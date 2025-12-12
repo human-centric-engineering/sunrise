@@ -57,12 +57,16 @@ sunrise/
 │   │   ├── signup/
 │   │   ├── verify-email/
 │   │   └── reset-password/
-│   ├── (dashboard)/         # Protected dashboard area (grouped route)
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   ├── settings/
-│   │   └── profile/
-│   ├── (marketing)/         # Public marketing pages (grouped route)
+│   ├── (protected)/         # All protected routes (grouped route)
+│   │   ├── layout.tsx       # Shared layout for all protected pages
+│   │   ├── dashboard/       # Dashboard home
+│   │   │   └── page.tsx
+│   │   ├── settings/        # User settings
+│   │   │   └── page.tsx
+│   │   └── profile/         # User profile
+│   │       └── page.tsx
+│   ├── (public)/            # All public pages (grouped route)
+│   │   ├── layout.tsx       # Shared layout for public pages
 │   │   ├── page.tsx         # Landing page
 │   │   ├── about/
 │   │   └── contact/
@@ -461,8 +465,9 @@ This phase makes the application production-ready with security, monitoring, and
 - [ ] Create user dashboard
 
 **Key Files:**
-- `app/(dashboard)/profile/page.tsx`
-- `app/(dashboard)/settings/page.tsx`
+- `app/(protected)/profile/page.tsx`
+- `app/(protected)/settings/page.tsx`
+- `app/(protected)/dashboard/page.tsx`
 - `components/forms/profile-form.tsx`
 - `components/forms/password-form.tsx`
 - `app/api/v1/users/[id]/route.ts` - user CRUD
@@ -513,9 +518,9 @@ This phase makes the application production-ready with security, monitoring, and
 - [ ] Optimize for SEO
 
 **Key Files:**
-- `app/(marketing)/page.tsx` - landing page
-- `app/(marketing)/about/page.tsx`
-- `app/(marketing)/contact/page.tsx`
+- `app/(public)/page.tsx` - landing page
+- `app/(public)/about/page.tsx`
+- `app/(public)/contact/page.tsx`
 - `components/marketing/hero.tsx`
 - `components/marketing/features.tsx`
 - `components/marketing/pricing.tsx`
@@ -917,7 +922,9 @@ SENTRY_DSN="your-sentry-dsn"
 Document these workflows for developers:
 
 1. **Adding a New Page**
-   - Create file in appropriate route group
+   - Protected page with dashboard UI: `app/(protected)/analytics/page.tsx`
+   - Public page with marketing UI: `app/(public)/pricing/page.tsx`
+   - Different layout needed: Create new route group (e.g., `app/(admin)/layout.tsx`)
    - Add to navigation if needed
    - Update sitemap
 
