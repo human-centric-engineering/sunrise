@@ -7,8 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "lint:fix": "next lint --fix",
+    "lint": "eslint . --cache --cache-location .next/cache/eslint/",
+    "lint:fix": "eslint . --fix --cache --cache-location .next/cache/eslint/",
     "type-check": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -36,8 +36,8 @@
     "tailwind",
     "nextauth"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": "Human-Centric Engineering",
+  "license": "",
   "bugs": {
     "url": "https://github.com/human-centric-engineering/sunrise/issues"
   },
@@ -50,6 +50,9 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.3",
+    "@eslint/js": "^9.39.1",
+    "@next/eslint-plugin-next": "16.0.10",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.1",
     "@types/react": "^19.2.7",
@@ -57,8 +60,12 @@
     "autoprefixer": "^10.4.22",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.10",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.0.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.49.0"
   }
 }
