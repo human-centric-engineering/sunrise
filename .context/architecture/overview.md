@@ -82,23 +82,32 @@ graph TB
 
 Route groups organize pages without affecting URL structure. Each group has its own layout and shared logic:
 
-**`app/(marketing)/`** - Public pages
-- Landing page, about, contact
-- No authentication required
-- SEO-optimized
-- Marketing layout with header/footer
-
 **`app/(auth)/`** - Authentication flows
 - Login, signup, password reset, email verification
 - Unauthenticated users only (redirect if logged in)
 - Minimal layout, centered forms
 - Form validation with Zod
 
-**`app/(dashboard)/`** - Protected application
-- User dashboard, profile, settings
+**`app/(protected)/`** - All protected routes
+- Contains: `dashboard/`, `settings/`, `profile/` as subdirectories
+- No `page.tsx` at group root (subdirectories provide pages)
 - Requires authentication (protected by middleware)
-- Application layout with navigation
+- Shared application layout with navigation
 - Server-side session checks
+- **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
+
+**`app/(public)/`** - All public pages
+- Landing page (`page.tsx`), about, contact, pricing, etc.
+- No authentication required
+- SEO-optimized
+- Shared marketing layout with header/footer
+- **Extend**: Add new public pages as subdirectories (e.g., `blog/`, `docs/`)
+
+**Creating New Route Groups:**
+When you need a different layout or authentication model:
+- Admin panel with distinct UI: `app/(admin)/layout.tsx`
+- Documentation site: `app/(docs)/layout.tsx`
+- Customer portal: `app/(portal)/layout.tsx`
 
 ### Server vs. Client Components
 
@@ -361,6 +370,38 @@ export function middleware(request: NextRequest) {
   return response;
 }
 ```
+
+## Route Organization Decision Rationale
+
+### Why Three Main Route Groups?
+
+**Decision**: Use `(auth)`, `(protected)`, and `(public)` instead of more specific groups like `(dashboard)` or `(marketing)`
+
+**Rationale**:
+- **Flexibility**: `(protected)` can contain any authenticated feature (dashboard, settings, analytics, admin tools)
+- **Clarity**: Clear authentication boundary - is it public or protected?
+- **Scalability**: Easy to add new features without restructuring
+- **Layout Reuse**: Most protected pages share the same navigation/layout
+- **Template-Friendly**: Users can easily extend without understanding complex organization
+
+**Trade-offs**:
+- Less granular than per-feature grouping
+- Requires subdirectories instead of top-level route groups
+
+**Migration Path**: If layouts diverge, extract to new group (e.g., `(protected)/admin/` → `(admin)/`)
+
+### When to Create a New Route Group
+
+Create a new route group when:
+1. **Different layout** needed (navigation, header, sidebar)
+2. **Different authentication model** (e.g., admin-only, customer-only)
+3. **Different page structure** (e.g., full-screen vs. contained)
+4. **Different metadata** (e.g., separate SEO strategy)
+
+**Examples**:
+- Admin panel with sidebar navigation: `(admin)` ✓
+- Docs site with different header: `(docs)` ✓
+- Same dashboard but different feature: `(protected)/analytics/` ✓ (subdirectory)
 
 ## Related Documentation
 

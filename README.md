@@ -41,6 +41,34 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 - **[.context/substrate.md](./.context/substrate.md)** - Comprehensive architecture and implementation docs
 - **[Build Plan](./.instructions/SUNRISE-BUILD-PLAN.md)** - Detailed implementation roadmap
 
+## Route Organization
+
+The app uses Next.js 14+ route groups for clean separation of concerns:
+
+- **`(auth)`** - Authentication pages (login, signup, password reset) with minimal layout
+- **`(protected)`** - All authenticated routes requiring login
+  - Currently includes: `dashboard/`, `settings/`, `profile/`
+  - Add new protected features here as directories (e.g., `(protected)/analytics/`)
+- **`(public)`** - All public routes (marketing, landing page, etc.)
+  - Add new public pages here (e.g., `(public)/about/`, `(public)/pricing/`)
+
+### Adding New Pages
+
+**Same layout as existing section?** Add as a subdirectory
+- Protected feature with dashboard UI → `app/(protected)/analytics/page.tsx`
+- Public page with marketing UI → `app/(public)/pricing/page.tsx`
+
+**Different layout needed?** Create a new route group
+- Admin panel with different UI → `app/(admin)/layout.tsx` + `app/(admin)/users/page.tsx`
+- Documentation site → `app/(docs)/layout.tsx` + `app/(docs)/getting-started/page.tsx`
+
+**Examples:**
+- Blog with same marketing UI: `(public)/blog/` ✓
+- Admin panel with different UI: `(admin)/` with custom layout ✓
+- Customer portal: `(protected)/portal/` if same dashboard UI, or `(portal)/` if different ✓
+
+See [`.context/architecture/overview.md`](./.context/architecture/overview.md) for detailed architecture patterns.
+
 ## Philosophy
 
 1. **Production-First** - Security, performance, and reliability are not afterthoughts

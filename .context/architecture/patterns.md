@@ -8,8 +8,19 @@
 sunrise/
 ├── app/                    # Next.js App Router (routes and API)
 │   ├── (auth)/            # Authentication pages (route group)
-│   ├── (dashboard)/       # Protected application (route group)
-│   ├── (marketing)/       # Public pages (route group)
+│   │   ├── login/
+│   │   ├── signup/
+│   │   └── reset-password/
+│   ├── (protected)/       # Protected routes (route group)
+│   │   ├── layout.tsx     # Shared protected layout
+│   │   ├── dashboard/     # Dashboard home
+│   │   ├── settings/      # User settings
+│   │   └── profile/       # User profile
+│   ├── (public)/          # Public routes (route group)
+│   │   ├── layout.tsx     # Shared public layout
+│   │   ├── page.tsx       # Landing page
+│   │   ├── about/
+│   │   └── contact/
 │   ├── api/               # API routes
 │   ├── layout.tsx         # Root layout
 │   └── error.tsx          # Error boundary
@@ -72,6 +83,56 @@ export default function LoginPage() {
   );
 }
 ```
+
+### Route Organization Patterns
+
+**Adding Protected Pages:**
+```typescript
+// app/(protected)/analytics/page.tsx
+// New protected feature - uses (protected) layout automatically
+export default async function AnalyticsPage() {
+  const session = await getServerSession(authOptions);
+  // Protected by middleware, session guaranteed to exist
+  const data = await fetchAnalytics(session.user.id);
+  return <AnalyticsDashboard data={data} />;
+}
+```
+
+**Adding Public Pages:**
+```typescript
+// app/(public)/pricing/page.tsx
+// New public page - uses (public) layout automatically
+export default function PricingPage() {
+  return <PricingTable />;
+}
+```
+
+**Creating New Route Group (Different Layout):**
+```typescript
+// app/(admin)/layout.tsx
+// New route group for admin-specific UI
+export default function AdminLayout({ children }) {
+  return (
+    <div className="admin-layout">
+      <AdminSidebar />
+      <main>{children}</main>
+    </div>
+  );
+}
+
+// app/(admin)/users/page.tsx
+// Uses admin layout defined above
+export default async function AdminUsersPage() {
+  const users = await prisma.user.findMany();
+  return <UserManagementTable users={users} />;
+}
+```
+
+**Decision Guide:**
+- Same navigation/UI as existing pages? → Use existing route group as subdirectory
+- Different navigation/UI needed? → Create new route group with `layout.tsx`
+- Just authentication difference? → Use `(protected)` vs `(public)`
+- Completely different section? → New route group (e.g., `(admin)`, `(docs)`, `(portal)`)
 
 ### API Route Organization
 

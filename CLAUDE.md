@@ -86,8 +86,14 @@ npm run test:coverage    # Run tests with coverage report
 ```
 app/
 ├── (auth)/              # Route group: authentication pages (login, signup, reset)
-├── (dashboard)/         # Route group: protected user dashboard area
-├── (marketing)/         # Route group: public marketing pages (landing, about)
+├── (protected)/         # Route group: all protected routes
+│   ├── dashboard/       # Dashboard home
+│   ├── settings/        # User settings
+│   └── profile/         # User profile
+├── (public)/            # Route group: all public routes
+│   ├── page.tsx         # Landing page
+│   ├── about/           # About page
+│   └── contact/         # Contact page
 └── api/                 # API routes
     ├── auth/            # NextAuth.js handlers
     ├── health/          # Health check endpoint
@@ -119,7 +125,14 @@ types/                   # Shared TypeScript types
 
 ### Important Patterns
 
-**1. Route Groups:** The `app/` directory uses route groups `(groupName)` to organize pages without affecting URLs. This allows clean separation of authenticated vs public pages with different layouts.
+**1. Route Groups:** The `app/` directory uses route groups `(groupName)` to organize pages without affecting URLs. This allows clean separation with different layouts:
+- `(auth)` - Authentication pages with minimal layout
+- `(protected)` - All authenticated routes (dashboard, settings, profile, etc.)
+- `(public)` - All public routes (landing, about, pricing, etc.)
+
+**Adding new pages:**
+- Same layout as existing? Add as subdirectory: `(protected)/analytics/page.tsx`
+- Different layout needed? Create new route group: `(admin)/layout.tsx`
 
 **2. API Response Format:** All API endpoints use standardized responses:
 ```typescript
@@ -220,10 +233,19 @@ export async function GET(request: NextRequest) {
 ### Common Tasks
 
 **Adding a New Page:**
-1. Create `app/(group)/page-name/page.tsx`
-2. Use appropriate route group: `(auth)`, `(dashboard)`, or `(marketing)`
+1. Determine if it's public or protected
+2. Choose appropriate route group:
+   - Authentication flow → `(auth)/page-name/page.tsx`
+   - Protected feature → `(protected)/page-name/page.tsx`
+   - Public page → `(public)/page-name/page.tsx`
+   - Different layout needed → Create new group `(admin)/page-name/page.tsx`
 3. Import from `@/components` and `@/lib` using path aliases
 4. Add to navigation if needed
+
+**Examples:**
+- Analytics dashboard: `app/(protected)/analytics/page.tsx` (uses protected layout)
+- Pricing page: `app/(public)/pricing/page.tsx` (uses public layout)
+- Admin panel: `app/(admin)/layout.tsx` + `app/(admin)/users/page.tsx` (custom layout)
 
 **Adding a New API Endpoint:**
 1. Create `app/api/v1/[resource]/route.ts`

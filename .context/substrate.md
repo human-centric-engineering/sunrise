@@ -30,7 +30,9 @@ System design, component boundaries, and architectural patterns. Includes:
 - [Dependencies](./architecture/dependencies.md) - Dependency injection and management patterns
 - [Patterns](./architecture/patterns.md) - Code organization, error handling, and conventions
 
-**Use When**: Understanding system structure, adding major features, making architectural decisions
+**Use When**: Understanding system structure, adding major features, making architectural decisions, organizing route groups
+
+**Route Organization**: See overview.md for how to use `(auth)`, `(protected)`, and `(public)` route groups
 
 ### 🔐 [Authentication](./auth/overview.md)
 Authentication and authorization implementation with NextAuth.js v5. Includes:
