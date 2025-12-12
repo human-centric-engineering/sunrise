@@ -1,0 +1,213 @@
+# Sunrise Context Substrate
+
+**Project**: Sunrise
+**Version**: 1.0.0
+**Stack**: Next.js 14+ (App Router), TypeScript, PostgreSQL, Prisma, NextAuth.js v5
+**Architecture**: Monolithic with API routes, server/client component separation
+**Last Updated**: 2025-12-12
+
+## Overview
+
+Sunrise is a production-ready Next.js starter template optimized for rapid application development with AI assistance. This substrate documents the system's architecture, patterns, and implementation details to provide both human developers and AI systems with comprehensive context.
+
+The project follows a monolithic architecture with clear separation of concerns: server components for data fetching, client components for interactivity, API routes for external access, and Prisma for database operations. This structure enables fast development while maintaining type safety and scalability.
+
+## Purpose & Methodology
+
+This `.context/` substrate implements **Documentation as Code as Context** - a methodology that organizes project knowledge into domain-specific, AI-optimized modules. Each domain is versioned with the codebase, ensuring documentation evolves alongside implementation.
+
+**Key Benefits:**
+- **AI Context Precision**: Structured domains enable targeted context loading for LLM operations
+- **Human Onboarding**: New developers understand architecture decisions and patterns quickly
+- **Decision Capture**: Trade-offs and rationale are documented, preventing architectural drift
+- **Implementation Focus**: Actionable patterns and examples, not theoretical concepts
+
+## Domain Structure
+
+### 📐 [Architecture](./architecture/overview.md)
+System design, component boundaries, and architectural patterns. Includes:
+- [Overview](./architecture/overview.md) - High-level system architecture with Mermaid diagrams
+- [Dependencies](./architecture/dependencies.md) - Dependency injection and management patterns
+- [Patterns](./architecture/patterns.md) - Code organization, error handling, and conventions
+
+**Use When**: Understanding system structure, adding major features, making architectural decisions
+
+### 🔐 [Authentication](./auth/overview.md)
+Authentication and authorization implementation with NextAuth.js v5. Includes:
+- [Overview](./auth/overview.md) - Authentication flows and session management
+- [Integration](./auth/integration.md) - Next.js App Router integration patterns
+- [Security](./auth/security.md) - Security model, threats, and mitigations
+
+**Use When**: Implementing auth features, securing endpoints, managing sessions, adding OAuth providers
+
+### 🌐 [API](./api/endpoints.md)
+RESTful API design and implementation patterns. Includes:
+- [Endpoints](./api/endpoints.md) - API reference with all route handlers
+- [Headers](./api/headers.md) - HTTP headers, CORS, and middleware
+- [Examples](./api/examples.md) - Client implementations and usage patterns
+
+**Use When**: Building API routes, integrating with external clients, handling requests
+
+### 💾 [Database](./database/schema.md)
+PostgreSQL schema, Prisma models, and data patterns. Includes:
+- [Schema](./database/schema.md) - Database design with ERD diagrams
+- [Models](./database/models.md) - Prisma models and validation patterns
+- [Migrations](./database/migrations.md) - Migration strategy and workflow
+
+**Use When**: Modifying database schema, creating models, running migrations
+
+### 📋 [Guidelines](./guidelines.md)
+Development workflow, testing, deployment, and operational procedures.
+
+**Use When**: Setting up development environment, deploying, following team conventions
+
+## AI Usage Patterns
+
+### For Code Generation
+```
+Load context from .context/[domain]/ for specific features:
+- Authentication feature → load .context/auth/
+- API endpoint → load .context/api/
+- Database model → load .context/database/
+```
+
+### For Architectural Decisions
+```
+Reference .context/architecture/overview.md for:
+- Component placement (server vs client)
+- API vs direct database access
+- Caching and performance strategies
+```
+
+### For Security Review
+```
+Cross-reference .context/auth/security.md and .context/api/headers.md for:
+- Authentication verification
+- Authorization checks
+- Input validation
+- Rate limiting
+```
+
+## Navigation Quick Reference
+
+| Task | Primary Context | Supporting Context |
+|------|----------------|-------------------|
+| Add new page | architecture/overview.md | architecture/patterns.md |
+| Build API endpoint | api/endpoints.md | api/headers.md, database/models.md |
+| Modify database | database/schema.md | database/migrations.md |
+| Add auth provider | auth/integration.md | auth/security.md |
+| Deploy application | guidelines.md | architecture/overview.md |
+
+## Technology Stack
+
+**Core Framework:**
+- Next.js 14+ with App Router (React Server Components)
+- TypeScript 5+ in strict mode
+- React 18+ (server/client components)
+
+**Data Layer:**
+- PostgreSQL 15+ (relational database)
+- Prisma ORM (type-safe query builder)
+- Zod (runtime validation)
+
+**Authentication:**
+- NextAuth.js v5 (authentication framework)
+- bcrypt (password hashing)
+- JWT sessions (secure, stateless)
+
+**UI/Styling:**
+- Tailwind CSS 3+ (utility-first styling)
+- shadcn/ui (accessible component library)
+- Lucide React (icon library)
+
+**Email:**
+- Resend (email delivery API)
+- React Email (email templates)
+
+**Infrastructure:**
+- Docker (containerization)
+- Nginx (reverse proxy for production)
+- Node.js 20+ Alpine (runtime)
+
+## Decision History & Trade-offs
+
+### Monolithic Architecture
+**Decision**: Single Next.js application with API routes vs. separate backend service
+**Rationale**:
+- Reduces deployment complexity (single Docker container)
+- Simplifies development (no API version sync issues)
+- Faster initial development (shared types, no network overhead)
+- Scales adequately for expected load (vertical scaling sufficient)
+
+**Trade-offs**: Less flexibility for independent service scaling, harder to split later if needed
+
+### Prisma ORM
+**Decision**: Prisma vs. raw SQL or TypeORM
+**Rationale**:
+- Type-safe queries with full TypeScript support
+- Excellent migrations workflow
+- Developer experience (Prisma Studio, autocomplete)
+- Prevents SQL injection by design
+
+**Trade-offs**: Additional abstraction layer, slightly reduced query flexibility for complex operations
+
+### NextAuth.js v5
+**Decision**: NextAuth.js vs. custom auth or Auth0/Clerk
+**Rationale**:
+- Open source, no vendor lock-in
+- Built specifically for Next.js App Router
+- Flexible (credentials + OAuth support)
+- Self-hosted (data ownership, no per-user costs)
+
+**Trade-offs**: More setup than SaaS solutions, requires security knowledge to configure properly
+
+### App Router (Server Components)
+**Decision**: App Router vs. Pages Router
+**Rationale**:
+- Future of Next.js (long-term support)
+- Better performance (server components reduce client JS)
+- Improved data fetching patterns
+- Streaming and Suspense support
+
+**Trade-offs**: Steeper learning curve, some community libraries not yet compatible
+
+## Versioning & Maintenance
+
+This substrate follows semantic versioning tied to the application codebase:
+- **Major version**: Breaking architectural changes (e.g., database migration, auth system swap)
+- **Minor version**: New features or domains added (e.g., new API endpoints, new patterns)
+- **Patch version**: Documentation improvements, clarifications, example updates
+
+**Update Frequency**: Document changes should be committed alongside code changes that affect architecture, APIs, or data models.
+
+**Review Schedule**: Architecture documents should be reviewed quarterly to ensure alignment with implementation.
+
+## Getting Started
+
+**For Human Developers:**
+1. Read [Architecture Overview](./architecture/overview.md) for system understanding
+2. Review [Guidelines](./guidelines.md) for development setup
+3. Reference domain-specific docs as needed during development
+
+**For AI Systems:**
+1. Load `.context/substrate.md` for project overview
+2. Load specific domains based on task context
+3. Cross-reference related domains for complete context
+4. Follow patterns in code examples exactly
+
+## Contributing to Documentation
+
+When updating this substrate:
+- Keep code examples realistic and tested
+- Include decision rationale for architectural choices
+- Update Mermaid diagrams when system structure changes
+- Maintain 400-800 word target per domain file
+- Cross-reference related sections
+- Update version and last-updated date
+
+## Support
+
+For questions about this documentation:
+- Check [Guidelines](./guidelines.md) for development workflows
+- Review build plan in `.instructions/HCE-BASE-BUILD-PLAN.md`
+- See `CLAUDE.md` for AI-specific development guidance
