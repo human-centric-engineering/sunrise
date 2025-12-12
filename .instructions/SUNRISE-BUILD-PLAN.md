@@ -18,20 +18,22 @@
 
 ## Technical Stack
 
+> **Note:** This project uses **Next.js 16**, **Tailwind CSS 4**, and **ESLint 9** which have breaking changes from earlier versions. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for migration details.
+
 ### Core Technologies
-- **Framework:** Next.js 14+ (App Router)
-- **Language:** TypeScript (strict mode)
-- **Database:** PostgreSQL 15
+- **Framework:** Next.js 16+ (App Router) - ⚠️ Breaking changes from 14/15
+- **Language:** TypeScript 5+ (strict mode)
+- **Database:** PostgreSQL 15+
 - **ORM:** Prisma
 - **Authentication:** NextAuth.js v5
-- **Styling:** Tailwind CSS
+- **Styling:** Tailwind CSS 4+ - ⚠️ New @import syntax
 - **UI Components:** shadcn/ui
 - **Icons:** Lucide React
 - **Email:** Resend
 - **Email Templates:** React Email
 
 ### Development Tools
-- **Linting:** ESLint (Next.js config)
+- **Linting:** ESLint 9+ (flat config) - ⚠️ No `next lint`, uses ESLint CLI
 - **Formatting:** Prettier
 - **Git Hooks:** Husky + lint-staged
 - **Testing:** Vitest (minimal setup)
