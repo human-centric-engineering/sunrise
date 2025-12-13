@@ -112,6 +112,32 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
   - Import icons: `import { IconName } from 'lucide-react'`
   - Browse icons: [lucide.dev](https://lucide.dev)
 
+## Database Setup
+
+**Quick Start:**
+1. Set your PostgreSQL connection string in `.env`:
+   ```bash
+   DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
+   ```
+2. Run migrations to create the database schema:
+   ```bash
+   npm run db:migrate
+   ```
+3. (Optional) Seed with test data:
+   ```bash
+   npm run db:seed
+   ```
+4. Verify connection: Visit http://localhost:3000/api/health
+
+**Database Scripts:**
+- `npm run db:migrate` - Create and apply migrations
+- `npm run db:push` - Push schema changes without migration (development)
+- `npm run db:studio` - Open Prisma Studio (database GUI)
+- `npm run db:seed` - Populate database with test users
+- `npm run db:generate` - Regenerate Prisma client after schema changes
+
+**Note:** This project uses Prisma 7 with PostgreSQL. The database schema includes User, Account, Session, and VerificationToken models ready for NextAuth.js authentication.
+
 ## Philosophy
 
 1. **Production-First** - Security, performance, and reliability are not afterthoughts
