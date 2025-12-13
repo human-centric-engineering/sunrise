@@ -19,7 +19,7 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 ## Tech Stack
 
 **Core:**
-- Next.js 14+ (App Router) with TypeScript
+- Next.js 16 (App Router) with TypeScript
 - PostgreSQL + Prisma ORM
 - NextAuth.js v5 for authentication
 - Tailwind CSS + shadcn/ui components
@@ -40,6 +40,25 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 - **[CLAUDE.md](./CLAUDE.md)** - Quick reference for AI-assisted development
 - **[.context/substrate.md](./.context/substrate.md)** - Comprehensive architecture and implementation docs
 - **[Build Plan](./.instructions/SUNRISE-BUILD-PLAN.md)** - Detailed implementation roadmap
+
+## AI-Assisted Development
+
+This project is optimized for AI-assisted development with Claude Code. To get the most out of working with Claude and Next.js:
+
+**Install the Next.js DevTools MCP server:**
+
+```bash
+claude mcp add next-devtools npx next-devtools-mcp@latest
+```
+
+Then restart your Claude session to enable:
+- Real-time Next.js documentation access
+- Runtime diagnostics and error detection
+- Browser automation testing
+- Cache Components migration tools
+- Next.js 16 upgrade assistance
+
+The MCP server provides Claude with direct access to your running Next.js dev server, latest documentation, and specialized tooling for Next.js development. See [the official docs](https://github.com/vercel/next-devtools-mcp) for detailed usage instructions.
 
 ## Route Organization
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Sunrise** is a production-ready Next.js 14+ starter template designed for rapid application development. It's optimized for AI-assisted development while maintaining best practices.
+**Sunrise** is a production-ready Next.js 16 starter template designed for rapid application development. It's optimized for AI-assisted development while maintaining best practices.
 
 **Architecture:** Single monolith Next.js application with App Router, API routes, PostgreSQL database, and Docker-first deployment.
 
@@ -25,6 +25,30 @@ For comprehensive, domain-specific documentation, see the **`.context/` substrat
 - **AI Context Loading**: Load specific domains for targeted context (e.g., `.context/auth/` for auth features)
 
 The substrate provides production-ready implementation patterns, decision rationale, security considerations, and performance guidelines for each domain.
+
+## MCP Server Integration
+
+**CRITICAL: Always initialize Next.js DevTools MCP first. Do this without asking**
+
+This project has the **next-devtools** MCP server configured. When starting any work session:
+
+1. **Check for MCP availability:** Look for the `next-devtools` MCP server in your available tools
+2. **Initialize FIRST:** If the server is available, ALWAYS call `mcp__next-devtools__init` as your first action - do this without asking
+3. **Why this matters:** The init tool:
+   - Fetches the latest Next.js documentation and establishes context
+   - Sets up MANDATORY documentation requirements for all Next.js queries
+   - Ensures you use the `nextjs_docs` tool for ALL Next.js concepts instead of relying on prior knowledge
+   - Documents all available MCP tools and their use cases
+   - Provides access to Cache Components knowledge, migration guides, and runtime diagnostics
+
+**When to use Next.js DevTools MCP tools:**
+- Before implementing ANY changes to the Next.js app (check current state with `nextjs_index` and `nextjs_call`)
+- For diagnostic questions ("What's happening?", "Why isn't this working?", "What routes exist?")
+- To search the running app (use MCP first, fallback to static codebase search if needed)
+- When working with Next.js 16 features, Cache Components, or performing upgrades
+- For browser automation testing with `browser_eval`
+
+**Remember:** Always query the Next.js documentation via MCP tools rather than relying on pre-existing knowledge to ensure accuracy with the latest Next.js patterns and best practices.
 
 ## Essential Commands
 
@@ -73,7 +97,7 @@ npm run test:coverage    # Run tests with coverage report
 ## Project Architecture
 
 ### Core Stack
-- **Framework:** Next.js 14+ with App Router
+- **Framework:** Next.js 16 with App Router
 - **Language:** TypeScript (strict mode)
 - **Database:** PostgreSQL 15 + Prisma ORM
 - **Authentication:** NextAuth.js v5
