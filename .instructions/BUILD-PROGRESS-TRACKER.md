@@ -15,14 +15,14 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Create .env.example
 - [x] Test dev server startup
 
-### 1.2 Styling Setup
-- [ ] Install and configure Tailwind CSS
-- [ ] Set up globals.css
-- [ ] Configure theme
-- [ ] Initialize shadcn/ui
-- [ ] Add initial UI components (Button, Input, Label, Card)
-- [ ] Install Lucide React
-- [ ] Create dark mode utilities
+### 1.2 Styling Setup ✅
+- [x] Install and configure Tailwind CSS
+- [x] Set up globals.css
+- [x] Configure theme
+- [x] Initialize shadcn/ui
+- [x] Add initial UI components (Button, Input, Label, Card)
+- [x] Install Lucide React
+- [x] Create dark mode utilities
 
 ### 1.3 Database Layer
 - [ ] Install Prisma
@@ -282,10 +282,10 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-12
-**Current Phase:** Phase 1.1 Complete, Ready for Phase 1.2
+**Last Updated:** 2025-12-13
+**Current Phase:** Phase 1.2 Complete, Ready for Phase 1.3
 **Blockers:** None
-**Next Steps:** Phase 1.2 - Styling Setup (shadcn/ui components)
+**Next Steps:** Phase 1.3 - Database Layer (Prisma setup)
 
 ---
 
@@ -335,3 +335,43 @@ Use this section to track important decisions made during development:
 **Git Commits:**
 1. `bab5cab` - Initial project setup (Phase 1.1)
 2. `72e3b71` - ESLint 9 flat config migration
+
+### 2025-12-13 - Phase 1.2 Complete
+
+**Styling System Implemented:**
+- Enhanced `app/globals.css` with comprehensive HSL-based theme variables
+- Configured `tailwind.config.ts` with shadcn/ui compatible theming
+- Created `lib/utils.ts` with `cn()` helper for class merging
+- Initialized shadcn/ui with `components.json` (style: "new-york", iconLibrary: "lucide")
+- Installed lucide-react for icon library
+- Added shadcn/ui components: Button, Input, Label, Card
+- Created dark mode system with `hooks/use-theme.tsx` and `components/theme-toggle.tsx`
+- Updated `app/layout.tsx` with ThemeProvider wrapper
+- Updated `app/page.tsx` to showcase new components and theme toggle
+
+**Tailwind CSS 4 Compatibility Issues:**
+- **Issue:** `@apply` directive doesn't work with custom properties (e.g., `@apply border-border`)
+- **Error:** `Cannot apply unknown utility class 'border-border'`
+- **Solution:** Replaced `@apply` directives with direct CSS properties
+  - Before: `@apply border-border bg-background text-foreground`
+  - After: Direct CSS properties using `hsl(var(--variable))` syntax
+- **Reference:** Tailwind CSS 4 has breaking changes with `@apply` behavior
+
+**Missing Dependencies:**
+- Had to manually install `class-variance-authority` (required by shadcn/ui Button component)
+- Error surfaced in browser console during testing
+
+**Theme System:**
+- HSL-based color system for easy theme customization
+- Supports light, dark, and system preference modes
+- Theme persisted to localStorage
+- Smooth transitions between theme changes
+- Comprehensive CSS variables: background, foreground, card, popover, primary, secondary, muted, accent, destructive, border, input, ring, radius, charts
+
+**Testing:**
+- Verified all components render correctly in browser
+- Tested theme toggle functionality (light → dark → system)
+- Confirmed dark mode classes apply correctly
+- No console errors after dependency fixes
+
+**Branch:** `phase-1.2-styling-setup`
