@@ -99,9 +99,10 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 
 **Theme System:**
 - Dark mode toggle available via `<ThemeToggle />` component
-- Modify theme variables in `app/globals.css` (HSL-based color system)
-- Supports light, dark, and system preference modes
+- Toggles between light and dark modes
+- On first visit: detects system preference, saves to localStorage, defaults to light
 - Theme persisted to localStorage
+- Modify theme variables in `app/globals.css` (HSL-based color system)
 
 **UI Components:**
 - **shadcn/ui** - Pre-built, customizable components in `components/ui/`

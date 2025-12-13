@@ -1,46 +1,37 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 
-type Theme = 'dark' | 'light' | 'system'
+type Theme = 'dark' | 'light'
 
 interface ThemeContextValue {
   theme: Theme
   setTheme: (theme: Theme) => void
-  resolvedTheme: 'dark' | 'light'
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Initialize theme from localStorage on first render
+  // Initialize theme from localStorage, system preferences, or default to light
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
+      // Check localStorage first
       const stored = localStorage.getItem('theme') as Theme | null
-      return stored || 'system'
+      if (stored === 'light' || stored === 'dark') {
+        return stored
+      }
+
+      // Check system preferences
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)')
+        .matches
+      const systemTheme: Theme = prefersDark ? 'dark' : 'light'
+
+      // Save system preference to localStorage
+      localStorage.setItem('theme', systemTheme)
+      return systemTheme
     }
-    return 'system'
+    return 'light'
   })
-
-  // Track if component is mounted (for SSR compatibility)
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Required for SSR hydration matching
-    setMounted(true)
-  }, [])
-
-  // Derive resolvedTheme from theme instead of storing in state
-  const resolvedTheme = useMemo<'dark' | 'light'>(() => {
-    if (!mounted) return 'light'
-
-    if (theme === 'system') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-    }
-    return theme
-  }, [theme, mounted])
 
   useEffect(() => {
     const root = window.document.documentElement
@@ -49,14 +40,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.classList.remove('light', 'dark')
 
     // Add current theme class
-    root.classList.add(resolvedTheme)
+    root.classList.add(theme)
 
     // Save to localStorage
     localStorage.setItem('theme', theme)
-  }, [theme, resolvedTheme])
+  }, [theme])
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   )

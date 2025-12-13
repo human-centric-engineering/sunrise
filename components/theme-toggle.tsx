@@ -6,19 +6,13 @@ import { useTheme } from '@/hooks/use-theme'
 
 /**
  * Theme toggle button component
- * Cycles between light, dark, and system themes
+ * Toggles between light and dark themes
  */
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
 
   const toggleTheme = () => {
-    if (theme === 'light') {
-      setTheme('dark')
-    } else if (theme === 'dark') {
-      setTheme('system')
-    } else {
-      setTheme('light')
-    }
+    setTheme(theme === 'light' ? 'dark' : 'light')
   }
 
   return (
