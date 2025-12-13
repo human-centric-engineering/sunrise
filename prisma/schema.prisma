@@ -25,13 +25,17 @@ model User {
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
 
+  @@index([email])
+  @@index([role])
   @@map("users")
 }
 
 enum Role {
   USER
   ADMIN
+  MODERATOR
 }
 
 // NextAuth.js Account model
@@ -52,6 +56,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
   @@map("accounts")
 }
 
@@ -64,6 +69,7 @@ model Session {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@map("sessions")
 }
 
@@ -74,5 +80,7 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@index([identifier])
+  @@index([token])
   @@map("verification_tokens")
 }
