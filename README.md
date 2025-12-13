@@ -33,7 +33,14 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 
 ## Project Status
 
-🚧 **Under Development** - Currently implementing the core foundation. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap.
+🚧 **Under Development** - Core foundation in progress. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap.
+
+**Completed:**
+- ✅ **Phase 1.1** - Project Initialization (Next.js 16, TypeScript, Tailwind CSS 4, ESLint 9)
+- ✅ **Phase 1.2** - Styling Setup (shadcn/ui, dark mode, theme system)
+
+**In Progress:**
+- 🚧 **Phase 1.3** - Database Layer (Prisma + PostgreSQL)
 
 ## Documentation
 
@@ -87,6 +94,22 @@ The app uses Next.js 14+ route groups for clean separation of concerns:
 - Customer portal: `(protected)/portal/` if same dashboard UI, or `(portal)/` if different ✓
 
 See [`.context/architecture/overview.md`](./.context/architecture/overview.md) for detailed architecture patterns.
+
+## Styling & Theming
+
+**Theme System:**
+- Dark mode toggle available via `<ThemeToggle />` component
+- Modify theme variables in `app/globals.css` (HSL-based color system)
+- Supports light, dark, and system preference modes
+- Theme persisted to localStorage
+
+**UI Components:**
+- **shadcn/ui** - Pre-built, customizable components in `components/ui/`
+  - Add more components: `npx shadcn-ui@latest add [component-name]`
+  - Customize components directly in `components/ui/` - they're your code
+- **Lucide React** - Icon library available throughout the app
+  - Import icons: `import { IconName } from 'lucide-react'`
+  - Browse icons: [lucide.dev](https://lucide.dev)
 
 ## Philosophy
 

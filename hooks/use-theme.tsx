@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
 type Theme = 'dark' | 'light' | 'system'
 
@@ -13,16 +13,34 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('system')
-  const [resolvedTheme, setResolvedTheme] = useState<'dark' | 'light'>('light')
+  // Initialize theme from localStorage on first render
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('theme') as Theme | null
+      return stored || 'system'
+    }
+    return 'system'
+  })
+
+  // Track if component is mounted (for SSR compatibility)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    // Get theme from localStorage or default to system
-    const stored = localStorage.getItem('theme') as Theme | null
-    if (stored) {
-      setTheme(stored)
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Required for SSR hydration matching
+    setMounted(true)
   }, [])
+
+  // Derive resolvedTheme from theme instead of storing in state
+  const resolvedTheme = useMemo<'dark' | 'light'>(() => {
+    if (!mounted) return 'light'
+
+    if (theme === 'system') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+    }
+    return theme
+  }, [theme, mounted])
 
   useEffect(() => {
     const root = window.document.documentElement
@@ -30,21 +48,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     // Remove existing theme classes
     root.classList.remove('light', 'dark')
 
-    if (theme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
-        .matches
-        ? 'dark'
-        : 'light'
-      root.classList.add(systemTheme)
-      setResolvedTheme(systemTheme)
-    } else {
-      root.classList.add(theme)
-      setResolvedTheme(theme)
-    }
+    // Add current theme class
+    root.classList.add(resolvedTheme)
 
     // Save to localStorage
     localStorage.setItem('theme', theme)
-  }, [theme])
+  }, [theme, resolvedTheme])
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
