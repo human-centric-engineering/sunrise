@@ -14,7 +14,7 @@ For comprehensive, domain-specific documentation, see the **`.context/` substrat
 
 - **[`.context/substrate.md`](./.context/substrate.md)** - Entry point with navigation and AI usage patterns
 - **[Architecture](./.context/architecture/overview.md)** - System design, component boundaries, deployment architecture
-- **[Authentication](./.context/auth/overview.md)** - NextAuth.js v5 flows, session management, security model
+- **[Authentication](./.context/auth/overview.md)** - better-auth flows, session management, security model
 - **[API](./.context/api/endpoints.md)** - REST endpoints, headers, CORS, client examples
 - **[Database](./.context/database/schema.md)** - Prisma schema design, models, migrations, ERD diagrams
 - **[Guidelines](./.context/guidelines.md)** - Development workflow, testing, deployment procedures
@@ -100,7 +100,7 @@ npm run test:coverage    # Run tests with coverage report
 - **Framework:** Next.js 16 with App Router
 - **Language:** TypeScript (strict mode)
 - **Database:** PostgreSQL 15 + Prisma ORM
-- **Authentication:** NextAuth.js v5
+- **Authentication:** better-auth
 - **Styling:** Tailwind CSS + shadcn/ui components
 - **Email:** Resend + React Email templates
 - **Validation:** Zod schemas
@@ -119,7 +119,7 @@ app/
 │   ├── about/           # About page
 │   └── contact/         # Contact page
 └── api/                 # API routes
-    ├── auth/            # NextAuth.js handlers
+    ├── auth/            # better-auth handlers
     ├── health/          # Health check endpoint
     └── v1/              # Versioned API endpoints
 
@@ -248,8 +248,8 @@ export async function GET(request: NextRequest) {
 - **Never commit `.env.local`** - only commit `.env.example`
 - **Validate all user input** with Zod schemas
 - **Use Prisma** for database queries (prevents SQL injection)
-- **Hash passwords** with bcrypt (utilities in `lib/auth/passwords.ts`)
-- **Protect API routes** using NextAuth session checks
+- **Hash passwords** with bcrypt (better-auth handles this)
+- **Protect API routes** using better-auth session checks
 - **Set security headers** in `next.config.js` and middleware
 - **Rate limit** sensitive endpoints using utilities in `lib/security/rate-limit.ts`
 - **Sanitize input** for XSS prevention using `lib/security/sanitize.ts`
@@ -320,14 +320,14 @@ Components are installed to `components/ui/` and can be customized.
 Required variables are documented in `.env.example`. Key variables:
 
 ```bash
-DATABASE_URL="postgresql://..."       # PostgreSQL connection string
-NEXTAUTH_URL="http://localhost:3000"  # App URL (change for production)
-NEXTAUTH_SECRET="..."                 # Generate with: openssl rand -base64 32
-GOOGLE_CLIENT_ID="..."                # For Google OAuth (optional)
-GOOGLE_CLIENT_SECRET="..."            # For Google OAuth (optional)
-RESEND_API_KEY="..."                  # For email sending
-EMAIL_FROM="noreply@yourdomain.com"   # From address for emails
-NODE_ENV="development"                # or "production"
+DATABASE_URL="postgresql://..."         # PostgreSQL connection string
+BETTER_AUTH_URL="http://localhost:3000" # App URL (change for production)
+BETTER_AUTH_SECRET="..."                # Generate with: openssl rand -base64 32
+GOOGLE_CLIENT_ID="..."                  # For Google OAuth (optional)
+GOOGLE_CLIENT_SECRET="..."              # For Google OAuth (optional)
+RESEND_API_KEY="..."                    # For email sending
+EMAIL_FROM="noreply@yourdomain.com"     # From address for emails
+NODE_ENV="development"                  # or "production"
 ```
 
 **After adding/changing environment variables:**
@@ -383,8 +383,8 @@ NODE_ENV="development"                # or "production"
 - Regenerate Prisma client: `npx prisma generate`
 
 **Authentication not working:**
-- Verify `NEXTAUTH_SECRET` is set and valid
-- Check `NEXTAUTH_URL` matches your app URL
+- Verify `BETTER_AUTH_SECRET` is set and valid
+- Check `BETTER_AUTH_URL` matches your app URL
 - Ensure database is connected and migrations are applied
 - Check browser console for session errors
 

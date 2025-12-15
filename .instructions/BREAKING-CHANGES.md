@@ -2,7 +2,202 @@
 
 This document tracks significant version differences and breaking changes from the technologies specified in the original build plan.
 
-**Last Updated:** 2025-12-12
+**Last Updated:** 2025-12-15
+
+---
+
+## Authentication: better-auth (Plan specified NextAuth.js v5)
+
+We're using **better-auth v1.4.7** instead of NextAuth.js v5 as specified in the original plan.
+
+### Why the Change?
+
+**Decision:** Use better-auth instead of NextAuth.js v5
+**Official Recommendation:** NextAuth.js has become part of better-auth, and the official recommendation is to use better-auth for all new projects.
+
+**Impact:** HIGH - Complete authentication architecture change
+
+### Key Differences
+
+#### 1. No Provider Wrapper Required
+**What Changed:**
+- NextAuth.js requires `<SessionProvider>` wrapper in client components
+- better-auth uses nanostore - no provider wrapper needed
+- Simpler client-side setup
+
+**Migration:**
+```typescript
+// NextAuth.js v5 - OLD
+import { SessionProvider } from 'next-auth/react'
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        <SessionProvider>{children}</SessionProvider>
+      </body>
+    </html>
+  )
+}
+
+// better-auth - NEW
+// No provider needed! Just use hooks directly
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>{children}</body>
+    </html>
+  )
+}
+```
+
+#### 2. API Route Structure Changed
+**What Changed:**
+- NextAuth.js uses catch-all: `app/api/auth/[...nextauth]/route.ts`
+- better-auth uses catch-all: `app/api/auth/[...all]/route.ts`
+
+**Migration:**
+```typescript
+// NextAuth.js v5 - OLD
+// app/api/auth/[...nextauth]/route.ts
+import NextAuth from 'next-auth'
+import { authOptions } from '@/lib/auth/config'
+
+const handler = NextAuth(authOptions)
+export { handler as GET, handler as POST }
+
+// better-auth - NEW
+// app/api/auth/[...all]/route.ts
+import { auth } from '@/lib/auth/config'
+import { toNextJsHandler } from 'better-auth/next-js'
+
+export const { POST, GET } = toNextJsHandler(auth)
+```
+
+#### 3. Configuration Structure Different
+**What Changed:**
+- NextAuth.js uses `NextAuthOptions` object exported separately
+- better-auth uses `betterAuth()` function with inline config
+- Different adapter syntax
+
+**Migration:**
+```typescript
+// NextAuth.js v5 - OLD
+import { NextAuthOptions } from 'next-auth'
+import { PrismaAdapter } from '@auth/prisma-adapter'
+
+export const authOptions: NextAuthOptions = {
+  adapter: PrismaAdapter(prisma),
+  session: { strategy: 'jwt' },
+  providers: [...]
+}
+
+// better-auth - NEW
+import { betterAuth } from 'better-auth'
+import { prismaAdapter } from 'better-auth/adapters/prisma'
+
+export const auth = betterAuth({
+  database: prismaAdapter(prisma, { provider: 'postgresql' }),
+  emailAndPassword: { enabled: true },
+  socialProviders: { google: {...} }
+})
+```
+
+#### 4. Environment Variables Renamed
+**Impact:** MEDIUM - Must update all environment variables
+
+**What Changed:**
+- `NEXTAUTH_URL` → `BETTER_AUTH_URL`
+- `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET`
+
+**Migration:**
+```bash
+# .env - OLD (NextAuth.js v5)
+NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_SECRET="your-secret-here"
+
+# .env - NEW (better-auth)
+BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_SECRET="your-secret-here"
+```
+
+#### 5. Session Access Patterns
+**What Changed:**
+- Server: Different import paths and function names
+- Client: `useSession` from different package
+
+**Migration:**
+```typescript
+// Server Components - OLD
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth/config'
+
+const session = await getServerSession(authOptions)
+
+// Server Components - NEW
+import { auth } from '@/lib/auth/config'
+import { headers } from 'next/headers'
+
+const requestHeaders = await headers()
+const session = await auth.api.getSession({ headers: requestHeaders })
+
+// Client Components - OLD
+import { useSession } from 'next-auth/react'
+
+// Client Components - NEW
+import { useSession } from '@/lib/auth/client'
+// (wrapper around better-auth's useSession)
+```
+
+#### 6. Database Schema Changes
+**What Changed:**
+- No `Role` enum - uses string-based role field
+- Different field names and structure
+- Model names: `VerificationToken` → `Verification`
+
+**Migration:**
+```prisma
+// NextAuth.js v5 Schema - OLD
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  role Role @default(USER)
+}
+
+model VerificationToken {
+  identifier String
+  token      String @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+// better-auth Schema - NEW
+model User {
+  role String? @default("USER")  // No enum
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  @@index([identifier])
+}
+```
+
+### Benefits of better-auth
+
+Despite breaking changes, better-auth provides:
+
+1. **Official Recommendation** - NextAuth team recommends better-auth for new projects
+2. **Simpler Architecture** - No provider wrapper, cleaner client setup
+3. **Modern Patterns** - Uses nanostore for state management
+4. **Prisma 7 Support** - Native support for latest Prisma
+5. **Active Development** - Actively maintained and improved
+6. **TypeScript First** - Better type inference and safety
 
 ---
 
@@ -254,9 +449,11 @@ New developers should know:
 |------------|-------------|----------------|------------------|
 | Next.js | 14+ | 16.0.10 | Yes - Major |
 | React | 18+ | 19.2.3 | Minor API changes |
+| Authentication | NextAuth.js v5 | better-auth 1.4.7 | Yes - Complete rewrite |
 | ESLint | 8.x | 9.39.1 | Yes - Config format |
 | Tailwind CSS | 3.x | 4.1.18 | Yes - CSS syntax |
 | TypeScript | 5+ | 5.9.3 | No |
+| Prisma | 6+ | 7.1.0 | Yes - Adapter pattern |
 | Node.js | 20+ | 20+ | No |
 
 ---
@@ -325,7 +522,9 @@ Despite breaking changes, these versions provide:
 
 | Date | Component | From | To | Reason |
 |------|-----------|------|-----|---------|
+| 2025-12-15 | Authentication | NextAuth.js v5 | better-auth 1.4.7 | Official recommendation from NextAuth team |
 | 2025-12-12 | Next.js | 14+ (plan) | 16.0.10 | Latest stable release |
 | 2025-12-12 | ESLint | 8.x (implied) | 9.39.1 | Installed with latest packages |
 | 2025-12-12 | Tailwind | 3.x (plan) | 4.1.18 | Latest stable release |
 | 2025-12-12 | React | 18+ (plan) | 19.2.3 | Required by Next.js 16 |
+| 2025-12-12 | Prisma | 6+ (plan) | 7.1.0 | Latest stable release |
