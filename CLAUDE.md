@@ -79,23 +79,23 @@ Use these Context7-compatible library IDs directly (no need to resolve):
 
 **Core Framework & Tools:**
 - **Next.js:** `/vercel/next.js` (versions: v16.0.3, v15.1.8, v14.3.0-canary.87, v13.5.11, v12.3.7, v11.1.3)
-- **React:** `/facebook/react` (use for React 19 patterns)
-- **Prisma:** `/prisma/docs` (version-specific: `/prisma/docs/7.1.0`)
-- **TypeScript:** `/microsoft/TypeScript`
+- **React:** TBC (use for React 19 patterns)
+- **Prisma:** `/prisma/docs` (check if version-specific is available)
+- **TypeScript:** `/microsoft/typescript`
 
 **Authentication & Security:**
 - **better-auth:** `/better-auth/better-auth` (version-specific: `/better-auth/better-auth/1.4.7`)
 
 **UI & Styling:**
-- **Tailwind CSS:** `/tailwindlabs/tailwindcss`
-- **Radix UI:** `/radix-ui/primitives`
-- **shadcn/ui:** `/shadcn/ui` (component library patterns)
+- **Tailwind CSS:** `/websites/tailwindcss`
+- **Radix UI:** TBC
+- **shadcn/ui:** `/websites/ui_shadcn` (component library patterns)
 
 **Data & Validation:**
-- **Zod:** `/colinhacks/zod`
-- **React Hook Form:** `/react-hook-form/react-hook-form`
+- **Zod:** TBC
+- **React Hook Form:** TBC
 
-**Add to this list as you use more libraries in Sunrise development.**
+**Update and add to this list as you use libraries in Sunrise development.**
 
 ### Example Usage
 
