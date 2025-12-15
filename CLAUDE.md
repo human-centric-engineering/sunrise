@@ -50,6 +50,75 @@ This project has the **next-devtools** MCP server configured. When starting any 
 
 **Remember:** Always query the Next.js documentation via MCP tools rather than relying on pre-existing knowledge to ensure accuracy with the latest Next.js patterns and best practices.
 
+## Context7 MCP Integration
+
+**IMPORTANT: Use Context7 automatically for library documentation and code generation**
+
+This project has the **context7** MCP server configured for accessing up-to-date library documentation.
+
+### When to Use Context7
+
+**Use Context7 automatically (without asking) when:**
+- Writing code that uses external libraries (React, Prisma, better-auth, etc.)
+- Implementing features with library-specific APIs
+- Troubleshooting library-related issues
+- Learning library patterns and best practices
+- Migrating between library versions
+
+**How to Use:**
+1. **For known libraries:** Use the library ID directly from the list below
+2. **For new libraries:** Call `mcp__context7__resolve-library-id` first to find the correct ID
+3. **Get documentation:** Call `mcp__context7__get-library-docs` with the library ID and topic
+4. **Modes:**
+   - `mode: "code"` - API references, code examples, function signatures (default)
+   - `mode: "info"` - Conceptual guides, architecture, narrative documentation
+
+### Library Reference List
+
+Use these Context7-compatible library IDs directly (no need to resolve):
+
+**Core Framework & Tools:**
+- **Next.js:** `/vercel/next.js` (versions: v16.0.3, v15.1.8, v14.3.0-canary.87, v13.5.11, v12.3.7, v11.1.3)
+- **React:** `/facebook/react` (use for React 19 patterns)
+- **Prisma:** `/prisma/docs` (version-specific: `/prisma/docs/7.1.0`)
+- **TypeScript:** `/microsoft/TypeScript`
+
+**Authentication & Security:**
+- **better-auth:** `/better-auth/better-auth` (version-specific: `/better-auth/better-auth/1.4.7`)
+
+**UI & Styling:**
+- **Tailwind CSS:** `/tailwindlabs/tailwindcss`
+- **Radix UI:** `/radix-ui/primitives`
+- **shadcn/ui:** `/shadcn/ui` (component library patterns)
+
+**Data & Validation:**
+- **Zod:** `/colinhacks/zod`
+- **React Hook Form:** `/react-hook-form/react-hook-form`
+
+**Add to this list as you use more libraries in Sunrise development.**
+
+### Example Usage
+
+```typescript
+// When implementing better-auth patterns:
+// 1. Get documentation
+mcp__context7__get-library-docs({
+  context7CompatibleLibraryID: "/better-auth/better-auth/1.4.7",
+  topic: "session management server components",
+  mode: "code"
+})
+
+// 2. Use the patterns from documentation in your code
+// 3. Add the library to the list above if not already present
+```
+
+**Best Practices:**
+- Always use version-specific IDs when available (e.g., `/better-auth/better-auth/1.4.7` instead of `/better-auth/better-auth`)
+- Use `mode: "code"` for implementation tasks
+- Use `mode: "info"` for understanding architecture or concepts
+- Keep the library list updated as the project grows
+- Reference the list to avoid redundant library ID lookups
+
 ## Essential Commands
 
 ### Development
