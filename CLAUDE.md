@@ -14,7 +14,7 @@ For comprehensive, domain-specific documentation, see the **`.context/` substrat
 
 - **[`.context/substrate.md`](./.context/substrate.md)** - Entry point with navigation and AI usage patterns
 - **[Architecture](./.context/architecture/overview.md)** - System design, component boundaries, deployment architecture
-- **[Authentication](./.context/auth/overview.md)** - NextAuth.js v5 flows, session management, security model
+- **[Authentication](./.context/auth/overview.md)** - better-auth flows, session management, security model
 - **[API](./.context/api/endpoints.md)** - REST endpoints, headers, CORS, client examples
 - **[Database](./.context/database/schema.md)** - Prisma schema design, models, migrations, ERD diagrams
 - **[Guidelines](./.context/guidelines.md)** - Development workflow, testing, deployment procedures
@@ -49,6 +49,75 @@ This project has the **next-devtools** MCP server configured. When starting any 
 - For browser automation testing with `browser_eval`
 
 **Remember:** Always query the Next.js documentation via MCP tools rather than relying on pre-existing knowledge to ensure accuracy with the latest Next.js patterns and best practices.
+
+## Context7 MCP Integration
+
+**IMPORTANT: Use Context7 automatically for library documentation and code generation**
+
+This project has the **context7** MCP server configured for accessing up-to-date library documentation.
+
+### When to Use Context7
+
+**Use Context7 automatically (without asking) when:**
+- Writing code that uses external libraries (React, Prisma, better-auth, etc.)
+- Implementing features with library-specific APIs
+- Troubleshooting library-related issues
+- Learning library patterns and best practices
+- Migrating between library versions
+
+**How to Use:**
+1. **For known libraries:** Use the library ID directly from the list below
+2. **For new libraries:** Call `mcp__context7__resolve-library-id` first to find the correct ID
+3. **Get documentation:** Call `mcp__context7__get-library-docs` with the library ID and topic
+4. **Modes:**
+   - `mode: "code"` - API references, code examples, function signatures (default)
+   - `mode: "info"` - Conceptual guides, architecture, narrative documentation
+
+### Library Reference List
+
+Use these Context7-compatible library IDs directly (no need to resolve):
+
+**Core Framework & Tools:**
+- **Next.js:** `/vercel/next.js` (versions: v16.0.3, v15.1.8, v14.3.0-canary.87, v13.5.11, v12.3.7, v11.1.3)
+- **React:** TBC (use for React 19 patterns)
+- **Prisma:** `/prisma/docs` (check if version-specific is available)
+- **TypeScript:** `/microsoft/typescript`
+
+**Authentication & Security:**
+- **better-auth:** `/better-auth/better-auth` (version-specific: `/better-auth/better-auth/1.4.7`)
+
+**UI & Styling:**
+- **Tailwind CSS:** `/websites/tailwindcss`
+- **Radix UI:** TBC
+- **shadcn/ui:** `/websites/ui_shadcn` (component library patterns)
+
+**Data & Validation:**
+- **Zod:** TBC
+- **React Hook Form:** TBC
+
+**Update and add to this list as you use libraries in Sunrise development.**
+
+### Example Usage
+
+```typescript
+// When implementing better-auth patterns:
+// 1. Get documentation
+mcp__context7__get-library-docs({
+  context7CompatibleLibraryID: "/better-auth/better-auth/1.4.7",
+  topic: "session management server components",
+  mode: "code"
+})
+
+// 2. Use the patterns from documentation in your code
+// 3. Add the library to the list above if not already present
+```
+
+**Best Practices:**
+- Always use version-specific IDs when available (e.g., `/better-auth/better-auth/1.4.7` instead of `/better-auth/better-auth`)
+- Use `mode: "code"` for implementation tasks
+- Use `mode: "info"` for understanding architecture or concepts
+- Keep the library list updated as the project grows
+- Reference the list to avoid redundant library ID lookups
 
 ## Essential Commands
 
@@ -100,7 +169,7 @@ npm run test:coverage    # Run tests with coverage report
 - **Framework:** Next.js 16 with App Router
 - **Language:** TypeScript (strict mode)
 - **Database:** PostgreSQL 15 + Prisma ORM
-- **Authentication:** NextAuth.js v5
+- **Authentication:** better-auth
 - **Styling:** Tailwind CSS + shadcn/ui components
 - **Email:** Resend + React Email templates
 - **Validation:** Zod schemas
@@ -119,7 +188,7 @@ app/
 │   ├── about/           # About page
 │   └── contact/         # Contact page
 └── api/                 # API routes
-    ├── auth/            # NextAuth.js handlers
+    ├── auth/            # better-auth handlers
     ├── health/          # Health check endpoint
     └── v1/              # Versioned API endpoints
 
@@ -248,8 +317,8 @@ export async function GET(request: NextRequest) {
 - **Never commit `.env.local`** - only commit `.env.example`
 - **Validate all user input** with Zod schemas
 - **Use Prisma** for database queries (prevents SQL injection)
-- **Hash passwords** with bcrypt (utilities in `lib/auth/passwords.ts`)
-- **Protect API routes** using NextAuth session checks
+- **Hash passwords** with bcrypt (better-auth handles this)
+- **Protect API routes** using better-auth session checks
 - **Set security headers** in `next.config.js` and middleware
 - **Rate limit** sensitive endpoints using utilities in `lib/security/rate-limit.ts`
 - **Sanitize input** for XSS prevention using `lib/security/sanitize.ts`
@@ -320,14 +389,14 @@ Components are installed to `components/ui/` and can be customized.
 Required variables are documented in `.env.example`. Key variables:
 
 ```bash
-DATABASE_URL="postgresql://..."       # PostgreSQL connection string
-NEXTAUTH_URL="http://localhost:3000"  # App URL (change for production)
-NEXTAUTH_SECRET="..."                 # Generate with: openssl rand -base64 32
-GOOGLE_CLIENT_ID="..."                # For Google OAuth (optional)
-GOOGLE_CLIENT_SECRET="..."            # For Google OAuth (optional)
-RESEND_API_KEY="..."                  # For email sending
-EMAIL_FROM="noreply@yourdomain.com"   # From address for emails
-NODE_ENV="development"                # or "production"
+DATABASE_URL="postgresql://..."         # PostgreSQL connection string
+BETTER_AUTH_URL="http://localhost:3000" # App URL (change for production)
+BETTER_AUTH_SECRET="..."                # Generate with: openssl rand -base64 32
+GOOGLE_CLIENT_ID="..."                  # For Google OAuth (optional)
+GOOGLE_CLIENT_SECRET="..."              # For Google OAuth (optional)
+RESEND_API_KEY="..."                    # For email sending
+EMAIL_FROM="noreply@yourdomain.com"     # From address for emails
+NODE_ENV="development"                  # or "production"
 ```
 
 **After adding/changing environment variables:**
@@ -383,8 +452,8 @@ NODE_ENV="development"                # or "production"
 - Regenerate Prisma client: `npx prisma generate`
 
 **Authentication not working:**
-- Verify `NEXTAUTH_SECRET` is set and valid
-- Check `NEXTAUTH_URL` matches your app URL
+- Verify `BETTER_AUTH_SECRET` is set and valid
+- Check `BETTER_AUTH_URL` matches your app URL
 - Ensure database is connected and migrations are applied
 - Check browser console for session errors
 

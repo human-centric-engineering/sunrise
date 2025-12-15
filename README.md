@@ -21,7 +21,7 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 **Core:**
 - Next.js 16 (App Router) with TypeScript
 - PostgreSQL + Prisma ORM
-- NextAuth.js v5 for authentication
+- better-auth for authentication
 - Tailwind CSS + shadcn/ui components
 
 **Production Ready:**
@@ -38,9 +38,8 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 **Completed:**
 - ✅ **Phase 1.1** - Project Initialization (Next.js 16, TypeScript, Tailwind CSS 4, ESLint 9)
 - ✅ **Phase 1.2** - Styling Setup (shadcn/ui, dark mode, theme system)
-
-**In Progress:**
-- 🚧 **Phase 1.3** - Database Layer (Prisma + PostgreSQL)
+- ✅ **Phase 1.3** - Database Layer (Prisma + PostgreSQL)
+- ✅ **Phase 1.4** - Authentication System (better-auth with email/password & Google OAuth)
 
 ## Documentation
 
@@ -136,7 +135,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 - `npm run db:seed` - Populate database with test users
 - `npm run db:generate` - Regenerate Prisma client after schema changes
 
-**Note:** This project uses Prisma 7 with PostgreSQL. The database schema includes User, Account, Session, and VerificationToken models ready for NextAuth.js authentication.
+**Note:** This project uses Prisma 7 with PostgreSQL. The database schema includes User, Account, Session, and Verification models ready for better-auth authentication.
 
 ## Philosophy
 

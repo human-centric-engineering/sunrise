@@ -2,52 +2,71 @@
 
 ## Next.js App Router Integration
 
-NextAuth.js v5 integrates deeply with Next.js 14+ App Router through server components, middleware, and route handlers in Sunrise. This document covers practical integration patterns for protecting routes, accessing sessions, and handling authentication state.
+Better-auth integrates deeply with Next.js 16+ App Router through server components, proxy, and route handlers in Sunrise. This document covers practical integration patterns for protecting routes, accessing sessions, and handling authentication state.
 
 ## Route Protection
 
-### Middleware-Based Protection
+### Proxy-Based Protection
 
-The primary method for protecting routes uses Next.js middleware to check authentication before rendering:
+The primary method for protecting routes uses Next.js proxy (formerly middleware) to check authentication before rendering:
 
 ```typescript
-// middleware.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { getToken } from 'next-auth/jwt';
+// proxy.ts
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET,
-  });
+/**
+ * Define which routes require authentication
+ */
+const protectedRoutes = ['/dashboard', '/settings', '/profile']
 
-  const isAuthPage = request.nextUrl.pathname.startsWith('/login') ||
-                     request.nextUrl.pathname.startsWith('/signup');
-  const isProtectedPage = request.nextUrl.pathname.startsWith('/dashboard');
+/**
+ * Define which routes are auth pages (login, signup, etc.)
+ * Authenticated users will be redirected away from these
+ */
+const authRoutes = ['/login', '/signup', '/reset-password']
+
+/**
+ * Check if a user is authenticated by looking for the better-auth session cookie
+ */
+function isAuthenticated(request: NextRequest): boolean {
+  // better-auth sets a session cookie named 'better-auth.session_token'
+  const sessionToken = request.cookies.get('better-auth.session_token')
+  return !!sessionToken
+}
+
+export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const authenticated = isAuthenticated(request)
+
+  // Check if the current route is protected
+  const isProtectedRoute = protectedRoutes.some((route) =>
+    pathname.startsWith(route)
+  )
+
+  // Check if the current route is an auth page
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
+
+  // Redirect unauthenticated users away from protected routes
+  if (isProtectedRoute && !authenticated) {
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('callbackUrl', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
 
   // Redirect authenticated users away from auth pages
-  if (isAuthPage && token) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+  if (isAuthRoute && authenticated) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  // Redirect unauthenticated users to login
-  if (isProtectedPage && !token) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('callbackUrl', request.nextUrl.pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  return NextResponse.next();
+  return NextResponse.next()
 }
 
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/login',
-    '/signup',
-    '/settings/:path*',
+    '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-};
+}
 ```
 
 **Benefits**:
@@ -55,30 +74,50 @@ export const config = {
 - Works with both server and client components
 - Centralized authentication logic
 - Automatic redirects with callback URL preservation
+- Fast cookie-based check (no database query)
 
 ### Page-Level Protection
 
 For fine-grained control, check authentication in server components:
 
 ```typescript
-// app/(dashboard)/settings/page.tsx
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
-import { redirect } from 'next/navigation';
+// app/(protected)/settings/page.tsx
+import { getServerSession } from '@/lib/auth/utils'
+import { redirect } from 'next/navigation'
+import { prisma } from '@/lib/db/client'
 
 export default async function SettingsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession()
 
   if (!session) {
-    redirect('/login?callbackUrl=/settings');
+    redirect('/login?callbackUrl=/settings')
   }
 
   // Fetch user-specific data
   const userSettings = await prisma.userSettings.findUnique({
     where: { userId: session.user.id },
-  });
+  })
 
-  return <SettingsForm settings={userSettings} />;
+  return <SettingsForm user={session.user} settings={userSettings} />
+}
+```
+
+**Alternative using requireAuth helper**:
+
+```typescript
+// app/(protected)/settings/page.tsx
+import { requireAuth } from '@/lib/auth/utils'
+import { prisma } from '@/lib/db/client'
+
+export default async function SettingsPage() {
+  // Throws error if not authenticated
+  const session = await requireAuth()
+
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: session.user.id },
+  })
+
+  return <SettingsForm user={session.user} settings={userSettings} />
 }
 ```
 
@@ -88,29 +127,55 @@ Protect API endpoints with session checks:
 
 ```typescript
 // app/api/v1/users/route.ts
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { getServerSession } from '@/lib/auth/utils'
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db/client'
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession()
 
   if (!session) {
     return Response.json(
       { success: false, error: { message: 'Unauthorized' } },
       { status: 401 }
-    );
+    )
   }
 
   // Check role-based permissions
-  if (session.user.role !== 'admin') {
+  if (session.user.role !== 'ADMIN') {
     return Response.json(
       { success: false, error: { message: 'Forbidden' } },
       { status: 403 }
-    );
+    )
   }
 
-  const users = await prisma.user.findMany();
-  return Response.json({ success: true, data: users });
+  const users = await prisma.user.findMany()
+  return Response.json({ success: true, data: users })
+}
+```
+
+**Alternative using requireRole helper**:
+
+```typescript
+// app/api/v1/users/route.ts
+import { requireRole } from '@/lib/auth/utils'
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db/client'
+
+export async function GET(request: NextRequest) {
+  try {
+    // Throws if not authenticated or not admin
+    await requireRole('ADMIN')
+
+    const users = await prisma.user.findMany()
+    return Response.json({ success: true, data: users })
+  } catch (error) {
+    const status = error.message === 'Authentication required' ? 401 : 403
+    return Response.json(
+      { success: false, error: { message: error.message } },
+      { status }
+    )
+  }
 }
 ```
 
@@ -127,49 +192,60 @@ enum Role {
 }
 
 model User {
-  id       String   @id @default(cuid())
-  email    String   @unique
-  role     Role     @default(USER)
-  // ... other fields
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
 }
 ```
 
-### Role Checking Helper
+### Server-Side Role Checks
+
+Using the built-in utility functions from `@/lib/auth/utils`:
 
 ```typescript
-// lib/auth/roles.ts
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+// app/(protected)/admin/page.tsx
+import { requireRole } from '@/lib/auth/utils'
 
-export async function requireRole(allowedRoles: string[]) {
-  const session = await getServerSession(authOptions);
+export default async function AdminPage() {
+  // Throws if not authenticated or not admin
+  const session = await requireRole('ADMIN')
+
+  return (
+    <div>
+      <h1>Admin Dashboard</h1>
+      <p>Welcome, {session.user.name}</p>
+    </div>
+  )
+}
+```
+
+**Alternative with manual check**:
+
+```typescript
+// app/(protected)/admin/page.tsx
+import { getServerSession } from '@/lib/auth/utils'
+import { redirect } from 'next/navigation'
+
+export default async function AdminPage() {
+  const session = await getServerSession()
 
   if (!session) {
-    throw new Error('Unauthorized');
+    redirect('/login?callbackUrl=/admin')
   }
 
-  if (!allowedRoles.includes(session.user.role)) {
-    throw new Error('Forbidden');
+  if (session.user.role !== 'ADMIN') {
+    redirect('/unauthorized')
   }
 
-  return session;
-}
-
-// Usage in API route
-export async function DELETE(request: NextRequest) {
-  try {
-    const session = await requireRole(['admin']);
-
-    // Admin-only logic
-    await prisma.user.delete({ where: { id: params.id } });
-
-    return Response.json({ success: true });
-  } catch (error) {
-    return Response.json(
-      { success: false, error: { message: error.message } },
-      { status: error.message === 'Unauthorized' ? 401 : 403 }
-    );
-  }
+  return <div>Admin Dashboard</div>
 }
 ```
 
@@ -179,13 +255,17 @@ export async function DELETE(request: NextRequest) {
 // components/admin-panel.tsx
 'use client'
 
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/lib/auth/client'
 
 export function AdminPanel() {
-  const { data: session } = useSession();
+  const { data: session, isPending } = useSession()
 
-  if (session?.user?.role !== 'admin') {
-    return null; // Don't render for non-admins
+  if (isPending) {
+    return <div>Loading...</div>
+  }
+
+  if (session?.user?.role !== 'ADMIN') {
+    return null // Don't render for non-admins
   }
 
   return (
@@ -193,7 +273,7 @@ export function AdminPanel() {
       <h2>Admin Panel</h2>
       {/* Admin controls */}
     </div>
-  );
+  )
 }
 ```
 
@@ -201,22 +281,112 @@ export function AdminPanel() {
 
 ## Authentication Forms
 
-### Login Form with NextAuth
+### Sign Up Form
+
+```typescript
+// components/forms/signup-form.tsx
+'use client'
+
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { authClient } from '@/lib/auth/client'
+import { useRouter } from 'next/navigation'
+import { signupSchema } from '@/lib/validations/auth'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+
+export function SignupForm() {
+  const router = useRouter()
+
+  const form = useForm({
+    resolver: zodResolver(signupSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      password: '',
+    },
+  })
+
+  const onSubmit = async (data: SignupFormValues) => {
+    try {
+      await authClient.signUp.email(
+        {
+          email: data.email,
+          password: data.password,
+          name: data.name,
+        },
+        {
+          onRequest: () => {
+            // Show loading state
+            form.clearErrors()
+          },
+          onSuccess: () => {
+            // Redirect to dashboard after successful signup
+            router.push('/dashboard')
+            router.refresh()
+          },
+          onError: (ctx) => {
+            form.setError('root', {
+              message: ctx.error.message || 'Failed to create account',
+            })
+          },
+        }
+      )
+    } catch (error) {
+      form.setError('root', {
+        message: 'An unexpected error occurred. Please try again.',
+      })
+    }
+  }
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)}>
+      <Input
+        {...form.register('name')}
+        placeholder="Full Name"
+        error={form.formState.errors.name?.message}
+      />
+      <Input
+        {...form.register('email')}
+        type="email"
+        placeholder="Email"
+        error={form.formState.errors.email?.message}
+      />
+      <Input
+        {...form.register('password')}
+        type="password"
+        placeholder="Password"
+        error={form.formState.errors.password?.message}
+      />
+      {form.formState.errors.root && (
+        <p className="text-red-500">{form.formState.errors.root.message}</p>
+      )}
+      <Button type="submit" loading={form.formState.isSubmitting}>
+        Sign Up
+      </Button>
+    </form>
+  )
+}
+```
+
+### Login Form
 
 ```typescript
 // components/forms/login-form.tsx
 'use client'
 
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { loginSchema } from '@/lib/validations/auth';
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { authClient } from '@/lib/auth/client'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { loginSchema } from '@/lib/validations/auth'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export function LoginForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard'
 
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -224,31 +394,36 @@ export function LoginForm() {
       email: '',
       password: '',
     },
-  });
+  })
 
   const onSubmit = async (data: LoginFormValues) => {
     try {
-      const result = await signIn('credentials', {
-        email: data.email,
-        password: data.password,
-        redirect: false,
-      });
-
-      if (result?.error) {
-        form.setError('root', {
-          message: 'Invalid email or password',
-        });
-        return;
-      }
-
-      router.push(callbackUrl);
-      router.refresh();
+      await authClient.signIn.email(
+        {
+          email: data.email,
+          password: data.password,
+        },
+        {
+          onRequest: () => {
+            form.clearErrors()
+          },
+          onSuccess: () => {
+            router.push(callbackUrl)
+            router.refresh()
+          },
+          onError: (ctx) => {
+            form.setError('root', {
+              message: 'Invalid email or password',
+            })
+          },
+        }
+      )
     } catch (error) {
       form.setError('root', {
-        message: 'An error occurred. Please try again.',
-      });
+        message: 'An unexpected error occurred. Please try again.',
+      })
     }
-  };
+  }
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -271,145 +446,54 @@ export function LoginForm() {
         Login
       </Button>
     </form>
-  );
+  )
 }
 ```
 
-### Signup Form with User Creation
+### Using Session in Client Components
 
 ```typescript
-// components/forms/signup-form.tsx
+// components/user-profile.tsx
 'use client'
 
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { signupSchema } from '@/lib/validations/auth';
-import { useRouter } from 'next/navigation';
+import { useSession } from '@/lib/auth/client'
 
-export function SignupForm() {
-  const router = useRouter();
+export function UserProfile() {
+  const { data: session, isPending, error } = useSession()
 
-  const form = useForm({
-    resolver: zodResolver(signupSchema),
-  });
+  if (isPending) {
+    return <div>Loading...</div>
+  }
 
-  const onSubmit = async (data: SignupFormValues) => {
-    try {
-      // Create user via API
-      const response = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
+  if (error) {
+    return <div>Error loading session: {error.message}</div>
+  }
 
-      if (!response.ok) {
-        const error = await response.json();
-        form.setError('root', { message: error.error.message });
-        return;
-      }
-
-      // Auto-login after signup
-      await signIn('credentials', {
-        email: data.email,
-        password: data.password,
-        redirect: false,
-      });
-
-      router.push('/dashboard');
-      router.refresh();
-    } catch (error) {
-      form.setError('root', {
-        message: 'An error occurred. Please try again.',
-      });
-    }
-  };
+  if (!session) {
+    return <div>Not authenticated</div>
+  }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
-      <Input {...form.register('name')} placeholder="Full Name" />
-      <Input {...form.register('email')} type="email" placeholder="Email" />
-      <Input {...form.register('password')} type="password" placeholder="Password" />
-      <Button type="submit" loading={form.formState.isSubmitting}>
-        Sign Up
-      </Button>
-    </form>
-  );
-}
-```
-
-### Signup API Route
-
-```typescript
-// app/api/auth/signup/route.ts
-import { NextRequest } from 'next/server';
-import { prisma } from '@/lib/db/client';
-import { hashPassword } from '@/lib/auth/passwords';
-import { signupSchema } from '@/lib/validations/auth';
-import { sendVerificationEmail } from '@/lib/email/templates';
-
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const validatedData = signupSchema.parse(body);
-
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: validatedData.email },
-    });
-
-    if (existingUser) {
-      return Response.json(
-        { success: false, error: { message: 'Email already registered' } },
-        { status: 400 }
-      );
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(validatedData.password);
-
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        name: validatedData.name,
-        email: validatedData.email,
-        password: hashedPassword,
-      },
-    });
-
-    // Send verification email
-    await sendVerificationEmail(user.email, user.name);
-
-    return Response.json({
-      success: true,
-      data: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      },
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        { success: false, error: { message: 'Validation failed', details: error.errors } },
-        { status: 400 }
-      );
-    }
-
-    return Response.json(
-      { success: false, error: { message: 'Internal server error' } },
-      { status: 500 }
-    );
-  }
+    <div>
+      <h1>Welcome, {session.user.name}!</h1>
+      <p>Email: {session.user.email}</p>
+      <p>Email verified: {session.user.emailVerified ? 'Yes' : 'No'}</p>
+      {session.user.image && (
+        <img src={session.user.image} alt="Profile" />
+      )}
+    </div>
+  )
 }
 ```
 
 ## OAuth Provider Integration
 
-### Adding Google OAuth
+### Google OAuth Setup
 
 1. **Configure Google Cloud Console**:
    - Create OAuth 2.0 credentials
    - Set authorized redirect URI: `https://yourdomain.com/api/auth/callback/google`
+   - For local development: `http://localhost:3000/api/auth/callback/google`
 
 2. **Add environment variables**:
 ```bash
@@ -417,96 +501,219 @@ GOOGLE_CLIENT_ID="your-google-client-id"
 GOOGLE_CLIENT_SECRET="your-google-client-secret"
 ```
 
-3. **Provider already configured** in `authOptions` (see [overview.md](./overview.md))
+3. **Provider is configured** in `lib/auth/config.ts`:
+```typescript
+export const auth = betterAuth({
+  // ... other config
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+      enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
+  },
+})
+```
 
 4. **Add login button**:
 ```typescript
 // components/oauth-buttons.tsx
 'use client'
 
-import { signIn } from 'next-auth/react';
-import { Button } from '@/components/ui/button';
+import { authClient } from '@/lib/auth/client'
+import { Button } from '@/components/ui/button'
 
 export function GoogleLoginButton() {
+  const handleGoogleLogin = async () => {
+    await authClient.signIn.social({
+      provider: 'google',
+      callbackURL: '/dashboard',
+    })
+  }
+
   return (
-    <Button
-      onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
-      variant="outline"
-    >
+    <Button onClick={handleGoogleLogin} variant="outline">
       <GoogleIcon className="mr-2" />
       Continue with Google
     </Button>
-  );
+  )
 }
 ```
 
 ### Adding Additional OAuth Providers
 
-Follow the same pattern for GitHub, Facebook, etc.:
+better-auth supports many providers. Example with GitHub:
 
-```typescript
-// lib/auth/config.ts
-import GitHubProvider from 'next-auth/providers/github';
-
-export const authOptions: NextAuthOptions = {
-  providers: [
-    // ... existing providers
-    GitHubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    }),
-  ],
-};
+1. **Add to environment variables**:
+```bash
+GITHUB_CLIENT_ID="your-github-client-id"
+GITHUB_CLIENT_SECRET="your-github-client-secret"
 ```
 
-## Session Refresh Patterns
-
-### Automatic Session Updates
-
-When user data changes (profile update, role change), update the session:
-
+2. **Update configuration**:
 ```typescript
-// app/api/v1/users/[id]/route.ts
-import { getServerSession } from 'next-auth';
-import { getToken } from 'next-auth/jwt';
+// lib/auth/config.ts
+export const auth = betterAuth({
+  // ... other config
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+      enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID || '',
+      clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
+      enabled: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+    },
+  },
+})
+```
 
-export async function PATCH(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+3. **Add button component**:
+```typescript
+export function GitHubLoginButton() {
+  const handleGitHubLogin = async () => {
+    await authClient.signIn.social({
+      provider: 'github',
+      callbackURL: '/dashboard',
+    })
+  }
 
-  // Update user
-  const updatedUser = await prisma.user.update({
-    where: { id: session.user.id },
-    data: { name: 'New Name' },
-  });
-
-  // Client must refetch session
-  return Response.json({
-    success: true,
-    data: updatedUser,
-    meta: { sessionRefreshRequired: true },
-  });
+  return (
+    <Button onClick={handleGitHubLogin} variant="outline">
+      <GitHubIcon className="mr-2" />
+      Continue with GitHub
+    </Button>
+  )
 }
 ```
 
-### Client-Side Session Refetch
+### Linking Social Accounts
+
+Allow users to link additional OAuth providers to their existing account:
 
 ```typescript
+// components/settings/linked-accounts.tsx
 'use client'
 
-import { useSession } from 'next-auth/react';
+import { authClient } from '@/lib/auth/client'
+import { Button } from '@/components/ui/button'
+
+export function LinkedAccounts() {
+  const linkGoogle = async () => {
+    await authClient.linkSocial({
+      provider: 'google',
+    })
+  }
+
+  return (
+    <div>
+      <h2>Linked Accounts</h2>
+      <Button onClick={linkGoogle}>
+        Link Google Account
+      </Button>
+    </div>
+  )
+}
+```
+
+## Session Management
+
+### Server-Side Session Access
+
+```typescript
+// app/(protected)/dashboard/page.tsx
+import { getServerSession, getServerUser } from '@/lib/auth/utils'
+
+export default async function DashboardPage() {
+  // Get full session (session + user)
+  const session = await getServerSession()
+
+  // Or get just the user
+  const user = await getServerUser()
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  return (
+    <div>
+      <h1>Welcome, {user.name}</h1>
+      <p>Session expires: {new Date(session.session.expiresAt).toLocaleDateString()}</p>
+    </div>
+  )
+}
+```
+
+### Session in Server Actions
+
+```typescript
+// app/actions/update-profile.ts
+'use server'
+
+import { requireAuth } from '@/lib/auth/utils'
+import { prisma } from '@/lib/db/client'
+import { revalidatePath } from 'next/cache'
+
+export async function updateProfile(formData: FormData) {
+  const session = await requireAuth()
+
+  const name = formData.get('name') as string
+
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: { name },
+  })
+
+  revalidatePath('/profile')
+
+  return { success: true }
+}
+```
+
+### Client-Side Session Updates
+
+When user data changes, the session automatically updates due to better-auth's reactive state management:
+
+```typescript
+// components/profile-form.tsx
+'use client'
+
+import { authClient, useSession } from '@/lib/auth/client'
+import { useState } from 'react'
 
 export function ProfileForm() {
-  const { data: session, update } = useSession();
+  const { data: session, refetch } = useSession()
+  const [name, setName] = useState(session?.user.name || '')
 
-  const handleSubmit = async (data) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    // Update user via API
     const response = await fetch('/api/v1/users/me', {
       method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
 
-    // Trigger session refresh
-    await update();
-  };
+    if (response.ok) {
+      // Manually refetch session if needed
+      // (better-auth usually updates automatically)
+      await refetch()
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <button type="submit">Update Profile</button>
+    </form>
+  )
 }
 ```
 
@@ -518,47 +725,246 @@ export function ProfileForm() {
 // components/logout-button.tsx
 'use client'
 
-import { signOut } from 'next-auth/react';
-import { Button } from '@/components/ui/button';
+import { authClient } from '@/lib/auth/client'
+import { Button } from '@/components/ui/button'
+import { useRouter } from 'next/navigation'
 
 export function LogoutButton() {
+  const router = useRouter()
+
+  const handleLogout = async () => {
+    await authClient.signOut()
+    router.push('/')
+    router.refresh()
+  }
+
   return (
-    <Button onClick={() => signOut({ callbackUrl: '/' })}>
+    <Button onClick={handleLogout} variant="ghost">
       Logout
     </Button>
-  );
+  )
 }
 ```
 
 ### Logout with Cleanup
 
 ```typescript
+// components/logout-button.tsx
+'use client'
+
+import { authClient } from '@/lib/auth/client'
+import { Button } from '@/components/ui/button'
+import { useRouter } from 'next/navigation'
+
 export function LogoutButton() {
+  const router = useRouter()
+
   const handleLogout = async () => {
-    // Optional: Clear client-side data
-    localStorage.clear();
+    try {
+      // Optional: Clear client-side data
+      localStorage.clear()
+      sessionStorage.clear()
 
-    // Optional: Call API to invalidate server-side resources
-    await fetch('/api/auth/logout', { method: 'POST' });
+      // Optional: Call API to perform server-side cleanup
+      await fetch('/api/auth/cleanup', { method: 'POST' })
 
-    // Sign out
-    await signOut({ callbackUrl: '/' });
-  };
+      // Sign out
+      await authClient.signOut()
 
-  return <Button onClick={handleLogout}>Logout</Button>;
+      // Redirect and refresh
+      router.push('/')
+      router.refresh()
+    } catch (error) {
+      console.error('Logout failed:', error)
+    }
+  }
+
+  return (
+    <Button onClick={handleLogout} variant="ghost">
+      Logout
+    </Button>
+  )
+}
+```
+
+## Server Actions with Authentication
+
+### Protected Server Actions
+
+```typescript
+// app/actions/create-post.ts
+'use server'
+
+import { requireAuth } from '@/lib/auth/utils'
+import { prisma } from '@/lib/db/client'
+import { z } from 'zod'
+
+const createPostSchema = z.object({
+  title: z.string().min(1).max(100),
+  content: z.string().min(1),
+})
+
+export async function createPost(formData: FormData) {
+  // Ensure user is authenticated
+  const session = await requireAuth()
+
+  // Validate input
+  const data = createPostSchema.parse({
+    title: formData.get('title'),
+    content: formData.get('content'),
+  })
+
+  // Create post
+  const post = await prisma.post.create({
+    data: {
+      ...data,
+      authorId: session.user.id,
+    },
+  })
+
+  return { success: true, post }
+}
+```
+
+### Role-Based Server Actions
+
+```typescript
+// app/actions/delete-user.ts
+'use server'
+
+import { requireRole } from '@/lib/auth/utils'
+import { prisma } from '@/lib/db/client'
+
+export async function deleteUser(userId: string) {
+  // Ensure user is admin
+  await requireRole('ADMIN')
+
+  await prisma.user.delete({
+    where: { id: userId },
+  })
+
+  return { success: true }
+}
+```
+
+## API Patterns
+
+### Protected API Route
+
+```typescript
+// app/api/v1/posts/route.ts
+import { getServerSession } from '@/lib/auth/utils'
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db/client'
+
+export async function GET(request: NextRequest) {
+  const session = await getServerSession()
+
+  if (!session) {
+    return Response.json(
+      { success: false, error: { message: 'Unauthorized' } },
+      { status: 401 }
+    )
+  }
+
+  // Fetch user's posts
+  const posts = await prisma.post.findMany({
+    where: { authorId: session.user.id },
+  })
+
+  return Response.json({ success: true, data: posts })
+}
+
+export async function POST(request: NextRequest) {
+  const session = await getServerSession()
+
+  if (!session) {
+    return Response.json(
+      { success: false, error: { message: 'Unauthorized' } },
+      { status: 401 }
+    )
+  }
+
+  const body = await request.json()
+
+  const post = await prisma.post.create({
+    data: {
+      ...body,
+      authorId: session.user.id,
+    },
+  })
+
+  return Response.json({ success: true, data: post })
+}
+```
+
+### Role-Protected API Route
+
+```typescript
+// app/api/v1/admin/users/route.ts
+import { requireRole } from '@/lib/auth/utils'
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db/client'
+
+export async function GET(request: NextRequest) {
+  try {
+    await requireRole('ADMIN')
+
+    const users = await prisma.user.findMany()
+
+    return Response.json({ success: true, data: users })
+  } catch (error) {
+    const status = error.message === 'Authentication required' ? 401 : 403
+    return Response.json(
+      { success: false, error: { message: error.message } },
+      { status }
+    )
+  }
 }
 ```
 
 ## Decision History & Trade-offs
 
-### Client vs. Server Session Checks
-**Decision**: Use middleware for route-level, server components for data-level
+### Proxy vs. Middleware
+**Decision**: Use proxy file convention (Next.js 16+)
 **Rationale**:
-- Middleware prevents unauthorized page renders (better UX)
-- Server components enable data-specific checks (e.g., resource ownership)
-- Combination provides defense in depth
+- Next.js 16 deprecated `middleware` in favor of `proxy` to clarify purpose
+- Same functionality, better naming that reflects network boundary
+- Aligns with Next.js direction moving forward
 
-**Trade-offs**: Slight duplication of auth checks
+**Trade-offs**: Requires migration from older middleware convention
+
+### better-auth vs. NextAuth.js
+**Decision**: Use better-auth instead of NextAuth.js
+**Rationale**:
+- Simpler API with less boilerplate
+- No provider wrapper needed for client hooks (uses nanostore)
+- Built-in signup functionality (no custom API routes needed)
+- Better TypeScript support
+- More flexible session management
+- Active development with modern patterns
+
+**Trade-offs**: Smaller ecosystem than NextAuth.js, but rapidly growing
+
+### Cookie-Based Session Check in Proxy
+**Decision**: Check for session cookie existence in proxy, not full session validation
+**Rationale**:
+- Fast (no database query or API call in proxy)
+- Sufficient for initial route protection
+- Full validation happens in page/API route
+- Better performance at scale
+
+**Trade-offs**: Slight duplication of auth checks, but provides defense in depth
+
+### Server-First Authentication
+**Decision**: Perform authentication checks on server when possible
+**Rationale**:
+- More secure (client can't bypass)
+- Better performance (no client-side redirect flash)
+- SEO-friendly (correct status codes)
+- Leverages React Server Components
+
+**Trade-offs**: Requires understanding server vs. client components
 
 ### Callback URL Preservation
 **Decision**: Pass `callbackUrl` in login redirects
@@ -567,31 +973,85 @@ export function LogoutButton() {
 - Standard OAuth pattern
 - Simple to implement
 
-**Trade-offs**: Open redirect vulnerability if not validated (NextAuth handles this)
+**Trade-offs**: Must validate callback URL to prevent open redirect (better-auth handles this)
 
-### Auto-login After Signup
-**Decision**: Automatically sign in users after registration
+### Auto-Login After Signup
+**Decision**: Automatically sign in users after registration via better-auth
 **Rationale**:
 - Reduces friction (no need to login after signup)
 - Common pattern in modern apps
-- Simple implementation
+- Built into better-auth by default
 
-**Trade-offs**: Skips email verification requirement (implemented separately)
+**Trade-offs**: Email verification handled separately (can be enabled in config)
 
 ## Performance Considerations
 
 ### Session Caching
-NextAuth.js caches `getServerSession()` calls within the same request. Multiple calls don't hit the database repeatedly.
+better-auth caches session data using cookies and internal state management:
+- Client-side: nanostore provides reactive state without re-fetching
+- Server-side: Session validated once per request using headers
+- No unnecessary database queries
 
-### Middleware Efficiency
-Middleware runs on every request to matched routes. Keep logic minimal:
-- Use JWT token decoding (fast, no database)
-- Avoid database queries in middleware
+### Proxy Efficiency
+Proxy runs on every request to matched routes. Keep logic minimal:
+- Use cookie existence check (fast, no I/O)
+- Avoid database queries in proxy
+- Full session validation in page/API route
 - Cache static configuration
+
+### Client Hook Optimization
+The `useSession()` hook from better-auth is optimized:
+- No provider wrapper needed (reduces React tree depth)
+- Uses nanostore for efficient state management
+- Only re-renders when session changes
+- Automatic cleanup on unmount
+
+### Database Query Optimization
+When fetching user data, use Prisma's query optimization:
+```typescript
+// Select only needed fields
+const user = await prisma.user.findUnique({
+  where: { id: session.user.id },
+  select: {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+  },
+})
+```
+
+## Security Best Practices
+
+### Environment Variables
+- Never commit `.env` or `.env.local`
+- Use strong `BETTER_AUTH_SECRET` (min 32 characters)
+- Generate secret: `openssl rand -base64 32`
+- Rotate secrets periodically
+
+### Session Security
+- HTTPS in production (enforced by better-auth)
+- Secure cookie flags set automatically
+- Session expiration configured (30 days default)
+- Automatic session refresh
+
+### Input Validation
+- Validate all inputs with Zod schemas
+- Sanitize user input before database operations
+- Use Prisma (prevents SQL injection)
+- Validate on server, not just client
+
+### Rate Limiting
+Consider adding rate limiting for:
+- Login endpoints (prevent brute force)
+- Signup endpoints (prevent spam)
+- Password reset endpoints
+- API endpoints
 
 ## Related Documentation
 
-- [Auth Overview](./overview.md) - Authentication flows and configuration
+- [Auth Overview](./overview.md) - Authentication architecture and configuration
 - [Auth Security](./security.md) - Security model and threat mitigation
 - [Architecture Patterns](../architecture/patterns.md) - Error handling and code organization
 - [API Endpoints](../api/endpoints.md) - API authentication patterns
+- [Database Schema](../database/schema.md) - User and session models

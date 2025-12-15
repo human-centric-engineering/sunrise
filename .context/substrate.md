@@ -2,9 +2,9 @@
 
 **Project**: Sunrise
 **Version**: 1.0.0
-**Stack**: Next.js 14+ (App Router), TypeScript, PostgreSQL, Prisma, NextAuth.js v5
+**Stack**: Next.js 16 (App Router), TypeScript, PostgreSQL, Prisma 7, better-auth
 **Architecture**: Monolithic with API routes, server/client component separation
-**Last Updated**: 2025-12-12
+**Last Updated**: 2025-12-15
 
 ## Overview
 
@@ -35,7 +35,7 @@ System design, component boundaries, and architectural patterns. Includes:
 **Route Organization**: See overview.md for how to use `(auth)`, `(protected)`, and `(public)` route groups
 
 ### 🔐 [Authentication](./auth/overview.md)
-Authentication and authorization implementation with NextAuth.js v5. Includes:
+Authentication and authorization implementation with better-auth. Includes:
 - [Overview](./auth/overview.md) - Authentication flows and session management
 - [Integration](./auth/integration.md) - Next.js App Router integration patterns
 - [Security](./auth/security.md) - Security model, threats, and mitigations
@@ -113,9 +113,9 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 - Zod (runtime validation)
 
 **Authentication:**
-- NextAuth.js v5 (authentication framework)
-- bcrypt (password hashing)
-- JWT sessions (secure, stateless)
+- better-auth (authentication framework, official NextAuth successor)
+- bcrypt (password hashing, handled by better-auth)
+- Session management with nanostore (no provider wrapper needed)
 
 **UI/Styling:**
 - Tailwind CSS 3+ (utility-first styling)
@@ -153,15 +153,18 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 
 **Trade-offs**: Additional abstraction layer, slightly reduced query flexibility for complex operations
 
-### NextAuth.js v5
-**Decision**: NextAuth.js vs. custom auth or Auth0/Clerk
+### better-auth
+**Decision**: better-auth vs. NextAuth.js v5 or custom auth
 **Rationale**:
-- Open source, no vendor lock-in
+- Official recommendation from NextAuth team for new projects
 - Built specifically for Next.js App Router
+- Simpler architecture (no provider wrapper, uses nanostore)
+- Open source, no vendor lock-in
 - Flexible (credentials + OAuth support)
 - Self-hosted (data ownership, no per-user costs)
+- Native Prisma 7 support
 
-**Trade-offs**: More setup than SaaS solutions, requires security knowledge to configure properly
+**Trade-offs**: More setup than SaaS solutions (Auth0/Clerk), requires security knowledge to configure properly, smaller community than NextAuth.js
 
 ### App Router (Server Components)
 **Decision**: App Router vs. Pages Router

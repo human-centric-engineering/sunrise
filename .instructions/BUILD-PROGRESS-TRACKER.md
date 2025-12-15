@@ -33,15 +33,15 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Write seed script
 - [x] Document database setup
 
-### 1.4 Authentication System
-- [ ] Install NextAuth.js v5
-- [ ] Configure NextAuth with Prisma adapter
-- [ ] Set up credentials provider
-- [ ] Set up Google OAuth
-- [ ] Create auth configuration
-- [ ] Build auth utilities
-- [ ] Implement password hashing
-- [ ] Create route protection middleware
+### 1.4 Authentication System ✅
+- [x] Install better-auth
+- [x] Configure better-auth with Prisma adapter
+- [x] Set up email/password authentication
+- [x] Set up Google OAuth
+- [x] Create auth configuration
+- [x] Build auth utilities (getServerSession, requireAuth, hasRole)
+- [x] Implement password hashing (handled by better-auth)
+- [x] Create route protection middleware
 
 ### 1.5 Authentication UI
 - [ ] Create login page
@@ -282,10 +282,10 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-13
-**Current Phase:** Phase 1.3 Complete, Ready for Phase 1.4
+**Last Updated:** 2025-12-15
+**Current Phase:** Phase 1.4 Complete, Ready for Phase 1.5
 **Blockers:** None
-**Next Steps:** Phase 1.4 - Authentication System (NextAuth.js setup)
+**Next Steps:** Phase 1.5 - Authentication UI (login/signup forms, password reset)
 
 ---
 
@@ -429,3 +429,70 @@ Use this section to track important decisions made during development:
 - ✅ Connection to local PostgreSQL verified
 
 **Branch:** `phase-1.3-database-layer`
+
+### 2025-12-15 - Phase 1.4 Complete
+
+**Breaking Change from Build Plan:**
+- **Implemented better-auth instead of NextAuth.js v5**
+- **Reason**: NextAuth.js has become part of better-auth, and the official recommendation is to use better-auth for all new projects
+- **Impact**: Complete authentication architecture change (see BREAKING-CHANGES.md)
+
+**Authentication System Implemented:**
+- Installed better-auth v1.4.7
+- Configured with Prisma adapter for unified database management
+- Implemented email/password authentication
+- Configured Google OAuth provider (template ready)
+- Created server-side session utilities (getServerSession, requireAuth, hasRole)
+- Created client-side useSession hook (no provider wrapper needed)
+- Implemented route protection middleware with security headers
+- Added Zod validation schemas for auth forms
+- Created clean baseline migration for reproducible database setup
+- Supports role-based access control (USER, ADMIN, MODERATOR)
+
+**Key Architecture Decisions:**
+- **No SessionProvider wrapper**: better-auth uses nanostore, eliminating need for React context wrapper
+- **Prisma adapter pattern**: All database operations flow through Prisma
+- **Clean migration baseline**: Deleted old NextAuth migrations, created single baseline migration
+- **String-based roles**: No enum, uses `String?` for role field
+- **Middleware-based protection**: Session checks in middleware, not per-route
+
+**Environment Variables:**
+- Changed: NEXTAUTH_URL → BETTER_AUTH_URL
+- Changed: NEXTAUTH_SECRET → BETTER_AUTH_SECRET
+- Updated .env.example with new variable names
+
+**Database Schema:**
+- Model: User (with string role field)
+- Model: Session (better-auth structure)
+- Model: Account (OAuth + credentials)
+- Model: Verification (email verification tokens)
+
+**Files Created:**
+- `lib/auth/config.ts` - better-auth configuration with Prisma adapter
+- `lib/auth/client.ts` - Client-side auth hook
+- `lib/auth/utils.ts` - Server-side session utilities
+- `lib/validations/auth.ts` - Zod schemas for auth forms
+- `middleware.ts` - Route protection and security headers
+- `app/api/auth/[...all]/route.ts` - better-auth API handler
+- `prisma/migrations/20251215121530_init_better_auth_schema/` - Clean baseline migration
+
+**Files Modified:**
+- `.env.example` - Updated environment variable names
+- `prisma/schema.prisma` - Updated to better-auth structure
+- `prisma/seed.ts` - Fixed for new schema (emailVerified boolean, verification model)
+
+**Testing:**
+- ✅ Type-check passes
+- ✅ Lint passes
+- ✅ Database migration successful
+- ✅ Seed script successful
+- ✅ Prisma client generation successful
+
+**Documentation Updates:**
+- Updated README.md with better-auth reference
+- Updated CLAUDE.md with better-auth patterns
+- Added comprehensive breaking change documentation in BREAKING-CHANGES.md
+- Updated BUILD-PROGRESS-TRACKER.md to reflect completion
+
+**Branch:** `phase-1.4-authentication-system`
+**Commit:** `f332335` - feat: implement Phase 1.4 authentication with better-auth

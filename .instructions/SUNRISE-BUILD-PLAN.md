@@ -18,14 +18,14 @@
 
 ## Technical Stack
 
-> **Note:** This project uses **Next.js 16**, **Tailwind CSS 4**, and **ESLint 9** which have breaking changes from earlier versions. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for migration details.
+> **Note:** This project uses **Next.js 16**, **Tailwind CSS 4**, **ESLint 9**, and **better-auth** which have breaking changes from earlier versions. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for migration details.
 
 ### Core Technologies
 - **Framework:** Next.js 16+ (App Router) - ⚠️ Breaking changes from 14/15
 - **Language:** TypeScript 5+ (strict mode)
 - **Database:** PostgreSQL 15+
-- **ORM:** Prisma
-- **Authentication:** NextAuth.js v5
+- **ORM:** Prisma 7+
+- **Authentication:** better-auth - ⚠️ Replaces NextAuth.js (official recommendation)
 - **Styling:** Tailwind CSS 4+ - ⚠️ New @import syntax
 - **UI Components:** shadcn/ui
 - **Icons:** Lucide React
@@ -217,29 +217,37 @@ model VerificationToken { ... }
 ```
 
 #### 1.4 Authentication System
-- [ ] Install NextAuth.js v5 and dependencies
-- [ ] Configure NextAuth with Prisma adapter
-- [ ] Set up credentials provider (email/password)
-- [ ] Set up Google OAuth provider
-- [ ] Create auth configuration file
-- [ ] Build authentication utilities (getServerSession, etc.)
-- [ ] Implement password hashing (bcrypt)
-- [ ] Create middleware for protected routes
+- [x] Install better-auth and dependencies
+- [x] Configure better-auth with Prisma adapter
+- [x] Set up email/password authentication
+- [x] Set up Google OAuth provider
+- [x] Create auth configuration file
+- [x] Build authentication utilities (getServerSession, requireAuth, hasRole)
+- [x] Implement password hashing (handled by better-auth)
+- [x] Create middleware for protected routes
 
 **Key Files:**
-- `lib/auth/config.ts` - NextAuth configuration
-- `lib/auth/utils.ts` - auth helper functions
-- `lib/auth/passwords.ts` - password utilities
-- `middleware.ts` - route protection
-- `app/api/auth/[...nextauth]/route.ts` - NextAuth handler
+- `lib/auth/config.ts` - better-auth configuration with Prisma adapter
+- `lib/auth/client.ts` - Client-side auth hook (no provider wrapper needed)
+- `lib/auth/utils.ts` - Server-side session utilities
+- `lib/validations/auth.ts` - Zod validation schemas
+- `middleware.ts` - Route protection and security headers
+- `app/api/auth/[...all]/route.ts` - better-auth handler
 
 **Features:**
 - Email/password authentication
 - Google OAuth (pre-configured)
 - Template/placeholder for additional OAuth providers
-- Session management
-- Protected routes
-- Role-based access control foundation
+- Session management (JWT-based)
+- Protected routes with middleware
+- Role-based access control (USER, ADMIN, MODERATOR)
+
+**Breaking Change from Original Plan:**
+> ⚠️ **Using better-auth instead of NextAuth.js v5**
+>
+> NextAuth.js has become part of better-auth, and the official recommendation is to use better-auth for all new projects. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for detailed migration information.
+>
+> Key differences: No SessionProvider wrapper, different API route structure, Prisma adapter pattern, environment variable names changed (NEXTAUTH_* → BETTER_AUTH_*).
 
 #### 1.5 Authentication UI
 - [ ] Create login page with form validation
@@ -883,9 +891,9 @@ Complete list needed for the application:
 # Database
 DATABASE_URL="postgresql://user:password@localhost:5432/sunrise"
 
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="generate-with-openssl-rand-base64-32"
+# Authentication - better-auth
+BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_SECRET="generate-with-openssl-rand-base64-32"
 
 # OAuth - Google (pre-configured)
 GOOGLE_CLIENT_ID="your-google-client-id"

@@ -2,9 +2,9 @@
 
 ## Authentication System
 
-Sunrise uses **NextAuth.js v5** (also known as Auth.js) for authentication, providing a flexible framework that supports multiple authentication strategies: credentials (email/password), OAuth providers (Google, GitHub, etc.), and magic links.
+Sunrise uses **better-auth** for authentication, a modern TypeScript-first framework that provides flexible authentication strategies: email/password, OAuth providers (Google, GitHub, etc.), and magic links. better-auth is the official successor to NextAuth.js, recommended by the NextAuth team for all new projects.
 
-The system implements JWT-based sessions stored in HTTP-only cookies, with user data persisted in PostgreSQL via Prisma. This approach balances security, performance, and developer experience.
+The system implements session-based authentication with user data persisted in PostgreSQL via Prisma. This approach balances security, performance, and developer experience while eliminating common complexity like provider wrappers.
 
 ## Authentication Flow
 
@@ -14,19 +14,16 @@ The system implements JWT-based sessions stored in HTTP-only cookies, with user 
 sequenceDiagram
     participant User
     participant Browser
-    participant NextAuth
+    participant BetterAuth
     participant API
     participant DB
 
     User->>Browser: Enter email/password
-    Browser->>NextAuth: POST /api/auth/signin
-    NextAuth->>API: credentials provider callback
-    API->>DB: findUnique(email)
-    DB-->>API: User data with hashed password
-    API->>API: bcrypt.compare(password, hash)
-    API-->>NextAuth: Return user object
-    NextAuth->>NextAuth: Create JWT session
-    NextAuth->>Browser: Set session cookie (HTTP-only)
+    Browser->>BetterAuth: POST /api/auth/sign-in/email
+    BetterAuth->>DB: findUnique(email)
+    DB-->>BetterAuth: User data with hashed password
+    BetterAuth->>BetterAuth: Verify password (bcrypt)
+    BetterAuth-->>Browser: Set session cookie (HTTP-only)
     Browser-->>User: Redirect to dashboard
 ```
 
@@ -36,143 +33,97 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant Browser
-    participant NextAuth
+    participant BetterAuth
     participant Google
     participant DB
 
     User->>Browser: Click "Sign in with Google"
-    Browser->>NextAuth: GET /api/auth/signin/google
-    NextAuth-->>Browser: Redirect to Google
+    Browser->>BetterAuth: GET /api/auth/sign-in/social
+    BetterAuth-->>Browser: Redirect to Google
     Browser->>Google: Authorization request
     Google-->>User: Login prompt
     User->>Google: Approve access
     Google-->>Browser: Redirect with code
-    Browser->>NextAuth: Callback with code
-    NextAuth->>Google: Exchange code for token
-    Google-->>NextAuth: User profile data
-    NextAuth->>DB: findOrCreate(googleId)
-    DB-->>NextAuth: User record
-    NextAuth->>NextAuth: Create JWT session
-    NextAuth->>Browser: Set session cookie
+    Browser->>BetterAuth: Callback with code
+    BetterAuth->>Google: Exchange code for token
+    Google-->>BetterAuth: User profile data
+    BetterAuth->>DB: findOrCreate(googleId)
+    DB-->>BetterAuth: User record
+    BetterAuth->>Browser: Set session cookie
     Browser-->>User: Redirect to dashboard
 ```
 
 ## Core Configuration
 
-### NextAuth Configuration
+### better-auth Configuration
 
 ```typescript
 // lib/auth/config.ts
-import { NextAuthOptions } from 'next-auth';
-import { PrismaAdapter } from '@auth/prisma-adapter';
-import CredentialsProvider from 'next-auth/providers/credentials';
-import GoogleProvider from 'next-auth/providers/google';
-import { prisma } from '@/lib/db/client';
-import { verifyPassword } from '@/lib/auth/passwords';
+import { betterAuth } from 'better-auth'
+import { prismaAdapter } from 'better-auth/adapters/prisma'
+import { prisma } from '@/lib/db/client'
 
-export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+export const auth = betterAuth({
+  // Database adapter
+  database: prismaAdapter(prisma, {
+    provider: 'postgresql',
+  }),
+
+  // Base URL for the application
+  baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
+
+  // Secret for JWT signing
+  secret: process.env.BETTER_AUTH_SECRET,
+
+  // Enable email and password authentication
+  emailAndPassword: {
+    enabled: true,
+    requireEmailVerification: false, // Will be enabled in Phase 3 with email system
+  },
+
+  // Social authentication providers
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+      enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
+  },
+
+  // Session configuration
   session: {
-    strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    expiresIn: 60 * 60 * 24 * 30, // 30 days in seconds
+    updateAge: 60 * 60 * 24, // Update session every 24 hours
+    cookieCache: {
+      enabled: true,
+      maxAge: 60 * 5, // 5 minutes
+    },
   },
-  pages: {
-    signIn: '/login',
-    signOut: '/logout',
-    error: '/auth/error',
-    verifyRequest: '/auth/verify-request',
-  },
-  providers: [
-    CredentialsProvider({
-      name: 'Credentials',
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" }
+
+  // User model customization
+  user: {
+    additionalFields: {
+      role: {
+        type: 'string',
+        defaultValue: 'USER',
+        required: false,
       },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error('Email and password required');
-        }
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
-
-        if (!user || !user.password) {
-          throw new Error('Invalid credentials');
-        }
-
-        const isValid = await verifyPassword(
-          credentials.password,
-          user.password
-        );
-
-        if (!isValid) {
-          throw new Error('Invalid credentials');
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        };
-      },
-    }),
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
-  callbacks: {
-    async jwt({ token, user, account }) {
-      // Initial sign in
-      if (user) {
-        token.id = user.id;
-        token.role = user.role;
-      }
-
-      // OAuth sign in
-      if (account?.provider === 'google') {
-        token.provider = 'google';
-      }
-
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as string;
-      }
-      return session;
     },
   },
-  events: {
-    async signIn({ user, account, isNewUser }) {
-      // Track sign-ins, send welcome email to new users, etc.
-      if (isNewUser) {
-        await sendWelcomeEmail(user.email, user.name);
-      }
+})
 
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { lastLoginAt: new Date() },
-      });
-    },
-  },
-};
+// Export the auth handler type for use in API routes
+export type Auth = typeof auth
 ```
 
-### NextAuth Route Handler
+### API Route Handler
 
 ```typescript
-// app/api/auth/[...nextauth]/route.ts
-import NextAuth from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+// app/api/auth/[...all]/route.ts
+import { auth } from '@/lib/auth/config'
+import { toNextJsHandler } from 'better-auth/next-js'
 
-const handler = NextAuth(authOptions);
-
-export { handler as GET, handler as POST };
+export const { POST, GET } = toNextJsHandler(auth)
 ```
 
 ## Session Management
@@ -181,119 +132,188 @@ export { handler as GET, handler as POST };
 
 ```typescript
 // In Server Components
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { auth } from '@/lib/auth/config'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const requestHeaders = await headers()
+  const session = await auth.api.getSession({
+    headers: requestHeaders,
+  })
 
   if (!session) {
-    redirect('/login');
+    redirect('/login')
   }
 
-  return <Dashboard user={session.user} />;
+  return <Dashboard user={session.user} />
 }
 ```
 
 ```typescript
 // In API Routes
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { auth } from '@/lib/auth/config'
+import { headers } from 'next/headers'
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const requestHeaders = await headers()
+  const session = await auth.api.getSession({
+    headers: requestHeaders,
+  })
 
   if (!session) {
     return Response.json(
       { error: 'Unauthorized' },
       { status: 401 }
-    );
+    )
   }
 
   // Access session.user.id, session.user.email, etc.
-  const data = await fetchUserData(session.user.id);
-  return Response.json({ data });
+  const data = await fetchUserData(session.user.id)
+  return Response.json({ data })
+}
+```
+
+### Server-Side Utilities
+
+```typescript
+// lib/auth/utils.ts
+import { auth } from './config'
+import { headers } from 'next/headers'
+
+type AuthSession = {
+  session: {
+    id: string
+    userId: string
+    token: string
+    expiresAt: Date
+    ipAddress?: string | null
+    userAgent?: string | null
+    createdAt: Date
+    updatedAt: Date
+  }
+  user: {
+    id: string
+    name: string
+    email: string
+    emailVerified: boolean
+    image?: string | null
+    role?: string | null
+    createdAt: Date
+    updatedAt: Date
+  }
+}
+
+/**
+ * Get the current user session on the server
+ */
+export async function getServerSession(): Promise<AuthSession | null> {
+  try {
+    const requestHeaders = await headers()
+    const session = await auth.api.getSession({
+      headers: requestHeaders,
+    })
+
+    return session
+  } catch (error) {
+    console.error('Failed to get server session:', error)
+    return null
+  }
+}
+
+/**
+ * Get the current authenticated user on the server
+ */
+export async function getServerUser(): Promise<AuthSession['user'] | null> {
+  const session = await getServerSession()
+  return session?.user ?? null
+}
+
+/**
+ * Check if the current user has a specific role
+ */
+export async function hasRole(requiredRole: string): Promise<boolean> {
+  const user = await getServerUser()
+
+  if (!user) {
+    return false
+  }
+
+  return user.role === requiredRole
+}
+
+/**
+ * Require authentication for a server component or API route
+ */
+export async function requireAuth(): Promise<AuthSession> {
+  const session = await getServerSession()
+
+  if (!session) {
+    throw new Error('Authentication required')
+  }
+
+  return session
+}
+
+/**
+ * Require a specific role for a server component or API route
+ */
+export async function requireRole(requiredRole: string): Promise<AuthSession> {
+  const session = await requireAuth()
+
+  if (session.user.role !== requiredRole) {
+    throw new Error(`Role ${requiredRole} required`)
+  }
+
+  return session
 }
 ```
 
 ### Client-Side Session Access
 
+**No Provider Wrapper Needed!** better-auth uses nanostore for state management, eliminating the need for React context providers.
+
+```typescript
+// lib/auth/client.ts
+'use client'
+
+import { createAuthClient } from 'better-auth/react'
+
+export const authClient = createAuthClient({
+  baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+})
+
+export const { useSession } = authClient
+```
+
 ```typescript
 // In Client Components
 'use client'
 
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/lib/auth/client'
 
 export function UserProfile() {
-  const { data: session, status } = useSession();
+  const { data: session, isPending } = useSession()
 
-  if (status === 'loading') {
-    return <Skeleton />;
+  if (isPending) {
+    return <Skeleton />
   }
 
-  if (status === 'unauthenticated') {
-    return <LoginPrompt />;
+  if (!session) {
+    return <LoginPrompt />
   }
 
-  return <div>Welcome, {session.user.name}</div>;
-}
-```
-
-### Session Provider Setup
-
-```typescript
-// app/providers/session-provider.tsx
-'use client'
-
-import { SessionProvider as NextAuthSessionProvider } from 'next-auth/react';
-
-export function SessionProvider({ children }: { children: React.ReactNode }) {
-  return <NextAuthSessionProvider>{children}</NextAuthSessionProvider>;
-}
-```
-
-```typescript
-// app/layout.tsx
-import { SessionProvider } from '@/app/providers/session-provider';
-
-export default function RootLayout({ children }) {
-  return (
-    <html>
-      <body>
-        <SessionProvider>{children}</SessionProvider>
-      </body>
-    </html>
-  );
+  return <div>Welcome, {session.user.name}</div>
 }
 ```
 
 ## Password Management
 
-### Password Hashing
-
-```typescript
-// lib/auth/passwords.ts
-import bcrypt from 'bcrypt';
-
-const SALT_ROUNDS = 12;
-
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, SALT_ROUNDS);
-}
-
-export async function verifyPassword(
-  password: string,
-  hashedPassword: string
-): Promise<boolean> {
-  return bcrypt.compare(password, hashedPassword);
-}
-```
-
 ### Password Validation
 
 ```typescript
-// lib/validations/password.ts
-import { z } from 'zod';
+// lib/validations/auth.ts
+import { z } from 'zod'
 
 export const passwordSchema = z
   .string()
@@ -302,194 +322,142 @@ export const passwordSchema = z
   .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
   .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
   .regex(/[0-9]/, 'Password must contain at least one number')
-  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character');
+  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character')
 
-export const changePasswordSchema = z
+export const emailSchema = z
+  .string()
+  .min(1, 'Email is required')
+  .email('Invalid email address')
+  .max(255)
+  .toLowerCase()
+  .trim()
+
+export const signUpSchema = z
   .object({
-    currentPassword: z.string(),
-    newPassword: passwordSchema,
+    email: emailSchema,
+    password: passwordSchema,
+    name: z.string().min(1).max(100).trim(),
     confirmPassword: z.string(),
   })
-  .refine((data) => data.newPassword === data.confirmPassword, {
+  .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
     path: ['confirmPassword'],
-  });
+  })
+
+export const loginSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, 'Password is required'),
+})
 ```
 
-## Password Reset Flow
+## Route Protection
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Browser
-    participant API
-    participant DB
-    participant Email
-
-    User->>Browser: Request password reset
-    Browser->>API: POST /api/auth/reset-request
-    API->>DB: Create verification token
-    DB-->>API: Token created
-    API->>Email: Send reset email with token
-    Email-->>User: Email with reset link
-    User->>Browser: Click reset link
-    Browser->>API: GET /auth/reset-password?token=...
-    API->>DB: Verify token (not expired)
-    DB-->>API: Token valid
-    API-->>Browser: Show reset form
-    User->>Browser: Enter new password
-    Browser->>API: POST /api/auth/reset-password
-    API->>DB: Update password, delete token
-    DB-->>API: Password updated
-    API-->>Browser: Success
-    Browser-->>User: Redirect to login
-```
-
-### Password Reset Implementation
+### Middleware-Based Protection
 
 ```typescript
-// app/api/auth/reset-request/route.ts
-import { prisma } from '@/lib/db/client';
-import { randomBytes } from 'crypto';
-import { sendPasswordResetEmail } from '@/lib/email/templates';
+// middleware.ts
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function POST(request: Request) {
-  const { email } = await request.json();
+const protectedRoutes = ['/dashboard', '/settings', '/profile']
+const authRoutes = ['/login', '/signup', '/reset-password']
 
-  const user = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  // Always return success to prevent email enumeration
-  if (!user) {
-    return Response.json({ success: true });
-  }
-
-  // Create reset token
-  const token = randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
-
-  await prisma.verificationToken.create({
-    data: {
-      identifier: email,
-      token,
-      expires,
-    },
-  });
-
-  // Send email
-  await sendPasswordResetEmail(email, token);
-
-  return Response.json({ success: true });
+function isAuthenticated(request: NextRequest): boolean {
+  const sessionToken = request.cookies.get('better-auth.session_token')
+  return !!sessionToken
 }
-```
 
-## Email Verification
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const authenticated = isAuthenticated(request)
 
-### Verification Flow
+  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route))
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
 
-```typescript
-// app/api/auth/verify-email/route.ts
-import { prisma } from '@/lib/db/client';
-
-export async function GET(request: NextRequest) {
-  const token = request.nextUrl.searchParams.get('token');
-
-  if (!token) {
-    return Response.json({ error: 'Token required' }, { status: 400 });
+  // Redirect unauthenticated users to login
+  if (isProtectedRoute && !authenticated) {
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('callbackUrl', pathname)
+    return NextResponse.redirect(loginUrl)
   }
 
-  const verificationToken = await prisma.verificationToken.findUnique({
-    where: { token },
-  });
-
-  if (!verificationToken || verificationToken.expires < new Date()) {
-    return Response.json({ error: 'Invalid or expired token' }, { status: 400 });
+  // Redirect authenticated users away from auth pages
+  if (isAuthRoute && authenticated) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  await prisma.user.update({
-    where: { email: verificationToken.identifier },
-    data: { emailVerified: new Date() },
-  });
+  const response = NextResponse.next()
 
-  await prisma.verificationToken.delete({
-    where: { token },
-  });
+  // Security headers
+  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
 
-  return Response.json({ success: true });
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
+
+  return response
+}
+
+export const config = {
+  matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }
 ```
 
 ## Decision History & Trade-offs
 
-### JWT vs. Database Sessions
-**Decision**: JWT sessions (default NextAuth.js v5 strategy)
+### better-auth vs. NextAuth.js v5
+**Decision**: Use better-auth instead of NextAuth.js v5
 **Rationale**:
-- Stateless (no database lookup on every request)
-- Scales horizontally (no shared session store needed)
-- Works with edge runtime
-- Simpler deployment (no Redis dependency)
+- Official recommendation from NextAuth team
+- Simpler architecture (no provider wrapper)
+- Modern patterns (nanostore instead of React context)
+- Native Prisma 7 support
+- Active development and maintenance
+- TypeScript-first design
 
 **Trade-offs**:
-- Can't invalidate sessions server-side (until expiry)
-- Larger cookie size (~1-2KB vs. session ID)
-- Token refresh needed for long-lived sessions
+- Smaller community than NextAuth.js
+- Fewer examples and tutorials
+- Newer framework (less battle-tested)
 
-**Mitigation**: Short session lifetime (30 days), implement token refresh for critical changes
+**Mitigation**: Comprehensive documentation, tested patterns in this codebase
 
-### bcrypt vs. argon2
-**Decision**: bcrypt for password hashing
+### Session Management
+**Decision**: Cookie-based sessions with better-auth defaults
 **Rationale**:
-- Industry standard, well-tested
-- Widely supported across platforms
-- Good performance with 12 rounds
-- Lower memory requirements than argon2
+- HTTP-only cookies prevent XSS attacks
+- Automatic CSRF protection
+- Works with Server Components
+- No client-side session storage needed
 
-**Trade-offs**: argon2 is technically more resistant to GPU/ASIC attacks
+**Trade-offs**: Sessions tied to domain (no cross-domain auth without additional setup)
 
-### NextAuth.js v5 vs. Custom Auth
-**Decision**: NextAuth.js over building custom authentication
+### Password Hashing
+**Decision**: Let better-auth handle password hashing (uses bcrypt internally)
 **Rationale**:
-- Saves weeks of development time
-- Security best practices built-in
-- OAuth provider integrations ready
-- Active maintenance and community
-- Built specifically for Next.js App Router
+- Framework handles security best practices
+- Consistent hashing across auth flows
+- Reduces custom code and potential errors
 
-**Trade-offs**:
-- Abstraction layer (less control)
-- Must follow NextAuth patterns
-- Beta version (v5) has fewer examples
-
-**Mitigation**: Comprehensive documentation, tested patterns, pin exact version
+**Trade-offs**: Less control over hashing algorithm and rounds
 
 ## Performance Considerations
 
 ### Session Caching
-NextAuth.js automatically caches sessions in server components. Manual revalidation if user data changes:
-
-```typescript
-import { revalidatePath } from 'next/cache';
-
-// After updating user profile
-await prisma.user.update({ where: { id }, data });
-revalidatePath('/dashboard');
-```
+better-auth caches sessions client-side for 5 minutes (configurable). Server-side calls to `getSession()` are fast cookie reads, no database hit per request.
 
 ### Database Connection Pooling
-Prisma handles connection pooling (default: 10 connections). For high-traffic auth endpoints, consider increasing:
-
-```prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // Add: ?connection_limit=20
-}
+Prisma handles connection pooling (default: 10 connections). For high-traffic auth endpoints, adjust in `DATABASE_URL`:
+```
+DATABASE_URL="postgresql://user:pass@host:5432/db?connection_limit=20"
 ```
 
 ## Related Documentation
 
-- [Auth Integration](./integration.md) - Framework integration patterns
+- [Auth Integration](./integration.md) - Framework integration patterns for better-auth
 - [Auth Security](./security.md) - Security model and threat mitigation
 - [API Headers](../api/headers.md) - Authentication headers and middleware
 - [Database Models](../database/models.md) - User and session schema

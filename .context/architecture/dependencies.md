@@ -9,18 +9,20 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 **Framework & Runtime:**
 ```json
 {
-  "next": "^14.0.0",
-  "react": "^18.2.0",
-  "react-dom": "^18.2.0",
-  "typescript": "^5.3.0"
+  "next": "^16.0.10",
+  "react": "^19.2.3",
+  "react-dom": "^19.2.3",
+  "typescript": "^5.9.3"
 }
 ```
 
 **Database & Validation:**
 ```json
 {
-  "@prisma/client": "^5.7.0",
-  "prisma": "^5.7.0",
+  "@prisma/client": "^7.1.0",
+  "@prisma/adapter-pg": "^7.1.0",
+  "prisma": "^7.1.0",
+  "pg": "^8.16.3",
   "zod": "^3.22.4"
 }
 ```
@@ -28,22 +30,20 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 **Authentication:**
 ```json
 {
-  "next-auth": "^5.0.0-beta",
-  "@auth/prisma-adapter": "^1.0.0",
-  "bcrypt": "^5.1.1",
-  "@types/bcrypt": "^5.0.2"
+  "better-auth": "^1.4.7"
 }
 ```
 
 **UI & Styling:**
 ```json
 {
-  "tailwindcss": "^3.4.0",
-  "@radix-ui/react-*": "^1.0.0",
-  "class-variance-authority": "^0.7.0",
-  "clsx": "^2.0.0",
-  "tailwind-merge": "^2.2.0",
-  "lucide-react": "^0.294.0"
+  "tailwindcss": "^4.1.18",
+  "@radix-ui/react-label": "^2.1.8",
+  "@radix-ui/react-slot": "^1.2.4",
+  "class-variance-authority": "^0.7.1",
+  "clsx": "^2.1.1",
+  "tailwind-merge": "^3.4.0",
+  "lucide-react": "^0.561.0"
 }
 ```
 
@@ -308,20 +308,23 @@ export function errorResponse(message: string, code?: string, details?: any) {
 - Vendor-specific schema language (not standard SQL)
 - Larger package size than lightweight alternatives
 
-### Next-Auth v5 Beta
-**Decision**: Use Next-Auth v5 (beta) despite stable v4 availability
+### better-auth over NextAuth.js
+**Decision**: Use better-auth instead of NextAuth.js
 **Rationale**:
-- Built for Next.js App Router (v4 designed for Pages Router)
-- Better edge runtime support
-- Improved TypeScript types
-- Future-proof (v5 will be stable soon)
+- Built for Next.js App Router and React Server Components
+- Simpler API with less boilerplate (no provider wrapper needed)
+- Better TypeScript support with type inference
+- No complex configuration objects to pass around
+- Built-in signup functionality (no custom API routes needed)
+- Modern patterns using nanostore for reactive state
+- Active development with focus on DX
 
 **Trade-offs**:
-- Beta software may have undiscovered bugs
-- Community resources mostly for v4
-- Breaking changes possible before stable release
+- Smaller ecosystem than NextAuth.js
+- Fewer community resources and examples
+- Less mature (though stable for production)
 
-**Mitigation**: Pin exact version in package.json, comprehensive testing, monitor release notes
+**Mitigation**: Comprehensive documentation in `.context/auth/`, clear patterns established, pin exact version
 
 ### Zod for Validation
 **Decision**: Zod over Yup, Joi, or class-validator
