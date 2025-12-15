@@ -90,9 +90,11 @@ export default function LoginPage() {
 ```typescript
 // app/(protected)/analytics/page.tsx
 // New protected feature - uses (protected) layout automatically
+import { getServerSession } from '@/lib/auth/utils';
+
 export default async function AnalyticsPage() {
-  const session = await getServerSession(authOptions);
-  // Protected by middleware, session guaranteed to exist
+  const session = await getServerSession();
+  // Protected by proxy, session guaranteed to exist
   const data = await fetchAnalytics(session.user.id);
   return <AnalyticsDashboard data={data} />;
 }
@@ -139,7 +141,7 @@ export default async function AdminUsersPage() {
 ```
 app/api/
 ├── auth/
-│   └── [...nextauth]/route.ts    # NextAuth.js catch-all
+│   └── [...all]/route.ts         # better-auth catch-all
 ├── health/
 │   └── route.ts                  # Health check
 ├── v1/                           # Versioned API
@@ -200,6 +202,8 @@ export class NotFoundError extends AppError {
 import { NextRequest } from 'next/server';
 import { AppError, NotFoundError, UnauthorizedError } from '@/lib/errors';
 import { errorResponse } from '@/lib/api/responses';
+import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(
   request: NextRequest,
@@ -207,7 +211,7 @@ export async function GET(
 ) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getServerSession();
     if (!session) {
       throw new UnauthorizedError();
     }
@@ -489,9 +493,12 @@ export default async function UsersPage() {
 
 ```typescript
 // app/(dashboard)/page.tsx
+import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
+
 export default async function DashboardPage() {
   // Sequential fetches (when dependent)
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession();
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
   });
@@ -510,8 +517,12 @@ export default async function DashboardPage() {
 
 ```typescript
 // app/api/v1/dashboard/route.ts
+import { NextRequest } from 'next/server';
+import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
+
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession();
 
   if (!session) {
     return Response.json({ success: false }, { status: 401 });

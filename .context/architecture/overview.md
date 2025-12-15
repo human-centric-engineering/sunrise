@@ -2,7 +2,7 @@
 
 ## System Architecture
 
-Sunrise implements a **monolithic architecture** using Next.js 14+ with the App Router pattern. The system separates concerns through route groups, server/client component boundaries, and a versioned API layer for external access.
+Sunrise implements a **monolithic architecture** using Next.js 16+ with the App Router pattern. The system separates concerns through route groups, server/client component boundaries, and a versioned API layer for external access.
 
 ### High-Level Architecture
 
@@ -23,13 +23,13 @@ graph TB
         subgraph "API Layer"
             API[API Routes /api/v1/*]
             Health[Health Check /api/health]
-            AuthAPI[NextAuth.js /api/auth/*]
+            AuthAPI[better-auth /api/auth/*]
         end
 
         subgraph "Server Layer"
             ServerComponents[React Server Components]
             ServerActions[Server Actions]
-            Middleware[Next.js Middleware]
+            Proxy[Next.js Proxy]
         end
 
         subgraph "Business Logic"
@@ -66,7 +66,7 @@ graph TB
     API --> Validation
 
     AuthAPI --> AuthLib
-    Middleware --> AuthLib
+    Proxy --> AuthLib
 
     AuthLib --> Prisma
     DBLib --> Prisma
@@ -91,7 +91,7 @@ Route groups organize pages without affecting URL structure. Each group has its 
 **`app/(protected)/`** - All protected routes
 - Contains: `dashboard/`, `settings/`, `profile/` as subdirectories
 - No `page.tsx` at group root (subdirectories provide pages)
-- Requires authentication (protected by middleware)
+- Requires authentication (protected by proxy)
 - Shared application layout with navigation
 - Server-side session checks
 - **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
@@ -115,8 +115,11 @@ When you need a different layout or authentication model:
 ```typescript
 // app/(dashboard)/dashboard/page.tsx
 // Server component - runs on server, no 'use client' directive
+import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
+
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession();
   const user = await prisma.user.findUnique({
     where: { id: session.user.id }
   });
@@ -133,7 +136,9 @@ export default async function DashboardPage() {
 'use client'
 
 import { useForm } from 'react-hook-form';
-import { signIn } from 'next-auth/react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { authClient } from '@/lib/auth/client';
+import { loginSchema } from '@/lib/validations/auth';
 
 export function LoginForm() {
   const form = useForm<LoginFormValues>({
@@ -154,10 +159,11 @@ API routes (`app/api/`) provide RESTful endpoints for external clients and clien
 ```typescript
 // app/api/v1/users/route.ts
 import { NextRequest } from 'next/server';
-import { getServerSession } from 'next-auth';
+import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession();
 
   if (!session) {
     return Response.json(
@@ -177,7 +183,7 @@ export async function GET(request: NextRequest) {
 ```
 
 **Versioning**: All public APIs use `/api/v1/` prefix for future compatibility
-**Authentication**: Session-based using NextAuth.js
+**Authentication**: Session-based using better-auth
 **Responses**: Standardized `{ success, data, error }` format
 
 ## Data Flow Patterns
@@ -345,21 +351,25 @@ export default async function ProductsPage() {
 ### Defense in Depth
 
 **Layer 1 - Network**: HTTPS only, security headers (CSP, HSTS, X-Frame-Options)
-**Layer 2 - Authentication**: NextAuth.js with secure session management
-**Layer 3 - Authorization**: Role-based access control, route protection via middleware
+**Layer 2 - Authentication**: better-auth with secure session management
+**Layer 3 - Authorization**: Role-based access control, route protection via proxy
 **Layer 4 - Input Validation**: Zod schemas on all API inputs
 **Layer 5 - Data Access**: Prisma (parameterized queries prevent SQL injection)
 **Layer 6 - Output Encoding**: React's XSS protection, Content-Security-Policy headers
 
-### Middleware Protection
+### Proxy Protection
 ```typescript
-// middleware.ts
-export function middleware(request: NextRequest) {
-  const token = await getToken({ req: request });
+// proxy.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function proxy(request: NextRequest) {
+  // Check for better-auth session cookie
+  const sessionToken = request.cookies.get('better-auth.session_token');
 
   // Protect dashboard routes
   if (request.nextUrl.pathname.startsWith('/dashboard')) {
-    if (!token) {
+    if (!sessionToken) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
   }
@@ -407,5 +417,5 @@ Create a new route group when:
 
 - [Dependencies](./dependencies.md) - Dependency injection and package management
 - [Patterns](./patterns.md) - Code organization and error handling patterns
-- [Auth Integration](../auth/integration.md) - NextAuth.js integration details
+- [Auth Integration](../auth/integration.md) - better-auth integration details
 - [API Endpoints](../api/endpoints.md) - API route documentation
