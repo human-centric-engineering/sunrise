@@ -16,7 +16,7 @@ async function main() {
   // Clear existing data (in development only)
   if (process.env.NODE_ENV === 'development') {
     console.log('🗑️  Clearing existing data...')
-    await prisma.verificationToken.deleteMany()
+    await prisma.verification.deleteMany()
     await prisma.session.deleteMany()
     await prisma.account.deleteMany()
     await prisma.user.deleteMany()
@@ -29,11 +29,8 @@ async function main() {
     data: {
       email: 'test@example.com',
       name: 'Test User',
-      emailVerified: new Date(),
+      emailVerified: true,
       role: 'USER',
-      // Note: In production, this would be a hashed password
-      // For now, we'll add password hashing in Phase 1.4 (Authentication)
-      password: null,
     },
   })
 
@@ -41,9 +38,8 @@ async function main() {
     data: {
       email: 'admin@example.com',
       name: 'Admin User',
-      emailVerified: new Date(),
+      emailVerified: true,
       role: 'ADMIN',
-      password: null,
     },
   })
 
