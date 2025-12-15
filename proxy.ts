@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 /**
- * Next.js Middleware
+ * Next.js Proxy
  *
  * Runs before every request to check authentication and handle protected routes.
  * Uses better-auth session cookies to determine if a user is authenticated.
@@ -40,7 +40,7 @@ function isAuthenticated(request: NextRequest): boolean {
   return !!sessionToken
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const authenticated = isAuthenticated(request)
 
@@ -97,7 +97,7 @@ export function middleware(request: NextRequest) {
 }
 
 /**
- * Configure which routes the middleware runs on
+ * Configure which routes the proxy runs on
  *
  * Match all routes except:
  * - /api/auth/* (better-auth handles these)
