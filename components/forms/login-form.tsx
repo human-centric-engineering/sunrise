@@ -9,6 +9,7 @@ import { signInSchema, type SignInInput } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { FormError } from './form-error'
 
 /**
  * Login Form Component
@@ -36,6 +37,7 @@ export function LoginForm() {
     formState: { errors },
   } = useForm<SignInInput>({
     resolver: zodResolver(signInSchema),
+    mode: 'onTouched',
     defaultValues: {
       email: '',
       password: '',
@@ -86,9 +88,7 @@ export function LoginForm() {
           disabled={isLoading}
           {...register('email')}
         />
-        {errors.email && (
-          <p className="text-sm text-destructive">{errors.email.message}</p>
-        )}
+        <FormError message={errors.email?.message} />
       </div>
 
       {/* Password Field */}
@@ -102,9 +102,7 @@ export function LoginForm() {
           disabled={isLoading}
           {...register('password')}
         />
-        {errors.password && (
-          <p className="text-sm text-destructive">{errors.password.message}</p>
-        )}
+        <FormError message={errors.password?.message} />
       </div>
 
       {/* Error Message */}

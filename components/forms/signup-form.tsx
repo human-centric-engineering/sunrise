@@ -9,6 +9,7 @@ import { signUpSchema, type SignUpInput } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { FormError } from './form-error'
 
 /**
  * Signup Form Component
@@ -35,6 +36,7 @@ export function SignupForm() {
     formState: { errors },
   } = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
+    mode: 'onTouched',
     defaultValues: {
       name: '',
       email: '',
@@ -92,9 +94,7 @@ export function SignupForm() {
           disabled={isLoading}
           {...register('name')}
         />
-        {errors.name && (
-          <p className="text-sm text-destructive">{errors.name.message}</p>
-        )}
+        <FormError message={errors.name?.message} />
       </div>
 
       {/* Email Field */}
@@ -108,9 +108,7 @@ export function SignupForm() {
           disabled={isLoading}
           {...register('email')}
         />
-        {errors.email && (
-          <p className="text-sm text-destructive">{errors.email.message}</p>
-        )}
+        <FormError message={errors.email?.message} />
       </div>
 
       {/* Password Field */}
@@ -124,9 +122,7 @@ export function SignupForm() {
           disabled={isLoading}
           {...register('password')}
         />
-        {errors.password && (
-          <p className="text-sm text-destructive">{errors.password.message}</p>
-        )}
+        <FormError message={errors.password?.message} />
         <p className="text-xs text-muted-foreground">
           Must be at least 8 characters with uppercase, lowercase, number, and
           special character
@@ -144,11 +140,7 @@ export function SignupForm() {
           disabled={isLoading}
           {...register('confirmPassword')}
         />
-        {errors.confirmPassword && (
-          <p className="text-sm text-destructive">
-            {errors.confirmPassword.message}
-          </p>
-        )}
+        <FormError message={errors.confirmPassword?.message} />
       </div>
 
       {/* Error Message */}
