@@ -3,24 +3,27 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { authClient } from '@/lib/auth/client'
 import { signInSchema, type SignInInput } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormError } from './form-error'
+import { OAuthButtons } from './oauth-buttons'
 
 /**
  * Login Form Component
  *
- * Handles user authentication with email and password.
+ * Handles user authentication with email/password and OAuth providers.
  * Uses react-hook-form with Zod validation and better-auth for authentication.
  *
  * Features:
+ * - OAuth authentication (Google)
+ * - Email/password authentication
  * - Form validation with Zod schema
  * - Loading states during submission
- * - Error handling and display
+ * - Error handling and display (including OAuth errors from URL)
  * - Callback URL preservation for post-login redirect
  */
 export function LoginForm() {
@@ -30,6 +33,16 @@ export function LoginForm() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Check for OAuth errors in URL params
+  useEffect(() => {
+    const oauthError = searchParams.get('error')
+    const oauthErrorDescription = searchParams.get('error_description')
+
+    if (oauthError) {
+      setError(oauthErrorDescription || 'OAuth authentication failed. Please try again.')
+    }
+  }, [searchParams])
 
   const {
     register,
@@ -76,8 +89,13 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
-      {/* Email Field */}
+    <div className="space-y-4">
+      {/* OAuth Buttons */}
+      <OAuthButtons callbackUrl={callbackUrl} />
+
+      {/* Email/Password Form */}
+      <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+        {/* Email Field */}
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
         <Input
@@ -112,10 +130,11 @@ export function LoginForm() {
         </div>
       )}
 
-      {/* Submit Button */}
-      <Button type="submit" className="w-full" disabled={isLoading}>
-        {isLoading ? 'Signing in...' : 'Sign In'}
-      </Button>
-    </form>
+        {/* Submit Button */}
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading ? 'Signing in...' : 'Sign In'}
+        </Button>
+      </form>
+    </div>
   )
 }

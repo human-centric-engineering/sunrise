@@ -2,8 +2,8 @@
 
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import { authClient } from '@/lib/auth/client'
 import { signUpSchema, type SignUpInput } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
@@ -11,26 +11,40 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormError } from './form-error'
 import { PasswordStrength } from './password-strength'
+import { OAuthButtons } from './oauth-buttons'
 
 /**
  * Signup Form Component
  *
- * Handles user registration with name, email, and password.
+ * Handles user registration with OAuth providers or email/password.
  * Uses react-hook-form with Zod validation and better-auth for user creation.
  *
  * Features:
+ * - OAuth authentication (Google)
+ * - Email/password registration
  * - Form validation with Zod schema (password strength, email format, etc.)
  * - Real-time password strength meter with visual feedback
  * - Password confirmation matching
  * - Loading states during submission
- * - Error handling and display
+ * - Error handling and display (including OAuth errors from URL)
  * - Auto-login after successful registration
  */
 export function SignupForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Check for OAuth errors in URL params
+  useEffect(() => {
+    const oauthError = searchParams.get('error')
+    const oauthErrorDescription = searchParams.get('error_description')
+
+    if (oauthError) {
+      setError(oauthErrorDescription || 'OAuth authentication failed. Please try again.')
+    }
+  }, [searchParams])
 
   const {
     register,
@@ -88,8 +102,13 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
-      {/* Name Field */}
+    <div className="space-y-4">
+      {/* OAuth Buttons */}
+      <OAuthButtons callbackUrl="/dashboard" />
+
+      {/* Email/Password Form */}
+      <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+        {/* Name Field */}
       <div className="space-y-2">
         <Label htmlFor="name">Full Name</Label>
         <Input
@@ -157,10 +176,11 @@ export function SignupForm() {
         </div>
       )}
 
-      {/* Submit Button */}
-      <Button type="submit" className="w-full" disabled={isLoading}>
-        {isLoading ? 'Creating account...' : 'Create Account'}
-      </Button>
-    </form>
+        {/* Submit Button */}
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading ? 'Creating account...' : 'Create Account'}
+        </Button>
+      </form>
+    </div>
   )
 }
