@@ -33,13 +33,7 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 
 ## Project Status
 
-🚧 **Under Development** - Core foundation in progress. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap.
-
-**Completed:**
-- ✅ **Phase 1.1** - Project Initialization (Next.js 16, TypeScript, Tailwind CSS 4, ESLint 9)
-- ✅ **Phase 1.2** - Styling Setup (shadcn/ui, dark mode, theme system)
-- ✅ **Phase 1.3** - Database Layer (Prisma + PostgreSQL)
-- ✅ **Phase 1.4** - Authentication System (better-auth with email/password & Google OAuth)
+🚧 **Under Development** - Core foundation complete, production features in progress. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap and [`.instructions/BUILD-PROGRESS-TRACKER.md`](./.instructions/BUILD-PROGRESS-TRACKER.md) for detailed progress tracking
 
 ## Documentation
 
@@ -147,7 +141,80 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 
 ## Quick Start
 
-*(Coming soon - setup instructions will be added once core features are implemented)*
+### Prerequisites
+
+- Node.js 18+ and npm
+- PostgreSQL 15+ (local or hosted)
+- Git
+
+### Setup
+
+1. **Clone and install dependencies:**
+   ```bash
+   git clone https://github.com/human-centric-engineering/sunrise.git
+   cd sunrise
+   npm install
+   ```
+
+2. **Set up environment variables:**
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   Edit `.env.local` and configure:
+   ```bash
+   # Database
+   DATABASE_URL="postgresql://user:password@localhost:5432/sunrise"
+
+   # Authentication (generate secret with: openssl rand -base64 32)
+   BETTER_AUTH_SECRET="your-32-character-secret-here"
+   BETTER_AUTH_URL="http://localhost:3000"
+
+   # Optional: Google OAuth
+   GOOGLE_CLIENT_ID="your-google-client-id"
+   GOOGLE_CLIENT_SECRET="your-google-client-secret"
+   ```
+
+3. **Set up the database:**
+   ```bash
+   npm run db:migrate    # Create database schema
+   npm run db:seed       # (Optional) Add test users
+   ```
+
+4. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open your browser:**
+   - App: http://localhost:3000
+   - Health check: http://localhost:3000/api/health
+   - Database GUI: `npm run db:studio`
+
+### Test Accounts (after seeding)
+
+- **User**: test@example.com / password123
+- **Admin**: admin@example.com / password123
+
+### Development Commands
+
+```bash
+npm run dev           # Start dev server
+npm run build         # Build for production
+npm run lint          # Run ESLint
+npm run type-check    # Run TypeScript checks
+npm run validate      # Run all checks (type + lint + format)
+npm run db:studio     # Open Prisma Studio
+```
+
+### Docker Setup (Optional)
+
+```bash
+docker-compose up     # Start app + database
+docker-compose down   # Stop all services
+```
+
+For detailed deployment instructions, see [`.instructions/DEPLOYMENT.md`](./.instructions/DEPLOYMENT.md)
 
 ## License
 
