@@ -549,6 +549,32 @@ Use this section to track important decisions made during development:
 - @hookform/resolvers (Zod integration)
 - Installed with --legacy-peer-deps due to better-auth/Prisma version mismatch
 
+**Password Strength Meter:**
+- Implemented real-time password strength calculation with visual feedback
+- Created PasswordStrength component with color-coded progress bar
+- Strength levels: Weak (red), Fair (orange), Good (yellow), Strong (green)
+- Multi-factor scoring: length, character variety, pattern penalties
+- Integrated into signup form with react-hook-form watch()
+
+**OAuth Authentication (Google):**
+- Implemented OAuth button component for social provider authentication
+- Created OAuthButtons section with Google button and divider
+- Added OAuth error handling via URL params (error, error_description)
+- Integrated better-auth social provider sign-in flow
+- Official Google branding and icon included
+- Callback URL preservation through OAuth flow
+- Graceful handling when OAuth credentials not configured
+- OAuth flow: Click → Google consent → callback → session → redirect
+
+**Security Documentation:**
+- Rewrote `.context/auth/security.md` for better-auth implementation
+- Documented scrypt password hashing (better-auth default)
+- Updated session management documentation (database + cookie cache)
+- Changed environment variables from NEXTAUTH_* to BETTER_AUTH_*
+- Updated all middleware.ts references to proxy.ts (Next.js 16 convention)
+- Added comprehensive CSP documentation with implementation guidance
+- Updated Phase 3.3 build plan with CSP and security header tasks
+
 **Files Created:**
 - `app/(auth)/layout.tsx` - Auth layout with theme toggle
 - `app/(auth)/login/page.tsx` - Login page with Suspense boundary
@@ -557,20 +583,30 @@ Use this section to track important decisions made during development:
 - `app/(auth)/reset-password/page.tsx` - Placeholder for password reset
 - `app/(protected)/layout.tsx` - Protected layout with header
 - `app/(protected)/dashboard/page.tsx` - Dashboard showing session info
-- `components/forms/login-form.tsx` - Login form component
-- `components/forms/signup-form.tsx` - Signup form component
+- `components/forms/login-form.tsx` - Login form component with OAuth
+- `components/forms/signup-form.tsx` - Signup form component with OAuth
+- `components/forms/oauth-button.tsx` - Generic OAuth provider button
+- `components/forms/oauth-buttons.tsx` - OAuth section with Google button
 - `components/forms/form-error.tsx` - Reusable error message component
+- `components/forms/password-strength.tsx` - Password strength meter
 - `components/auth/logout-button.tsx` - Logout functionality
+- `lib/utils/password-strength.ts` - Password strength calculation utility
 
 **Files Modified:**
 - `app/globals.css` - Fixed for Tailwind v4 with @theme directive and proper @layer base
 - `app/page.tsx` - Removed old test content, will be landing page in Phase 3
+- `.context/auth/security.md` - Complete rewrite for better-auth and Next.js 16
+- `.instructions/SUNRISE-BUILD-PLAN.md` - Updated Phase 3.3 with CSP tasks
+- `.instructions/BUILD-PROGRESS-TRACKER.md` - Architecture decision updates
 
 **Testing:**
-- ✅ Login flow works (redirects to dashboard)
+- ✅ Login flow works (email/password + OAuth)
 - ✅ Signup flow works (auto-login and redirect)
+- ✅ OAuth flow works (Google sign-in with callback)
 - ✅ Logout works (redirects to home)
 - ✅ Form validation works (onTouched mode)
+- ✅ Password strength meter displays correctly
+- ✅ OAuth error handling displays errors from URL params
 - ✅ Error messages display with proper styling
 - ✅ Theme toggle works on all pages
 - ✅ Dark mode works correctly
@@ -585,8 +621,11 @@ Use this section to track important decisions made during development:
 
 **Branch:** `phase-1.5-auth-ui`
 **Commits:**
-1. `abc1234` - feat: complete Phase 1.5 authentication UI with forms
-2. `def5678` - fix: styled validation error messages with color
-3. `ghi9012` - fix: implement Tailwind v4 @theme directive for button colors
-4. `jkl3456` - fix: update @layer base for Tailwind v4 variable references
-5. `mno7890` - fix: wrap LoginForm in Suspense boundary for useSearchParams
+1. `3a15e93` - Merge pull request #4 (Phase 1.5 complete)
+2. `515f588` - remove untested context7 libraries from claude.md
+3. `135503b` - docs: add Context7 MCP integration guide to CLAUDE.md
+4. `569bfde` - docs: update context substrate for Next.js 16 and better-auth
+5. `ba7b438` - refactor: migrate from deprecated middleware to proxy convention
+6. `01f58e6` - docs: update security documentation for better-auth and Next.js 16
+7. `eb0efbf` - feat: implement OAuth authentication with Google
+8. (Previous commits from earlier Phase 1.5 work)
