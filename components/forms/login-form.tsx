@@ -1,0 +1,123 @@
+'use client'
+
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useState } from 'react'
+import { authClient } from '@/lib/auth/client'
+import { signInSchema, type SignInInput } from '@/lib/validations/auth'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+
+/**
+ * Login Form Component
+ *
+ * Handles user authentication with email and password.
+ * Uses react-hook-form with Zod validation and better-auth for authentication.
+ *
+ * Features:
+ * - Form validation with Zod schema
+ * - Loading states during submission
+ * - Error handling and display
+ * - Callback URL preservation for post-login redirect
+ */
+export function LoginForm() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard'
+
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<SignInInput>({
+    resolver: zodResolver(signInSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  })
+
+  const onSubmit = async (data: SignInInput) => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      await authClient.signIn.email(
+        {
+          email: data.email,
+          password: data.password,
+        },
+        {
+          onRequest: () => {
+            // Request started
+          },
+          onSuccess: () => {
+            // Redirect to callback URL or dashboard
+            router.push(callbackUrl)
+            router.refresh()
+          },
+          onError: (ctx) => {
+            setError(ctx.error.message || 'Invalid email or password')
+            setIsLoading(false)
+          },
+        }
+      )
+    } catch {
+      setError('An unexpected error occurred. Please try again.')
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+      {/* Email Field */}
+      <div className="space-y-2">
+        <Label htmlFor="email">Email</Label>
+        <Input
+          id="email"
+          type="email"
+          placeholder="you@example.com"
+          autoComplete="email"
+          disabled={isLoading}
+          {...register('email')}
+        />
+        {errors.email && (
+          <p className="text-sm text-destructive">{errors.email.message}</p>
+        )}
+      </div>
+
+      {/* Password Field */}
+      <div className="space-y-2">
+        <Label htmlFor="password">Password</Label>
+        <Input
+          id="password"
+          type="password"
+          placeholder="••••••••"
+          autoComplete="current-password"
+          disabled={isLoading}
+          {...register('password')}
+        />
+        {errors.password && (
+          <p className="text-sm text-destructive">{errors.password.message}</p>
+        )}
+      </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
+      {/* Submit Button */}
+      <Button type="submit" className="w-full" disabled={isLoading}>
+        {isLoading ? 'Signing in...' : 'Sign In'}
+      </Button>
+    </form>
+  )
+}
