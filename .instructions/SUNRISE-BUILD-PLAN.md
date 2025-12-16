@@ -484,21 +484,27 @@ This phase makes the application production-ready with security, monitoring, and
 
 #### 3.3 Security Hardening
 - [ ] Configure CORS properly
-- [ ] Add security headers (CSP, HSTS, X-Frame-Options)
+- [ ] Add Content-Security-Policy (CSP) header with environment-specific policies
+  - Permissive CSP for development (allows Next.js HMR and Fast Refresh)
+  - Strict CSP for production (blocks XSS attacks)
+  - Document CSP directives and rationale
+- [ ] Review and update existing security headers (HSTS, X-Frame-Options)
+- [ ] Remove deprecated X-XSS-Protection header
+- [ ] Change X-Frame-Options from DENY to SAMEORIGIN (or remove if using CSP frame-ancestors)
 - [ ] Implement rate limiting utilities
 - [ ] Add input sanitization
-- [ ] Create CSRF protection
+- [ ] Verify CSRF protection (better-auth built-in + origin validation)
 - [ ] Set up environment variable validation
 - [ ] Add SQL injection prevention docs
 - [ ] Document security best practices
 
 **Key Files:**
-- `middleware.ts` - enhanced with security
+- `proxy.ts` - enhanced with CSP and updated security headers
 - `lib/security/cors.ts` - CORS configuration
 - `lib/security/rate-limit.ts` - rate limiting
 - `lib/security/sanitize.ts` - input sanitization
-- `lib/security/headers.ts` - security headers
-- `docs/security.md` - security documentation
+- `lib/security/headers.ts` - security headers utilities
+- `.context/auth/security.md` - comprehensive security documentation
 
 #### 3.4 Monitoring & Observability
 - [ ] Create health check endpoint with details
