@@ -539,7 +539,7 @@ Use this section to track important decisions made during development:
 
 **Key Architecture Decisions:**
 1. **Minimal UI approach:** Kept forms simple as this is a starter template
-2. **No password strength meter:** Just requirement text (can be added by users)
+2. **Password strength meter:** Real-time visual feedback with color-coded progress bar and strength labels
 3. **Placeholders for Phase 3:** Email verification and password reset are placeholders until email service is set up
 4. **Progressive validation:** onTouched mode for better UX (no errors while typing initially)
 5. **Route groups:** Used (auth) and (protected) groups for clean URL structure
