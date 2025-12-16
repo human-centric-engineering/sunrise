@@ -84,7 +84,7 @@ Use these Context7-compatible library IDs directly (no need to resolve):
 - **TypeScript:** `/microsoft/typescript`
 
 **Authentication & Security:**
-- **better-auth:** `/better-auth/better-auth` (version-specific: `/better-auth/better-auth/1.4.7`)
+- **better-auth:** `/better-auth/better-auth`
 
 **UI & Styling:**
 - **Tailwind CSS:** `/websites/tailwindcss`
