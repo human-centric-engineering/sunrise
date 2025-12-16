@@ -3,7 +3,7 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { authClient } from '@/lib/auth/client'
 import { signInSchema, type SignInInput } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
@@ -34,15 +34,10 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Check for OAuth errors in URL params
-  useEffect(() => {
-    const oauthError = searchParams.get('error')
-    const oauthErrorDescription = searchParams.get('error_description')
-
-    if (oauthError) {
-      setError(oauthErrorDescription || 'OAuth authentication failed. Please try again.')
-    }
-  }, [searchParams])
+  // Check for OAuth errors in URL params (read directly, don't store in state)
+  const oauthError = searchParams.get('error')
+  const oauthErrorDescription = searchParams.get('error_description')
+  const displayError = error || (oauthError ? (oauthErrorDescription || 'OAuth authentication failed. Please try again.') : null)
 
   const {
     register,
@@ -124,9 +119,9 @@ export function LoginForm() {
       </div>
 
       {/* Error Message */}
-      {error && (
+      {displayError && (
         <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
+          {displayError}
         </div>
       )}
 

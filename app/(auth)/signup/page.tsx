@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import {
   Card,
   CardContent,
@@ -13,6 +14,8 @@ import { SignupForm } from '@/components/forms/signup-form'
  *
  * Allows new users to create an account with email and password.
  * Protected by proxy - authenticated users are redirected to /dashboard
+ *
+ * Note: SignupForm uses useSearchParams() which requires Suspense boundary
  */
 export default function SignupPage() {
   return (
@@ -24,7 +27,9 @@ export default function SignupPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <SignupForm />
+        <Suspense fallback={<div>Loading...</div>}>
+          <SignupForm />
+        </Suspense>
 
         {/* Login Link */}
         <div className="text-center text-sm">
