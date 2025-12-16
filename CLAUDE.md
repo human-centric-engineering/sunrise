@@ -472,3 +472,4 @@ NODE_ENV="development"                  # or "production"
 6. Review Next.js 14 App Router documentation
 7. Check shadcn/ui documentation for component usage
 8. Review Prisma documentation for database operations
+- Remember to use Tailwind v4, which is quite different from v3. Check the Tailwind v4 documentation on context7 when working with styling
