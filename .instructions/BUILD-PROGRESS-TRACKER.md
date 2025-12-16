@@ -43,14 +43,14 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Implement password hashing (handled by better-auth)
 - [x] Create route protection middleware
 
-### 1.5 Authentication UI
-- [ ] Create login page
-- [ ] Create signup page
-- [ ] Create email verification page
-- [ ] Create password reset pages
-- [ ] Create logout functionality
-- [ ] Add loading and error states
-- [ ] Style with shadcn/ui
+### 1.5 Authentication UI ✅
+- [x] Create login page
+- [x] Create signup page
+- [x] Create email verification page
+- [x] Create password reset pages
+- [x] Create logout functionality
+- [x] Add loading and error states
+- [x] Style with shadcn/ui
 
 ### 1.6 API Structure
 - [ ] Create API response utilities
@@ -282,10 +282,10 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-15
-**Current Phase:** Phase 1.4 Complete, Ready for Phase 1.5
+**Last Updated:** 2025-12-16
+**Current Phase:** Phase 1.5 Complete, Ready for Phase 1.6
 **Blockers:** None
-**Next Steps:** Phase 1.5 - Authentication UI (login/signup forms, password reset)
+**Next Steps:** Phase 1.6 - API Structure (response utilities, error handling, validation)
 
 ---
 
@@ -496,3 +496,136 @@ Use this section to track important decisions made during development:
 
 **Branch:** `phase-1.4-authentication-system`
 **Commit:** `f332335` - feat: implement Phase 1.4 authentication with better-auth
+
+### 2025-12-16 - Phase 1.5 Complete
+
+**Authentication UI Implemented:**
+- Created complete authentication page flow with better-auth integration
+- Built login and signup forms with react-hook-form + Zod validation
+- Created placeholder pages for email verification and password reset (email service in Phase 3)
+- Implemented logout functionality with loading states
+- Added auth route group layout with theme toggle
+- Created protected route group layout with header and dashboard
+- Styled all components with shadcn/ui (Card, Input, Label, Button)
+
+**Form Validation System:**
+- Integrated react-hook-form with @hookform/resolvers for Zod validation
+- Used existing Zod schemas from lib/validations/auth.ts
+- Implemented `mode: 'onTouched'` for progressive validation (errors show after first blur)
+- Created FormError component with icon and styled error messages
+- Added field-level error display with red colors in both light and dark modes
+
+**Better-Auth Integration:**
+- Used better-auth client methods: signUp.email(), signIn.email(), signOut()
+- No SessionProvider wrapper needed (better-auth uses nanostore)
+- Callbacks: onRequest, onSuccess, onError for proper state management
+- Auto-login after signup (handled by better-auth)
+- Callback URL preservation for post-login redirects
+
+**Tailwind CSS 4 Migration:**
+- **Breaking Changes Fixed:** Tailwind v3 → v4 has significant differences
+- **@theme directive:** Replaced old HSL-based CSS custom properties with @theme block
+- **Proper naming:** Used `--color-*` naming convention (e.g., `--color-primary`)
+- **Direct color values:** Used hex colors instead of HSL values with opacity modifiers
+- **@layer base fix:** Updated to use `var(--color-*)` without `hsl()` wrappers
+- **@variant dark:** Added for proper dark mode variant support
+- **Result:** Buttons and links now show proper colors in both light and dark modes
+
+**Next.js Build Fixes:**
+- **Suspense boundary:** Wrapped LoginForm in Suspense to fix build error
+- **Requirement:** useSearchParams() requires Suspense boundary in Next.js
+- **Fix location:** app/(auth)/login/page.tsx
+- **Build status:** ✅ Passes successfully
+
+**Key Architecture Decisions:**
+1. **Minimal UI approach:** Kept forms simple as this is a starter template
+2. **Password strength meter:** Real-time visual feedback with color-coded progress bar and strength labels
+3. **Placeholders for Phase 3:** Email verification and password reset are placeholders until email service is set up
+4. **Progressive validation:** onTouched mode for better UX (no errors while typing initially)
+5. **Route groups:** Used (auth) and (protected) groups for clean URL structure
+
+**Dependencies Added:**
+- react-hook-form (form management)
+- @hookform/resolvers (Zod integration)
+- Installed with --legacy-peer-deps due to better-auth/Prisma version mismatch
+
+**Password Strength Meter:**
+- Implemented real-time password strength calculation with visual feedback
+- Created PasswordStrength component with color-coded progress bar
+- Strength levels: Weak (red), Fair (orange), Good (yellow), Strong (green)
+- Multi-factor scoring: length, character variety, pattern penalties
+- Integrated into signup form with react-hook-form watch()
+
+**OAuth Authentication (Google):**
+- Implemented OAuth button component for social provider authentication
+- Created OAuthButtons section with Google button and divider
+- Added OAuth error handling via URL params (error, error_description)
+- Integrated better-auth social provider sign-in flow
+- Official Google branding and icon included
+- Callback URL preservation through OAuth flow
+- Graceful handling when OAuth credentials not configured
+- OAuth flow: Click → Google consent → callback → session → redirect
+
+**Security Documentation:**
+- Rewrote `.context/auth/security.md` for better-auth implementation
+- Documented scrypt password hashing (better-auth default)
+- Updated session management documentation (database + cookie cache)
+- Changed environment variables from NEXTAUTH_* to BETTER_AUTH_*
+- Updated all middleware.ts references to proxy.ts (Next.js 16 convention)
+- Added comprehensive CSP documentation with implementation guidance
+- Updated Phase 3.3 build plan with CSP and security header tasks
+
+**Files Created:**
+- `app/(auth)/layout.tsx` - Auth layout with theme toggle
+- `app/(auth)/login/page.tsx` - Login page with Suspense boundary
+- `app/(auth)/signup/page.tsx` - Signup page
+- `app/(auth)/verify-email/page.tsx` - Placeholder for email verification
+- `app/(auth)/reset-password/page.tsx` - Placeholder for password reset
+- `app/(protected)/layout.tsx` - Protected layout with header
+- `app/(protected)/dashboard/page.tsx` - Dashboard showing session info
+- `components/forms/login-form.tsx` - Login form component with OAuth
+- `components/forms/signup-form.tsx` - Signup form component with OAuth
+- `components/forms/oauth-button.tsx` - Generic OAuth provider button
+- `components/forms/oauth-buttons.tsx` - OAuth section with Google button
+- `components/forms/form-error.tsx` - Reusable error message component
+- `components/forms/password-strength.tsx` - Password strength meter
+- `components/auth/logout-button.tsx` - Logout functionality
+- `lib/utils/password-strength.ts` - Password strength calculation utility
+
+**Files Modified:**
+- `app/globals.css` - Fixed for Tailwind v4 with @theme directive and proper @layer base
+- `app/page.tsx` - Removed old test content, will be landing page in Phase 3
+- `.context/auth/security.md` - Complete rewrite for better-auth and Next.js 16
+- `.instructions/SUNRISE-BUILD-PLAN.md` - Updated Phase 3.3 with CSP tasks
+- `.instructions/BUILD-PROGRESS-TRACKER.md` - Architecture decision updates
+
+**Testing:**
+- ✅ Login flow works (email/password + OAuth)
+- ✅ Signup flow works (auto-login and redirect)
+- ✅ OAuth flow works (Google sign-in with callback)
+- ✅ Logout works (redirects to home)
+- ✅ Form validation works (onTouched mode)
+- ✅ Password strength meter displays correctly
+- ✅ OAuth error handling displays errors from URL params
+- ✅ Error messages display with proper styling
+- ✅ Theme toggle works on all pages
+- ✅ Dark mode works correctly
+- ✅ Build passes without errors
+- ✅ Type-check passes
+- ✅ Lint passes
+
+**Tailwind v4 Documentation Used:**
+- Consulted Context7 for Tailwind CSS v4 documentation
+- Verified @theme directive usage and CSS custom property patterns
+- Confirmed proper variable naming conventions
+
+**Branch:** `phase-1.5-auth-ui`
+**Commits:**
+1. `3a15e93` - Merge pull request #4 (Phase 1.5 complete)
+2. `515f588` - remove untested context7 libraries from claude.md
+3. `135503b` - docs: add Context7 MCP integration guide to CLAUDE.md
+4. `569bfde` - docs: update context substrate for Next.js 16 and better-auth
+5. `ba7b438` - refactor: migrate from deprecated middleware to proxy convention
+6. `01f58e6` - docs: update security documentation for better-auth and Next.js 16
+7. `eb0efbf` - feat: implement OAuth authentication with Google
+8. (Previous commits from earlier Phase 1.5 work)
