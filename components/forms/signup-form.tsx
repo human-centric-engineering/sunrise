@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FormError } from './form-error'
+import { PasswordStrength } from './password-strength'
 
 /**
  * Signup Form Component
@@ -19,6 +20,7 @@ import { FormError } from './form-error'
  *
  * Features:
  * - Form validation with Zod schema (password strength, email format, etc.)
+ * - Real-time password strength meter with visual feedback
  * - Password confirmation matching
  * - Loading states during submission
  * - Error handling and display
@@ -33,6 +35,7 @@ export function SignupForm() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
@@ -44,6 +47,9 @@ export function SignupForm() {
       confirmPassword: '',
     },
   })
+
+  // Watch password field for strength meter
+  const password = watch('password')
 
   const onSubmit = async (data: SignUpInput) => {
     try {
@@ -123,6 +129,7 @@ export function SignupForm() {
           {...register('password')}
         />
         <FormError message={errors.password?.message} />
+        <PasswordStrength password={password} />
         <p className="text-xs text-muted-foreground">
           Must be at least 8 characters with uppercase, lowercase, number, and
           special character
