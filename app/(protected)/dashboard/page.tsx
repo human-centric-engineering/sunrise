@@ -1,5 +1,5 @@
 import { getServerSession } from '@/lib/auth/utils'
-import { redirect } from 'next/navigation'
+import { clearInvalidSession } from '@/lib/auth/clear-session'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { LogoutButton } from '@/components/auth/logout-button'
 
@@ -13,10 +13,10 @@ export default async function DashboardPage() {
   // Get the current user session
   const session = await getServerSession()
 
-  // Redirect to login if not authenticated
-  // (proxy should handle this, but this is a fallback)
+  // Clear invalid session cookie and redirect if not authenticated
+  // This prevents infinite redirect loops when user is deleted but cookie remains
   if (!session) {
-    redirect('/login')
+    clearInvalidSession('/dashboard')
   }
 
   const { user } = session
