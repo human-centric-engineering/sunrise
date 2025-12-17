@@ -38,7 +38,7 @@ export async function validateRequestBody<T>(
   schema: z.ZodSchema<T>
 ): Promise<T> {
   try {
-    const body = await request.json()
+    const body = (await request.json()) as unknown
     return schema.parse(body)
   } catch (error) {
     if (error instanceof z.ZodError) {

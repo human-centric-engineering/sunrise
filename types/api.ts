@@ -34,7 +34,7 @@ export type APIResponse<T> =
   | {
       success: true
       data: T
-      meta?: PaginationMeta | Record<string, any>
+      meta?: PaginationMeta | Record<string, unknown>
     }
   | {
       success: false
@@ -53,7 +53,7 @@ export interface APIError {
   /** Machine-readable error code for client-side error handling */
   code?: string
   /** Additional context about the error (validation errors, stack traces in dev, etc.) */
-  details?: Record<string, any>
+  details?: Record<string, unknown>
 }
 
 /**

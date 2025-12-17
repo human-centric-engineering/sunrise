@@ -31,6 +31,33 @@ import { validateRequestBody, validateQueryParams, parsePaginationParams } from 
 import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user'
 
 /**
+ * Type definitions for better-auth signup API responses
+ */
+interface BetterAuthUser {
+  id: string
+  name: string
+  email: string
+  emailVerified: boolean
+  createdAt: string
+}
+
+interface BetterAuthSession {
+  token: string
+  userId: string
+  expiresAt: string
+}
+
+interface BetterAuthSignupResponse {
+  user: BetterAuthUser
+  session?: BetterAuthSession
+}
+
+interface BetterAuthError {
+  message?: string
+  code?: string
+}
+
+/**
  * GET /api/v1/users
  *
  * Returns a paginated list of users.
@@ -172,7 +199,9 @@ export async function POST(request: NextRequest) {
     )
 
     if (!signupResponse.ok) {
-      const error = await signupResponse.json().catch(() => ({}))
+      const error = (await signupResponse
+        .json()
+        .catch(() => ({}) as BetterAuthError)) as BetterAuthError
 
       // Handle duplicate email or other signup errors
       if (
@@ -188,7 +217,7 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message || 'User creation failed')
     }
 
-    const signupData = await signupResponse.json()
+    const signupData = (await signupResponse.json()) as BetterAuthSignupResponse
     const createdUser = signupData.user
 
     // 5. Update role if different from default (signup creates USER role)

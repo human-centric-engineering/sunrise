@@ -39,7 +39,7 @@ import type { PaginationMeta } from '@/types/api'
  */
 export function successResponse<T>(
   data: T,
-  meta?: PaginationMeta | Record<string, any>,
+  meta?: PaginationMeta | Record<string, unknown>,
   options?: { status?: number; headers?: HeadersInit }
 ): Response {
   const body = {
@@ -90,7 +90,7 @@ export function errorResponse(
   options?: {
     code?: string
     status?: number
-    details?: Record<string, any>
+    details?: Record<string, unknown>
     headers?: HeadersInit
   }
 ): Response {

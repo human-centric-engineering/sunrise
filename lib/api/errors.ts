@@ -43,7 +43,7 @@ export class APIError extends Error {
     message: string,
     public code?: string,
     public status: number = 500,
-    public details?: Record<string, any>
+    public details?: Record<string, unknown>
   ) {
     super(message)
     this.name = 'APIError'
@@ -68,7 +68,7 @@ export class APIError extends Error {
  * ```
  */
 export class ValidationError extends APIError {
-  constructor(message: string = 'Validation failed', details?: Record<string, any>) {
+  constructor(message: string = 'Validation failed', details?: Record<string, unknown>) {
     super(message, ErrorCodes.VALIDATION_ERROR, 400, details)
     this.name = 'ValidationError'
   }
