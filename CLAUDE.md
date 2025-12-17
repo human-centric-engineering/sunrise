@@ -462,6 +462,13 @@ NODE_ENV="development"                  # or "production"
 - Check Docker has enough memory (4GB+ recommended)
 - Verify `.dockerignore` includes `node_modules` and `.next`
 
+**NPM peer dependency warnings:**
+- **Known Issue**: better-auth@1.4.7 expects @prisma/client@^5.22.0, but we use Prisma 7.1.0
+- **Status**: Works correctly in practice; better-auth is compatible with Prisma 7
+- **Solution**: `.npmrc` is configured with `legacy-peer-deps=true` to handle this
+- **No Action Required**: This is expected and documented
+- **Future**: Will be resolved when better-auth officially supports Prisma 7
+
 ## Getting Help
 
 1. Check this `CLAUDE.md` file for quick reference

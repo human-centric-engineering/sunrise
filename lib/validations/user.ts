@@ -2,11 +2,11 @@
  * User Validation Schemas
  *
  * Zod schemas for user-related API operations (profile updates, user management, etc.)
- * Reuses email validation from auth schemas for consistency
+ * Reuses email and password validation from auth schemas for consistency
  */
 
 import { z } from 'zod'
-import { emailSchema } from './auth'
+import { emailSchema, passwordSchema } from './auth'
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)
@@ -67,9 +67,37 @@ export const userIdSchema = z.object({
 })
 
 /**
+ * Create user schema (POST /api/v1/users - admin only)
+ *
+ * Validates user creation requests by admins.
+ * Creates user with password that should be changed on first login.
+ */
+export const createUserSchema = z.object({
+  /** User's full name */
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
+
+  /** User's email address (must be unique) */
+  email: emailSchema,
+
+  /**
+   * Password for the user
+   * If not provided, a secure random password will be generated
+   */
+  password: passwordSchema.optional(),
+
+  /** User's role (defaults to USER) */
+  role: z.enum(['USER', 'ADMIN', 'MODERATOR']).default('USER'),
+})
+
+/**
  * TypeScript types inferred from schemas
  * Use these for type-safe API handling
  */
+export type CreateUserInput = z.infer<typeof createUserSchema>
 export type UpdateUserInput = z.infer<typeof updateUserSchema>
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>
 export type UserIdParam = z.infer<typeof userIdSchema>

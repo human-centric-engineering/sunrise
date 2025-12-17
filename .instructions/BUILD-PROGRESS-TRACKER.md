@@ -52,14 +52,14 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Add loading and error states
 - [x] Style with shadcn/ui
 
-### 1.6 API Structure
-- [ ] Create API response utilities
-- [ ] Build error handling utilities
-- [ ] Create validation middleware
-- [ ] Set up API route examples
-- [ ] Create versioned API structure (/api/v1/)
-- [ ] Add health check endpoint
-- [ ] Document API patterns
+### 1.6 API Structure ✅
+- [x] Create API response utilities
+- [x] Build error handling utilities
+- [x] Create validation middleware
+- [x] Set up API route examples
+- [x] Create versioned API structure (/api/v1/)
+- [x] Add health check endpoint
+- [x] Document API patterns
 
 ### 1.7 Environment Configuration
 - [ ] Create .env.example
@@ -282,10 +282,10 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-16
-**Current Phase:** Phase 1.5 Complete, Ready for Phase 1.6
+**Last Updated:** 2025-12-17
+**Current Phase:** Phase 1.6 Complete, Ready for Phase 1.7
 **Blockers:** None
-**Next Steps:** Phase 1.6 - API Structure (response utilities, error handling, validation)
+**Next Steps:** Phase 1.7 - Environment Configuration (environment validation with Zod)
 
 ---
 
@@ -629,3 +629,63 @@ Use this section to track important decisions made during development:
 6. `01f58e6` - docs: update security documentation for better-auth and Next.js 16
 7. `eb0efbf` - feat: implement OAuth authentication with Google
 8. (Previous commits from earlier Phase 1.5 work)
+
+### 2025-12-17 - Phase 1.6 Complete
+
+**API Structure Implemented:**
+- Created standardized API response utilities (successResponse, paginatedResponse, errorResponse)
+- Built comprehensive error handling system with custom error classes and error codes
+- Implemented validation middleware using Zod schemas
+- Created versioned API structure (/api/v1/)
+- Added health check endpoint at /api/health
+- Implemented complete user management endpoints (GET /api/v1/users, POST /api/v1/users, GET /api/v1/users/me, PATCH /api/v1/users/me)
+- Documented API patterns in .context/api/
+
+**User Creation Implementation (POST /api/v1/users):**
+- **Approach Selected**: Delegation to better-auth's signup API (Approach 2)
+- **Why**: Guaranteed compatibility with better-auth's password verification, future-proof against better-auth internal changes
+- **Implementation**: Calls `/api/auth/sign-up/email` internally, then updates role and cleans up session
+- **Trade-offs Accepted**: Extra HTTP roundtrip (acceptable for admin operations), session cleanup complexity
+- **Alternative Considered**: Manual scrypt password hashing (Approach 1) - attempted but failed to match better-auth's verification format
+
+**NPM Configuration Fix:**
+- Created `.npmrc` with `legacy-peer-deps=true` to handle Prisma version mismatch
+- **Issue**: better-auth@1.4.7 expects @prisma/client@^5.22.0, we use Prisma 7.1.0
+- **Status**: Works correctly in practice; better-auth is compatible with Prisma 7
+- **Documentation**: Comprehensive comments in .npmrc explaining the issue and tracking removal
+- **Future**: Will be removed when better-auth officially supports Prisma 7
+
+**Files Created:**
+- `lib/api/responses.ts` - Standardized response utilities
+- `lib/api/errors.ts` - Custom error classes and error code constants
+- `lib/api/validation.ts` - Request validation middleware with Zod
+- `lib/validations/user.ts` - Zod schemas for user operations
+- `app/api/health/route.ts` - Health check endpoint
+- `app/api/v1/users/route.ts` - User management (GET all, POST create)
+- `app/api/v1/users/me/route.ts` - Current user (GET, PATCH)
+- `.npmrc` - NPM configuration for peer dependency handling
+- `.context/api/endpoints.md` - Complete API endpoint documentation
+
+**Files Modified:**
+- `CLAUDE.md` - Added NPM peer dependency warnings section
+- `.instructions/SUNRISE-BUILD-PLAN.md` - Updated Phase 1.6 with Approach 2 documentation
+
+**Testing:**
+- ✅ GET /api/v1/users returns paginated user list (admin only)
+- ✅ POST /api/v1/users creates users with correct password hashing
+- ✅ Users created via API can successfully log in
+- ✅ GET /api/v1/users/me returns current user profile
+- ✅ PATCH /api/v1/users/me updates user profile
+- ✅ Health check endpoint returns correct status
+- ✅ Type-check passes
+- ✅ Lint passes
+
+**Key Architecture Decisions:**
+1. **API-first design**: All endpoints designed for AI agents and external systems
+2. **Standardized responses**: Consistent format across all endpoints
+3. **Zod validation**: All inputs validated with type-safe schemas
+4. **Error codes**: Structured error handling with machine-readable codes
+5. **Delegation pattern**: Use better-auth APIs instead of replicating internal logic
+6. **Documentation**: Comprehensive inline comments for future auth library migrations
+
+**Branch:** `phase-1.6-api-structure`

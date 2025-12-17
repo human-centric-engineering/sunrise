@@ -280,8 +280,21 @@ model VerificationToken { ... }
 - `lib/api/errors.ts` - error handling
 - `lib/api/validation.ts` - request validation
 - `app/api/health/route.ts` - health check endpoint
-- `app/api/v1/users/route.ts` - example CRUD API
+- `app/api/v1/users/route.ts` - example CRUD API (POST endpoint delegates to better-auth signup API)
 - `types/api.ts` - API type definitions
+
+**Important Note on User Creation (POST /api/v1/users):**
+The user creation endpoint delegates to better-auth's signup API to guarantee password compatibility. This approach:
+- Ensures passwords work with better-auth's login verification
+- Automatically adapts if better-auth changes its password hashing implementation
+- Eliminates the need to manually replicate better-auth's internal password hashing logic
+
+**If you switch to a different authentication library:**
+1. Replace the `fetch()` call to `/api/auth/sign-up/email` with your new library's user creation method
+2. Update the session cleanup logic if your library handles sessions differently
+3. Adjust the response structure to match your library's format
+
+See inline documentation in `app/api/v1/users/route.ts` for implementation details.
 
 **API Response Format:**
 ```typescript
@@ -452,7 +465,9 @@ This phase makes the application production-ready with security, monitoring, and
   - Email verification
   - Password reset
   - Account notifications
+  - **User invitation email** (for users created via POST /api/v1/users with auto-generated passwords)
 - [ ] Add email sending to auth flows
+- [ ] **Implement invitation email flow**: When admin creates user via POST /api/v1/users without providing password, send invitation email with password reset link so user can set their own password
 - [ ] Test email delivery
 - [ ] Document email setup
 
@@ -462,7 +477,10 @@ This phase makes the application production-ready with security, monitoring, and
 - `emails/welcome.tsx` - welcome template
 - `emails/verify-email.tsx` - verification template
 - `emails/reset-password.tsx` - reset template
+- `emails/invitation.tsx` - **NEW**: user invitation template for admin-created users
 - `emails/layouts/base.tsx` - base email layout
+
+**Note:** The POST /api/v1/users endpoint (Phase 1.6) creates users with auto-generated passwords when not provided. This phase should implement the invitation flow to send users a secure password reset link upon creation.
 
 #### 3.2 User Management
 - [ ] Create user profile page
