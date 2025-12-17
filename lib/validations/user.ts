@@ -1,0 +1,75 @@
+/**
+ * User Validation Schemas
+ *
+ * Zod schemas for user-related API operations (profile updates, user management, etc.)
+ * Reuses email validation from auth schemas for consistency
+ */
+
+import { z } from 'zod'
+import { emailSchema } from './auth'
+
+/**
+ * Update user profile schema (PATCH /api/v1/users/me)
+ *
+ * Validates user profile update requests.
+ * All fields are optional - only provided fields will be updated.
+ */
+export const updateUserSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name cannot be empty')
+    .max(100, 'Name must be less than 100 characters')
+    .trim()
+    .optional(),
+  email: emailSchema.optional(),
+})
+
+/**
+ * List users query parameters schema (GET /api/v1/users)
+ *
+ * Validates query parameters for the user list endpoint (admin only).
+ * Supports pagination, search, and sorting.
+ */
+export const listUsersQuerySchema = z.object({
+  /** Page number (1-indexed) */
+  page: z.coerce
+    .number()
+    .int('Page must be an integer')
+    .positive('Page must be positive')
+    .default(1),
+
+  /** Items per page (max 100) */
+  limit: z.coerce
+    .number()
+    .int('Limit must be an integer')
+    .positive('Limit must be positive')
+    .max(100, 'Maximum limit is 100')
+    .default(20),
+
+  /** Search query (searches name and email) */
+  search: z.string().trim().optional(),
+
+  /** Field to sort by */
+  sortBy: z.enum(['name', 'email', 'createdAt']).default('createdAt'),
+
+  /** Sort order */
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+})
+
+/**
+ * User ID parameter validation
+ *
+ * Validates user ID in route parameters.
+ * Accepts any non-empty string (database will reject invalid IDs)
+ */
+export const userIdSchema = z.object({
+  id: z.string().min(1, 'User ID is required'),
+})
+
+/**
+ * TypeScript types inferred from schemas
+ * Use these for type-safe API handling
+ */
+export type UpdateUserInput = z.infer<typeof updateUserSchema>
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>
+export type UserIdParam = z.infer<typeof userIdSchema>
