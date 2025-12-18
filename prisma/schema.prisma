@@ -10,6 +10,10 @@ datasource db {
 }
 
 // Better Auth User model
+//
+// ID Generation: @default(cuid()) generates 25-character CUIDs (format: c[a-z0-9]{24})
+// better-auth is configured to delegate ID generation to Prisma (see lib/auth/config.ts)
+// This ensures consistent CUID format across all user creation methods (UI, API, OAuth, seed)
 model User {
   id            String    @id @default(cuid())
   name          String

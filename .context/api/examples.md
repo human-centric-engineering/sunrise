@@ -1,10 +1,18 @@
 # API Client Examples
 
+> **Implementation Status:** December 2025
+> - ✅ **Implemented** - Patterns from actual codebase (with file references)
+> - 📋 **Guidance** - Best practice examples for future development
+
 ## Client Implementation Patterns
 
 This document provides practical examples of consuming the Sunrise API from various clients: browser JavaScript, React components, external services, and command-line tools.
 
+**Purpose:** This serves as both a reference for implemented patterns and a guide for future API development.
+
 ## Browser Fetch API
+
+📋 **Guidance** - Client-side patterns for consuming the API
 
 ### Basic GET Request
 
@@ -104,6 +112,8 @@ const response = await fetchWithRetry('/api/v1/users', {
 ```
 
 ## React Components
+
+📋 **Guidance** - React patterns for API consumption
 
 ### Custom Hook for API Calls
 
@@ -337,7 +347,210 @@ export function UsersList() {
 }
 ```
 
+## Server-Side API Implementation Patterns
+
+✅ **Implemented** - Patterns from actual route handlers
+
+These patterns are used in the implemented API routes and should be followed for consistency.
+
+### Error Handling Pattern
+
+✅ **From:** `app/api/v1/users/me/route.ts`
+
+```typescript
+import { NextRequest } from 'next/server'
+import { headers } from 'next/headers'
+import { auth } from '@/lib/auth/config'
+import { prisma } from '@/lib/db/client'
+import { successResponse } from '@/lib/api/responses'
+import { UnauthorizedError, handleAPIError } from '@/lib/api/errors'
+
+export async function GET(request: NextRequest) {
+  try {
+    // 1. Authenticate
+    const requestHeaders = await headers()
+    const session = await auth.api.getSession({ headers: requestHeaders })
+    if (!session) throw new UnauthorizedError()
+
+    // 2. Business logic with Prisma
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        emailVerified: true,
+        image: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    if (!user) throw new UnauthorizedError('User not found')
+
+    // 3. Return standardized response
+    return successResponse(user)
+  } catch (error) {
+    // 4. Centralized error handling
+    return handleAPIError(error)
+  }
+}
+```
+
+### Authentication & Authorization Pattern
+
+✅ **From:** `app/api/v1/users/route.ts`
+
+```typescript
+import { headers } from 'next/headers'
+import { auth } from '@/lib/auth/config'
+import { UnauthorizedError, ForbiddenError } from '@/lib/api/errors'
+
+export async function GET(request: NextRequest) {
+  try {
+    // Authentication check
+    const requestHeaders = await headers()
+    const session = await auth.api.getSession({ headers: requestHeaders })
+
+    if (!session) {
+      throw new UnauthorizedError()
+    }
+
+    // Authorization check (role-based)
+    if (session.user.role !== 'ADMIN') {
+      throw new ForbiddenError('Admin access required')
+    }
+
+    // ... route logic
+  } catch (error) {
+    return handleAPIError(error)
+  }
+}
+```
+
+### Request Validation Pattern
+
+✅ **From:** `app/api/v1/users/route.ts` and `app/api/v1/users/me/route.ts`
+
+```typescript
+import { validateRequestBody, validateQueryParams, parsePaginationParams } from '@/lib/api/validation'
+import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user'
+
+// Validate request body (POST/PATCH)
+export async function POST(request: NextRequest) {
+  try {
+    const body = await validateRequestBody(request, createUserSchema)
+    // body is now typed and validated
+
+    // ... use validated data
+  } catch (error) {
+    return handleAPIError(error) // Automatically returns 400 with field errors
+  }
+}
+
+// Validate query parameters (GET)
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = request.nextUrl
+    const query = validateQueryParams(searchParams, listUsersQuerySchema)
+    const { page, limit, skip } = parsePaginationParams(searchParams)
+
+    // query, page, limit, skip are now validated
+  } catch (error) {
+    return handleAPIError(error)
+  }
+}
+```
+
+### Pagination Pattern
+
+✅ **From:** `app/api/v1/users/route.ts` (lines 78-97)
+
+```typescript
+import { paginatedResponse } from '@/lib/api/responses'
+import { parsePaginationParams } from '@/lib/api/validation'
+
+export async function GET(request: NextRequest) {
+  try {
+    // 1. Parse and validate pagination params
+    const { searchParams } = request.nextUrl
+    const { page, limit, skip } = parsePaginationParams(searchParams)
+
+    // 2. Build where clause (example with search)
+    const query = validateQueryParams(searchParams, listUsersQuerySchema)
+    const where = query.search
+      ? {
+          OR: [
+            { name: { contains: query.search, mode: 'insensitive' as const } },
+            { email: { contains: query.search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {}
+
+    // 3. Execute queries in parallel for performance
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        orderBy: { [query.sortBy]: query.sortOrder },
+      }),
+      prisma.user.count({ where }),
+    ])
+
+    // 4. Return paginated response
+    return paginatedResponse(users, { page, limit, total })
+  } catch (error) {
+    return handleAPIError(error)
+  }
+}
+```
+
+### Custom Error Classes Pattern
+
+✅ **From:** `lib/api/errors.ts`
+
+```typescript
+import { UnauthorizedError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors'
+
+// Use custom error classes for better error handling
+if (!session) throw new UnauthorizedError()
+if (session.user.role !== 'ADMIN') throw new ForbiddenError('Admin access required')
+if (!user) throw new NotFoundError('User not found')
+
+// handleAPIError() will automatically:
+// - Convert to proper HTTP status codes (401, 403, 404)
+// - Return standardized error response format
+// - Include error codes for client-side handling
+```
+
+### Response Utilities Pattern
+
+✅ **From:** `lib/api/responses.ts`
+
+```typescript
+import { successResponse, errorResponse, paginatedResponse } from '@/lib/api/responses'
+
+// Success response
+return successResponse(userData)
+// { success: true, data: userData }
+
+// Success with custom status
+return successResponse(newUser, undefined, { status: 201 })
+
+// Paginated response
+return paginatedResponse(users, { page, limit, total })
+// { success: true, data: users, meta: { page, limit, total, totalPages } }
+
+// Error response (rarely used - prefer custom error classes)
+return errorResponse('Something went wrong', { code: 'CUSTOM_ERROR', status: 500 })
+```
+
 ## Type-Safe API Client
+
+📋 **Guidance** - Client-side TypeScript patterns for consuming the API
 
 ### API Client Class
 
@@ -452,6 +665,8 @@ await userAPI.updateCurrentUser({ name: 'Jane' });
 
 ## External API Consumption
 
+📋 **Guidance** - Patterns for external services consuming Sunrise API
+
 ### Node.js / Server-Side
 
 ```typescript
@@ -528,6 +743,8 @@ curl -X DELETE https://api.sunrise.com/api/v1/users/clxxxx \
 ```
 
 ## Error Handling Patterns
+
+📋 **Guidance** - Client-side error handling patterns
 
 ### Centralized Error Handler
 
@@ -630,6 +847,8 @@ export class APIErrorBoundary extends React.Component<Props, State> {
 
 ## Decision History & Trade-offs
 
+📋 **Guidance** - Documentation of design choices and architectural trade-offs
+
 ### Client-Side vs. Server Components
 **Decision**: Provide both fetch examples and React hooks
 **Rationale**:
@@ -655,6 +874,8 @@ export class APIErrorBoundary extends React.Component<Props, State> {
 - Different complexity needs
 
 ## Performance Considerations
+
+📋 **Guidance** - Optimization patterns for client-side API consumption
 
 ### Request Deduplication
 

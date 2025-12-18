@@ -134,10 +134,11 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 ## Philosophy
 
 1. **Production-First** - Security, performance, and reliability are not afterthoughts
-2. **Type-Safe** - TypeScript strict mode everywhere, Zod for runtime validation
-3. **Well-Documented** - Code is temporary, decisions are permanent
-4. **AI-Optimized** - Structured for AI code generation while remaining human-readable
-5. **Fork-Friendly** - Take what you need, customize what you want
+2. **API-First** - Every UI capability is accessible via API for maximum interoperability with AI agents and external systems
+3. **Type-Safe** - TypeScript strict mode everywhere, Zod for runtime validation
+4. **Well-Documented** - Code is temporary, decisions are permanent
+5. **AI-Optimized** - Structured for AI code generation while remaining human-readable
+6. **Fork-Friendly** - Take what you need, customize what you want
 
 ## Quick Start
 

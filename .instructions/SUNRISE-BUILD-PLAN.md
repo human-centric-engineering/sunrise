@@ -280,8 +280,21 @@ model VerificationToken { ... }
 - `lib/api/errors.ts` - error handling
 - `lib/api/validation.ts` - request validation
 - `app/api/health/route.ts` - health check endpoint
-- `app/api/v1/users/route.ts` - example CRUD API
+- `app/api/v1/users/route.ts` - example CRUD API (POST endpoint delegates to better-auth signup API)
 - `types/api.ts` - API type definitions
+
+**Important Note on User Creation (POST /api/v1/users):**
+The user creation endpoint delegates to better-auth's signup API to guarantee password compatibility. This approach:
+- Ensures passwords work with better-auth's login verification
+- Automatically adapts if better-auth changes its password hashing implementation
+- Eliminates the need to manually replicate better-auth's internal password hashing logic
+
+**If you switch to a different authentication library:**
+1. Replace the `fetch()` call to `/api/auth/sign-up/email` with your new library's user creation method
+2. Update the session cleanup logic if your library handles sessions differently
+3. Adjust the response structure to match your library's format
+
+See inline documentation in `app/api/v1/users/route.ts` for implementation details.
 
 **API Response Format:**
 ```typescript
@@ -452,9 +465,19 @@ This phase makes the application production-ready with security, monitoring, and
   - Email verification
   - Password reset
   - Account notifications
+  - **User invitation email** (for invitation-based user creation)
 - [ ] Add email sending to auth flows
+- [ ] **Implement user invitation flow** (recommended alternative to password-based creation):
+  - [ ] Create `POST /api/v1/users/invite` endpoint (alternative to POST /api/v1/users)
+  - [ ] Generate invitation token (JWT or random token stored in database)
+  - [ ] Create user record with `password: null` or disabled state
+  - [ ] Send invitation email with secure link: `/auth/accept-invite?token=...`
+  - [ ] Build `/auth/accept-invite` page where user sets their password
+  - [ ] Validate token and allow user to set password
+  - [ ] Mark user as active after password is set
+- [ ] **Optional**: Enhance existing POST /api/v1/users to send invitation email when password not provided
 - [ ] Test email delivery
-- [ ] Document email setup
+- [ ] Document both user creation patterns (password vs invitation)
 
 **Key Files:**
 - `lib/email/client.ts` - Resend client
@@ -462,7 +485,31 @@ This phase makes the application production-ready with security, monitoring, and
 - `emails/welcome.tsx` - welcome template
 - `emails/verify-email.tsx` - verification template
 - `emails/reset-password.tsx` - reset template
+- `emails/invitation.tsx` - **NEW**: user invitation template
 - `emails/layouts/base.tsx` - base email layout
+- `app/api/v1/users/invite/route.ts` - **NEW**: invitation-based user creation
+- `app/(auth)/accept-invite/page.tsx` - **NEW**: invitation acceptance page
+- `lib/utils/invitation-token.ts` - **NEW**: invitation token generation/validation
+
+**User Creation Patterns:**
+
+This phase implements two patterns for admin-created users:
+
+1. **Password-based creation** (Phase 1.6 - already implemented):
+   - Use: `POST /api/v1/users` with password parameter
+   - Admin provides password (or auto-generated if omitted)
+   - Good for: Testing, demos, quick account creation
+   - Limitation: Admin must communicate password to user
+
+2. **Invitation-based creation** (Phase 3.1 - to be implemented):
+   - Use: `POST /api/v1/users/invite` (new endpoint)
+   - Creates user without password, sends invitation email
+   - User sets their own password via secure link
+   - Good for: Production environments, better security, better UX
+   - Recommended: This is the pattern most SaaS apps use
+
+**Implementation Priority:**
+Focus on invitation flow first as it's more production-ready. The password-based creation (already implemented) serves as a fallback for specific use cases.
 
 #### 3.2 User Management
 - [ ] Create user profile page

@@ -181,7 +181,33 @@ model VerificationToken {
 - Shorter than UUID (25 chars vs 36)
 - URL-safe characters
 
-**Example**: `clh7kj32v0000356hjdoe8f9q`
+**Example**: `cmjbv4i3x00003wsloputgwul`
+
+**Format**: `c[a-z0-9]{24}` (25 characters total, starts with 'c')
+
+#### better-auth ID Generation Configuration
+
+**Important**: By default, better-auth generates its own IDs (32-character format) instead of using Prisma's `@default(cuid())`. To ensure **consistent CUID format across all user creation methods**, better-auth is configured to delegate ID generation to Prisma:
+
+```typescript
+// lib/auth/config.ts
+export const auth = betterAuth({
+  // ... other config
+  advanced: {
+    database: {
+      generateId: () => false, // Delegate to Prisma's @default(cuid())
+    },
+  },
+})
+```
+
+**This ensures**:
+- ✅ UI signup via better-auth → CUID format
+- ✅ OAuth signup via better-auth → CUID format
+- ✅ API user creation (delegates to better-auth) → CUID format
+- ✅ Direct Prisma calls (seed script) → CUID format
+
+Without this configuration, better-auth would generate 32-character IDs, resulting in inconsistent ID formats across the application.
 
 ### Timestamps
 

@@ -1,5 +1,9 @@
 # API Endpoints
 
+> **Implementation Status:** December 2025
+> - ✅ **Implemented** - Endpoints currently available (with file references)
+> - 📋 **Planned** - Endpoints defined for future development
+
 ## API Design Principles
 
 Sunrise implements RESTful APIs through Next.js route handlers with the following principles:
@@ -8,7 +12,7 @@ Sunrise implements RESTful APIs through Next.js route handlers with the followin
 - **Resource-Based**: URLs represent resources (nouns), not actions
 - **HTTP Methods**: Standard methods (GET, POST, PUT, PATCH, DELETE)
 - **Standard Responses**: Consistent `{ success, data, error }` format
-- **Authentication**: Session-based using NextAuth.js
+- **Authentication**: Session-based using better-auth
 - **Validation**: Zod schemas for all inputs
 
 ## Response Format
@@ -40,13 +44,17 @@ Sunrise implements RESTful APIs through Next.js route handlers with the followin
 
 ### Health Check
 
+✅ **Implemented in:** `app/api/health/route.ts`
+
 **Purpose**: System health monitoring for load balancers and monitoring tools
 
 ```
 GET /api/health
 ```
 
-**Response**:
+**Authentication**: None required
+
+**Response** (200 OK):
 ```json
 {
   "status": "ok",
@@ -57,33 +65,12 @@ GET /api/health
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/health/route.ts
-import { prisma } from '@/lib/db/client';
-
-export async function GET() {
-  try {
-    // Check database connectivity
-    await prisma.$queryRaw`SELECT 1`;
-
-    return Response.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      version: process.env.npm_package_version || '1.0.0',
-      uptime: process.uptime(),
-      database: 'connected',
-    });
-  } catch (error) {
-    return Response.json(
-      {
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        database: 'disconnected',
-      },
-      { status: 503 }
-    );
-  }
+**Response** (503 Service Unavailable - database disconnected):
+```json
+{
+  "status": "error",
+  "timestamp": "2025-12-12T10:00:00.000Z",
+  "database": "disconnected"
 }
 ```
 
@@ -91,15 +78,17 @@ export async function GET() {
 
 ### Get Current User
 
+✅ **Implemented in:** `app/api/v1/users/me/route.ts` (GET handler)
+
 **Purpose**: Retrieve authenticated user's profile
 
 ```
 GET /api/v1/users/me
 ```
 
-**Authentication**: Required
+**Authentication**: Required (session)
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -107,50 +96,30 @@ GET /api/v1/users/me
     "id": "clxxxx",
     "name": "John Doe",
     "email": "john@example.com",
-    "role": "user",
+    "role": "USER",
     "emailVerified": "2025-01-15T10:00:00.000Z",
-    "createdAt": "2025-01-01T08:00:00.000Z"
+    "image": "https://...",
+    "createdAt": "2025-01-01T08:00:00.000Z",
+    "updatedAt": "2025-01-10T12:00:00.000Z"
   }
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/v1/users/me/route.ts
-import { NextRequest } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
-import { prisma } from '@/lib/db/client';
-
-export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    );
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "No active session found",
+      "code": "UNAUTHORIZED"
+    }
   }
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      emailVerified: true,
-      image: true,
-      createdAt: true,
-      // Exclude password
-    },
-  });
-
-  return Response.json({ success: true, data: user });
-}
-```
+  ```
 
 ### Update Current User
+
+✅ **Implemented in:** `app/api/v1/users/me/route.ts` (PATCH handler)
 
 **Purpose**: Update authenticated user's profile
 
@@ -158,9 +127,9 @@ export async function GET(request: NextRequest) {
 PATCH /api/v1/users/me
 ```
 
-**Authentication**: Required
+**Authentication**: Required (session)
 
-**Request Body**:
+**Request Body** (all fields optional):
 ```json
 {
   "name": "Jane Doe",
@@ -168,7 +137,9 @@ PATCH /api/v1/users/me
 }
 ```
 
-**Response**:
+**Validation**: Uses `updateUserSchema` from `lib/validations/user.ts`
+
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -176,101 +147,65 @@ PATCH /api/v1/users/me
     "id": "clxxxx",
     "name": "Jane Doe",
     "email": "jane@example.com",
-    "role": "user"
+    "emailVerified": "2025-01-15T10:00:00.000Z",
+    "image": "https://...",
+    "role": "USER",
+    "createdAt": "2025-01-01T08:00:00.000Z",
+    "updatedAt": "2025-01-15T14:30:00.000Z"
   }
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/v1/users/me/route.ts
-import { updateUserSchema } from '@/lib/validations/user';
-
-export async function PATCH(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    );
-  }
-
-  try {
-    const body = await request.json();
-    const validatedData = updateUserSchema.parse(body);
-
-    // Check if email is already taken
-    if (validatedData.email) {
-      const existingUser = await prisma.user.findUnique({
-        where: { email: validatedData.email },
-      });
-
-      if (existingUser && existingUser.id !== session.user.id) {
-        return Response.json(
-          {
-            success: false,
-            error: {
-              message: 'Email already in use',
-              code: 'EMAIL_TAKEN',
-            },
-          },
-          { status: 400 }
-        );
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+- **400 Validation Error**: Invalid input data
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Invalid request body",
+      "code": "VALIDATION_ERROR",
+      "details": {
+        "errors": [
+          { "path": "email", "message": "Invalid email format" }
+        ]
       }
     }
-
-    const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
-      data: validatedData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
-
-    return Response.json({ success: true, data: updatedUser });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        {
-          success: false,
-          error: {
-            message: 'Validation failed',
-            code: 'VALIDATION_ERROR',
-            details: error.errors,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    return Response.json(
-      { success: false, error: { message: 'Internal server error' } },
-      { status: 500 }
-    );
   }
-}
-```
+  ```
+- **400 Email Taken**: Email already in use by another user
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Email already in use",
+      "code": "EMAIL_TAKEN"
+    }
+  }
+  ```
 
 ### List Users (Admin)
 
-**Purpose**: List all users (admin only)
+✅ **Implemented in:** `app/api/v1/users/route.ts` (GET handler)
+
+**Purpose**: List all users with pagination and search (admin only)
 
 ```
-GET /api/v1/users?page=1&limit=20&search=john
+GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
 ```
 
-**Authentication**: Required (Admin role)
+**Authentication**: Required (ADMIN role)
 
-**Query Parameters**:
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Items per page (default: 20, max: 100)
-- `search` (optional): Search by name or email
+**Query Parameters** (all optional):
+- `page`: Page number (default: 1, min: 1)
+- `limit`: Items per page (default: 20, max: 100)
+- `search`: Search by name or email (case-insensitive)
+- `sortBy`: Sort field - `name`, `email`, `createdAt` (default: `createdAt`)
+- `sortOrder`: Sort order - `asc`, `desc` (default: `desc`)
 
-**Response**:
+**Validation**: Uses `listUsersQuerySchema` from `lib/validations/user.ts`
+
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -279,7 +214,7 @@ GET /api/v1/users?page=1&limit=20&search=john
       "id": "clxxxx",
       "name": "John Doe",
       "email": "john@example.com",
-      "role": "user",
+      "role": "USER",
       "createdAt": "2025-01-01T08:00:00.000Z"
     }
   ],
@@ -292,73 +227,76 @@ GET /api/v1/users?page=1&limit=20&search=john
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/v1/users/route.ts
-export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    );
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User does not have ADMIN role
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Admin access required",
+      "code": "FORBIDDEN"
+    }
   }
+  ```
+- **400 Validation Error**: Invalid query parameters
 
-  if (session.user.role !== 'admin') {
-    return Response.json(
-      { success: false, error: { message: 'Forbidden' } },
-      { status: 403 }
-    );
-  }
+### Create User (Admin)
 
-  const { searchParams } = request.nextUrl;
-  const page = parseInt(searchParams.get('page') || '1');
-  const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
-  const search = searchParams.get('search') || '';
+✅ **Implemented in:** `app/api/v1/users/route.ts` (POST handler)
 
-  const skip = (page - 1) * limit;
+**Purpose**: Create a new user account (admin only, delegates to better-auth signup API)
 
-  const where = search
-    ? {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-        ],
-      }
-    : {};
+```
+POST /api/v1/users
+```
 
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({
-      where,
-      skip,
-      take: limit,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    }),
-    prisma.user.count({ where }),
-  ]);
+**Authentication**: Required (ADMIN role)
 
-  return Response.json({
-    success: true,
-    data: users,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  });
+**Request Body**:
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "password": "SecurePassword123!",
+  "role": "USER"
 }
 ```
 
-### Get User by ID (Admin)
+**Validation**: Uses `createUserSchema` from `lib/validations/user.ts`
+- `name`: Required, 1-100 characters
+- `email`: Required, valid email format
+- `password`: Required, minimum 8 characters
+- `role`: Optional, one of `USER`, `ADMIN`, `MODERATOR` (default: `USER`)
+
+**Response** (201 Created):
+```json
+{
+  "success": true,
+  "data": {
+    "id": "clxxxx",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "role": "USER",
+    "emailVerified": null,
+    "image": null,
+    "createdAt": "2025-01-15T14:30:00.000Z",
+    "updatedAt": "2025-01-15T14:30:00.000Z"
+  }
+}
+```
+
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User does not have ADMIN role
+- **400 Validation Error**: Invalid request body
+- **400 Email Taken**: Email already in use
+
+**Note**: This endpoint delegates to better-auth's signup API (`auth.api.signUpEmail()`) for secure user creation with password hashing.
+
+### Get User by ID
+
+✅ **Implemented in:** `app/api/v1/users/[id]/route.ts` (GET handler)
 
 **Purpose**: Retrieve specific user details
 
@@ -366,9 +304,11 @@ export async function GET(request: NextRequest) {
 GET /api/v1/users/:id
 ```
 
-**Authentication**: Required (Admin role or own profile)
+**Authentication**: Required (ADMIN role or requesting own profile)
 
-**Response**:
+**Authorization**: Users can view their own profile. Admins can view any user profile.
+
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -376,77 +316,53 @@ GET /api/v1/users/:id
     "id": "clxxxx",
     "name": "John Doe",
     "email": "john@example.com",
-    "role": "user",
+    "role": "USER",
     "emailVerified": "2025-01-15T10:00:00.000Z",
+    "image": "https://...",
     "createdAt": "2025-01-01T08:00:00.000Z",
     "updatedAt": "2025-01-10T12:00:00.000Z"
   }
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/v1/users/[id]/route.ts
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    );
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User is not ADMIN and not requesting own profile
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Forbidden",
+      "code": "FORBIDDEN"
+    }
   }
-
-  // Allow users to view their own profile, admins can view any
-  if (session.user.id !== params.id && session.user.role !== 'admin') {
-    return Response.json(
-      { success: false, error: { message: 'Forbidden' } },
-      { status: 403 }
-    );
+  ```
+- **404 Not Found**: User ID does not exist
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "User not found",
+      "code": "NOT_FOUND"
+    }
   }
+  ```
 
-  const user = await prisma.user.findUnique({
-    where: { id: params.id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      emailVerified: true,
-      image: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+### Delete User
 
-  if (!user) {
-    return Response.json(
-      {
-        success: false,
-        error: { message: 'User not found', code: 'NOT_FOUND' },
-      },
-      { status: 404 }
-    );
-  }
+✅ **Implemented in:** `app/api/v1/users/[id]/route.ts` (DELETE handler)
 
-  return Response.json({ success: true, data: user });
-}
-```
-
-### Delete User (Admin)
-
-**Purpose**: Delete a user account
+**Purpose**: Delete a user account (admin only)
 
 ```
 DELETE /api/v1/users/:id
 ```
 
-**Authentication**: Required (Admin role)
+**Authentication**: Required (ADMIN role)
 
-**Response**:
+**Authorization**: Admins only. Cannot delete own account.
+
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -457,56 +373,200 @@ DELETE /api/v1/users/:id
 }
 ```
 
-**Implementation**:
-```typescript
-// app/api/v1/users/[id]/route.ts
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== 'admin') {
-    return Response.json(
-      { success: false, error: { message: 'Forbidden' } },
-      { status: 403 }
-    );
+**Error Responses**:
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User does not have ADMIN role
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Forbidden",
+      "code": "FORBIDDEN"
+    }
   }
-
-  // Prevent self-deletion
-  if (session.user.id === params.id) {
-    return Response.json(
-      {
-        success: false,
-        error: { message: 'Cannot delete your own account' },
-      },
-      { status: 400 }
-    );
+  ```
+- **400 Bad Request**: Attempting to delete own account
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Cannot delete your own account",
+      "code": "SELF_DELETE_FORBIDDEN"
+    }
   }
+  ```
+- **404 Not Found**: User ID does not exist
 
-  const user = await prisma.user.findUnique({
-    where: { id: params.id },
-  });
+**Note**: Deletion cascades to related records (sessions, accounts) as configured in Prisma schema.
 
-  if (!user) {
-    return Response.json(
-      { success: false, error: { message: 'User not found' } },
-      { status: 404 }
-    );
-  }
+## Authentication Endpoints
 
-  await prisma.user.delete({
-    where: { id: params.id },
-  });
+✅ **Implemented in:** `app/api/auth/[...all]/route.ts` (better-auth handler)
 
-  return Response.json({
-    success: true,
-    data: { id: params.id, deleted: true },
-  });
+**Purpose**: All authentication flows are handled by better-auth
+
+Better-auth provides the following endpoints automatically:
+
+### Sign Up with Email
+
+```
+POST /api/auth/sign-up/email
+```
+
+**Request Body**:
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "SecurePassword123!"
 }
 ```
 
+### Sign In with Email
+
+```
+POST /api/auth/sign-in/email
+```
+
+**Request Body**:
+```json
+{
+  "email": "john@example.com",
+  "password": "SecurePassword123!"
+}
+```
+
+### Sign In with OAuth (Google)
+
+```
+GET /api/auth/sign-in/social
+```
+
+**Query Parameters**:
+- `provider`: `google`
+- `callbackURL`: URL to redirect after successful authentication
+
+### Sign Out
+
+```
+POST /api/auth/sign-out
+```
+
+### Get Session
+
+```
+GET /api/auth/session
+```
+
+**Response**:
+```json
+{
+  "user": {
+    "id": "clxxxx",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "USER"
+  },
+  "session": {
+    "token": "...",
+    "expiresAt": "..."
+  }
+}
+```
+
+### OAuth Callback
+
+```
+GET /api/auth/callback/google
+```
+
+Handles OAuth callback from Google after successful authentication.
+
+### Clear Session (Utility)
+
+✅ **Implemented in:** `app/api/auth/clear-session/route.ts`
+
+**Purpose**: Utility endpoint for clearing session cookies
+
+```
+GET /api/auth/clear-session
+```
+
+**Response**: Redirects to home page with session cookie cleared.
+
+**Note**: Refer to better-auth documentation for complete API reference and configuration options.
+
+## Planned Endpoints
+
+The following endpoints are defined for future implementation:
+
+### Invite User (Admin)
+
+📋 **Planned** - Phase 3.1 (Email System)
+
+**Purpose**: Create user account without password, send invitation email
+
+```
+POST /api/v1/users/invite
+```
+
+**Authentication**: Required (ADMIN role)
+
+**Request Body**:
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "role": "USER"
+}
+```
+
+**Response** (201 Created):
+```json
+{
+  "success": true,
+  "data": {
+    "id": "clxxxx",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "role": "USER",
+    "invitationToken": "...",
+    "invitationSentAt": "2025-01-15T14:30:00.000Z"
+  }
+}
+```
+
+**Flow**:
+1. Admin creates user without password
+2. Invitation token generated and stored
+3. Email sent with invitation link: `/auth/accept-invite?token=...`
+4. User clicks link, sets password, account activated
+
+### Accept Invitation
+
+📋 **Planned** - Phase 3.1 (Email System)
+
+**Purpose**: Allow invited user to set password and activate account
+
+```
+GET /auth/accept-invite?token=...
+```
+
+**Query Parameters**:
+- `token`: Invitation token from email
+
+**Flow**:
+1. Validate invitation token
+2. Display password form
+3. Update user record with password
+4. Clear invitation token
+5. Redirect to login
+
+**Implementation**: Page route in `app/(auth)/accept-invite/page.tsx`
+
 ## Common Patterns
+
+📋 **Guidance** - Common implementation patterns for API routes
 
 ### Pagination
 
@@ -580,6 +640,8 @@ const results = await prisma.user.findMany({ orderBy });
 
 ## Decision History & Trade-offs
 
+📋 **Guidance** - Documentation of API design decisions and architectural trade-offs
+
 ### Versioned API Path
 **Decision**: `/api/v1/` prefix for all public APIs
 **Rationale**:
@@ -608,6 +670,8 @@ const results = await prisma.user.findMany({ orderBy });
 **Trade-offs**: Some use cases may need larger limits (use cursor pagination instead)
 
 ## Performance Considerations
+
+📋 **Guidance** - Performance optimization patterns for API routes
 
 ### Database Query Optimization
 

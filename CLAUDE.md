@@ -422,21 +422,23 @@ NODE_ENV="development"                  # or "production"
 
 ## Key Principles
 
-1. **Build Iteratively:** Complete one feature fully before moving to the next. Don't skip ahead.
+1. **API-First Architecture:** Every capability in the UI must be accessible via API. This ensures maximum interoperability with AI agents, external systems, and future integrations. When building features, implement the API endpoint first, then the UI layer.
 
-2. **Test as You Go:** Test each feature locally before proceeding. Don't commit untested code.
+2. **Build Iteratively:** Complete one feature fully before moving to the next. Don't skip ahead.
 
-3. **Document While Building:** Update documentation alongside code changes, not after.
+3. **Test as You Go:** Test each feature locally before proceeding. Don't commit untested code.
 
-4. **Follow the Build Order:** The phases in `SUNRISE-BUILD-PLAN.md` have dependencies. Follow the order.
+4. **Document While Building:** Update documentation alongside code changes, not after.
 
-5. **Keep It Simple:** Avoid over-engineering. Don't add features, refactoring, or "improvements" beyond what's requested. Simple code is maintainable code.
+5. **Follow the Build Order:** The phases in `SUNRISE-BUILD-PLAN.md` have dependencies. Follow the order.
 
-6. **Type Everything:** No `any` types. Use TypeScript strictly.
+6. **Keep It Simple:** Avoid over-engineering. Don't add features, refactoring, or "improvements" beyond what's requested. Simple code is maintainable code.
 
-7. **Validate Everything:** All user input must go through Zod schemas.
+7. **Type Everything:** No `any` types. Use TypeScript strictly.
 
-8. **Reference the Plan:** When in doubt, consult `SUNRISE-BUILD-PLAN.md`. It's the source of truth.
+8. **Validate Everything:** All user input must go through Zod schemas.
+
+9. **Reference the Plan:** When in doubt, consult `SUNRISE-BUILD-PLAN.md`. It's the source of truth.
 
 ## Troubleshooting
 
@@ -461,6 +463,13 @@ NODE_ENV="development"                  # or "production"
 - Ensure `output: 'standalone'` is in `next.config.js`
 - Check Docker has enough memory (4GB+ recommended)
 - Verify `.dockerignore` includes `node_modules` and `.next`
+
+**NPM peer dependency warnings:**
+- **Known Issue**: better-auth@1.4.7 expects @prisma/client@^5.22.0, but we use Prisma 7.1.0
+- **Status**: Works correctly in practice; better-auth is compatible with Prisma 7
+- **Solution**: `.npmrc` is configured with `legacy-peer-deps=true` to handle this
+- **No Action Required**: This is expected and documented
+- **Future**: Will be resolved when better-auth officially supports Prisma 7
 
 ## Getting Help
 
