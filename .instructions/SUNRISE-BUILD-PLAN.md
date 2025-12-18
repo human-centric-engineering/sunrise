@@ -465,11 +465,19 @@ This phase makes the application production-ready with security, monitoring, and
   - Email verification
   - Password reset
   - Account notifications
-  - **User invitation email** (for users created via POST /api/v1/users with auto-generated passwords)
+  - **User invitation email** (for invitation-based user creation)
 - [ ] Add email sending to auth flows
-- [ ] **Implement invitation email flow**: When admin creates user via POST /api/v1/users without providing password, send invitation email with password reset link so user can set their own password
+- [ ] **Implement user invitation flow** (recommended alternative to password-based creation):
+  - [ ] Create `POST /api/v1/users/invite` endpoint (alternative to POST /api/v1/users)
+  - [ ] Generate invitation token (JWT or random token stored in database)
+  - [ ] Create user record with `password: null` or disabled state
+  - [ ] Send invitation email with secure link: `/auth/accept-invite?token=...`
+  - [ ] Build `/auth/accept-invite` page where user sets their password
+  - [ ] Validate token and allow user to set password
+  - [ ] Mark user as active after password is set
+- [ ] **Optional**: Enhance existing POST /api/v1/users to send invitation email when password not provided
 - [ ] Test email delivery
-- [ ] Document email setup
+- [ ] Document both user creation patterns (password vs invitation)
 
 **Key Files:**
 - `lib/email/client.ts` - Resend client
@@ -477,10 +485,31 @@ This phase makes the application production-ready with security, monitoring, and
 - `emails/welcome.tsx` - welcome template
 - `emails/verify-email.tsx` - verification template
 - `emails/reset-password.tsx` - reset template
-- `emails/invitation.tsx` - **NEW**: user invitation template for admin-created users
+- `emails/invitation.tsx` - **NEW**: user invitation template
 - `emails/layouts/base.tsx` - base email layout
+- `app/api/v1/users/invite/route.ts` - **NEW**: invitation-based user creation
+- `app/(auth)/accept-invite/page.tsx` - **NEW**: invitation acceptance page
+- `lib/utils/invitation-token.ts` - **NEW**: invitation token generation/validation
 
-**Note:** The POST /api/v1/users endpoint (Phase 1.6) creates users with auto-generated passwords when not provided. This phase should implement the invitation flow to send users a secure password reset link upon creation.
+**User Creation Patterns:**
+
+This phase implements two patterns for admin-created users:
+
+1. **Password-based creation** (Phase 1.6 - already implemented):
+   - Use: `POST /api/v1/users` with password parameter
+   - Admin provides password (or auto-generated if omitted)
+   - Good for: Testing, demos, quick account creation
+   - Limitation: Admin must communicate password to user
+
+2. **Invitation-based creation** (Phase 3.1 - to be implemented):
+   - Use: `POST /api/v1/users/invite` (new endpoint)
+   - Creates user without password, sends invitation email
+   - User sets their own password via secure link
+   - Good for: Production environments, better security, better UX
+   - Recommended: This is the pattern most SaaS apps use
+
+**Implementation Priority:**
+Focus on invitation flow first as it's more production-ready. The password-based creation (already implemented) serves as a fallback for specific use cases.
 
 #### 3.2 User Management
 - [ ] Create user profile page
