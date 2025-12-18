@@ -60,10 +60,19 @@ export const listUsersQuerySchema = z.object({
  * User ID parameter validation
  *
  * Validates user ID in route parameters.
- * Accepts any non-empty string (database will reject invalid IDs)
+ * Enforces CUID format (25-character string starting with 'c')
+ *
+ * Format: c[a-z0-9]{24} (case-insensitive)
+ * Example: cmjbv4i3x00003wsloputgwul
+ *
+ * Note: better-auth is configured to delegate ID generation to Prisma's
+ * @default(cuid()), ensuring all users have this consistent format.
  */
 export const userIdSchema = z.object({
-  id: z.string().min(1, 'User ID is required'),
+  id: z
+    .string()
+    .min(1, 'User ID is required')
+    .regex(/^c[a-z0-9]{24}$/i, 'Invalid user ID format (must be a valid CUID)'),
 })
 
 /**

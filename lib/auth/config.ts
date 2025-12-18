@@ -61,6 +61,22 @@ export const auth = betterAuth({
       },
     },
   },
+
+  // Advanced database configuration
+  advanced: {
+    database: {
+      /**
+       * Delegate ID generation to Prisma's @default(cuid())
+       *
+       * By default, better-auth generates its own IDs. Returning `false` here
+       * tells better-auth to let Prisma handle ID generation using the schema's
+       * @default(cuid()) specification. This ensures all users get consistent
+       * CUID-format IDs (25 characters starting with 'c') regardless of how
+       * they're created (UI, API, OAuth, or seed script).
+       */
+      generateId: () => false,
+    },
+  },
 })
 
 // Export the auth handler type for use in API routes
