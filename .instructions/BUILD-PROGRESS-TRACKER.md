@@ -68,17 +68,17 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Create dev/prod configs (uniform requirements pattern)
 - [x] Add runtime validation (fail-fast at startup)
 
-### 1.8 Docker Setup
-- [ ] Create production Dockerfile
-- [ ] Create development Dockerfile
-- [ ] Configure docker-compose.yml
-- [ ] Configure docker-compose.prod.yml
-- [ ] Add .dockerignore
-- [ ] Update next.config.js (standalone output)
-- [ ] Create nginx.conf
-- [ ] Test Docker builds
+### 1.8 Docker Setup ✅
+- [x] Create production Dockerfile
+- [x] Create development Dockerfile
+- [x] Configure docker-compose.yml
+- [x] Configure docker-compose.prod.yml
+- [x] Add .dockerignore
+- [x] Update next.config.js (standalone output)
+- [x] Create nginx.conf
+- [x] Test Docker builds
 
-**Phase 1 Complete:** [ ]
+**Phase 1 Complete:** [x]
 
 ---
 
@@ -282,10 +282,10 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-17
-**Current Phase:** Phase 1.6 Complete, Ready for Phase 1.7
+**Last Updated:** 2025-12-19
+**Current Phase:** Phase 1 Complete ✅ - Ready for Phase 2
 **Blockers:** None
-**Next Steps:** Phase 1.7 - Environment Configuration (environment validation with Zod)
+**Next Steps:** Phase 2.1 - Code Quality Tools (ESLint, Prettier, Husky, lint-staged)
 
 ---
 
@@ -689,3 +689,167 @@ Use this section to track important decisions made during development:
 6. **Documentation**: Comprehensive inline comments for future auth library migrations
 
 **Branch:** `phase-1.6-api-structure`
+
+### 2025-12-17 - Phase 1.7 Complete
+
+**Environment Configuration with Zod Validation:**
+- Enhanced .env.example with comprehensive documentation and examples
+- Created lib/env.ts with Zod schema validation for all environment variables
+- Implemented fail-fast behavior (app won't start with invalid/missing env vars)
+- Created .context/environment/ documentation domain:
+  - overview.md - Setup guide, patterns, troubleshooting
+  - reference.md - Complete variable reference with examples
+- Updated .context/substrate.md to include environment domain
+
+**Environment Validation Features:**
+- **Type-safe access**: All environment variables typed and validated at runtime
+- **Fail-fast startup**: Invalid configuration caught immediately, not at runtime
+- **Clear error messages**: Detailed validation errors with field names and issues
+- **Flexible validation**: Different rules for development vs. production
+- **URL validation**: Ensures BETTER_AUTH_URL and NEXT_PUBLIC_APP_URL are valid URLs
+- **Optional vs. required**: Clear distinction with helpful error messages
+
+**Files Created:**
+- `lib/env.ts` - Runtime environment validation with Zod
+- `.context/environment/overview.md` - Environment setup and patterns guide
+- `.context/environment/reference.md` - Complete variable documentation
+
+**Files Modified:**
+- `.env.example` - Enhanced with detailed comments, examples, and usage notes
+- `.context/substrate.md` - Added environment domain to navigation
+- `CLAUDE.md` - Updated environment variables section
+
+**Testing:**
+- ✅ Invalid DATABASE_URL caught at startup
+- ✅ Missing required variables fail fast
+- ✅ Type-safe access works throughout app
+- ✅ Development environment works with minimal config
+- ✅ Production validation enforces all required vars
+- ✅ Type-check passes
+- ✅ Lint passes
+
+**Key Architecture Decisions:**
+1. **Uniform requirements**: Same required vars for dev and prod (simplicity over flexibility)
+2. **Fail-fast validation**: App won't start with invalid config
+3. **Zod for validation**: Runtime type safety with clear error messages
+4. **Centralized access**: All env vars accessed through lib/env.ts
+5. **Documentation-first**: Comprehensive docs before implementation
+
+**Branch:** `feature/phase-1-7-env-config`
+**Commit:** `bcdfb94` - feat: complete Phase 1.7 - Environment Configuration with Zod validation
+
+### 2025-12-19 - Phase 1.8 Complete
+
+**Docker Setup Implemented:**
+- Created production Dockerfile with multi-stage builds (~150-200MB optimized image)
+- Created development Dockerfile with hot-reload support
+- Configured docker-compose.yml for development environment
+- Configured docker-compose.prod.yml for production deployment
+- Created .dockerignore for build optimization
+- Created nginx.conf for optional reverse proxy
+- Updated next.config.js with standalone output (already configured)
+- Migrated deployment documentation to .context/deployment/overview.md
+- Cleaned up .instructions/ folder (removed 7 template files)
+
+**Docker Configuration Fixes:**
+- **Prisma postinstall hook**: Copy Prisma schema BEFORE npm ci to satisfy postinstall
+- **Environment variables**: Changed NEXTAUTH_* to BETTER_AUTH_* throughout
+- **Database name**: Changed from 'myapp' to 'sunrise'
+- **Port mapping**: Added 5555:5555 for Prisma Studio access
+- **Obsolete version field**: Removed from docker-compose files (Docker Compose v2)
+- **Redis removed**: Moved to Phase 4 optional features
+
+**Migration Strategy:**
+- **Migrations NOT in Dockerfile**: Industry standard pattern
+- **Why**: Database doesn't exist during build, migrations modify state not build artifacts
+- **When**: Run as deployment step: `docker-compose exec web npx prisma migrate deploy`
+- **Files included**: Migration files ARE in the image, execution is separate
+
+**Environment Variables:**
+- Docker-specific vars (DB_USER, DB_PASSWORD, DB_NAME) are infrastructure-only
+- Consumed by docker-compose to configure PostgreSQL container
+- Application uses DATABASE_URL (already validated in lib/env.ts)
+- No need to add Docker vars to lib/env.ts validation
+
+**Files Created:**
+- `.dockerignore` - Comprehensive exclusion patterns
+- `Dockerfile` - Production multi-stage build
+- `Dockerfile.dev` - Development with hot-reload
+- `docker-compose.yml` - Development environment
+- `docker-compose.prod.yml` - Production stack
+- `nginx.conf` - Optional reverse proxy
+- `.context/deployment/overview.md` - Deployment guide
+
+**Files Modified:**
+- `.env.example` - Added Docker-specific documentation
+- `CLAUDE.md` - Added comprehensive Docker commands section
+- `README.md` - Added Docker quick start guide
+- `.context/substrate.md` - Added deployment domain
+
+**Files Removed:**
+- `.instructions/Dockerfile` (template, now in root)
+- `.instructions/docker-compose.yml` (template, now in root)
+- `.instructions/docker-compose.prod.yml` (template, now in root)
+- `.instructions/nginx.conf` (template, now in root)
+- `.instructions/next.config.js` (reference template)
+- `.instructions/DEPLOYMENT.md` (migrated to context)
+- `.instructions/DEPLOYMENT-QUICKSTART.md` (migrated to context)
+
+**Testing:**
+- ✅ Development environment starts successfully
+- ✅ Hot reload works with volume mounts
+- ✅ Production build completes (image size < 200MB)
+- ✅ Health check endpoint returns 200 OK
+- ✅ Database connectivity works in both environments
+- ✅ Migrations run successfully in container
+- ✅ Prisma Studio accessible at localhost:5555
+- ✅ User signup, login, and logout work in Docker environment
+
+**Key Architecture Decisions:**
+1. **Docker-first deployment**: Platform-agnostic, reproducible builds
+2. **Multi-stage builds**: Optimized production image size
+3. **Migrations as deployment step**: Standard industry pattern, explicit control
+4. **Nginx as optional**: Most platforms provide load balancers
+5. **Volume mounts for dev**: Hot-reload support in development
+6. **Alpine Linux**: Minimal base images for production optimization
+
+**Branch:** `feature/phase-1-8-docker-setup`
+**Commits:**
+1. `25e39dc` - feat: create Docker configuration files for development and production
+2. `d231b27` - fix: copy Prisma schema before npm ci to satisfy postinstall hook
+3. `0a79e65` - chore: remove obsolete version field from docker-compose files
+4. `2f8ddc8` - fix: add Prisma Studio port mapping to docker-compose.yml
+5. `c9467d1` - docs: add deployment documentation to context substrate and clean up templates
+
+---
+
+## Phase 1: Core Foundation - COMPLETE ✅
+
+**Total Duration:** 2025-12-12 to 2025-12-19 (8 days)
+
+**Summary:**
+Phase 1 establishes the complete foundation for the Sunrise starter template. All core systems are implemented, tested, and documented:
+
+- ✅ **Modern Stack**: Next.js 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7
+- ✅ **Authentication**: Complete better-auth implementation with email/password + OAuth
+- ✅ **Database**: PostgreSQL with Prisma ORM, migrations, and seed data
+- ✅ **API Layer**: Versioned endpoints, standardized responses, Zod validation
+- ✅ **Environment**: Runtime validation with fail-fast behavior
+- ✅ **Docker**: Production-ready containerization with development support
+- ✅ **Documentation**: Comprehensive .context/ substrate covering all domains
+
+**Breaking Changes Handled:**
+- Next.js 16 (removed next lint, new config patterns)
+- Tailwind CSS 4 (@theme directive, new syntax)
+- ESLint 9 (flat config format)
+- Prisma 7 (adapter pattern, new config structure)
+- better-auth (replaced NextAuth.js per official recommendation)
+
+**Production Readiness:**
+- Type-safe throughout (strict TypeScript, Zod validation)
+- Secure by default (better-auth, environment validation, security headers)
+- Docker-optimized (multi-stage builds, ~150-200MB images)
+- API-first design (all features accessible via REST API)
+- Well-documented (comprehensive context substrate)
+
+**Ready for Phase 2:** Developer Experience (linting, testing, type safety, logging)
