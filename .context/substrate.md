@@ -67,6 +67,14 @@ Environment variable configuration, validation, and management. Includes:
 
 **Key Features**: Zod validation, type-safe access, fail-fast startup behavior
 
+### 🚀 [Deployment](./deployment/overview.md)
+Deployment strategies, Docker configuration, and platform-specific guides. Includes:
+- [Overview](./deployment/overview.md) - Deployment workflows, Docker setup, platform comparison
+
+**Use When**: Deploying to production, setting up Docker, configuring CI/CD, troubleshooting deployments
+
+**Key Features**: Multi-stage Docker builds, migration workflow, health checks, platform guides
+
 ### 📋 [Guidelines](./guidelines.md)
 Development workflow, testing, deployment, and operational procedures.
 
@@ -108,7 +116,9 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 | Modify database | database/schema.md | database/migrations.md |
 | Add auth provider | auth/integration.md | auth/security.md |
 | Configure environment | environment/overview.md | environment/reference.md |
-| Deploy application | guidelines.md | architecture/overview.md, environment/overview.md |
+| Deploy application | deployment/overview.md | environment/overview.md, database/migrations.md |
+| Set up Docker | deployment/overview.md | environment/overview.md |
+| Configure CI/CD | deployment/overview.md | guidelines.md |
 
 ## Technology Stack
 
