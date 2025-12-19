@@ -63,13 +63,59 @@ networks:
   sunrise-network:
     driver: bridge
 
-# Usage:
+# Usage Instructions:
+#
+# FIRST TIME SETUP:
+# ----------------
+# 1. Start the development environment:
+#    docker-compose up
+#
+#    This starts Next.js dev server + PostgreSQL database
+#    Wait for "Ready in X seconds" message
+#
+# 2. IMPORTANT: Run database migrations (in a new terminal):
+#    docker-compose exec web npx prisma migrate dev
+#
+#    This creates the database tables. You only need to do this:
+#    - On first run
+#    - After pulling database schema changes
+#    - When you modify prisma/schema.prisma
+#
+# 3. (Optional) Seed with test data:
+#    docker-compose exec web npm run db:seed
+#
+# 4. Access the app:
+#    - App: http://localhost:3000
+#    - Health: http://localhost:3000/api/health
+#    - Database: localhost:5432 (postgres/postgres/sunrise)
+#
+# DAILY DEVELOPMENT:
+# -----------------
 # Start: docker-compose up
+# Stop: Ctrl+C or docker-compose down
+# Rebuild after dependency changes: docker-compose up --build
+#
+# USEFUL COMMANDS:
+# ---------------
 # Start in background: docker-compose up -d
-# Rebuild: docker-compose up --build
 # View logs: docker-compose logs -f web
-# Stop: docker-compose down
+# View database logs: docker-compose logs -f db
 # Stop and remove volumes: docker-compose down -v
 # Run migrations: docker-compose exec web npx prisma migrate dev
-# Access database: docker-compose exec db psql -U postgres -d sunrise
 # Prisma Studio: docker-compose exec web npx prisma studio
+#   Then manually open: http://localhost:5555
+# Access database CLI: docker-compose exec db psql -U postgres -d sunrise
+# Container shell: docker-compose exec web sh
+#
+# TROUBLESHOOTING:
+# ---------------
+# If you see "relation does not exist" errors:
+#   → Run migrations: docker-compose exec web npx prisma migrate dev
+#
+# If changes aren't appearing:
+#   → Check that hot reload is working (edit a file and save)
+#   → Restart: docker-compose restart web
+#
+# If port 3000 is in use:
+#   → Stop local npm run dev if running
+#   → Or change port in this file: ports: - "3001:3000"

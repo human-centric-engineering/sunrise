@@ -213,27 +213,40 @@ If you prefer Docker, the entire development environment (Next.js + PostgreSQL) 
    docker-compose up
    ```
 
-   That's it! The Docker setup:
+   The Docker setup:
    - ✅ Installs all dependencies automatically
    - ✅ Sets up PostgreSQL database
-   - ✅ Runs database migrations
    - ✅ Starts Next.js dev server with hot-reload
    - ✅ Handles all port mapping
 
-3. **Access the application:**
+3. **Run database migrations** (in a new terminal, first time only):
+   ```bash
+   docker-compose exec web npx prisma migrate dev
+   ```
+
+   This creates the database tables. Run this:
+   - On first setup
+   - After pulling database schema changes
+   - When you modify `prisma/schema.prisma`
+
+4. **(Optional) Seed with test data:**
+   ```bash
+   docker-compose exec web npm run db:seed
+   ```
+
+5. **Access the application:**
    - App: http://localhost:3000
    - Database: localhost:5432 (postgres/postgres/sunrise)
    - Health check: http://localhost:3000/api/health
 
-**Docker commands:**
+**Daily development commands:**
 ```bash
 docker-compose up              # Start dev environment
-docker-compose up --build      # Rebuild and start
 docker-compose down            # Stop all services
 docker-compose logs -f web     # View app logs
 ```
 
-**Note:** The Docker development environment uses the same source code via volume mounts, so changes to your code will trigger hot-reload just like running `npm run dev` locally.
+**Note:** The Docker development environment uses volume mounts, so changes to your code trigger hot-reload just like `npm run dev` locally.
    - Database GUI: `npm run db:studio`
 
 ### Test Accounts (after seeding)

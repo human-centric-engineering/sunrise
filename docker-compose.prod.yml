@@ -95,26 +95,56 @@ networks:
 
 # Usage Instructions:
 #
+# INITIAL DEPLOYMENT:
+# ------------------
 # 1. Create .env file with production values (see .env.example):
 #    cp .env.example .env
-#    # Edit .env with production credentials
+#    # Edit .env with production credentials (especially BETTER_AUTH_SECRET and DATABASE_URL)
 #
 # 2. Build and start all services:
 #    docker-compose -f docker-compose.prod.yml up -d --build
 #
-# 3. Run database migrations:
+# 3. IMPORTANT: Run database migrations (creates tables):
 #    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
 #
-# 4. View logs:
+#    Note: This step is REQUIRED on first deployment and whenever the schema changes.
+#    The migration files are included in the Docker image but need to be executed
+#    against the running database. This is the standard production pattern.
+#
+# 4. (Optional) Seed the database with test data:
+#    docker-compose -f docker-compose.prod.yml exec web npm run db:seed
+#
+# 5. Verify deployment:
+#    curl http://localhost:3000/api/health
+#    # Should return: {"status":"ok","database":{"connected":true}}
+#
+# ONGOING OPERATIONS:
+# ------------------
+# View logs:
 #    docker-compose -f docker-compose.prod.yml logs -f web
 #    docker-compose -f docker-compose.prod.yml logs -f db
 #
-# 5. Check service health:
+# Check service health:
 #    docker-compose -f docker-compose.prod.yml ps
-#    curl http://localhost:3000/api/health
 #
-# 6. Stop all services:
+# Restart a service:
+#    docker-compose -f docker-compose.prod.yml restart web
+#
+# Run new migrations (after schema changes):
+#    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+#
+# Stop all services:
 #    docker-compose -f docker-compose.prod.yml down
 #
-# 7. Stop and remove volumes (WARNING: deletes database data):
+# Stop and remove volumes (WARNING: deletes database data):
 #    docker-compose -f docker-compose.prod.yml down -v
+#
+# DEPLOYMENT AUTOMATION (CI/CD):
+# -----------------------------
+# For automated deployments, include these steps in your deployment script:
+#
+#   docker-compose -f docker-compose.prod.yml up -d --build
+#   docker-compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy
+#   docker-compose -f docker-compose.prod.yml exec -T web curl -f http://localhost:3000/api/health
+#
+# The -T flag is needed for non-interactive environments (CI/CD pipelines)
