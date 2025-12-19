@@ -31,6 +31,11 @@ import { createAuthClient } from 'better-auth/react'
  * ```
  *
  * For reactive session access in components, use the `useSession` hook.
+ *
+ * Note: This is a client-side module, so it can only access NEXT_PUBLIC_* environment variables.
+ * NEXT_PUBLIC_APP_URL is validated at build time in lib/env.ts.
+ *
+ * @see .context/environment/reference.md for environment variable documentation
  */
 export const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',

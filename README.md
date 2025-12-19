@@ -162,19 +162,26 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
    cp .env.example .env.local
    ```
 
-   Edit `.env.local` and configure:
+   Edit `.env.local` and configure the required variables:
    ```bash
-   # Database
+   # Database (Required)
    DATABASE_URL="postgresql://user:password@localhost:5432/sunrise"
 
-   # Authentication (generate secret with: openssl rand -base64 32)
-   BETTER_AUTH_SECRET="your-32-character-secret-here"
+   # Authentication (Required)
+   BETTER_AUTH_SECRET="your-32-character-secret-here"  # Generate: openssl rand -base64 32
    BETTER_AUTH_URL="http://localhost:3000"
+   NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
-   # Optional: Google OAuth
+   # OAuth (Optional)
    GOOGLE_CLIENT_ID="your-google-client-id"
    GOOGLE_CLIENT_SECRET="your-google-client-secret"
    ```
+
+   **📖 For detailed configuration:** See [Environment Configuration](./.context/environment/overview.md) for:
+   - Complete variable reference and descriptions
+   - Environment-specific setup (development vs. production)
+   - Troubleshooting guide
+   - Security best practices
 
 3. **Set up the database:**
    ```bash
