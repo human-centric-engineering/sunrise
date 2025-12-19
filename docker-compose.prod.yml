@@ -2,8 +2,6 @@
 # Includes Next.js app, PostgreSQL database, and optional Nginx reverse proxy
 # Start with: docker-compose -f docker-compose.prod.yml up -d --build
 
-version: '3.8'
-
 services:
   # Next.js application (production build)
   web:

@@ -3,8 +3,6 @@
 # Start with: docker-compose up
 # Stop with: docker-compose down
 
-version: '3.8'
-
 services:
   # Next.js application (development with hot-reload)
   web:
