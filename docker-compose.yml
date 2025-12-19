@@ -12,6 +12,7 @@ services:
     container_name: sunrise-dev
     ports:
       - "3000:3000"
+      - "5555:5555"  # Prisma Studio
     volumes:
       # Mount source code for hot reload
       - .:/app
@@ -102,8 +103,8 @@ networks:
 # View database logs: docker-compose logs -f db
 # Stop and remove volumes: docker-compose down -v
 # Run migrations: docker-compose exec web npx prisma migrate dev
-# Prisma Studio: docker-compose exec web npx prisma studio
-#   Then manually open: http://localhost:5555
+# Prisma Studio: docker-compose exec web npx prisma studio --browser none --port 5555
+#   Then open: http://localhost:5555
 # Access database CLI: docker-compose exec db psql -U postgres -d sunrise
 # Container shell: docker-compose exec web sh
 #
