@@ -197,6 +197,43 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 5. **Open your browser:**
    - App: http://localhost:3000
    - Health check: http://localhost:3000/api/health
+
+### Quick Start with Docker
+
+If you prefer Docker, the entire development environment (Next.js + PostgreSQL) is containerized and ready to use:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/human-centric-engineering/sunrise.git
+   cd sunrise
+   ```
+
+2. **Start the development environment:**
+   ```bash
+   docker-compose up
+   ```
+
+   That's it! The Docker setup:
+   - ✅ Installs all dependencies automatically
+   - ✅ Sets up PostgreSQL database
+   - ✅ Runs database migrations
+   - ✅ Starts Next.js dev server with hot-reload
+   - ✅ Handles all port mapping
+
+3. **Access the application:**
+   - App: http://localhost:3000
+   - Database: localhost:5432 (postgres/postgres/sunrise)
+   - Health check: http://localhost:3000/api/health
+
+**Docker commands:**
+```bash
+docker-compose up              # Start dev environment
+docker-compose up --build      # Rebuild and start
+docker-compose down            # Stop all services
+docker-compose logs -f web     # View app logs
+```
+
+**Note:** The Docker development environment uses the same source code via volume mounts, so changes to your code will trigger hot-reload just like running `npm run dev` locally.
    - Database GUI: `npm run db:studio`
 
 ### Test Accounts (after seeding)

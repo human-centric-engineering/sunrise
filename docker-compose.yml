@@ -1,0 +1,77 @@
+# Docker Compose configuration for development environment
+# Includes Next.js app with hot-reload and PostgreSQL database
+# Start with: docker-compose up
+# Stop with: docker-compose down
+
+version: '3.8'
+
+services:
+  # Next.js application (development with hot-reload)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: sunrise-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      # Prevent node_modules from being overwritten by host
+      - /app/node_modules
+      # Prevent .next from being overwritten by host
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      # Docker: use service name 'db' instead of 'localhost'
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sunrise
+      # better-auth configuration (NOT NextAuth - this project uses better-auth)
+      - BETTER_AUTH_URL=http://localhost:3000
+      - BETTER_AUTH_SECRET=dev-secret-change-in-production-min-32-chars
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sunrise-network
+    command: npm run dev
+
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    container_name: sunrise-db-dev
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=sunrise
+      - POSTGRES_INITDB_ARGS=-E UTF8
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - sunrise-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_dev_data:
+    driver: local
+
+networks:
+  sunrise-network:
+    driver: bridge
+
+# Usage:
+# Start: docker-compose up
+# Start in background: docker-compose up -d
+# Rebuild: docker-compose up --build
+# View logs: docker-compose logs -f web
+# Stop: docker-compose down
+# Stop and remove volumes: docker-compose down -v
+# Run migrations: docker-compose exec web npx prisma migrate dev
+# Access database: docker-compose exec db psql -U postgres -d sunrise
+# Prisma Studio: docker-compose exec web npx prisma studio
