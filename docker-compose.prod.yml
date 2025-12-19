@@ -1,0 +1,150 @@
+# Docker Compose configuration for production environment
+# Includes Next.js app, PostgreSQL database, and optional Nginx reverse proxy
+# Start with: docker-compose -f docker-compose.prod.yml up -d --build
+
+services:
+  # Next.js application (production build)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Pass build-time environment variables for NEXT_PUBLIC_* vars
+      # These are embedded into the JavaScript bundle during build
+      args:
+        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+    container_name: sunrise-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    # Load all environment variables from .env file
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sunrise-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    container_name: sunrise-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-sunrise}
+      - POSTGRES_INITDB_ARGS=-E UTF8
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      # Optional: Mount init scripts for database setup
+      # - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - sunrise-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Nginx reverse proxy (OPTIONAL)
+  # Only needed for:
+  # - Self-hosted deployments
+  # - Custom SSL/caching/load balancing
+  # - Multiple services behind one domain
+  # For Vercel/Railway/Render, platform load balancers are sufficient
+  nginx:
+    image: nginx:alpine
+    container_name: sunrise-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # SSL certificates - comment out until you set up SSL
+      # To enable HTTPS:
+      # 1. Obtain SSL certificates (Let's Encrypt, Certbot, etc.)
+      # 2. Place cert files in ./ssl/ directory
+      # 3. Uncomment the line below
+      # - ./ssl:/etc/nginx/ssl:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - web
+    networks:
+      - sunrise-network
+
+volumes:
+  postgres_prod_data:
+    driver: local
+  nginx_cache:
+    driver: local
+
+networks:
+  sunrise-network:
+    driver: bridge
+
+# Usage Instructions:
+#
+# INITIAL DEPLOYMENT:
+# ------------------
+# 1. Create .env file with production values (see .env.example):
+#    cp .env.example .env
+#    # Edit .env with production credentials (especially BETTER_AUTH_SECRET and DATABASE_URL)
+#
+# 2. Build and start all services:
+#    docker-compose -f docker-compose.prod.yml up -d --build
+#
+# 3. IMPORTANT: Run database migrations (creates tables):
+#    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+#
+#    Note: This step is REQUIRED on first deployment and whenever the schema changes.
+#    The migration files are included in the Docker image but need to be executed
+#    against the running database. This is the standard production pattern.
+#
+# 4. (Optional) Seed the database with test data:
+#    docker-compose -f docker-compose.prod.yml exec web npm run db:seed
+#
+# 5. Verify deployment:
+#    curl http://localhost:3000/api/health
+#    # Should return: {"status":"ok","database":{"connected":true}}
+#
+# ONGOING OPERATIONS:
+# ------------------
+# View logs:
+#    docker-compose -f docker-compose.prod.yml logs -f web
+#    docker-compose -f docker-compose.prod.yml logs -f db
+#
+# Check service health:
+#    docker-compose -f docker-compose.prod.yml ps
+#
+# Restart a service:
+#    docker-compose -f docker-compose.prod.yml restart web
+#
+# Run new migrations (after schema changes):
+#    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+#
+# Stop all services:
+#    docker-compose -f docker-compose.prod.yml down
+#
+# Stop and remove volumes (WARNING: deletes database data):
+#    docker-compose -f docker-compose.prod.yml down -v
+#
+# DEPLOYMENT AUTOMATION (CI/CD):
+# -----------------------------
+# For automated deployments, include these steps in your deployment script:
+#
+#   docker-compose -f docker-compose.prod.yml up -d --build
+#   docker-compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy
+#   docker-compose -f docker-compose.prod.yml exec -T web curl -f http://localhost:3000/api/health
+#
+# The -T flag is needed for non-interactive environments (CI/CD pipelines)

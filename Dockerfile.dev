@@ -1,0 +1,42 @@
+# Development Dockerfile with hot-reload support
+# This Dockerfile is optimized for local development with Docker Compose
+
+FROM node:20-alpine
+
+# Install dependencies for node-gyp and native modules
+# python3, make, g++ needed for packages with native bindings
+RUN apk add --no-cache libc6-compat python3 make g++
+
+WORKDIR /app
+
+# Copy package files AND .npmrc (critical for better-auth + Prisma 7 compatibility)
+# .npmrc contains legacy-peer-deps=true to handle better-auth peer dependency warnings
+COPY package.json package-lock.json* .npmrc ./
+
+# Copy Prisma schema BEFORE npm ci
+# This is required because the postinstall script runs "prisma generate"
+COPY prisma ./prisma
+
+# Install dependencies
+# Uses npm ci for reproducible builds based on package-lock.json
+# The postinstall script will run "prisma generate" automatically
+RUN npm ci
+
+# Copy application source
+# Note: In development, source code is mounted as a volume in docker-compose.yml
+# This COPY ensures the image can run standalone, but hot-reload comes from volume mount
+COPY . .
+
+# Expose Next.js development server port
+EXPOSE 3000
+
+# Set environment variables
+# NODE_ENV=development enables Next.js dev features (Fast Refresh, better errors)
+ENV NODE_ENV=development
+ENV PORT=3000
+# HOSTNAME="0.0.0.0" allows connections from outside the container
+ENV HOSTNAME="0.0.0.0"
+
+# Start development server
+# Hot reload works through volume mounts configured in docker-compose.yml
+CMD ["npm", "run", "dev"]

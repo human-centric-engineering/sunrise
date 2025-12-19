@@ -1,0 +1,122 @@
+# Docker Compose configuration for development environment
+# Includes Next.js app with hot-reload and PostgreSQL database
+# Start with: docker-compose up
+# Stop with: docker-compose down
+
+services:
+  # Next.js application (development with hot-reload)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: sunrise-dev
+    ports:
+      - "3000:3000"
+      - "5555:5555"  # Prisma Studio
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      # Prevent node_modules from being overwritten by host
+      - /app/node_modules
+      # Prevent .next from being overwritten by host
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      # Docker: use service name 'db' instead of 'localhost'
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sunrise
+      # better-auth configuration (NOT NextAuth - this project uses better-auth)
+      - BETTER_AUTH_URL=http://localhost:3000
+      - BETTER_AUTH_SECRET=dev-secret-change-in-production-min-32-chars
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sunrise-network
+    command: npm run dev
+
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    container_name: sunrise-db-dev
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=sunrise
+      - POSTGRES_INITDB_ARGS=-E UTF8
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - sunrise-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_dev_data:
+    driver: local
+
+networks:
+  sunrise-network:
+    driver: bridge
+
+# Usage Instructions:
+#
+# FIRST TIME SETUP:
+# ----------------
+# 1. Start the development environment:
+#    docker-compose up
+#
+#    This starts Next.js dev server + PostgreSQL database
+#    Wait for "Ready in X seconds" message
+#
+# 2. IMPORTANT: Run database migrations (in a new terminal):
+#    docker-compose exec web npx prisma migrate dev
+#
+#    This creates the database tables. You only need to do this:
+#    - On first run
+#    - After pulling database schema changes
+#    - When you modify prisma/schema.prisma
+#
+# 3. (Optional) Seed with test data:
+#    docker-compose exec web npm run db:seed
+#
+# 4. Access the app:
+#    - App: http://localhost:3000
+#    - Health: http://localhost:3000/api/health
+#    - Database: localhost:5432 (postgres/postgres/sunrise)
+#
+# DAILY DEVELOPMENT:
+# -----------------
+# Start: docker-compose up
+# Stop: Ctrl+C or docker-compose down
+# Rebuild after dependency changes: docker-compose up --build
+#
+# USEFUL COMMANDS:
+# ---------------
+# Start in background: docker-compose up -d
+# View logs: docker-compose logs -f web
+# View database logs: docker-compose logs -f db
+# Stop and remove volumes: docker-compose down -v
+# Run migrations: docker-compose exec web npx prisma migrate dev
+# Prisma Studio: docker-compose exec web npx prisma studio --browser none --port 5555
+#   Then open: http://localhost:5555
+# Access database CLI: docker-compose exec db psql -U postgres -d sunrise
+# Container shell: docker-compose exec web sh
+#
+# TROUBLESHOOTING:
+# ---------------
+# If you see "relation does not exist" errors:
+#   → Run migrations: docker-compose exec web npx prisma migrate dev
+#
+# If changes aren't appearing:
+#   → Check that hot reload is working (edit a file and save)
+#   → Restart: docker-compose restart web
+#
+# If port 3000 is in use:
+#   → Stop local npm run dev if running
+#   → Or change port in this file: ports: - "3001:3000"

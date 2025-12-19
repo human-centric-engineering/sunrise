@@ -197,6 +197,56 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 5. **Open your browser:**
    - App: http://localhost:3000
    - Health check: http://localhost:3000/api/health
+
+### Quick Start with Docker
+
+If you prefer Docker, the entire development environment (Next.js + PostgreSQL) is containerized and ready to use:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/human-centric-engineering/sunrise.git
+   cd sunrise
+   ```
+
+2. **Start the development environment:**
+   ```bash
+   docker-compose up
+   ```
+
+   The Docker setup:
+   - ✅ Installs all dependencies automatically
+   - ✅ Sets up PostgreSQL database
+   - ✅ Starts Next.js dev server with hot-reload
+   - ✅ Handles all port mapping
+
+3. **Run database migrations** (in a new terminal, first time only):
+   ```bash
+   docker-compose exec web npx prisma migrate dev
+   ```
+
+   This creates the database tables. Run this:
+   - On first setup
+   - After pulling database schema changes
+   - When you modify `prisma/schema.prisma`
+
+4. **(Optional) Seed with test data:**
+   ```bash
+   docker-compose exec web npm run db:seed
+   ```
+
+5. **Access the application:**
+   - App: http://localhost:3000
+   - Database: localhost:5432 (postgres/postgres/sunrise)
+   - Health check: http://localhost:3000/api/health
+
+**Daily development commands:**
+```bash
+docker-compose up              # Start dev environment
+docker-compose down            # Stop all services
+docker-compose logs -f web     # View app logs
+```
+
+**Note:** The Docker development environment uses volume mounts, so changes to your code trigger hot-reload just like `npm run dev` locally.
    - Database GUI: `npm run db:studio`
 
 ### Test Accounts (after seeding)

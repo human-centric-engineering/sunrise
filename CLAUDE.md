@@ -148,12 +148,28 @@ npx prisma generate      # Regenerate Prisma client after schema changes
 # Development environment (includes database)
 docker-compose up                    # Start all services
 docker-compose up --build            # Rebuild and start
+docker-compose up -d                 # Start in background (detached)
 docker-compose down                  # Stop all services
+docker-compose down -v               # Stop and remove volumes
 docker-compose logs -f web           # View app logs
+docker-compose logs -f db            # View database logs
+docker-compose exec web npx prisma migrate dev  # Run migrations in container
+docker-compose exec web npx prisma studio       # Open Prisma Studio
+docker-compose exec db psql -U postgres -d sunrise  # Access database CLI
 
-# Production build
-docker build -t sunrise .            # Build production image
-docker-compose -f docker-compose.prod.yml up -d   # Run production stack
+# Production build and deployment
+docker build -t sunrise:latest .     # Build production image
+docker images sunrise:latest         # Check image size (should be ~150-200MB)
+docker-compose -f docker-compose.prod.yml up -d --build  # Build and start production stack
+docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy  # Run production migrations
+docker-compose -f docker-compose.prod.yml logs -f web     # View production logs
+docker-compose -f docker-compose.prod.yml ps              # Check service health
+docker-compose -f docker-compose.prod.yml down            # Stop production stack
+
+# Maintenance and troubleshooting
+docker system prune -f               # Clean up unused Docker resources
+docker-compose restart web           # Restart app without rebuilding
+curl http://localhost:3000/api/health  # Test health endpoint
 ```
 
 ### Testing
