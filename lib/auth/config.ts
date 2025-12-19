@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { prisma } from '@/lib/db/client'
+import { env } from '@/lib/env'
 
 /**
  * Better Auth Configuration
@@ -14,6 +15,8 @@ import { prisma } from '@/lib/db/client'
  * - DATABASE_URL: PostgreSQL connection string (used by Prisma)
  * - GOOGLE_CLIENT_ID: Google OAuth client ID (optional)
  * - GOOGLE_CLIENT_SECRET: Google OAuth client secret (optional)
+ *
+ * @see .context/environment/reference.md for complete environment variable reference
  */
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
@@ -21,10 +24,10 @@ export const auth = betterAuth({
   }),
 
   // Base URL for the application
-  baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
+  baseURL: env.BETTER_AUTH_URL,
 
   // Secret for JWT signing
-  secret: process.env.BETTER_AUTH_SECRET,
+  secret: env.BETTER_AUTH_SECRET,
 
   // Enable email and password authentication
   emailAndPassword: {
@@ -35,9 +38,9 @@ export const auth = betterAuth({
   // Social authentication providers
   socialProviders: {
     google: {
-      clientId: process.env.GOOGLE_CLIENT_ID || '',
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-      enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      clientId: env.GOOGLE_CLIENT_ID || '',
+      clientSecret: env.GOOGLE_CLIENT_SECRET || '',
+      enabled: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
     },
   },
 

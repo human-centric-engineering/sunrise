@@ -58,6 +58,15 @@ PostgreSQL schema, Prisma models, and data patterns. Includes:
 
 **Use When**: Modifying database schema, creating models, running migrations
 
+### ⚙️ [Environment](./environment/overview.md)
+Environment variable configuration, validation, and management. Includes:
+- [Overview](./environment/overview.md) - Setup guide, patterns, and troubleshooting
+- [Reference](./environment/reference.md) - Complete variable documentation with examples
+
+**Use When**: Setting up new environments, configuring deployment, adding new variables, troubleshooting configuration issues
+
+**Key Features**: Zod validation, type-safe access, fail-fast startup behavior
+
 ### 📋 [Guidelines](./guidelines.md)
 Development workflow, testing, deployment, and operational procedures.
 
@@ -98,7 +107,8 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 | Build API endpoint | api/endpoints.md | api/headers.md, database/models.md |
 | Modify database | database/schema.md | database/migrations.md |
 | Add auth provider | auth/integration.md | auth/security.md |
-| Deploy application | guidelines.md | architecture/overview.md |
+| Configure environment | environment/overview.md | environment/reference.md |
+| Deploy application | guidelines.md | architecture/overview.md, environment/overview.md |
 
 ## Technology Stack
 

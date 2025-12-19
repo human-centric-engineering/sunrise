@@ -4,11 +4,14 @@
  * Provides custom error classes and centralized error handling for API routes.
  * All API routes should use these error classes and the handleAPIError function
  * to ensure consistent error responses.
+ *
+ * @see .context/api/errors.md for error handling patterns
  */
 
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { errorResponse } from './responses'
+import { env } from '@/lib/env'
 
 /**
  * Error code constants for consistent error handling across the API
@@ -153,7 +156,7 @@ export class NotFoundError extends APIError {
  */
 export function handleAPIError(error: unknown): Response {
   // Log error in development for debugging
-  if (process.env.NODE_ENV === 'development') {
+  if (env.NODE_ENV === 'development') {
     console.error('API Error:', error)
   }
 
@@ -222,7 +225,7 @@ export function handleAPIError(error: unknown): Response {
       code: ErrorCodes.INTERNAL_ERROR,
       status: 500,
       details:
-        process.env.NODE_ENV === 'development'
+        env.NODE_ENV === 'development'
           ? { code: error.code, message: error.message }
           : undefined,
     })
@@ -233,7 +236,7 @@ export function handleAPIError(error: unknown): Response {
     return errorResponse('Invalid data format', {
       code: ErrorCodes.VALIDATION_ERROR,
       status: 400,
-      details: process.env.NODE_ENV === 'development' ? { message: error.message } : undefined,
+      details: env.NODE_ENV === 'development' ? { message: error.message } : undefined,
     })
   }
 
@@ -244,7 +247,7 @@ export function handleAPIError(error: unknown): Response {
     code: ErrorCodes.INTERNAL_ERROR,
     status: 500,
     details:
-      process.env.NODE_ENV === 'development' && error instanceof Error
+      env.NODE_ENV === 'development' && error instanceof Error
         ? { stack: error.stack }
         : undefined,
   })
