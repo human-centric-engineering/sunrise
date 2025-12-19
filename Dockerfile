@@ -14,20 +14,19 @@ WORKDIR /app
 # .npmrc contains legacy-peer-deps=true to handle better-auth peer dependency warnings
 COPY package.json package-lock.json* .npmrc ./
 
+# Copy Prisma schema BEFORE npm ci
+# This is required because the postinstall script runs "prisma generate"
+COPY prisma ./prisma
+
 # Install dependencies
+# The postinstall script will run "prisma generate" automatically
 RUN npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-
-# Copy Prisma schema BEFORE copying rest of source
-# This allows Docker to cache Prisma generation separately
-COPY prisma ./prisma
-
-# Generate Prisma Client
-RUN npx prisma generate
+COPY --from=deps /app/prisma ./prisma
 
 # Copy application source
 COPY . .
