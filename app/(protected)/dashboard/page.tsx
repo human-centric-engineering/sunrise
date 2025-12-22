@@ -1,7 +1,7 @@
-import { getServerSession } from '@/lib/auth/utils'
-import { clearInvalidSession } from '@/lib/auth/clear-session'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { LogoutButton } from '@/components/auth/logout-button'
+import { getServerSession } from '@/lib/auth/utils';
+import { clearInvalidSession } from '@/lib/auth/clear-session';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { LogoutButton } from '@/components/auth/logout-button';
 
 /**
  * Dashboard Page
@@ -11,15 +11,15 @@ import { LogoutButton } from '@/components/auth/logout-button'
  */
 export default async function DashboardPage() {
   // Get the current user session
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   // Clear invalid session cookie and redirect if not authenticated
   // This prevents infinite redirect loops when user is deleted but cookie remains
   if (!session) {
-    clearInvalidSession('/dashboard')
+    clearInvalidSession('/dashboard');
   }
 
-  const { user } = session
+  const { user } = session;
 
   return (
     <div className="space-y-6">
@@ -31,51 +31,37 @@ export default async function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle>Welcome, {user.name}!</CardTitle>
-          <CardDescription>
-            You are successfully authenticated
-          </CardDescription>
+          <CardDescription>You are successfully authenticated</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <div className="flex items-center justify-between py-2 border-b">
-              <span className="text-sm font-medium text-muted-foreground">
-                Name
-              </span>
+            <div className="flex items-center justify-between border-b py-2">
+              <span className="text-muted-foreground text-sm font-medium">Name</span>
               <span className="text-sm">{user.name}</span>
             </div>
 
-            <div className="flex items-center justify-between py-2 border-b">
-              <span className="text-sm font-medium text-muted-foreground">
-                Email
-              </span>
+            <div className="flex items-center justify-between border-b py-2">
+              <span className="text-muted-foreground text-sm font-medium">Email</span>
               <span className="text-sm">{user.email}</span>
             </div>
 
-            <div className="flex items-center justify-between py-2 border-b">
-              <span className="text-sm font-medium text-muted-foreground">
-                Email Verified
-              </span>
-              <span className="text-sm">
-                {user.emailVerified ? 'Yes' : 'No'}
-              </span>
+            <div className="flex items-center justify-between border-b py-2">
+              <span className="text-muted-foreground text-sm font-medium">Email Verified</span>
+              <span className="text-sm">{user.emailVerified ? 'Yes' : 'No'}</span>
             </div>
 
-            <div className="flex items-center justify-between py-2 border-b">
-              <span className="text-sm font-medium text-muted-foreground">
-                Role
-              </span>
+            <div className="flex items-center justify-between border-b py-2">
+              <span className="text-muted-foreground text-sm font-medium">Role</span>
               <span className="text-sm">{user.role || 'USER'}</span>
             </div>
 
             <div className="flex items-center justify-between py-2">
-              <span className="text-sm font-medium text-muted-foreground">
-                User ID
-              </span>
-              <span className="text-sm font-mono text-xs">{user.id}</span>
+              <span className="text-muted-foreground text-sm font-medium">User ID</span>
+              <span className="font-mono text-sm text-xs">{user.id}</span>
             </div>
           </div>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

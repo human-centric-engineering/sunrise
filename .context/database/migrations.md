@@ -137,6 +137,7 @@ npx prisma migrate dev --name add_user_role
 ```
 
 **Output**:
+
 ```
 Prisma schema loaded from prisma/schema.prisma
 Datasource "db": PostgreSQL database "sunrise", schema "public" at "localhost:5432"
@@ -244,6 +245,7 @@ model User {
 ```
 
 **Manual Rename**:
+
 ```bash
 # 1. Create empty migration
 npx prisma migrate dev --name rename_user_name --create-only
@@ -345,11 +347,13 @@ main()
 ```
 
 **Run Seed**:
+
 ```bash
 npx prisma db seed
 ```
 
 **Configure in package.json**:
+
 ```json
 {
   "prisma": {
@@ -424,11 +428,13 @@ For large tables, some migrations may lock tables and cause downtime.
 **Safe Patterns**:
 
 1. **Add Optional Column** (no lock):
+
 ```sql
 ALTER TABLE users ADD COLUMN bio TEXT;
 ```
 
 2. **Add Index Concurrently** (no lock):
+
 ```sql
 CREATE INDEX CONCURRENTLY "users_role_idx" ON "users"("role");
 ```
@@ -514,6 +520,7 @@ npx prisma migrate dev --name update
 ### 5. Never Edit Applied Migrations
 
 Once a migration is applied and committed:
+
 - **DO NOT** edit the migration SQL
 - **DO NOT** delete migration files
 - **DO** create a new migration to fix issues
@@ -573,8 +580,10 @@ npx prisma generate
 ## Decision History & Trade-offs
 
 ### Prisma Migrate vs. Manual Migrations
+
 **Decision**: Prisma Migrate (official tooling)
 **Rationale**:
+
 - Integrated with Prisma schema
 - Type-safe migrations
 - Migration history tracking
@@ -583,16 +592,20 @@ npx prisma generate
 **Trade-offs**: Less control than raw SQL, learning curve for complex scenarios
 
 ### db push vs. migrate dev
+
 **Decision**: Use `migrate dev` for tracked changes, `db push` for prototyping only
 **Rationale**:
+
 - `migrate dev`: Creates versioned migrations (production-ready)
 - `db push`: Quick iteration without migration files (prototype only)
 
 **Trade-offs**: `db push` can be faster during early development but loses history
 
 ### Seed Data Strategy
+
 **Decision**: Seed file for initial admin user, minimal test data
 **Rationale**:
+
 - Admin user needed for first login
 - Test data useful for development
 - Production uses real data, not seeds

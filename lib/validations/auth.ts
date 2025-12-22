@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod';
 
 /**
  * Password validation schema
@@ -20,10 +20,7 @@ export const passwordSchema = z
   .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
   .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
   .regex(/[0-9]/, 'Password must contain at least one number')
-  .regex(
-    /[^A-Za-z0-9]/,
-    'Password must contain at least one special character'
-  )
+  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character');
 
 /**
  * Email validation schema
@@ -40,26 +37,28 @@ export const emailSchema = z
   .email('Invalid email address')
   .max(255, 'Email must be less than 255 characters')
   .toLowerCase()
-  .trim()
+  .trim();
 
 /**
  * Sign-up validation schema
  *
  * Validates user registration data
  */
-export const signUpSchema = z.object({
-  email: emailSchema,
-  password: passwordSchema,
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword'],
-})
+export const signUpSchema = z
+  .object({
+    email: emailSchema,
+    password: passwordSchema,
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .max(100, 'Name must be less than 100 characters')
+      .trim(),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
 
 /**
  * Sign-in validation schema
@@ -68,11 +67,8 @@ export const signUpSchema = z.object({
  */
 export const signInSchema = z.object({
   email: emailSchema,
-  password: z
-    .string()
-    .min(1, 'Password is required')
-    .max(100), // Don't validate password strength on login
-})
+  password: z.string().min(1, 'Password is required').max(100), // Don't validate password strength on login
+});
 
 /**
  * Change password validation schema
@@ -92,7 +88,7 @@ export const changePasswordSchema = z
   .refine((data) => data.currentPassword !== data.newPassword, {
     message: 'New password must be different from current password',
     path: ['newPassword'],
-  })
+  });
 
 /**
  * Password reset request validation schema
@@ -101,7 +97,7 @@ export const changePasswordSchema = z
  */
 export const resetPasswordRequestSchema = z.object({
   email: emailSchema,
-})
+});
 
 /**
  * Password reset validation schema
@@ -117,7 +113,7 @@ export const resetPasswordSchema = z
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
     path: ['confirmPassword'],
-  })
+  });
 
 /**
  * Email verification schema
@@ -126,17 +122,15 @@ export const resetPasswordSchema = z
  */
 export const verifyEmailSchema = z.object({
   token: z.string().min(1, 'Verification token is required'),
-})
+});
 
 /**
  * TypeScript types inferred from schemas
  * Use these for type-safe form handling
  */
-export type SignUpInput = z.infer<typeof signUpSchema>
-export type SignInInput = z.infer<typeof signInSchema>
-export type ChangePasswordInput = z.infer<typeof changePasswordSchema>
-export type ResetPasswordRequestInput = z.infer<
-  typeof resetPasswordRequestSchema
->
-export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>
-export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>
+export type SignUpInput = z.infer<typeof signUpSchema>;
+export type SignInInput = z.infer<typeof signInSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ResetPasswordRequestInput = z.infer<typeof resetPasswordRequestSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;

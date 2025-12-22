@@ -20,41 +20,45 @@
  *   - role: User's role (optional, defaults to USER)
  */
 
-import { NextRequest } from 'next/server'
-import { headers } from 'next/headers'
-import { randomBytes } from 'crypto'
-import { auth } from '@/lib/auth/config'
-import { prisma } from '@/lib/db/client'
-import { successResponse, paginatedResponse, errorResponse } from '@/lib/api/responses'
-import { UnauthorizedError, ForbiddenError, handleAPIError, ErrorCodes } from '@/lib/api/errors'
-import { validateRequestBody, validateQueryParams, parsePaginationParams } from '@/lib/api/validation'
-import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user'
+import { NextRequest } from 'next/server';
+import { headers } from 'next/headers';
+import { randomBytes } from 'crypto';
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { successResponse, paginatedResponse, errorResponse } from '@/lib/api/responses';
+import { UnauthorizedError, ForbiddenError, handleAPIError, ErrorCodes } from '@/lib/api/errors';
+import {
+  validateRequestBody,
+  validateQueryParams,
+  parsePaginationParams,
+} from '@/lib/api/validation';
+import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
 
 /**
  * Type definitions for better-auth signup API responses
  */
 interface BetterAuthUser {
-  id: string
-  name: string
-  email: string
-  emailVerified: boolean
-  createdAt: string
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  createdAt: string;
 }
 
 interface BetterAuthSession {
-  token: string
-  userId: string
-  expiresAt: string
+  token: string;
+  userId: string;
+  expiresAt: string;
 }
 
 interface BetterAuthSignupResponse {
-  user: BetterAuthUser
-  session?: BetterAuthSession
+  user: BetterAuthUser;
+  session?: BetterAuthSession;
 }
 
 interface BetterAuthError {
-  message?: string
-  code?: string
+  message?: string;
+  code?: string;
 }
 
 /**
@@ -75,21 +79,21 @@ interface BetterAuthError {
 export async function GET(request: NextRequest) {
   try {
     // Authenticate and check role
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required')
+      throw new ForbiddenError('Admin access required');
     }
 
     // Validate and parse query params
-    const { searchParams } = request.nextUrl
-    const query = validateQueryParams(searchParams, listUsersQuerySchema)
-    const { page, limit, skip } = parsePaginationParams(searchParams)
+    const { searchParams } = request.nextUrl;
+    const query = validateQueryParams(searchParams, listUsersQuerySchema);
+    const { page, limit, skip } = parsePaginationParams(searchParams);
 
     // Build Prisma where clause for search
     const where = query.search
@@ -99,7 +103,7 @@ export async function GET(request: NextRequest) {
             { email: { contains: query.search, mode: 'insensitive' as const } },
           ],
         }
-      : {}
+      : {};
 
     // Execute queries in parallel for performance
     const [users, total] = await Promise.all([
@@ -118,12 +122,12 @@ export async function GET(request: NextRequest) {
         orderBy: { [query.sortBy]: query.sortOrder },
       }),
       prisma.user.count({ where }),
-    ])
+    ]);
 
     // Return paginated response
-    return paginatedResponse(users, { page, limit, total })
+    return paginatedResponse(users, { page, limit, total });
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 
@@ -167,65 +171,59 @@ export async function POST(request: NextRequest) {
     // ============================================================================
 
     // 1. Authenticate and authorize (admin only)
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required')
+      throw new ForbiddenError('Admin access required');
     }
 
     // 2. Validate request body
-    const body = await validateRequestBody(request, createUserSchema)
+    const body = await validateRequestBody(request, createUserSchema);
 
     // 3. Generate secure random password if not provided
-    const password = body.password || randomBytes(16).toString('hex')
+    const password = body.password || randomBytes(16).toString('hex');
 
     // 4. Create user via better-auth signup API (guarantees compatibility)
-    const signupResponse = await fetch(
-      `${process.env.BETTER_AUTH_URL}/api/auth/sign-up/email`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: body.name,
-          email: body.email,
-          password: password,
-        }),
-      }
-    )
+    const signupResponse = await fetch(`${process.env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: body.name,
+        email: body.email,
+        password: password,
+      }),
+    });
 
     if (!signupResponse.ok) {
       const error = (await signupResponse
         .json()
-        .catch(() => ({}) as BetterAuthError)) as BetterAuthError
+        .catch(() => ({}) as BetterAuthError)) as BetterAuthError;
 
       // Handle duplicate email or other signup errors
-      if (
-        error.message?.includes('already exists') ||
-        error.message?.includes('duplicate')
-      ) {
+      if (error.message?.includes('already exists') || error.message?.includes('duplicate')) {
         return errorResponse('Email already in use', {
           code: ErrorCodes.EMAIL_TAKEN,
           status: 400,
-        })
+        });
       }
 
-      throw new Error(error.message || 'User creation failed')
+      throw new Error(error.message || 'User creation failed');
     }
 
-    const signupData = (await signupResponse.json()) as BetterAuthSignupResponse
-    const createdUser = signupData.user
+    const signupData = (await signupResponse.json()) as BetterAuthSignupResponse;
+    const createdUser = signupData.user;
 
     // 5. Update role if different from default (signup creates USER role)
     if (body.role && body.role !== 'USER') {
       await prisma.user.update({
         where: { id: createdUser.id },
         data: { role: body.role },
-      })
+      });
     }
 
     // 6. Clean up the session created by signup (we don't want admin logged in as new user)
@@ -236,7 +234,7 @@ export async function POST(request: NextRequest) {
         })
         .catch(() => {
           // Ignore if session doesn't exist or was already cleaned up
-        })
+        });
     }
 
     // 7. Return created user
@@ -251,8 +249,8 @@ export async function POST(request: NextRequest) {
       },
       undefined,
       { status: 201 }
-    )
+    );
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }

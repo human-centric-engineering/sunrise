@@ -8,7 +8,7 @@
  * redirects to login, preventing infinite redirect loops.
  */
 
-import { redirect } from 'next/navigation'
+import { redirect } from 'next/navigation';
 
 /**
  * Clear the better-auth session cookie and redirect to login
@@ -40,6 +40,6 @@ export function clearInvalidSession(returnUrl: string = '/'): never {
   // Redirect to the clear-session endpoint which will:
   // 1. Delete the invalid session cookies
   // 2. Redirect to login with the return URL
-  const clearSessionUrl = `/api/auth/clear-session?returnUrl=${encodeURIComponent(returnUrl)}`
-  redirect(clearSessionUrl)
+  const clearSessionUrl = `/api/auth/clear-session?returnUrl=${encodeURIComponent(returnUrl)}`;
+  redirect(clearSessionUrl);
 }

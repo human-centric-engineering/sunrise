@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod';
 
 /**
  * Environment Variable Validation Schema
@@ -53,14 +53,12 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().email().optional(),
 
   // App Configuration
-  NODE_ENV: z
-    .enum(['development', 'production', 'test'])
-    .default('development'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   NEXT_PUBLIC_APP_URL: z.string().url({
     message:
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
-})
+});
 
 /**
  * Validated environment variables with type safety.
@@ -71,17 +69,17 @@ const envSchema = z.object({
  * const dbUrl = env.DATABASE_URL // Type-safe!
  * ```
  */
-export type Env = z.infer<typeof envSchema>
+export type Env = z.infer<typeof envSchema>;
 
 // Parse and validate environment variables
-const parsed = envSchema.safeParse(process.env)
+const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:')
-  console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2))
+  console.error('❌ Invalid environment variables:');
+  console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2));
   throw new Error(
     'Environment validation failed - check configuration above or see .context/environment/overview.md'
-  )
+  );
 }
 
 /**
@@ -99,9 +97,9 @@ if (!parsed.success) {
  * const isDev = env.NODE_ENV === 'development'
  * ```
  */
-export const env = parsed.data
+export const env = parsed.data;
 
 // Log successful validation in development
 if (env.NODE_ENV === 'development') {
-  console.log('✅ Environment variables validated successfully')
+  console.log('✅ Environment variables validated successfully');
 }

@@ -1,13 +1,7 @@
-import Link from 'next/link'
-import { Suspense } from 'react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { SignupForm } from '@/components/forms/signup-form'
+import Link from 'next/link';
+import { Suspense } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { SignupForm } from '@/components/forms/signup-form';
 
 /**
  * Signup Page
@@ -22,9 +16,7 @@ export default function SignupPage() {
     <Card>
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
-        <CardDescription>
-          Enter your information to create your account
-        </CardDescription>
+        <CardDescription>Enter your information to create your account</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <Suspense fallback={<div>Loading...</div>}>
@@ -33,17 +25,12 @@ export default function SignupPage() {
 
         {/* Login Link */}
         <div className="text-center text-sm">
-          <span className="text-muted-foreground">
-            Already have an account?{' '}
-          </span>
-          <Link
-            href="/login"
-            className="text-primary hover:underline font-medium"
-          >
+          <span className="text-muted-foreground">Already have an account? </span>
+          <Link href="/login" className="text-primary font-medium hover:underline">
             Sign in
           </Link>
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }

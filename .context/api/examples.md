@@ -1,6 +1,7 @@
 # API Client Examples
 
 > **Implementation Status:** December 2025
+>
 > - ✅ **Implemented** - Patterns from actual codebase (with file references)
 > - 📋 **Guidance** - Best practice examples for future development
 
@@ -94,7 +95,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3)
       const waitSeconds = retryAfter ? parseInt(retryAfter) : 60;
 
       console.log(`Rate limited. Retrying in ${waitSeconds}s...`);
-      await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
       continue;
     }
 
@@ -358,19 +359,19 @@ These patterns are used in the implemented API routes and should be followed for
 ✅ **From:** `app/api/v1/users/me/route.ts`
 
 ```typescript
-import { NextRequest } from 'next/server'
-import { headers } from 'next/headers'
-import { auth } from '@/lib/auth/config'
-import { prisma } from '@/lib/db/client'
-import { successResponse } from '@/lib/api/responses'
-import { UnauthorizedError, handleAPIError } from '@/lib/api/errors'
+import { NextRequest } from 'next/server';
+import { headers } from 'next/headers';
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { successResponse } from '@/lib/api/responses';
+import { UnauthorizedError, handleAPIError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
     // 1. Authenticate
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
-    if (!session) throw new UnauthorizedError()
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
+    if (!session) throw new UnauthorizedError();
 
     // 2. Business logic with Prisma
     const user = await prisma.user.findUnique({
@@ -385,15 +386,15 @@ export async function GET(request: NextRequest) {
         createdAt: true,
         updatedAt: true,
       },
-    })
+    });
 
-    if (!user) throw new UnauthorizedError('User not found')
+    if (!user) throw new UnauthorizedError('User not found');
 
     // 3. Return standardized response
-    return successResponse(user)
+    return successResponse(user);
   } catch (error) {
     // 4. Centralized error handling
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 ```
@@ -403,28 +404,28 @@ export async function GET(request: NextRequest) {
 ✅ **From:** `app/api/v1/users/route.ts`
 
 ```typescript
-import { headers } from 'next/headers'
-import { auth } from '@/lib/auth/config'
-import { UnauthorizedError, ForbiddenError } from '@/lib/api/errors'
+import { headers } from 'next/headers';
+import { auth } from '@/lib/auth/config';
+import { UnauthorizedError, ForbiddenError } from '@/lib/api/errors';
 
 export async function GET(request: NextRequest) {
   try {
     // Authentication check
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     // Authorization check (role-based)
     if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required')
+      throw new ForbiddenError('Admin access required');
     }
 
     // ... route logic
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 ```
@@ -434,31 +435,35 @@ export async function GET(request: NextRequest) {
 ✅ **From:** `app/api/v1/users/route.ts` and `app/api/v1/users/me/route.ts`
 
 ```typescript
-import { validateRequestBody, validateQueryParams, parsePaginationParams } from '@/lib/api/validation'
-import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user'
+import {
+  validateRequestBody,
+  validateQueryParams,
+  parsePaginationParams,
+} from '@/lib/api/validation';
+import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
 
 // Validate request body (POST/PATCH)
 export async function POST(request: NextRequest) {
   try {
-    const body = await validateRequestBody(request, createUserSchema)
+    const body = await validateRequestBody(request, createUserSchema);
     // body is now typed and validated
 
     // ... use validated data
   } catch (error) {
-    return handleAPIError(error) // Automatically returns 400 with field errors
+    return handleAPIError(error); // Automatically returns 400 with field errors
   }
 }
 
 // Validate query parameters (GET)
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = request.nextUrl
-    const query = validateQueryParams(searchParams, listUsersQuerySchema)
-    const { page, limit, skip } = parsePaginationParams(searchParams)
+    const { searchParams } = request.nextUrl;
+    const query = validateQueryParams(searchParams, listUsersQuerySchema);
+    const { page, limit, skip } = parsePaginationParams(searchParams);
 
     // query, page, limit, skip are now validated
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 ```
@@ -468,17 +473,17 @@ export async function GET(request: NextRequest) {
 ✅ **From:** `app/api/v1/users/route.ts` (lines 78-97)
 
 ```typescript
-import { paginatedResponse } from '@/lib/api/responses'
-import { parsePaginationParams } from '@/lib/api/validation'
+import { paginatedResponse } from '@/lib/api/responses';
+import { parsePaginationParams } from '@/lib/api/validation';
 
 export async function GET(request: NextRequest) {
   try {
     // 1. Parse and validate pagination params
-    const { searchParams } = request.nextUrl
-    const { page, limit, skip } = parsePaginationParams(searchParams)
+    const { searchParams } = request.nextUrl;
+    const { page, limit, skip } = parsePaginationParams(searchParams);
 
     // 2. Build where clause (example with search)
-    const query = validateQueryParams(searchParams, listUsersQuerySchema)
+    const query = validateQueryParams(searchParams, listUsersQuerySchema);
     const where = query.search
       ? {
           OR: [
@@ -486,7 +491,7 @@ export async function GET(request: NextRequest) {
             { email: { contains: query.search, mode: 'insensitive' as const } },
           ],
         }
-      : {}
+      : {};
 
     // 3. Execute queries in parallel for performance
     const [users, total] = await Promise.all([
@@ -498,12 +503,12 @@ export async function GET(request: NextRequest) {
         orderBy: { [query.sortBy]: query.sortOrder },
       }),
       prisma.user.count({ where }),
-    ])
+    ]);
 
     // 4. Return paginated response
-    return paginatedResponse(users, { page, limit, total })
+    return paginatedResponse(users, { page, limit, total });
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 ```
@@ -513,12 +518,17 @@ export async function GET(request: NextRequest) {
 ✅ **From:** `lib/api/errors.ts`
 
 ```typescript
-import { UnauthorizedError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors'
+import {
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/lib/api/errors';
 
 // Use custom error classes for better error handling
-if (!session) throw new UnauthorizedError()
-if (session.user.role !== 'ADMIN') throw new ForbiddenError('Admin access required')
-if (!user) throw new NotFoundError('User not found')
+if (!session) throw new UnauthorizedError();
+if (session.user.role !== 'ADMIN') throw new ForbiddenError('Admin access required');
+if (!user) throw new NotFoundError('User not found');
 
 // handleAPIError() will automatically:
 // - Convert to proper HTTP status codes (401, 403, 404)
@@ -531,21 +541,21 @@ if (!user) throw new NotFoundError('User not found')
 ✅ **From:** `lib/api/responses.ts`
 
 ```typescript
-import { successResponse, errorResponse, paginatedResponse } from '@/lib/api/responses'
+import { successResponse, errorResponse, paginatedResponse } from '@/lib/api/responses';
 
 // Success response
-return successResponse(userData)
+return successResponse(userData);
 // { success: true, data: userData }
 
 // Success with custom status
-return successResponse(newUser, undefined, { status: 201 })
+return successResponse(newUser, undefined, { status: 201 });
 
 // Paginated response
-return paginatedResponse(users, { page, limit, total })
+return paginatedResponse(users, { page, limit, total });
 // { success: true, data: users, meta: { page, limit, total, totalPages } }
 
 // Error response (rarely used - prefer custom error classes)
-return errorResponse('Something went wrong', { code: 'CUSTOM_ERROR', status: 500 })
+return errorResponse('Something went wrong', { code: 'CUSTOM_ERROR', status: 500 });
 ```
 
 ## Type-Safe API Client
@@ -556,18 +566,20 @@ return errorResponse('Something went wrong', { code: 'CUSTOM_ERROR', status: 500
 
 ```typescript
 // lib/api-client.ts
-type APIResponse<T> = {
-  success: true;
-  data: T;
-  meta?: Record<string, any>;
-} | {
-  success: false;
-  error: {
-    message: string;
-    code?: string;
-    details?: any;
-  };
-};
+type APIResponse<T> =
+  | {
+      success: true;
+      data: T;
+      meta?: Record<string, any>;
+    }
+  | {
+      success: false;
+      error: {
+        message: string;
+        code?: string;
+        details?: any;
+      };
+    };
 
 export class APIClient {
   private baseURL: string;
@@ -576,10 +588,7 @@ export class APIClient {
     this.baseURL = baseURL;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options?: RequestInit
-  ): Promise<T> {
+  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       ...options,
       headers: {
@@ -638,8 +647,7 @@ import { api } from './api-client';
 export const userAPI = {
   getCurrentUser: () => api.get<User>('/users/me'),
 
-  updateCurrentUser: (data: UpdateUserInput) =>
-    api.patch<User>('/users/me', data),
+  updateCurrentUser: (data: UpdateUserInput) => api.patch<User>('/users/me', data),
 
   listUsers: (params: { page?: number; limit?: number; search?: string }) => {
     const query = new URLSearchParams(
@@ -648,9 +656,7 @@ export const userAPI = {
         .map(([k, v]) => [k, String(v)])
     );
 
-    return api.get<{ data: User[]; meta: PaginationMeta }>(
-      `/users?${query}`
-    );
+    return api.get<{ data: User[]; meta: PaginationMeta }>(`/users?${query}`);
   },
 
   getUserById: (id: string) => api.get<User>(`/users/${id}`),
@@ -687,7 +693,7 @@ class SunriseClient {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`, // If API keys implemented
+        Authorization: `Bearer ${this.apiKey}`, // If API keys implemented
         ...options?.headers,
       },
     });
@@ -700,19 +706,14 @@ class SunriseClient {
   }
 
   async getUsers(params?: { page?: number; limit?: number }) {
-    const query = params
-      ? `?${new URLSearchParams(params as Record<string, string>)}`
-      : '';
+    const query = params ? `?${new URLSearchParams(params as Record<string, string>)}` : '';
 
     return this.request(`/api/v1/users${query}`);
   }
 }
 
 // Usage
-const client = new SunriseClient(
-  process.env.API_KEY!,
-  'https://api.sunrise.com'
-);
+const client = new SunriseClient(process.env.API_KEY!, 'https://api.sunrise.com');
 
 const users = await client.getUsers({ page: 1, limit: 50 });
 ```
@@ -765,11 +766,7 @@ export async function handleAPIResponse<T>(response: Response): Promise<T> {
   const result = await response.json();
 
   if (!result.success) {
-    throw new APIError(
-      result.error.message,
-      result.error.code,
-      response.status
-    );
+    throw new APIError(result.error.message, result.error.code, response.status);
   }
 
   return result.data;
@@ -850,15 +847,19 @@ export class APIErrorBoundary extends React.Component<Props, State> {
 📋 **Guidance** - Documentation of design choices and architectural trade-offs
 
 ### Client-Side vs. Server Components
+
 **Decision**: Provide both fetch examples and React hooks
 **Rationale**:
+
 - Server components: Direct API calls in component (simpler)
 - Client components: Need hooks for state management
 - Both patterns valid depending on use case
 
 ### Custom Hooks vs. Libraries (React Query, SWR)
+
 **Decision**: Show custom hooks as foundation
 **Rationale**:
+
 - No additional dependencies
 - Educational value
 - Easy to upgrade to library later
@@ -867,8 +868,10 @@ export class APIErrorBoundary extends React.Component<Props, State> {
 **Trade-offs**: Custom hooks lack advanced features (caching, deduplication, optimistic updates)
 
 ### API Client Class vs. Plain Fetch
+
 **Decision**: Provide both patterns
 **Rationale**:
+
 - Plain fetch: Simple, no abstraction
 - Client class: DRY, type safety, error handling
 - Different complexity needs
@@ -889,7 +892,7 @@ export async function fetchWithDedup<T>(url: string): Promise<T> {
   }
 
   const promise = fetch(url, { credentials: 'include' })
-    .then(r => r.json())
+    .then((r) => r.json())
     .finally(() => requestCache.delete(url));
 
   requestCache.set(url, promise);

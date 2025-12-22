@@ -19,9 +19,7 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: process.env.NODE_ENV === 'development'
-      ? ['query', 'error', 'warn']
-      : ['error'],
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   });
 
 if (process.env.NODE_ENV !== 'production') {
@@ -70,7 +68,7 @@ const user = await prisma.user.create({
     },
   },
   include: {
-    accounts: true,  // Return created user with accounts
+    accounts: true, // Return created user with accounts
   },
 });
 
@@ -80,7 +78,7 @@ const users = await prisma.user.createMany({
     { name: 'User 1', email: 'user1@example.com' },
     { name: 'User 2', email: 'user2@example.com' },
   ],
-  skipDuplicates: true,  // Skip on unique constraint violations
+  skipDuplicates: true, // Skip on unique constraint violations
 });
 ```
 
@@ -118,14 +116,8 @@ const users = await prisma.user.findMany({
 // Complex filtering with AND/OR
 const users = await prisma.user.findMany({
   where: {
-    OR: [
-      { email: { contains: 'gmail.com' } },
-      { email: { contains: 'yahoo.com' } },
-    ],
-    AND: [
-      { role: 'USER' },
-      { emailVerified: { not: null } },
-    ],
+    OR: [{ email: { contains: 'gmail.com' } }, { email: { contains: 'yahoo.com' } }],
+    AND: [{ role: 'USER' }, { emailVerified: { not: null } }],
   },
 });
 ```
@@ -138,14 +130,14 @@ const user = await prisma.user.update({
   where: { id: 'user-id' },
   data: {
     name: 'Jane Doe',
-    updatedAt: new Date(),  // Automatic with @updatedAt
+    updatedAt: new Date(), // Automatic with @updatedAt
   },
 });
 
 // Update many
 const result = await prisma.user.updateMany({
   where: { emailVerified: null },
-  data: { role: 'USER' },  // Batch update
+  data: { role: 'USER' }, // Batch update
 });
 
 console.log(`Updated ${result.count} users`);
@@ -237,7 +229,7 @@ const users = await prisma.user.findMany({
   include: {
     sessions: {
       where: {
-        expires: { gt: new Date() },  // Only active sessions
+        expires: { gt: new Date() }, // Only active sessions
       },
       orderBy: { createdAt: 'desc' },
       take: 5,
@@ -344,9 +336,9 @@ await prisma.$transaction(
     // Transaction logic
   },
   {
-    isolationLevel: 'Serializable',  // Highest isolation
-    maxWait: 5000,  // Max time to wait for transaction start
-    timeout: 10000,  // Max transaction duration
+    isolationLevel: 'Serializable', // Highest isolation
+    maxWait: 5000, // Max time to wait for transaction start
+    timeout: 10000, // Max transaction duration
   }
 );
 ```
@@ -379,6 +371,7 @@ await prisma.$executeRaw`
 ```
 
 **When to Use Raw SQL**:
+
 - Complex queries Prisma doesn't support well
 - Performance-critical queries needing specific SQL
 - Database-specific features (CTEs, window functions)
@@ -433,6 +426,7 @@ model User {
 ```
 
 **Two-Layer Validation**:
+
 1. **Zod (Application)**: Validate input format and business rules
 2. **Prisma/PostgreSQL (Database)**: Enforce data integrity constraints
 
@@ -559,9 +553,13 @@ export async function paginate<T>(
 }
 
 // Usage
-const result = await paginate(prisma.user, { page: 1, limit: 20 }, {
-  role: 'USER',
-});
+const result = await paginate(
+  prisma.user,
+  { page: 1, limit: 20 },
+  {
+    role: 'USER',
+  }
+);
 ```
 
 ## Performance Optimization
@@ -602,13 +600,13 @@ const users = await prisma.user.findMany({
 // Use indexes for filtering
 const users = await prisma.user.findMany({
   where: {
-    email: 'john@example.com',  // Uses index on email
+    email: 'john@example.com', // Uses index on email
   },
 });
 
 // Avoid computed filtering (can't use index)
 const users = await prisma.user.findMany();
-const filtered = users.filter(u => u.email.includes('@gmail.com'));
+const filtered = users.filter((u) => u.email.includes('@gmail.com'));
 // Better: Use database filtering
 const users = await prisma.user.findMany({
   where: { email: { contains: '@gmail.com' } },
@@ -642,6 +640,7 @@ try {
 ```
 
 **Common Error Codes**:
+
 - `P2002`: Unique constraint violation
 - `P2025`: Record not found
 - `P2003`: Foreign key constraint violation
@@ -650,8 +649,10 @@ try {
 ## Decision History & Trade-offs
 
 ### Repository Pattern vs. Direct Prisma
+
 **Decision**: Provide both patterns, repositories optional
 **Rationale**:
+
 - Repositories: Encapsulate complex queries, provide abstraction
 - Direct Prisma: Simpler for straightforward CRUD
 - Team flexibility
@@ -659,8 +660,10 @@ try {
 **Trade-offs**: Inconsistent patterns if not disciplined
 
 ### Select vs. Include Default
+
 **Decision**: Explicit select for user-facing queries
 **Rationale**:
+
 - Security (never accidentally return passwords)
 - Performance (only fetch needed fields)
 - Clear intent in code

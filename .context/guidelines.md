@@ -67,6 +67,7 @@ NODE_ENV="development"
 ```
 
 **Generate NEXTAUTH_SECRET**:
+
 ```bash
 openssl rand -base64 32
 ```
@@ -157,13 +158,8 @@ npm run validate     # Type check + lint + format check
     }
   },
   "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{json,md}": [
-      "prettier --write"
-    ]
+    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
+    "*.{json,md}": ["prettier --write"]
   }
 }
 ```
@@ -368,6 +364,7 @@ chore: update dependencies
 ```
 
 **Examples**:
+
 ```bash
 git commit -m "feat: add password reset flow"
 git commit -m "fix: correct email validation regex"
@@ -378,17 +375,20 @@ git commit -m "test: add unit tests for auth utilities"
 ### Pull Request Process
 
 1. **Create Feature Branch**:
+
 ```bash
 git checkout -b feature/new-feature
 ```
 
 2. **Make Changes and Commit**:
+
 ```bash
 git add .
 git commit -m "feat: add new feature"
 ```
 
 3. **Push to Remote**:
+
 ```bash
 git push -u origin feature/new-feature
 ```
@@ -404,6 +404,7 @@ git push -u origin feature/new-feature
    - [ ] No merge conflicts
 
 6. **Merge to Main**:
+
 ```bash
 # Squash and merge (recommended)
 # Or rebase and merge
@@ -414,6 +415,7 @@ git push -u origin feature/new-feature
 ### Deployment Checklist
 
 **Pre-Deployment**:
+
 - [ ] All tests pass
 - [ ] Code reviewed and approved
 - [ ] Environment variables configured
@@ -422,6 +424,7 @@ git push -u origin feature/new-feature
 - [ ] Changelog updated
 
 **Deployment Steps**:
+
 - [ ] Build Docker image
 - [ ] Push to container registry
 - [ ] Apply database migrations
@@ -430,6 +433,7 @@ git push -u origin feature/new-feature
 - [ ] Monitor error logs
 
 **Post-Deployment**:
+
 - [ ] Smoke tests passed
 - [ ] Monitor performance metrics
 - [ ] Check error rates
@@ -438,6 +442,7 @@ git push -u origin feature/new-feature
 ### Docker Deployment
 
 **Build Production Image**:
+
 ```bash
 # Build image
 docker build -t sunrise:latest .
@@ -450,6 +455,7 @@ docker push registry.example.com/sunrise:1.0.0
 ```
 
 **Deploy with Docker Compose**:
+
 ```bash
 # Pull latest image
 docker-compose pull
@@ -467,6 +473,7 @@ curl http://localhost:3000/api/health
 ### Platform-Specific Deployment
 
 **Vercel** (Easiest):
+
 ```bash
 # Install Vercel CLI
 npm i -g vercel
@@ -478,6 +485,7 @@ vercel --prod
 ```
 
 **Railway**:
+
 ```bash
 # Install Railway CLI
 npm i -g @railway/cli
@@ -497,6 +505,7 @@ railway up
 ### Environment-Specific Configuration
 
 **Development**:
+
 ```bash
 NODE_ENV=development
 NEXTAUTH_URL=http://localhost:3000
@@ -504,6 +513,7 @@ DATABASE_URL=postgresql://localhost:5432/sunrise_dev
 ```
 
 **Staging**:
+
 ```bash
 NODE_ENV=production
 NEXTAUTH_URL=https://staging.sunrise.com
@@ -511,6 +521,7 @@ DATABASE_URL=postgresql://staging-db:5432/sunrise
 ```
 
 **Production**:
+
 ```bash
 NODE_ENV=production
 NEXTAUTH_URL=https://sunrise.com
@@ -550,6 +561,7 @@ console.log('User logged in');
 ### Error Tracking
 
 **Integrate Sentry** (optional):
+
 ```typescript
 // lib/monitoring/sentry.ts
 import * as Sentry from '@sentry/nextjs';
@@ -627,6 +639,7 @@ npm install -g @next/bundle-analyzer
 ### Common Issues
 
 **Database Connection Fails**:
+
 ```bash
 # Check DATABASE_URL format
 postgresql://user:password@host:5432/database
@@ -639,6 +652,7 @@ npx prisma db pull
 ```
 
 **Build Fails**:
+
 ```bash
 # Clear Next.js cache
 rm -rf .next
@@ -651,6 +665,7 @@ npm run type-check
 ```
 
 **Migrations Fail**:
+
 ```bash
 # Check migration status
 npx prisma migrate status

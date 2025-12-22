@@ -8,25 +8,25 @@
  * GET /api/auth/clear-session?returnUrl=/dashboard
  */
 
-import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers';
+import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
   // Get return URL from query params
-  const { searchParams } = request.nextUrl
-  const returnUrl = searchParams.get('returnUrl') || '/'
+  const { searchParams } = request.nextUrl;
+  const returnUrl = searchParams.get('returnUrl') || '/';
 
   // Get cookie store
-  const cookieStore = await cookies()
+  const cookieStore = await cookies();
 
   // Delete better-auth session cookies
-  cookieStore.delete('better-auth.session_token')
-  cookieStore.delete('better-auth.csrf_token')
+  cookieStore.delete('better-auth.session_token');
+  cookieStore.delete('better-auth.csrf_token');
 
   // Construct login URL with callback
-  const loginUrl = new URL('/login', request.url)
-  loginUrl.searchParams.set('callbackUrl', returnUrl)
+  const loginUrl = new URL('/login', request.url);
+  loginUrl.searchParams.set('callbackUrl', returnUrl);
 
   // Redirect to login
-  return NextResponse.redirect(loginUrl)
+  return NextResponse.redirect(loginUrl);
 }

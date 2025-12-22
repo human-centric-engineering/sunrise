@@ -176,6 +176,7 @@ model VerificationToken {
 **Decision**: Use CUID (`@default(cuid())`)
 
 **Rationale**:
+
 - Collision-resistant (like UUID)
 - Sortable by creation time (unlike UUID v4)
 - Shorter than UUID (25 chars vs 36)
@@ -198,10 +199,11 @@ export const auth = betterAuth({
       generateId: () => false, // Delegate to Prisma's @default(cuid())
     },
   },
-})
+});
 ```
 
 **This ensures**:
+
 - ✅ UI signup via better-auth → CUID format
 - ✅ OAuth signup via better-auth → CUID format
 - ✅ API user creation (delegates to better-auth) → CUID format
@@ -212,6 +214,7 @@ Without this configuration, better-auth would generate 32-character IDs, resulti
 ### Timestamps
 
 All models include:
+
 - `createdAt`: Automatic timestamp on creation
 - `updatedAt`: Automatic timestamp on every update
 
@@ -223,11 +226,13 @@ updatedAt DateTime @updatedAt
 ### Nullable vs. Required Fields
 
 **Required Fields** (not null):
+
 - `email`: Essential for user identification
 - `role`: Every user must have a role (defaults to USER)
 - `createdAt`, `updatedAt`: System-managed timestamps
 
 **Nullable Fields** (`?`):
+
 - `name`: Optional, some users may not provide
 - `password`: OAuth users don't have passwords
 - `emailVerified`: Null until verified
@@ -241,11 +246,13 @@ user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 ```
 
 **Strategy**: CASCADE for owned data
+
 - Delete user → automatically delete accounts, sessions
 - Prevents orphaned records
 - Maintains referential integrity
 
 **Alternative**: SET NULL for shared references
+
 ```prisma
 // If posts should survive author deletion
 author User @relation(fields: [authorId], references: [id], onDelete: SetNull)
@@ -256,6 +263,7 @@ author User @relation(fields: [authorId], references: [id], onDelete: SetNull)
 ### Purpose of Indexes
 
 Indexes speed up queries but slow down writes. Index fields that are:
+
 1. Used in WHERE clauses frequently
 2. Used in ORDER BY clauses
 3. Foreign keys
@@ -271,6 +279,7 @@ Indexes speed up queries but slow down writes. Index fields that are:
 ```
 
 **Query Performance**:
+
 - Without index: O(n) table scan
 - With index: O(log n) B-tree search
 
@@ -282,6 +291,7 @@ email String @unique              // Single field unique
 ```
 
 **Purpose**:
+
 - Enforce business rules (one email per user)
 - Prevent duplicate OAuth connections
 - Automatically creates index
@@ -293,6 +303,7 @@ email String @unique              // Single field unique
 ```
 
 **Convention**: Plural snake_case
+
 - Model: `User` (PascalCase)
 - Table: `users` (plural snake_case)
 - Consistency with SQL conventions
@@ -332,11 +343,13 @@ role Role @default(USER)
 ```
 
 **Benefits**:
+
 - Type safety
 - Database-level constraint
 - Clear documentation
 
 **Alternative**: String with validation
+
 ```prisma
 role String @default("user")  // Requires app-level validation
 ```
@@ -399,6 +412,7 @@ datasource db {
 ```
 
 **Recommended Settings**:
+
 - Development: 5-10 connections
 - Production: 10-20 connections (per instance)
 - Formula: `pool_size = (core_count × 2) + effective_spindle_count`
@@ -430,21 +444,26 @@ for (const user of users) {
 ## Decision History & Trade-offs
 
 ### Prisma vs. TypeORM vs. Raw SQL
+
 **Decision**: Prisma ORM
 **Rationale**:
+
 - Type-safe queries (generated types match schema exactly)
 - Excellent developer experience (autocomplete, migrations)
 - Prevents SQL injection by design
 - Prisma Studio for database inspection
 
 **Trade-offs**:
+
 - Abstraction layer (slight performance overhead)
 - Complex queries may require raw SQL
 - Vendor-specific schema language
 
 ### PostgreSQL vs. MySQL
+
 **Decision**: PostgreSQL
 **Rationale**:
+
 - Better JSON support (for future features)
 - More powerful query capabilities (CTEs, window functions)
 - Strong ACID compliance
@@ -453,8 +472,10 @@ for (const user of users) {
 **Trade-offs**: Slightly higher resource usage than MySQL
 
 ### Soft Delete vs. Hard Delete
+
 **Decision**: Hard delete (actual DELETE statements)
 **Rationale**:
+
 - GDPR compliance (right to erasure)
 - Simpler queries (no WHERE deleted_at IS NULL everywhere)
 - Smaller database size
@@ -462,6 +483,7 @@ for (const user of users) {
 **Trade-offs**: Can't recover deleted data
 
 **Alternative Soft Delete Pattern**:
+
 ```prisma
 model User {
   // ... fields

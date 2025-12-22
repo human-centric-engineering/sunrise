@@ -5,6 +5,7 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Phase 1: Core Foundation
 
 ### 1.1 Project Initialization ✅
+
 - [x] Create Next.js 16 project with TypeScript and App Router
 - [x] Configure tsconfig.json (strict mode)
 - [x] Set up Git repository with .gitignore
@@ -16,6 +17,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Test dev server startup
 
 ### 1.2 Styling Setup ✅
+
 - [x] Install and configure Tailwind CSS
 - [x] Set up globals.css
 - [x] Configure theme
@@ -25,6 +27,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Create dark mode utilities
 
 ### 1.3 Database Layer ✅
+
 - [x] Install Prisma
 - [x] Initialize Prisma with PostgreSQL
 - [x] Create schema (User, Account, Session, VerificationToken)
@@ -34,6 +37,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Document database setup
 
 ### 1.4 Authentication System ✅
+
 - [x] Install better-auth
 - [x] Configure better-auth with Prisma adapter
 - [x] Set up email/password authentication
@@ -44,6 +48,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Create route protection middleware
 
 ### 1.5 Authentication UI ✅
+
 - [x] Create login page
 - [x] Create signup page
 - [x] Create email verification page
@@ -53,6 +58,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Style with shadcn/ui
 
 ### 1.6 API Structure ✅
+
 - [x] Create API response utilities
 - [x] Build error handling utilities
 - [x] Create validation middleware
@@ -62,6 +68,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Document API patterns
 
 ### 1.7 Environment Configuration ✅
+
 - [x] Create .env.example (enhanced with detailed comments)
 - [x] Set up environment validation (Zod) in lib/env.ts
 - [x] Document all variables (.context/environment/reference.md)
@@ -69,6 +76,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Add runtime validation (fail-fast at startup)
 
 ### 1.8 Docker Setup ✅
+
 - [x] Create production Dockerfile
 - [x] Create development Dockerfile
 - [x] Configure docker-compose.yml
@@ -85,6 +93,7 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Phase 2: Developer Experience
 
 ### 2.1 Code Quality Tools
+
 - [ ] Configure ESLint
 - [ ] Add custom ESLint rules
 - [ ] Configure Prettier
@@ -94,6 +103,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Create validation scripts
 
 ### 2.2 Type Safety & Validation
+
 - [ ] Create shared types directory
 - [ ] Build Zod schemas for forms
 - [ ] Create Zod schemas for API validation
@@ -102,6 +112,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document type conventions
 
 ### 2.3 Error Handling & Logging
+
 - [ ] Create global error handler
 - [ ] Build logging utilities
 - [ ] Set up error boundaries
@@ -110,6 +121,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document error patterns
 
 ### 2.4 Testing Framework
+
 - [ ] Install and configure Vitest
 - [ ] Create test utilities
 - [ ] Write example unit tests
@@ -118,6 +130,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Add coverage reporting
 
 ### 2.5 Documentation Structure
+
 - [ ] Write README.md
 - [ ] Create CONTRIBUTING.md
 - [ ] Document architecture
@@ -133,6 +146,7 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Phase 3: Production Features
 
 ### 3.1 Email System
+
 - [ ] Install Resend and React Email
 - [ ] Configure Resend client
 - [ ] Create email utilities
@@ -144,6 +158,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document email setup
 
 ### 3.2 User Management
+
 - [ ] Create user profile page
 - [ ] Build account settings page
 - [ ] Implement profile editing
@@ -154,6 +169,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Create user dashboard
 
 ### 3.3 Security Hardening
+
 - [ ] Configure CORS
 - [ ] Add security headers
 - [ ] Implement rate limiting
@@ -164,6 +180,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document security practices
 
 ### 3.4 Monitoring & Observability
+
 - [ ] Enhanced health check
 - [ ] Add structured logging
 - [ ] Prepare Sentry integration
@@ -173,6 +190,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document monitoring setup
 
 ### 3.5 Landing Page & Marketing
+
 - [ ] Create landing page layout
 - [ ] Build hero section
 - [ ] Add features section
@@ -183,6 +201,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Optimize for SEO
 
 ### 3.6 Deployment Documentation
+
 - [ ] Write DEPLOYMENT.md
 - [ ] Create DEPLOYMENT-QUICKSTART.md
 - [ ] Document Vercel deployment
@@ -203,6 +222,7 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Phase 4: Documentation for Optional Features
 
 ### 4.1 Redis Documentation
+
 - [ ] Write docs/redis.md
 - [ ] Document use cases
 - [ ] Create integration guide
@@ -210,29 +230,34 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Include Docker Compose config
 
 ### 4.2 File Uploads Documentation
+
 - [ ] Write docs/file-uploads.md
 - [ ] Write docs/s3-setup.md
 - [ ] Document upload component
 - [ ] Document security considerations
 
 ### 4.3 Background Jobs Documentation
+
 - [ ] Write docs/background-jobs.md
 - [ ] Write docs/workers.md
 - [ ] Document job queue setup
 - [ ] Add example jobs
 
 ### 4.4 Admin Dashboard Documentation
+
 - [ ] Write docs/admin-dashboard.md
 - [ ] Document architecture
 - [ ] Document features
 
 ### 4.5 Analytics Documentation
+
 - [ ] Write docs/analytics.md
 - [ ] Document provider options
 - [ ] Document integration steps
 - [ ] Document privacy considerations
 
 ### 4.6 Internationalization Documentation
+
 - [ ] Write docs/i18n.md
 - [ ] Document library setup
 - [ ] Document translation structure
@@ -244,6 +269,7 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Final Checklist
 
 ### Testing
+
 - [ ] All auth flows tested
 - [ ] All API endpoints tested
 - [ ] Email delivery tested
@@ -254,6 +280,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Security headers verified
 
 ### Documentation
+
 - [ ] README complete
 - [ ] All docs written
 - [ ] Code comments added
@@ -262,6 +289,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Troubleshooting guide complete
 
 ### Code Quality
+
 - [ ] Linting passes
 - [ ] Formatting consistent
 - [ ] Type checking passes
@@ -270,6 +298,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] No security warnings
 
 ### Production Readiness
+
 - [ ] Environment validation works
 - [ ] Health check endpoint works
 - [ ] Monitoring hooks in place
@@ -296,27 +325,32 @@ Use this section to track important decisions made during development:
 ### 2025-12-12 - Phase 1.1 Complete
 
 **Version Changes:**
+
 - **Next.js 16** installed instead of Next.js 14 (breaking changes from 14/15)
 - **Tailwind CSS 4** installed instead of v3 (new syntax)
 - **ESLint 9** installed (new flat config format required)
 
 **Breaking Changes from Next.js 14/15 to Next.js 16:**
+
 1. **`next lint` command removed** - Must use ESLint CLI directly
 2. **`next build` no longer runs linting** - Need separate lint step in CI/CD
 3. **ESLint config in next.config.js removed** - Use eslint.config.mjs instead
 
 **Tailwind CSS 4 Changes:**
+
 - Old: `@tailwind base; @tailwind components; @tailwind utilities;`
 - New: `@import "tailwindcss";`
 - Requires `@tailwindcss/postcss` plugin instead of `tailwindcss` in PostCSS config
 
 **ESLint 9 Changes:**
+
 - `.eslintrc.json` deprecated, must use flat config (`eslint.config.js/mjs/cjs`)
 - Requires explicit plugin installation: `typescript-eslint`, `eslint-plugin-react`, etc.
 - `eslint-config-next` compatibility requires manual plugin configuration
 - See: https://chris.lu/web_development/tutorials/next-js-16-linting-setup-eslint-9-flat-config
 
 **Configuration Files Created:**
+
 - `eslint.config.mjs` - ESLint 9 flat config with TypeScript, React, Next.js rules
 - `tailwind.config.ts` - Tailwind CSS configuration
 - `postcss.config.js` - PostCSS with @tailwindcss/postcss plugin
@@ -325,6 +359,7 @@ Use this section to track important decisions made during development:
 - `.env.example` - Environment variable template
 
 **Package Scripts:**
+
 - `npm run dev` - Development server
 - `npm run build` - Production build
 - `npm run lint` - ESLint with caching
@@ -333,12 +368,14 @@ Use this section to track important decisions made during development:
 - `npm run validate` - Run all checks (type-check + lint + format)
 
 **Git Commits:**
+
 1. `bab5cab` - Initial project setup (Phase 1.1)
 2. `72e3b71` - ESLint 9 flat config migration
 
 ### 2025-12-13 - Phase 1.2 Complete
 
 **Styling System Implemented:**
+
 - Enhanced `app/globals.css` with comprehensive HSL-based theme variables
 - Configured `tailwind.config.ts` with shadcn/ui compatible theming
 - Created `lib/utils.ts` with `cn()` helper for class merging
@@ -350,6 +387,7 @@ Use this section to track important decisions made during development:
 - Updated `app/page.tsx` to showcase new components and theme toggle
 
 **Tailwind CSS 4 Compatibility Issues:**
+
 - **Issue:** `@apply` directive doesn't work with custom properties (e.g., `@apply border-border`)
 - **Error:** `Cannot apply unknown utility class 'border-border'`
 - **Solution:** Replaced `@apply` directives with direct CSS properties
@@ -358,10 +396,12 @@ Use this section to track important decisions made during development:
 - **Reference:** Tailwind CSS 4 has breaking changes with `@apply` behavior
 
 **Missing Dependencies:**
+
 - Had to manually install `class-variance-authority` (required by shadcn/ui Button component)
 - Error surfaced in browser console during testing
 
 **Theme System:**
+
 - HSL-based color system for easy theme customization
 - Supports light, dark, and system preference modes
 - Theme persisted to localStorage
@@ -369,6 +409,7 @@ Use this section to track important decisions made during development:
 - Comprehensive CSS variables: background, foreground, card, popover, primary, secondary, muted, accent, destructive, border, input, ring, radius, charts
 
 **Testing:**
+
 - Verified all components render correctly in browser
 - Tested theme toggle functionality (light → dark → system)
 - Confirmed dark mode classes apply correctly
@@ -379,6 +420,7 @@ Use this section to track important decisions made during development:
 ### 2025-12-13 - Phase 1.3 Complete
 
 **Database Setup:**
+
 - Installed Prisma 7.1.0 with @prisma/client
 - Configured PostgreSQL connection with Prisma adapter pattern
 - Created complete database schema: User, Account, Session, VerificationToken models
@@ -387,12 +429,14 @@ Use this section to track important decisions made during development:
 - Implemented seed script with test users (test@example.com, admin@example.com)
 
 **Prisma 7 Breaking Changes:**
+
 - **New datasource configuration:** DATABASE_URL moved from schema.prisma to prisma.config.ts
 - **Adapter pattern required:** Must use @prisma/adapter-pg with pg driver
 - **Client instantiation:** PrismaClient now requires adapter in constructor
 - **Configuration file:** Uses prisma.config.ts instead of env() in schema
 
 **Dependencies Added:**
+
 - prisma@7.1.0 (dev)
 - @prisma/client@7.1.0
 - @prisma/adapter-pg
@@ -401,6 +445,7 @@ Use this section to track important decisions made during development:
 - dotenv (for Prisma config)
 
 **Database Scripts:**
+
 - `npm run db:generate` - Generate Prisma client
 - `npm run db:migrate` - Create and apply migrations
 - `npm run db:push` - Push schema changes without migration
@@ -409,6 +454,7 @@ Use this section to track important decisions made during development:
 - `postinstall` - Auto-generate Prisma client after npm install
 
 **Files Created:**
+
 - `prisma/schema.prisma` - Complete database schema
 - `prisma/migrations/20251213220204_init/` - Initial migration
 - `prisma/seed.ts` - Seed script with test data
@@ -417,10 +463,12 @@ Use this section to track important decisions made during development:
 - `lib/db/utils.ts` - Database utility functions
 
 **Database Created:**
+
 - Local PostgreSQL database: `sunrise_dev`
 - Successfully migrated and seeded with test data
 
 **Testing:**
+
 - ✅ Prisma client generation successful
 - ✅ Database migration applied
 - ✅ Seed script executed successfully
@@ -433,11 +481,13 @@ Use this section to track important decisions made during development:
 ### 2025-12-15 - Phase 1.4 Complete
 
 **Breaking Change from Build Plan:**
+
 - **Implemented better-auth instead of NextAuth.js v5**
 - **Reason**: NextAuth.js has become part of better-auth, and the official recommendation is to use better-auth for all new projects
 - **Impact**: Complete authentication architecture change (see BREAKING-CHANGES.md)
 
 **Authentication System Implemented:**
+
 - Installed better-auth v1.4.7
 - Configured with Prisma adapter for unified database management
 - Implemented email/password authentication
@@ -450,6 +500,7 @@ Use this section to track important decisions made during development:
 - Supports role-based access control (USER, ADMIN, MODERATOR)
 
 **Key Architecture Decisions:**
+
 - **No SessionProvider wrapper**: better-auth uses nanostore, eliminating need for React context wrapper
 - **Prisma adapter pattern**: All database operations flow through Prisma
 - **Clean migration baseline**: Deleted old NextAuth migrations, created single baseline migration
@@ -457,17 +508,20 @@ Use this section to track important decisions made during development:
 - **Middleware-based protection**: Session checks in middleware, not per-route
 
 **Environment Variables:**
+
 - Changed: NEXTAUTH_URL → BETTER_AUTH_URL
 - Changed: NEXTAUTH_SECRET → BETTER_AUTH_SECRET
 - Updated .env.example with new variable names
 
 **Database Schema:**
+
 - Model: User (with string role field)
 - Model: Session (better-auth structure)
 - Model: Account (OAuth + credentials)
 - Model: Verification (email verification tokens)
 
 **Files Created:**
+
 - `lib/auth/config.ts` - better-auth configuration with Prisma adapter
 - `lib/auth/client.ts` - Client-side auth hook
 - `lib/auth/utils.ts` - Server-side session utilities
@@ -477,11 +531,13 @@ Use this section to track important decisions made during development:
 - `prisma/migrations/20251215121530_init_better_auth_schema/` - Clean baseline migration
 
 **Files Modified:**
+
 - `.env.example` - Updated environment variable names
 - `prisma/schema.prisma` - Updated to better-auth structure
 - `prisma/seed.ts` - Fixed for new schema (emailVerified boolean, verification model)
 
 **Testing:**
+
 - ✅ Type-check passes
 - ✅ Lint passes
 - ✅ Database migration successful
@@ -489,6 +545,7 @@ Use this section to track important decisions made during development:
 - ✅ Prisma client generation successful
 
 **Documentation Updates:**
+
 - Updated README.md with better-auth reference
 - Updated CLAUDE.md with better-auth patterns
 - Added comprehensive breaking change documentation in BREAKING-CHANGES.md
@@ -500,6 +557,7 @@ Use this section to track important decisions made during development:
 ### 2025-12-16 - Phase 1.5 Complete
 
 **Authentication UI Implemented:**
+
 - Created complete authentication page flow with better-auth integration
 - Built login and signup forms with react-hook-form + Zod validation
 - Created placeholder pages for email verification and password reset (email service in Phase 3)
@@ -509,6 +567,7 @@ Use this section to track important decisions made during development:
 - Styled all components with shadcn/ui (Card, Input, Label, Button)
 
 **Form Validation System:**
+
 - Integrated react-hook-form with @hookform/resolvers for Zod validation
 - Used existing Zod schemas from lib/validations/auth.ts
 - Implemented `mode: 'onTouched'` for progressive validation (errors show after first blur)
@@ -516,6 +575,7 @@ Use this section to track important decisions made during development:
 - Added field-level error display with red colors in both light and dark modes
 
 **Better-Auth Integration:**
+
 - Used better-auth client methods: signUp.email(), signIn.email(), signOut()
 - No SessionProvider wrapper needed (better-auth uses nanostore)
 - Callbacks: onRequest, onSuccess, onError for proper state management
@@ -523,6 +583,7 @@ Use this section to track important decisions made during development:
 - Callback URL preservation for post-login redirects
 
 **Tailwind CSS 4 Migration:**
+
 - **Breaking Changes Fixed:** Tailwind v3 → v4 has significant differences
 - **@theme directive:** Replaced old HSL-based CSS custom properties with @theme block
 - **Proper naming:** Used `--color-*` naming convention (e.g., `--color-primary`)
@@ -532,12 +593,14 @@ Use this section to track important decisions made during development:
 - **Result:** Buttons and links now show proper colors in both light and dark modes
 
 **Next.js Build Fixes:**
+
 - **Suspense boundary:** Wrapped LoginForm in Suspense to fix build error
 - **Requirement:** useSearchParams() requires Suspense boundary in Next.js
 - **Fix location:** app/(auth)/login/page.tsx
 - **Build status:** ✅ Passes successfully
 
 **Key Architecture Decisions:**
+
 1. **Minimal UI approach:** Kept forms simple as this is a starter template
 2. **Password strength meter:** Real-time visual feedback with color-coded progress bar and strength labels
 3. **Placeholders for Phase 3:** Email verification and password reset are placeholders until email service is set up
@@ -545,11 +608,13 @@ Use this section to track important decisions made during development:
 5. **Route groups:** Used (auth) and (protected) groups for clean URL structure
 
 **Dependencies Added:**
+
 - react-hook-form (form management)
 - @hookform/resolvers (Zod integration)
 - Installed with --legacy-peer-deps due to better-auth/Prisma version mismatch
 
 **Password Strength Meter:**
+
 - Implemented real-time password strength calculation with visual feedback
 - Created PasswordStrength component with color-coded progress bar
 - Strength levels: Weak (red), Fair (orange), Good (yellow), Strong (green)
@@ -557,6 +622,7 @@ Use this section to track important decisions made during development:
 - Integrated into signup form with react-hook-form watch()
 
 **OAuth Authentication (Google):**
+
 - Implemented OAuth button component for social provider authentication
 - Created OAuthButtons section with Google button and divider
 - Added OAuth error handling via URL params (error, error_description)
@@ -567,15 +633,17 @@ Use this section to track important decisions made during development:
 - OAuth flow: Click → Google consent → callback → session → redirect
 
 **Security Documentation:**
+
 - Rewrote `.context/auth/security.md` for better-auth implementation
 - Documented scrypt password hashing (better-auth default)
 - Updated session management documentation (database + cookie cache)
-- Changed environment variables from NEXTAUTH_* to BETTER_AUTH_*
+- Changed environment variables from NEXTAUTH*\* to BETTER_AUTH*\*
 - Updated all middleware.ts references to proxy.ts (Next.js 16 convention)
 - Added comprehensive CSP documentation with implementation guidance
 - Updated Phase 3.3 build plan with CSP and security header tasks
 
 **Files Created:**
+
 - `app/(auth)/layout.tsx` - Auth layout with theme toggle
 - `app/(auth)/login/page.tsx` - Login page with Suspense boundary
 - `app/(auth)/signup/page.tsx` - Signup page
@@ -593,6 +661,7 @@ Use this section to track important decisions made during development:
 - `lib/utils/password-strength.ts` - Password strength calculation utility
 
 **Files Modified:**
+
 - `app/globals.css` - Fixed for Tailwind v4 with @theme directive and proper @layer base
 - `app/page.tsx` - Removed old test content, will be landing page in Phase 3
 - `.context/auth/security.md` - Complete rewrite for better-auth and Next.js 16
@@ -600,6 +669,7 @@ Use this section to track important decisions made during development:
 - `.instructions/BUILD-PROGRESS-TRACKER.md` - Architecture decision updates
 
 **Testing:**
+
 - ✅ Login flow works (email/password + OAuth)
 - ✅ Signup flow works (auto-login and redirect)
 - ✅ OAuth flow works (Google sign-in with callback)
@@ -615,12 +685,14 @@ Use this section to track important decisions made during development:
 - ✅ Lint passes
 
 **Tailwind v4 Documentation Used:**
+
 - Consulted Context7 for Tailwind CSS v4 documentation
 - Verified @theme directive usage and CSS custom property patterns
 - Confirmed proper variable naming conventions
 
 **Branch:** `phase-1.5-auth-ui`
 **Commits:**
+
 1. `3a15e93` - Merge pull request #4 (Phase 1.5 complete)
 2. `515f588` - remove untested context7 libraries from claude.md
 3. `135503b` - docs: add Context7 MCP integration guide to CLAUDE.md
@@ -633,6 +705,7 @@ Use this section to track important decisions made during development:
 ### 2025-12-17 - Phase 1.6 Complete
 
 **API Structure Implemented:**
+
 - Created standardized API response utilities (successResponse, paginatedResponse, errorResponse)
 - Built comprehensive error handling system with custom error classes and error codes
 - Implemented validation middleware using Zod schemas
@@ -642,6 +715,7 @@ Use this section to track important decisions made during development:
 - Documented API patterns in .context/api/
 
 **User Creation Implementation (POST /api/v1/users):**
+
 - **Approach Selected**: Delegation to better-auth's signup API (Approach 2)
 - **Why**: Guaranteed compatibility with better-auth's password verification, future-proof against better-auth internal changes
 - **Implementation**: Calls `/api/auth/sign-up/email` internally, then updates role and cleans up session
@@ -649,6 +723,7 @@ Use this section to track important decisions made during development:
 - **Alternative Considered**: Manual scrypt password hashing (Approach 1) - attempted but failed to match better-auth's verification format
 
 **NPM Configuration Fix:**
+
 - Created `.npmrc` with `legacy-peer-deps=true` to handle Prisma version mismatch
 - **Issue**: better-auth@1.4.7 expects @prisma/client@^5.22.0, we use Prisma 7.1.0
 - **Status**: Works correctly in practice; better-auth is compatible with Prisma 7
@@ -656,6 +731,7 @@ Use this section to track important decisions made during development:
 - **Future**: Will be removed when better-auth officially supports Prisma 7
 
 **Files Created:**
+
 - `lib/api/responses.ts` - Standardized response utilities
 - `lib/api/errors.ts` - Custom error classes and error code constants
 - `lib/api/validation.ts` - Request validation middleware with Zod
@@ -667,10 +743,12 @@ Use this section to track important decisions made during development:
 - `.context/api/endpoints.md` - Complete API endpoint documentation
 
 **Files Modified:**
+
 - `CLAUDE.md` - Added NPM peer dependency warnings section
 - `.instructions/SUNRISE-BUILD-PLAN.md` - Updated Phase 1.6 with Approach 2 documentation
 
 **Testing:**
+
 - ✅ GET /api/v1/users returns paginated user list (admin only)
 - ✅ POST /api/v1/users creates users with correct password hashing
 - ✅ Users created via API can successfully log in
@@ -681,6 +759,7 @@ Use this section to track important decisions made during development:
 - ✅ Lint passes
 
 **Key Architecture Decisions:**
+
 1. **API-first design**: All endpoints designed for AI agents and external systems
 2. **Standardized responses**: Consistent format across all endpoints
 3. **Zod validation**: All inputs validated with type-safe schemas
@@ -693,6 +772,7 @@ Use this section to track important decisions made during development:
 ### 2025-12-17 - Phase 1.7 Complete
 
 **Environment Configuration with Zod Validation:**
+
 - Enhanced .env.example with comprehensive documentation and examples
 - Created lib/env.ts with Zod schema validation for all environment variables
 - Implemented fail-fast behavior (app won't start with invalid/missing env vars)
@@ -702,6 +782,7 @@ Use this section to track important decisions made during development:
 - Updated .context/substrate.md to include environment domain
 
 **Environment Validation Features:**
+
 - **Type-safe access**: All environment variables typed and validated at runtime
 - **Fail-fast startup**: Invalid configuration caught immediately, not at runtime
 - **Clear error messages**: Detailed validation errors with field names and issues
@@ -710,16 +791,19 @@ Use this section to track important decisions made during development:
 - **Optional vs. required**: Clear distinction with helpful error messages
 
 **Files Created:**
+
 - `lib/env.ts` - Runtime environment validation with Zod
 - `.context/environment/overview.md` - Environment setup and patterns guide
 - `.context/environment/reference.md` - Complete variable documentation
 
 **Files Modified:**
+
 - `.env.example` - Enhanced with detailed comments, examples, and usage notes
 - `.context/substrate.md` - Added environment domain to navigation
 - `CLAUDE.md` - Updated environment variables section
 
 **Testing:**
+
 - ✅ Invalid DATABASE_URL caught at startup
 - ✅ Missing required variables fail fast
 - ✅ Type-safe access works throughout app
@@ -729,6 +813,7 @@ Use this section to track important decisions made during development:
 - ✅ Lint passes
 
 **Key Architecture Decisions:**
+
 1. **Uniform requirements**: Same required vars for dev and prod (simplicity over flexibility)
 2. **Fail-fast validation**: App won't start with invalid config
 3. **Zod for validation**: Runtime type safety with clear error messages
@@ -741,6 +826,7 @@ Use this section to track important decisions made during development:
 ### 2025-12-19 - Phase 1.8 Complete
 
 **Docker Setup Implemented:**
+
 - Created production Dockerfile with multi-stage builds (~150-200MB optimized image)
 - Created development Dockerfile with hot-reload support
 - Configured docker-compose.yml for development environment
@@ -752,26 +838,30 @@ Use this section to track important decisions made during development:
 - Cleaned up .instructions/ folder (removed 7 template files)
 
 **Docker Configuration Fixes:**
+
 - **Prisma postinstall hook**: Copy Prisma schema BEFORE npm ci to satisfy postinstall
-- **Environment variables**: Changed NEXTAUTH_* to BETTER_AUTH_* throughout
+- **Environment variables**: Changed NEXTAUTH*\* to BETTER_AUTH*\* throughout
 - **Database name**: Changed from 'myapp' to 'sunrise'
 - **Port mapping**: Added 5555:5555 for Prisma Studio access
 - **Obsolete version field**: Removed from docker-compose files (Docker Compose v2)
 - **Redis removed**: Moved to Phase 4 optional features
 
 **Migration Strategy:**
+
 - **Migrations NOT in Dockerfile**: Industry standard pattern
 - **Why**: Database doesn't exist during build, migrations modify state not build artifacts
 - **When**: Run as deployment step: `docker-compose exec web npx prisma migrate deploy`
 - **Files included**: Migration files ARE in the image, execution is separate
 
 **Environment Variables:**
+
 - Docker-specific vars (DB_USER, DB_PASSWORD, DB_NAME) are infrastructure-only
 - Consumed by docker-compose to configure PostgreSQL container
 - Application uses DATABASE_URL (already validated in lib/env.ts)
 - No need to add Docker vars to lib/env.ts validation
 
 **Files Created:**
+
 - `.dockerignore` - Comprehensive exclusion patterns
 - `Dockerfile` - Production multi-stage build
 - `Dockerfile.dev` - Development with hot-reload
@@ -781,12 +871,14 @@ Use this section to track important decisions made during development:
 - `.context/deployment/overview.md` - Deployment guide
 
 **Files Modified:**
+
 - `.env.example` - Added Docker-specific documentation
 - `CLAUDE.md` - Added comprehensive Docker commands section
 - `README.md` - Added Docker quick start guide
 - `.context/substrate.md` - Added deployment domain
 
 **Files Removed:**
+
 - `.instructions/Dockerfile` (template, now in root)
 - `.instructions/docker-compose.yml` (template, now in root)
 - `.instructions/docker-compose.prod.yml` (template, now in root)
@@ -796,6 +888,7 @@ Use this section to track important decisions made during development:
 - `.instructions/DEPLOYMENT-QUICKSTART.md` (migrated to context)
 
 **Testing:**
+
 - ✅ Development environment starts successfully
 - ✅ Hot reload works with volume mounts
 - ✅ Production build completes (image size < 200MB)
@@ -806,6 +899,7 @@ Use this section to track important decisions made during development:
 - ✅ User signup, login, and logout work in Docker environment
 
 **Key Architecture Decisions:**
+
 1. **Docker-first deployment**: Platform-agnostic, reproducible builds
 2. **Multi-stage builds**: Optimized production image size
 3. **Migrations as deployment step**: Standard industry pattern, explicit control
@@ -815,6 +909,7 @@ Use this section to track important decisions made during development:
 
 **Branch:** `feature/phase-1-8-docker-setup`
 **Commits:**
+
 1. `25e39dc` - feat: create Docker configuration files for development and production
 2. `d231b27` - fix: copy Prisma schema before npm ci to satisfy postinstall hook
 3. `0a79e65` - chore: remove obsolete version field from docker-compose files
@@ -839,6 +934,7 @@ Phase 1 establishes the complete foundation for the Sunrise starter template. Al
 - ✅ **Documentation**: Comprehensive .context/ substrate covering all domains
 
 **Breaking Changes Handled:**
+
 - Next.js 16 (removed next lint, new config patterns)
 - Tailwind CSS 4 (@theme directive, new syntax)
 - ESLint 9 (flat config format)
@@ -846,6 +942,7 @@ Phase 1 establishes the complete foundation for the Sunrise starter template. Al
 - better-auth (replaced NextAuth.js per official recommendation)
 
 **Production Readiness:**
+
 - Type-safe throughout (strict TypeScript, Zod validation)
 - Secure by default (better-auth, environment validation, security headers)
 - Docker-optimized (multi-stage builds, ~150-200MB images)

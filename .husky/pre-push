@@ -1,0 +1,2 @@
+echo "Running pre-push validation..."
+npm run type-check

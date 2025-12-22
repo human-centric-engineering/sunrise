@@ -1,10 +1,10 @@
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle } from 'lucide-react';
 
 interface FormErrorProps {
   /**
    * Error message to display
    */
-  message?: string
+  message?: string;
 }
 
 /**
@@ -20,12 +20,12 @@ interface FormErrorProps {
  * ```
  */
 export function FormError({ message }: FormErrorProps) {
-  if (!message) return null
+  if (!message) return null;
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/50 px-3 py-2 text-sm text-red-700 dark:text-red-400 font-medium">
+    <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400">
       <AlertCircle className="h-4 w-4 flex-shrink-0" />
       <span>{message}</span>
     </div>
-  )
+  );
 }

@@ -1,5 +1,5 @@
-import { auth } from '@/lib/auth/config'
-import { toNextJsHandler } from 'better-auth/next-js'
+import { auth } from '@/lib/auth/config';
+import { toNextJsHandler } from 'better-auth/next-js';
 
 /**
  * Better Auth API Route Handler
@@ -15,4 +15,4 @@ import { toNextJsHandler } from 'better-auth/next-js'
  *
  * Better Auth automatically handles all routes, validation, and responses.
  */
-export const { POST, GET } = toNextJsHandler(auth)
+export const { POST, GET } = toNextJsHandler(auth);

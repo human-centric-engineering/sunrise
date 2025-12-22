@@ -7,6 +7,7 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 ### Core Dependencies
 
 **Framework & Runtime:**
+
 ```json
 {
   "next": "^16.0.10",
@@ -17,6 +18,7 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 ```
 
 **Database & Validation:**
+
 ```json
 {
   "@prisma/client": "^7.1.0",
@@ -28,6 +30,7 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 ```
 
 **Authentication:**
+
 ```json
 {
   "better-auth": "^1.4.7"
@@ -35,6 +38,7 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 ```
 
 **UI & Styling:**
+
 ```json
 {
   "tailwindcss": "^4.1.18",
@@ -48,6 +52,7 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 ```
 
 **Email:**
+
 ```json
 {
   "resend": "^3.0.0",
@@ -83,6 +88,7 @@ if (process.env.NODE_ENV !== 'production') {
 **Why Global Variable**: Next.js hot-reloading in development creates new module instances. Without global storage, each reload creates a new Prisma client, exhausting database connections.
 
 **Import Pattern**:
+
 ```typescript
 // Anywhere in the app
 import { prisma } from '@/lib/db/client';
@@ -129,6 +135,7 @@ export const userService = new UserService();
 ```
 
 **Usage in API Routes**:
+
 ```typescript
 // app/api/v1/users/route.ts
 import { userService } from '@/lib/services/user-service';
@@ -140,10 +147,7 @@ export async function POST(request: Request) {
     const user = await userService.createUser(data);
     return Response.json({ success: true, data: user });
   } catch (error) {
-    return Response.json(
-      { success: false, error: { message: error.message } },
-      { status: 400 }
-    );
+    return Response.json({ success: false, error: { message: error.message } }, { status: 400 });
   }
 }
 ```
@@ -213,6 +217,7 @@ const dbUrl = env.DATABASE_URL; // Type-safe and validated
 ```
 
 **Benefits**:
+
 - Application won't start with invalid configuration
 - TypeScript autocomplete for environment variables
 - Single source of truth for required vs. optional variables
@@ -241,6 +246,7 @@ Configure TypeScript path aliases for clean imports:
 ```
 
 **Import Examples**:
+
 ```typescript
 // Before
 import { Button } from '../../../../components/ui/button';
@@ -296,21 +302,26 @@ export function errorResponse(message: string, code?: string, details?: any) {
 ## Decision History & Trade-offs
 
 ### Prisma vs. Other ORMs
+
 **Decision**: Prisma over TypeORM, Sequelize, or Drizzle
 **Rationale**:
+
 - Best TypeScript integration (generated types match schema exactly)
 - Excellent migration workflow
 - Prisma Studio for database inspection
 - Active development and community support
 
 **Trade-offs**:
+
 - Abstraction layer can limit complex query capabilities
 - Vendor-specific schema language (not standard SQL)
 - Larger package size than lightweight alternatives
 
 ### better-auth over NextAuth.js
+
 **Decision**: Use better-auth instead of NextAuth.js
 **Rationale**:
+
 - Built for Next.js App Router and React Server Components
 - Simpler API with less boilerplate (no provider wrapper needed)
 - Better TypeScript support with type inference
@@ -320,6 +331,7 @@ export function errorResponse(message: string, code?: string, details?: any) {
 - Active development with focus on DX
 
 **Trade-offs**:
+
 - Smaller ecosystem than NextAuth.js
 - Fewer community resources and examples
 - Less mature (though stable for production)
@@ -327,8 +339,10 @@ export function errorResponse(message: string, code?: string, details?: any) {
 **Mitigation**: Comprehensive documentation in `.context/auth/`, clear patterns established, pin exact version
 
 ### Zod for Validation
+
 **Decision**: Zod over Yup, Joi, or class-validator
 **Rationale**:
+
 - TypeScript-first design (infer types from schemas)
 - No dependencies (small bundle size)
 - Excellent DX (autocomplete, error messages)
@@ -337,14 +351,17 @@ export function errorResponse(message: string, code?: string, details?: any) {
 **Trade-offs**: Slight learning curve for complex transformations
 
 ### shadcn/ui vs. Component Libraries
+
 **Decision**: shadcn/ui over Material-UI, Chakra UI, or Ant Design
 **Rationale**:
+
 - Copy-paste components (full control, no npm bloat)
 - Built on Radix UI (accessible primitives)
 - Tailwind integration (consistent styling)
 - Easy customization (components in your codebase)
 
 **Trade-offs**:
+
 - Manual updates (not npm-managed)
 - More initial setup for each component
 - Smaller ecosystem than established libraries
@@ -352,11 +369,13 @@ export function errorResponse(message: string, code?: string, details?: any) {
 ## Package Management
 
 ### Lock File Strategy
+
 **Use**: `package-lock.json` (npm's lock file)
 **Commit**: Always commit lock file to repository
 **Updates**: Run `npm audit fix` monthly, `npm update` quarterly
 
 ### Dependency Update Workflow
+
 ```bash
 # Check for updates
 npm outdated
@@ -375,6 +394,7 @@ git add package-lock.json && git commit -m "chore: update dependencies"
 ```
 
 ### Security Scanning
+
 ```bash
 # Audit dependencies
 npm audit
@@ -389,15 +409,19 @@ npm audit fix --force
 ## Performance Considerations
 
 ### Bundle Size Management
+
 - **Avoid large dependencies**: Check bundle impact with `npm view package-name`
 - **Use dynamic imports**: Load heavy components only when needed
+
 ```typescript
 // Heavy component loaded on demand
 const HeavyChart = dynamic(() => import('@/components/charts/heavy-chart'), {
   loading: () => <Skeleton />,
 });
 ```
+
 - **Tree-shaking**: Import specific functions, not entire libraries
+
 ```typescript
 // Good - tree-shakeable
 import { format } from 'date-fns';
@@ -407,6 +431,7 @@ import * as dateFns from 'date-fns';
 ```
 
 ### Database Connection Pooling
+
 ```typescript
 // Prisma automatically pools connections (default: 10)
 // Adjust in schema.prisma if needed:

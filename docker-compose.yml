@@ -11,8 +11,8 @@ services:
       dockerfile: Dockerfile.dev
     container_name: sunrise-dev
     ports:
-      - "3000:3000"
-      - "5555:5555"  # Prisma Studio
+      - '3000:3000'
+      - '5555:5555' # Prisma Studio
     volumes:
       # Mount source code for hot reload
       - .:/app
@@ -40,7 +40,7 @@ services:
     image: postgres:15-alpine
     container_name: sunrise-db-dev
     ports:
-      - "5432:5432"
+      - '5432:5432'
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -51,7 +51,7 @@ services:
     networks:
       - sunrise-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,27 +1,27 @@
-'use client'
+'use client';
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { authClient } from '@/lib/auth/client'
-import { Button } from '@/components/ui/button'
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { authClient } from '@/lib/auth/client';
+import { Button } from '@/components/ui/button';
 
 interface LogoutButtonProps {
   /**
    * Button variant (default, ghost, outline, etc.)
    */
-  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
+  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
   /**
    * Button size
    */
-  size?: 'default' | 'sm' | 'lg' | 'icon'
+  size?: 'default' | 'sm' | 'lg' | 'icon';
   /**
    * Additional CSS classes
    */
-  className?: string
+  className?: string;
   /**
    * Redirect path after logout (default: '/')
    */
-  redirectTo?: string
+  redirectTo?: string;
 }
 
 /**
@@ -42,31 +42,31 @@ export function LogoutButton({
   className,
   redirectTo = '/',
 }: LogoutButtonProps) {
-  const router = useRouter()
-  const [isLoading, setIsLoading] = useState(false)
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleLogout = async () => {
     try {
-      setIsLoading(true)
+      setIsLoading(true);
 
       await authClient.signOut({
         fetchOptions: {
           onSuccess: () => {
             // Redirect to home or login page
-            router.push(redirectTo)
-            router.refresh()
+            router.push(redirectTo);
+            router.refresh();
           },
           onError: (ctx) => {
-            console.error('Logout failed:', ctx.error)
-            setIsLoading(false)
+            console.error('Logout failed:', ctx.error);
+            setIsLoading(false);
           },
         },
-      })
+      });
     } catch (error) {
-      console.error('Logout error:', error)
-      setIsLoading(false)
+      console.error('Logout error:', error);
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <Button
@@ -78,5 +78,5 @@ export function LogoutButton({
     >
       {isLoading ? 'Signing out...' : 'Sign Out'}
     </Button>
-  )
+  );
 }

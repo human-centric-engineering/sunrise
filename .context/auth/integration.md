@@ -12,64 +12,63 @@ The primary method for protecting routes uses Next.js proxy (formerly middleware
 
 ```typescript
 // proxy.ts
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 /**
  * Define which routes require authentication
  */
-const protectedRoutes = ['/dashboard', '/settings', '/profile']
+const protectedRoutes = ['/dashboard', '/settings', '/profile'];
 
 /**
  * Define which routes are auth pages (login, signup, etc.)
  * Authenticated users will be redirected away from these
  */
-const authRoutes = ['/login', '/signup', '/reset-password']
+const authRoutes = ['/login', '/signup', '/reset-password'];
 
 /**
  * Check if a user is authenticated by looking for the better-auth session cookie
  */
 function isAuthenticated(request: NextRequest): boolean {
   // better-auth sets a session cookie named 'better-auth.session_token'
-  const sessionToken = request.cookies.get('better-auth.session_token')
-  return !!sessionToken
+  const sessionToken = request.cookies.get('better-auth.session_token');
+  return !!sessionToken;
 }
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const authenticated = isAuthenticated(request)
+  const { pathname } = request.nextUrl;
+  const authenticated = isAuthenticated(request);
 
   // Check if the current route is protected
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    pathname.startsWith(route)
-  )
+  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
 
   // Check if the current route is an auth page
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
 
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !authenticated) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('callbackUrl', pathname)
-    return NextResponse.redirect(loginUrl)
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('callbackUrl', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  return NextResponse.next()
+  return NextResponse.next();
 }
 
 export const config = {
   matcher: [
     '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-}
+};
 ```
 
 **Benefits**:
+
 - Runs before page rendering (no flash of protected content)
 - Works with both server and client components
 - Centralized authentication logic
@@ -127,30 +126,24 @@ Protect API endpoints with session checks:
 
 ```typescript
 // app/api/v1/users/route.ts
-import { getServerSession } from '@/lib/auth/utils'
-import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/db/client'
+import { getServerSession } from '@/lib/auth/utils';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    )
+    return Response.json({ success: false, error: { message: 'Unauthorized' } }, { status: 401 });
   }
 
   // Check role-based permissions
   if (session.user.role !== 'ADMIN') {
-    return Response.json(
-      { success: false, error: { message: 'Forbidden' } },
-      { status: 403 }
-    )
+    return Response.json({ success: false, error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  const users = await prisma.user.findMany()
-  return Response.json({ success: true, data: users })
+  const users = await prisma.user.findMany();
+  return Response.json({ success: true, data: users });
 }
 ```
 
@@ -158,23 +151,20 @@ export async function GET(request: NextRequest) {
 
 ```typescript
 // app/api/v1/users/route.ts
-import { requireRole } from '@/lib/auth/utils'
-import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/db/client'
+import { requireRole } from '@/lib/auth/utils';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
   try {
     // Throws if not authenticated or not admin
-    await requireRole('ADMIN')
+    await requireRole('ADMIN');
 
-    const users = await prisma.user.findMany()
-    return Response.json({ success: true, data: users })
+    const users = await prisma.user.findMany();
+    return Response.json({ success: true, data: users });
   } catch (error) {
-    const status = error.message === 'Authentication required' ? 401 : 403
-    return Response.json(
-      { success: false, error: { message: error.message } },
-      { status }
-    )
+    const status = error.message === 'Authentication required' ? 401 : 403;
+    return Response.json({ success: false, error: { message: error.message } }, { status });
   }
 }
 ```
@@ -505,12 +495,14 @@ export function UserProfile() {
    - Copy the Client ID and Client Secret
 
 2. **Add environment variables**:
+
 ```bash
 GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET="your-client-secret-here"
 ```
 
 3. **Provider is already configured** in `lib/auth/config.ts`:
+
 ```typescript
 export const auth = betterAuth({
   // ... other config
@@ -521,7 +513,7 @@ export const auth = betterAuth({
       enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     },
   },
-})
+});
 ```
 
 4. **OAuth Components Already Implemented**:
@@ -529,6 +521,7 @@ export const auth = betterAuth({
 Sunrise includes reusable OAuth components in `components/forms/`:
 
 **Generic OAuth Button** (`oauth-button.tsx`):
+
 ```typescript
 'use client'
 
@@ -577,6 +570,7 @@ export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProp
 ```
 
 **OAuth Buttons Section** (`oauth-buttons.tsx`):
+
 ```typescript
 'use client'
 
@@ -635,13 +629,13 @@ OAuth errors from URL params are automatically handled:
 ```typescript
 // In login/signup forms
 useEffect(() => {
-  const oauthError = searchParams.get('error')
-  const oauthErrorDescription = searchParams.get('error_description')
+  const oauthError = searchParams.get('error');
+  const oauthErrorDescription = searchParams.get('error_description');
 
   if (oauthError) {
-    setError(oauthErrorDescription || 'OAuth authentication failed. Please try again.')
+    setError(oauthErrorDescription || 'OAuth authentication failed. Please try again.');
   }
-}, [searchParams])
+}, [searchParams]);
 ```
 
 ### Adding Additional OAuth Providers
@@ -649,37 +643,43 @@ useEffect(() => {
 To add more providers (GitHub, Facebook, etc.), follow this pattern:
 
 1. **Add environment variables**:
+
 ```bash
 GITHUB_CLIENT_ID="your-github-client-id"
 GITHUB_CLIENT_SECRET="your-github-client-secret"
 ```
 
 2. **Update auth configuration**:
+
 ```typescript
 // lib/auth/config.ts
 export const auth = betterAuth({
   socialProviders: {
-    google: { /* ... */ },
+    google: {
+      /* ... */
+    },
     github: {
       clientId: process.env.GITHUB_CLIENT_ID || '',
       clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
       enabled: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
     },
   },
-})
+});
 ```
 
 3. **Update OAuthButton type**:
+
 ```typescript
 // components/forms/oauth-button.tsx
 interface OAuthButtonProps {
-  provider: 'google' | 'github' // Add new provider here
-  children: React.ReactNode
-  callbackUrl?: string
+  provider: 'google' | 'github'; // Add new provider here
+  children: React.ReactNode;
+  callbackUrl?: string;
 }
 ```
 
 4. **Add button to OAuthButtons component**:
+
 ```typescript
 // components/forms/oauth-buttons.tsx
 export function OAuthButtons({ callbackUrl }: { callbackUrl?: string }) {
@@ -704,6 +704,7 @@ export function OAuthButtons({ callbackUrl }: { callbackUrl?: string }) {
 ```
 
 **OAuth Flow**:
+
 1. User clicks "Continue with Google"
 2. `authClient.signIn.social()` initiates OAuth flow
 3. User redirected to Google OAuth consent screen
@@ -775,25 +776,25 @@ export default async function DashboardPage() {
 
 ```typescript
 // app/actions/update-profile.ts
-'use server'
+'use server';
 
-import { requireAuth } from '@/lib/auth/utils'
-import { prisma } from '@/lib/db/client'
-import { revalidatePath } from 'next/cache'
+import { requireAuth } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
+import { revalidatePath } from 'next/cache';
 
 export async function updateProfile(formData: FormData) {
-  const session = await requireAuth()
+  const session = await requireAuth();
 
-  const name = formData.get('name') as string
+  const name = formData.get('name') as string;
 
   await prisma.user.update({
     where: { id: session.user.id },
     data: { name },
-  })
+  });
 
-  revalidatePath('/profile')
+  revalidatePath('/profile');
 
-  return { success: true }
+  return { success: true };
 }
 ```
 
@@ -918,26 +919,26 @@ export function LogoutButton() {
 
 ```typescript
 // app/actions/create-post.ts
-'use server'
+'use server';
 
-import { requireAuth } from '@/lib/auth/utils'
-import { prisma } from '@/lib/db/client'
-import { z } from 'zod'
+import { requireAuth } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
+import { z } from 'zod';
 
 const createPostSchema = z.object({
   title: z.string().min(1).max(100),
   content: z.string().min(1),
-})
+});
 
 export async function createPost(formData: FormData) {
   // Ensure user is authenticated
-  const session = await requireAuth()
+  const session = await requireAuth();
 
   // Validate input
   const data = createPostSchema.parse({
     title: formData.get('title'),
     content: formData.get('content'),
-  })
+  });
 
   // Create post
   const post = await prisma.post.create({
@@ -945,9 +946,9 @@ export async function createPost(formData: FormData) {
       ...data,
       authorId: session.user.id,
     },
-  })
+  });
 
-  return { success: true, post }
+  return { success: true, post };
 }
 ```
 
@@ -955,20 +956,20 @@ export async function createPost(formData: FormData) {
 
 ```typescript
 // app/actions/delete-user.ts
-'use server'
+'use server';
 
-import { requireRole } from '@/lib/auth/utils'
-import { prisma } from '@/lib/db/client'
+import { requireRole } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
 
 export async function deleteUser(userId: string) {
   // Ensure user is admin
-  await requireRole('ADMIN')
+  await requireRole('ADMIN');
 
   await prisma.user.delete({
     where: { id: userId },
-  })
+  });
 
-  return { success: true }
+  return { success: true };
 }
 ```
 
@@ -978,48 +979,42 @@ export async function deleteUser(userId: string) {
 
 ```typescript
 // app/api/v1/posts/route.ts
-import { getServerSession } from '@/lib/auth/utils'
-import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/db/client'
+import { getServerSession } from '@/lib/auth/utils';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    )
+    return Response.json({ success: false, error: { message: 'Unauthorized' } }, { status: 401 });
   }
 
   // Fetch user's posts
   const posts = await prisma.post.findMany({
     where: { authorId: session.user.id },
-  })
+  });
 
-  return Response.json({ success: true, data: posts })
+  return Response.json({ success: true, data: posts });
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    )
+    return Response.json({ success: false, error: { message: 'Unauthorized' } }, { status: 401 });
   }
 
-  const body = await request.json()
+  const body = await request.json();
 
   const post = await prisma.post.create({
     data: {
       ...body,
       authorId: session.user.id,
     },
-  })
+  });
 
-  return Response.json({ success: true, data: post })
+  return Response.json({ success: true, data: post });
 }
 ```
 
@@ -1027,23 +1022,20 @@ export async function POST(request: NextRequest) {
 
 ```typescript
 // app/api/v1/admin/users/route.ts
-import { requireRole } from '@/lib/auth/utils'
-import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/db/client'
+import { requireRole } from '@/lib/auth/utils';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole('ADMIN')
+    await requireRole('ADMIN');
 
-    const users = await prisma.user.findMany()
+    const users = await prisma.user.findMany();
 
-    return Response.json({ success: true, data: users })
+    return Response.json({ success: true, data: users });
   } catch (error) {
-    const status = error.message === 'Authentication required' ? 401 : 403
-    return Response.json(
-      { success: false, error: { message: error.message } },
-      { status }
-    )
+    const status = error.message === 'Authentication required' ? 401 : 403;
+    return Response.json({ success: false, error: { message: error.message } }, { status });
   }
 }
 ```
@@ -1051,8 +1043,10 @@ export async function GET(request: NextRequest) {
 ## Decision History & Trade-offs
 
 ### Proxy vs. Middleware
+
 **Decision**: Use proxy file convention (Next.js 16+)
 **Rationale**:
+
 - Next.js 16 deprecated `middleware` in favor of `proxy` to clarify purpose
 - Same functionality, better naming that reflects network boundary
 - Aligns with Next.js direction moving forward
@@ -1060,8 +1054,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Requires migration from older middleware convention
 
 ### better-auth vs. NextAuth.js
+
 **Decision**: Use better-auth instead of NextAuth.js
 **Rationale**:
+
 - Simpler API with less boilerplate
 - No provider wrapper needed for client hooks (uses nanostore)
 - Built-in signup functionality (no custom API routes needed)
@@ -1072,8 +1068,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Smaller ecosystem than NextAuth.js, but rapidly growing
 
 ### Cookie-Based Session Check in Proxy
+
 **Decision**: Check for session cookie existence in proxy, not full session validation
 **Rationale**:
+
 - Fast (no database query or API call in proxy)
 - Sufficient for initial route protection
 - Full validation happens in page/API route
@@ -1082,8 +1080,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Slight duplication of auth checks, but provides defense in depth
 
 ### Server-First Authentication
+
 **Decision**: Perform authentication checks on server when possible
 **Rationale**:
+
 - More secure (client can't bypass)
 - Better performance (no client-side redirect flash)
 - SEO-friendly (correct status codes)
@@ -1092,8 +1092,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Requires understanding server vs. client components
 
 ### Callback URL Preservation
+
 **Decision**: Pass `callbackUrl` in login redirects
 **Rationale**:
+
 - Better UX (return user to intended destination)
 - Standard OAuth pattern
 - Simple to implement
@@ -1101,8 +1103,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Must validate callback URL to prevent open redirect (better-auth handles this)
 
 ### Auto-Login After Signup
+
 **Decision**: Automatically sign in users after registration via better-auth
 **Rationale**:
+
 - Reduces friction (no need to login after signup)
 - Common pattern in modern apps
 - Built into better-auth by default
@@ -1112,27 +1116,35 @@ export async function GET(request: NextRequest) {
 ## Performance Considerations
 
 ### Session Caching
+
 better-auth caches session data using cookies and internal state management:
+
 - Client-side: nanostore provides reactive state without re-fetching
 - Server-side: Session validated once per request using headers
 - No unnecessary database queries
 
 ### Proxy Efficiency
+
 Proxy runs on every request to matched routes. Keep logic minimal:
+
 - Use cookie existence check (fast, no I/O)
 - Avoid database queries in proxy
 - Full session validation in page/API route
 - Cache static configuration
 
 ### Client Hook Optimization
+
 The `useSession()` hook from better-auth is optimized:
+
 - No provider wrapper needed (reduces React tree depth)
 - Uses nanostore for efficient state management
 - Only re-renders when session changes
 - Automatic cleanup on unmount
 
 ### Database Query Optimization
+
 When fetching user data, use Prisma's query optimization:
+
 ```typescript
 // Select only needed fields
 const user = await prisma.user.findUnique({
@@ -1143,31 +1155,36 @@ const user = await prisma.user.findUnique({
     email: true,
     role: true,
   },
-})
+});
 ```
 
 ## Security Best Practices
 
 ### Environment Variables
+
 - Never commit `.env` or `.env.local`
 - Use strong `BETTER_AUTH_SECRET` (min 32 characters)
 - Generate secret: `openssl rand -base64 32`
 - Rotate secrets periodically
 
 ### Session Security
+
 - HTTPS in production (enforced by better-auth)
 - Secure cookie flags set automatically
 - Session expiration configured (30 days default)
 - Automatic session refresh
 
 ### Input Validation
+
 - Validate all inputs with Zod schemas
 - Sanitize user input before database operations
 - Use Prisma (prevents SQL injection)
 - Validate on server, not just client
 
 ### Rate Limiting
+
 Consider adding rate limiting for:
+
 - Login endpoints (prevent brute force)
 - Signup endpoints (prevent spam)
 - Password reset endpoints

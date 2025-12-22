@@ -7,6 +7,7 @@
 **Purpose:** A production-ready Next.js starter repository that can be forked for rapid application development. Optimized for AI-assisted development (Claude Code) while maintaining best practices for human developers.
 
 **Key Requirements:**
+
 - Single monolith architecture (Next.js with API routes)
 - External API accessibility for AI-connected applications
 - Docker-first deployment (works on any platform)
@@ -21,6 +22,7 @@
 > **Note:** This project uses **Next.js 16**, **Tailwind CSS 4**, **ESLint 9**, and **better-auth** which have breaking changes from earlier versions. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for migration details.
 
 ### Core Technologies
+
 - **Framework:** Next.js 16+ (App Router) - ⚠️ Breaking changes from 14/15
 - **Language:** TypeScript 5+ (strict mode)
 - **Database:** PostgreSQL 15+
@@ -33,6 +35,7 @@
 - **Email Templates:** React Email
 
 ### Development Tools
+
 - **Linting:** ESLint 9+ (flat config) - ⚠️ No `next lint`, uses ESLint CLI
 - **Formatting:** Prettier
 - **Git Hooks:** Husky + lint-staged
@@ -41,6 +44,7 @@
 - **Validation:** Zod
 
 ### Deployment
+
 - **Containerization:** Docker (multi-stage builds)
 - **Orchestration:** Docker Compose
 - **Reverse Proxy:** Nginx (optional for production)
@@ -51,6 +55,7 @@
 ## Project Architecture
 
 ### Directory Structure
+
 ```
 sunrise/
 ├── app/
@@ -147,6 +152,7 @@ sunrise/
 This phase establishes the fundamental structure. Nothing else works without this.
 
 #### 1.1 Project Initialization
+
 - [ ] Create Next.js 14+ project with TypeScript and App Router
 - [ ] Configure `tsconfig.json` with strict mode
 - [ ] Set up Git repository with `.gitignore`
@@ -154,11 +160,13 @@ This phase establishes the fundamental structure. Nothing else works without thi
 - [ ] Create basic folder structure
 
 **Key Files:**
+
 - `package.json` - with scripts for dev, build, lint, format, test, db operations
 - `tsconfig.json` - strict mode enabled
 - `.gitignore` - comprehensive ignore rules
 
 #### 1.2 Styling Setup
+
 - [ ] Install and configure Tailwind CSS
 - [ ] Set up base styles in `globals.css`
 - [ ] Configure theme (colors, typography, spacing)
@@ -168,12 +176,14 @@ This phase establishes the fundamental structure. Nothing else works without thi
 - [ ] Create dark mode toggle utilities
 
 **Key Files:**
+
 - `tailwind.config.ts`
 - `app/globals.css`
 - `components.json` (shadcn config)
 - `components/ui/` - initial UI components
 
 #### 1.3 Database Layer
+
 - [ ] Install Prisma and dependencies
 - [ ] Initialize Prisma with PostgreSQL
 - [ ] Create initial schema: User, Account, Session, VerificationToken models
@@ -183,12 +193,14 @@ This phase establishes the fundamental structure. Nothing else works without thi
 - [ ] Document database setup in README
 
 **Key Files:**
+
 - `prisma/schema.prisma` - complete database schema
 - `lib/db/client.ts` - Prisma client singleton
 - `lib/db/utils.ts` - database helper functions
 - `prisma/seed.ts` - seed data for development
 
 **Prisma Schema Structure:**
+
 ```prisma
 // User authentication
 model User {
@@ -217,6 +229,7 @@ model VerificationToken { ... }
 ```
 
 #### 1.4 Authentication System
+
 - [x] Install better-auth and dependencies
 - [x] Configure better-auth with Prisma adapter
 - [x] Set up email/password authentication
@@ -227,6 +240,7 @@ model VerificationToken { ... }
 - [x] Create middleware for protected routes
 
 **Key Files:**
+
 - `lib/auth/config.ts` - better-auth configuration with Prisma adapter
 - `lib/auth/client.ts` - Client-side auth hook (no provider wrapper needed)
 - `lib/auth/utils.ts` - Server-side session utilities
@@ -235,6 +249,7 @@ model VerificationToken { ... }
 - `app/api/auth/[...all]/route.ts` - better-auth handler
 
 **Features:**
+
 - Email/password authentication
 - Google OAuth (pre-configured)
 - Template/placeholder for additional OAuth providers
@@ -243,13 +258,15 @@ model VerificationToken { ... }
 - Role-based access control (USER, ADMIN, MODERATOR)
 
 **Breaking Change from Original Plan:**
+
 > ⚠️ **Using better-auth instead of NextAuth.js v5**
 >
 > NextAuth.js has become part of better-auth, and the official recommendation is to use better-auth for all new projects. See [BREAKING-CHANGES.md](./BREAKING-CHANGES.md) for detailed migration information.
 >
-> Key differences: No SessionProvider wrapper, different API route structure, Prisma adapter pattern, environment variable names changed (NEXTAUTH_* → BETTER_AUTH_*).
+> Key differences: No SessionProvider wrapper, different API route structure, Prisma adapter pattern, environment variable names changed (NEXTAUTH*\* → BETTER_AUTH*\*).
 
 #### 1.5 Authentication UI
+
 - [ ] Create login page with form validation
 - [ ] Create signup page with password strength meter
 - [ ] Create email verification page
@@ -259,6 +276,7 @@ model VerificationToken { ... }
 - [ ] Style with shadcn/ui components
 
 **Key Files:**
+
 - `app/(auth)/login/page.tsx`
 - `app/(auth)/signup/page.tsx`
 - `app/(auth)/verify-email/page.tsx`
@@ -267,6 +285,7 @@ model VerificationToken { ... }
 - `components/forms/signup-form.tsx`
 
 #### 1.6 API Structure
+
 - [ ] Create standardized API response format
 - [ ] Build error handling utilities
 - [ ] Create request validation middleware
@@ -276,6 +295,7 @@ model VerificationToken { ... }
 - [ ] Document API patterns
 
 **Key Files:**
+
 - `lib/api/responses.ts` - standard response formats
 - `lib/api/errors.ts` - error handling
 - `lib/api/validation.ts` - request validation
@@ -285,11 +305,13 @@ model VerificationToken { ... }
 
 **Important Note on User Creation (POST /api/v1/users):**
 The user creation endpoint delegates to better-auth's signup API to guarantee password compatibility. This approach:
+
 - Ensures passwords work with better-auth's login verification
 - Automatically adapts if better-auth changes its password hashing implementation
 - Eliminates the need to manually replicate better-auth's internal password hashing logic
 
 **If you switch to a different authentication library:**
+
 1. Replace the `fetch()` call to `/api/auth/sign-up/email` with your new library's user creation method
 2. Update the session cleanup logic if your library handles sessions differently
 3. Adjust the response structure to match your library's format
@@ -297,6 +319,7 @@ The user creation endpoint delegates to better-auth's signup API to guarantee pa
 See inline documentation in `app/api/v1/users/route.ts` for implementation details.
 
 **API Response Format:**
+
 ```typescript
 // Success
 {
@@ -317,6 +340,7 @@ See inline documentation in `app/api/v1/users/route.ts` for implementation detai
 ```
 
 #### 1.7 Environment Configuration
+
 - [ ] Create comprehensive `.env.example`
 - [ ] Set up environment variable validation (Zod)
 - [ ] Document all environment variables
@@ -324,11 +348,13 @@ See inline documentation in `app/api/v1/users/route.ts` for implementation detai
 - [ ] Add runtime environment validation
 
 **Key Files:**
+
 - `.env.example` - complete template
 - `lib/env.ts` - environment validation
 - `docs/environment.md` - environment documentation
 
 #### 1.8 Docker Setup
+
 - [ ] Create production Dockerfile (multi-stage)
 - [ ] Create development Dockerfile
 - [ ] Configure `docker-compose.yml` for development
@@ -339,6 +365,7 @@ See inline documentation in `app/api/v1/users/route.ts` for implementation detai
 - [ ] Test Docker builds locally
 
 **Key Files:**
+
 - `Dockerfile` - production build
 - `Dockerfile.dev` - development build
 - `docker-compose.yml` - dev environment
@@ -354,6 +381,7 @@ See inline documentation in `app/api/v1/users/route.ts` for implementation detai
 This phase makes the codebase maintainable and pleasant to work with.
 
 #### 2.1 Code Quality Tools
+
 - [ ] Configure ESLint with Next.js recommended rules
 - [ ] Add custom ESLint rules for consistency
 - [ ] Configure Prettier with project standards
@@ -363,6 +391,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - [ ] Create npm scripts for validation
 
 **Key Files:**
+
 - `.eslintrc.json`
 - `.prettierrc`
 - `.husky/pre-commit`
@@ -370,6 +399,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - `.vscode/settings.json` (recommended)
 
 **Scripts to Add:**
+
 ```json
 {
   "lint": "next lint",
@@ -382,6 +412,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 ```
 
 #### 2.2 Type Safety & Validation
+
 - [ ] Create shared TypeScript types directory
 - [ ] Build Zod schemas for all forms
 - [ ] Create Zod schemas for API validation
@@ -390,6 +421,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - [ ] Document type conventions
 
 **Key Files:**
+
 - `types/index.ts` - shared types
 - `types/api.ts` - API types
 - `lib/validations/auth.ts` - auth schemas
@@ -397,6 +429,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - `lib/validations/common.ts` - reusable schemas
 
 #### 2.3 Error Handling & Logging
+
 - [ ] Create global error handler
 - [ ] Build structured logging utilities
 - [ ] Set up error boundaries in UI
@@ -405,6 +438,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - [ ] Document error handling patterns
 
 **Key Files:**
+
 - `lib/errors/index.ts` - error classes
 - `lib/errors/handler.ts` - global error handler
 - `lib/logging/index.ts` - logging utilities
@@ -412,6 +446,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - `components/error-boundary.tsx` - reusable boundary
 
 #### 2.4 Testing Framework
+
 - [ ] Install and configure Vitest
 - [ ] Create test utilities and helpers
 - [ ] Write example unit tests
@@ -420,6 +455,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - [ ] Add test coverage reporting
 
 **Key Files:**
+
 - `vitest.config.ts`
 - `tests/setup.ts` - test configuration
 - `tests/helpers.ts` - test utilities
@@ -427,12 +463,14 @@ This phase makes the codebase maintainable and pleasant to work with.
 - `tests/integration/api.test.ts` - example integration test
 
 **Minimal Test Coverage:**
+
 - Authentication flows
 - API endpoint examples
 - Utility functions
 - Form validation
 
 #### 2.5 Documentation Structure
+
 - [ ] Write comprehensive README.md
 - [ ] Create CONTRIBUTING.md
 - [ ] Document architecture decisions
@@ -442,6 +480,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 - [ ] Create troubleshooting guide
 
 **Key Files:**
+
 - `README.md` - main documentation
 - `CONTRIBUTING.md` - contribution guide
 - `docs/architecture.md` - system design
@@ -457,6 +496,7 @@ This phase makes the codebase maintainable and pleasant to work with.
 This phase makes the application production-ready with security, monitoring, and essential features.
 
 #### 3.1 Email System
+
 - [ ] Install Resend and React Email
 - [ ] Configure Resend API client
 - [ ] Create email utility functions
@@ -480,6 +520,7 @@ This phase makes the application production-ready with security, monitoring, and
 - [ ] Document both user creation patterns (password vs invitation)
 
 **Key Files:**
+
 - `lib/email/client.ts` - Resend client
 - `lib/email/send.ts` - email utilities
 - `emails/welcome.tsx` - welcome template
@@ -512,6 +553,7 @@ This phase implements two patterns for admin-created users:
 Focus on invitation flow first as it's more production-ready. The password-based creation (already implemented) serves as a fallback for specific use cases.
 
 #### 3.2 User Management
+
 - [ ] Create user profile page
 - [ ] Build account settings page
 - [ ] Implement profile editing
@@ -522,6 +564,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - [ ] Create user dashboard
 
 **Key Files:**
+
 - `app/(protected)/profile/page.tsx`
 - `app/(protected)/settings/page.tsx`
 - `app/(protected)/dashboard/page.tsx`
@@ -530,6 +573,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - `app/api/v1/users/[id]/route.ts` - user CRUD
 
 #### 3.3 Security Hardening
+
 - [ ] Configure CORS properly
 - [ ] Add Content-Security-Policy (CSP) header with environment-specific policies
   - Permissive CSP for development (allows Next.js HMR and Fast Refresh)
@@ -546,6 +590,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - [ ] Document security best practices
 
 **Key Files:**
+
 - `proxy.ts` - enhanced with CSP and updated security headers
 - `lib/security/cors.ts` - CORS configuration
 - `lib/security/rate-limit.ts` - rate limiting
@@ -554,6 +599,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - `.context/auth/security.md` - comprehensive security documentation
 
 #### 3.4 Monitoring & Observability
+
 - [ ] Create health check endpoint with details
 - [ ] Add structured logging throughout app
 - [ ] Prepare Sentry integration (hooks, not full setup)
@@ -563,6 +609,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - [ ] Document monitoring setup
 
 **Key Files:**
+
 - `app/api/health/route.ts` - enhanced health check
 - `lib/monitoring/sentry.ts` - Sentry preparation
 - `lib/monitoring/performance.ts` - performance tracking
@@ -571,6 +618,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - `docs/monitoring.md` - monitoring guide
 
 #### 3.5 Landing Page & Marketing
+
 - [ ] Create landing page layout
 - [ ] Build hero section
 - [ ] Add features section
@@ -581,6 +629,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - [ ] Optimize for SEO
 
 **Key Files:**
+
 - `app/(public)/page.tsx` - landing page
 - `app/(public)/about/page.tsx`
 - `app/(public)/contact/page.tsx`
@@ -590,6 +639,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - `components/marketing/faq.tsx`
 
 #### 3.6 Deployment Documentation
+
 - [ ] Write comprehensive DEPLOYMENT.md
 - [ ] Create DEPLOYMENT-QUICKSTART.md
 - [ ] Document platform-specific deployments:
@@ -605,6 +655,7 @@ Focus on invitation flow first as it's more production-ready. The password-based
 - [ ] Document scaling strategies
 
 **Key Files:**
+
 - `DEPLOYMENT.md` - comprehensive guide
 - `DEPLOYMENT-QUICKSTART.md` - quick reference
 - `.github/workflows/deploy.yml` - CI/CD example
@@ -617,9 +668,11 @@ Focus on invitation flow first as it's more production-ready. The password-based
 These features add polish and advanced capabilities but aren't essential for the initial release. They should be documented as "how to add" guides rather than implemented by default.
 
 #### 4.1 Redis Integration (Documentation Only)
+
 **Purpose:** Caching, session storage, rate limiting, real-time features
 
 **Documentation to Create:**
+
 - When and why to add Redis
 - Integration guide
 - Example implementations:
@@ -631,13 +684,16 @@ These features add polish and advanced capabilities but aren't essential for the
 - Performance comparisons
 
 **Key Files:**
+
 - `docs/redis.md` - complete Redis guide
 - `docker-compose.redis.yml` - example config
 
 #### 4.2 File Uploads with S3 (Documentation Only)
+
 **Purpose:** User-uploaded content, profile pictures, document storage
 
 **Documentation to Create:**
+
 - S3 setup guide (or compatible services)
 - Integration steps
 - File upload component examples
@@ -646,13 +702,16 @@ These features add polish and advanced capabilities but aren't essential for the
 - CDN configuration
 
 **Key Files:**
+
 - `docs/file-uploads.md` - upload guide
 - `docs/s3-setup.md` - S3 configuration
 
 #### 4.3 Background Jobs (Documentation Only)
+
 **Purpose:** Async processing, scheduled tasks, email queues
 
 **Documentation to Create:**
+
 - Job queue setup (BullMQ or similar)
 - Worker process configuration
 - Example jobs:
@@ -663,13 +722,16 @@ These features add polish and advanced capabilities but aren't essential for the
 - Monitoring jobs
 
 **Key Files:**
+
 - `docs/background-jobs.md` - jobs guide
 - `docs/workers.md` - worker setup
 
 #### 4.4 Admin Dashboard (Documentation Only)
+
 **Purpose:** User management, system monitoring, feature flags
 
 **Documentation to Create:**
+
 - Admin panel architecture
 - User management interface
 - System stats dashboard
@@ -678,12 +740,15 @@ These features add polish and advanced capabilities but aren't essential for the
 - Role-based access
 
 **Key Files:**
+
 - `docs/admin-dashboard.md` - admin guide
 
 #### 4.5 Analytics Integration (Documentation Only)
+
 **Purpose:** User behavior tracking, performance metrics
 
 **Documentation to Create:**
+
 - Analytics provider options (PostHog, Plausible)
 - Integration guide
 - Event tracking patterns
@@ -692,12 +757,15 @@ These features add polish and advanced capabilities but aren't essential for the
 - Dashboard setup
 
 **Key Files:**
+
 - `docs/analytics.md` - analytics guide
 
 #### 4.6 Internationalization (Documentation Only)
+
 **Purpose:** Multi-language support
 
 **Documentation to Create:**
+
 - i18n library setup (next-intl)
 - Translation file structure
 - Language switcher
@@ -705,6 +773,7 @@ These features add polish and advanced capabilities but aren't essential for the
 - Date/currency formatting
 
 **Key Files:**
+
 - `docs/i18n.md` - internationalization guide
 
 ---
@@ -714,6 +783,7 @@ These features add polish and advanced capabilities but aren't essential for the
 This is the recommended order for implementation. Each step should be completed and tested before moving to the next.
 
 ### Week 1: Foundation
+
 1. Initialize Next.js project with TypeScript
 2. Set up Tailwind CSS and shadcn/ui
 3. Create folder structure
@@ -723,6 +793,7 @@ This is the recommended order for implementation. Each step should be completed 
 7. Create environment configuration
 
 ### Week 2: Authentication
+
 8. Build login/signup UI
 9. Implement email/password authentication
 10. Set up Google OAuth
@@ -732,6 +803,7 @@ This is the recommended order for implementation. Each step should be completed 
 14. Test all auth flows
 
 ### Week 3: Core Features
+
 15. Set up API structure and utilities
 16. Create health check endpoint
 17. Build user management pages (profile, settings)
@@ -740,6 +812,7 @@ This is the recommended order for implementation. Each step should be completed 
 20. Create error handling system
 
 ### Week 4: Developer Experience
+
 21. Configure ESLint and Prettier
 22. Set up Husky and lint-staged
 23. Create test framework setup
@@ -748,6 +821,7 @@ This is the recommended order for implementation. Each step should be completed 
 26. Add error boundaries
 
 ### Week 5: Docker & Deployment
+
 27. Create Dockerfiles (dev and prod)
 28. Set up docker-compose files
 29. Configure nginx
@@ -756,6 +830,7 @@ This is the recommended order for implementation. Each step should be completed 
 32. Create deployment examples
 
 ### Week 6: Email & Polish
+
 33. Set up Resend integration
 34. Create email templates
 35. Connect email to auth flows
@@ -764,6 +839,7 @@ This is the recommended order for implementation. Each step should be completed 
 38. Create rate limiting utilities
 
 ### Week 7: Documentation & Testing
+
 39. Write comprehensive README
 40. Create API documentation
 41. Write feature documentation
@@ -772,6 +848,7 @@ This is the recommended order for implementation. Each step should be completed 
 44. Create troubleshooting guide
 
 ### Week 8: Production Readiness
+
 45. Add monitoring preparation
 46. Security audit
 47. Performance optimization
@@ -796,24 +873,28 @@ This project should be built iteratively with the following principles:
 ### Code Style Guidelines
 
 **TypeScript:**
+
 - Use strict mode
 - Prefer interfaces over types for objects
 - Use type inference where obvious
 - Explicit return types for functions
 
 **React:**
+
 - Functional components only
 - Use TypeScript for props
 - Prefer server components unless interactivity needed
 - Use "use client" directive sparingly
 
 **File Naming:**
+
 - Components: `PascalCase.tsx`
 - Utilities: `kebab-case.ts`
 - Pages: `page.tsx` (Next.js convention)
 - API routes: `route.ts` (Next.js convention)
 
 **Component Structure:**
+
 ```typescript
 // Imports
 import { ... } from '...'
@@ -833,6 +914,7 @@ export function ComponentName({ prop }: ComponentProps) {
 ```
 
 **API Route Structure:**
+
 ```typescript
 // Imports
 import { ... } from '...'
@@ -856,12 +938,14 @@ export async function GET(request: Request) {
 ### Testing Strategy
 
 **Minimal but Effective:**
+
 - Unit tests for critical utilities (auth, validation, etc.)
 - Integration tests for API endpoints
 - Manual testing for UI flows
 - Documented test cases in README
 
 **Not Required Initially:**
+
 - E2E tests (can be added later)
 - Component tests (manual testing sufficient)
 - 100% coverage (focus on critical paths)
@@ -869,32 +953,41 @@ export async function GET(request: Request) {
 ### Documentation Standards
 
 **Every Feature Needs:**
+
 1. Comment explaining what it does
 2. Example usage in comments or docs
 3. Environment variables documented
 4. Setup instructions if complex
 
 **README Structure:**
+
 ```markdown
 # Project Title
+
 Brief description
 
 ## Quick Start
+
 5-minute setup instructions
 
 ## Features
+
 Bullet list of what's included
 
 ## Documentation
+
 Links to detailed docs
 
 ## Development
+
 How to develop locally
 
 ## Deployment
+
 Link to deployment guide
 
 ## Contributing
+
 Link to contribution guide
 ```
 
@@ -903,6 +996,7 @@ Link to contribution guide
 ## Success Criteria
 
 ### Phase 1 Success Criteria
+
 - [ ] Project runs locally with `npm run dev`
 - [ ] Docker containers build and run successfully
 - [ ] Database migrations work
@@ -912,6 +1006,7 @@ Link to contribution guide
 - [ ] API endpoints return proper responses
 
 ### Phase 2 Success Criteria
+
 - [ ] Code lints without errors
 - [ ] Code formats consistently
 - [ ] Tests run and pass
@@ -920,6 +1015,7 @@ Link to contribution guide
 - [ ] Type checking passes
 
 ### Phase 3 Success Criteria
+
 - [ ] Emails send successfully
 - [ ] User management flows work
 - [ ] Security headers are set
@@ -929,6 +1025,7 @@ Link to contribution guide
 - [ ] Monitoring hooks are in place
 
 ### Phase 4 Success Criteria
+
 - [ ] Documentation guides are complete and clear
 - [ ] Future features are well-explained with rationale
 - [ ] Integration paths are documented
@@ -1040,6 +1137,7 @@ Before deploying to production:
 ## Maintenance & Updates
 
 **Regular Maintenance Tasks:**
+
 - Update dependencies monthly
 - Review and rotate secrets quarterly
 - Monitor error logs weekly
@@ -1048,6 +1146,7 @@ Before deploying to production:
 - Security audit quarterly
 
 **Update Strategy:**
+
 - Test updates in development first
 - Use semantic versioning
 - Document breaking changes
@@ -1058,28 +1157,34 @@ Before deploying to production:
 ## Resources & References
 
 ### Next.js
+
 - [Next.js Documentation](https://nextjs.org/docs)
 - [App Router Guide](https://nextjs.org/docs/app)
 - [API Routes](https://nextjs.org/docs/app/building-your-application/routing/route-handlers)
 
 ### Authentication
+
 - [NextAuth.js v5 Documentation](https://next-auth.js.org)
 - [OAuth Providers](https://next-auth.js.org/providers)
 
 ### Database
+
 - [Prisma Documentation](https://www.prisma.io/docs)
 - [Prisma Schema Reference](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference)
 
 ### UI Components
+
 - [shadcn/ui Documentation](https://ui.shadcn.com)
 - [Tailwind CSS Documentation](https://tailwindcss.com/docs)
 - [Lucide Icons](https://lucide.dev)
 
 ### Email
+
 - [Resend Documentation](https://resend.com/docs)
 - [React Email Documentation](https://react.email)
 
 ### Deployment
+
 - [Docker Documentation](https://docs.docker.com)
 - [Vercel Deployment](https://vercel.com/docs)
 - [Railway Documentation](https://docs.railway.app)
@@ -1089,6 +1194,7 @@ Before deploying to production:
 ## Notes for Future Development
 
 ### Potential Enhancements (Beyond Phase 4)
+
 - Multi-tenancy support
 - Subscription billing (Stripe integration)
 - Advanced analytics dashboard
@@ -1101,6 +1207,7 @@ Before deploying to production:
 - AI integration examples
 
 ### Community Contributions
+
 - Accept PRs for Phase 4 features
 - Create contributor hall of fame
 - Maintain changelog
@@ -1112,6 +1219,7 @@ Before deploying to production:
 ## Getting Help
 
 ### During Development
+
 1. Check this build plan
 2. Review Next.js documentation
 3. Check shadcn/ui documentation
@@ -1119,6 +1227,7 @@ Before deploying to production:
 5. Consult troubleshooting guide
 
 ### For Users of Sunrise
+
 1. Check README.md
 2. Review docs/ directory
 3. Check DEPLOYMENT.md for deployment issues
@@ -1130,6 +1239,7 @@ Before deploying to production:
 ## Final Notes
 
 This is a **living document** that should be:
+
 - Referenced throughout development
 - Updated when architecture decisions change
 - Used as onboarding material for new contributors

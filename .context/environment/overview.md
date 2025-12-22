@@ -5,6 +5,7 @@
 Sunrise uses **Zod-validated environment variables** for type-safe configuration management. All environment variables are validated at application startup with fail-fast behavior, ensuring that configuration errors are caught immediately rather than at runtime.
 
 **Key Benefits:**
+
 - ✅ **Type-safe access**: TypeScript knows your environment variables exist and have valid values
 - ✅ **Fail-fast validation**: Application won't start with invalid or missing required variables
 - ✅ **Clear error messages**: Validation failures provide actionable guidance
@@ -94,11 +95,13 @@ npm run dev
 ```
 
 If all required variables are valid, you'll see:
+
 ```
 ✅ Environment variables validated successfully
 ```
 
 If any variables are missing or invalid, you'll see detailed error messages:
+
 ```
 ❌ Invalid environment variables:
 {
@@ -114,6 +117,7 @@ If any variables are missing or invalid, you'll see detailed error messages:
 **⚠️ CRITICAL: Server-Side Only**
 
 The `lib/env.ts` module and the `env` object should **ONLY be imported in server-side code**:
+
 - ✅ Server components
 - ✅ API routes (`app/api/**/route.ts`)
 - ✅ Server actions
@@ -121,6 +125,7 @@ The `lib/env.ts` module and the `env` object should **ONLY be imported in server
 - ✅ Server utilities (`lib/db`, `lib/auth/config.ts`, etc.)
 
 **❌ NEVER import `env` in client-side code:**
+
 - ❌ Client components (`'use client'`)
 - ❌ Client-side utilities (e.g., `lib/auth/client.ts`)
 - ❌ Browser-only code
@@ -131,11 +136,11 @@ The `lib/env.ts` module and the `env` object should **ONLY be imported in server
 
 ```typescript
 // ✅ GOOD: Server component or API route
-import { env } from '@/lib/env'
+import { env } from '@/lib/env';
 
 export default async function ServerComponent() {
-  const secret = env.BETTER_AUTH_SECRET // Type-safe, validated
-  const dbUrl = env.DATABASE_URL // Guaranteed to exist
+  const secret = env.BETTER_AUTH_SECRET; // Type-safe, validated
+  const dbUrl = env.DATABASE_URL; // Guaranteed to exist
   // ...
 }
 ```
@@ -159,7 +164,7 @@ export function ClientComponent() {
 
 ```typescript
 // BAD: No type safety, could be undefined, no validation
-const secret = process.env.BETTER_AUTH_SECRET
+const secret = process.env.BETTER_AUTH_SECRET;
 ```
 
 ### Client vs. Server Variables
@@ -186,19 +191,20 @@ export function MyClientComponent() {
 
 ```typescript
 // Server component (no 'use client')
-import { env } from '@/lib/env'
+import { env } from '@/lib/env';
 
 export default async function ServerComponent() {
   // ✅ All variables available, type-safe
-  const secret = env.BETTER_AUTH_SECRET
-  const dbUrl = env.DATABASE_URL
-  const appUrl = env.NEXT_PUBLIC_APP_URL
+  const secret = env.BETTER_AUTH_SECRET;
+  const dbUrl = env.DATABASE_URL;
+  const appUrl = env.NEXT_PUBLIC_APP_URL;
 
   // ... use any environment variable
 }
 ```
 
 **Server-only variables** (without `NEXT_PUBLIC_` prefix) are only available in:
+
 - Server components (no `'use client'` directive)
 - API routes (`app/api/**/route.ts`)
 - Server actions (`'use server'`)
@@ -210,16 +216,16 @@ export default async function ServerComponent() {
 Check the current environment:
 
 ```typescript
-import { env } from '@/lib/env'
+import { env } from '@/lib/env';
 
 if (env.NODE_ENV === 'development') {
   // Development-only logic
-  console.log('Debug info:', data)
+  console.log('Debug info:', data);
 }
 
 if (env.NODE_ENV === 'production') {
   // Production-only logic
-  enableAdvancedCaching()
+  enableAdvancedCaching();
 }
 ```
 
@@ -230,15 +236,15 @@ if (env.NODE_ENV === 'production') {
 Some variables are optional and may be `undefined`:
 
 ```typescript
-import { env } from '@/lib/env'
+import { env } from '@/lib/env';
 
 // Optional variables need null checking
 if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-  enableGoogleOAuth()
+  enableGoogleOAuth();
 }
 
 // Or use optional chaining with fallback
-const clientId = env.GOOGLE_CLIENT_ID || 'not-configured'
+const clientId = env.GOOGLE_CLIENT_ID || 'not-configured';
 ```
 
 ## Troubleshooting
@@ -250,12 +256,14 @@ const clientId = env.GOOGLE_CLIENT_ID || 'not-configured'
 **Cause:** Required environment variables are missing or invalid
 
 **Solution:**
+
 1. Check the error message for specific fields that failed validation
 2. Compare your `.env.local` with `.env.example` to find missing variables
 3. Verify variable values match the expected format (URLs, minimum length, etc.)
 4. Ensure secrets are properly generated (e.g., 32+ characters for `BETTER_AUTH_SECRET`)
 
 **Example error:**
+
 ```json
 {
   "BETTER_AUTH_SECRET": ["String must contain at least 32 character(s)"]
@@ -263,6 +271,7 @@ const clientId = env.GOOGLE_CLIENT_ID || 'not-configured'
 ```
 
 **Fix:** Generate a longer secret:
+
 ```bash
 openssl rand -base64 32
 ```
@@ -274,6 +283,7 @@ openssl rand -base64 32
 **Cause:** `DATABASE_URL` is malformed or points to wrong database
 
 **Solution:**
+
 1. Verify PostgreSQL connection string format:
    ```
    postgresql://[user]:[password]@[host]:[port]/[database]
@@ -283,11 +293,13 @@ openssl rand -base64 32
 4. In Docker: use service name `db` instead of `localhost`
 
 **Local development:**
+
 ```bash
 DATABASE_URL="postgresql://postgres:password@localhost:5432/sunrise_db"
 ```
 
 **Docker Compose:**
+
 ```bash
 DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 ```
@@ -299,6 +311,7 @@ DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 **Cause:** `BETTER_AUTH_URL` doesn't match actual application URL
 
 **Solution:**
+
 1. Ensure `BETTER_AUTH_URL` matches your running app:
    - Local dev: `http://localhost:3000`
    - Production: `https://yourdomain.com`
@@ -312,6 +325,7 @@ DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 **Cause:** `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` not set
 
 **Solution:**
+
 1. Set both variables (both are required to enable Google OAuth)
 2. Get credentials from [Google Cloud Console](https://console.cloud.google.com/)
 3. Configure OAuth consent screen and authorized redirect URIs:
@@ -325,6 +339,7 @@ DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 **Cause:** Variables starting with `NEXT_PUBLIC_` are embedded at build time
 
 **Solution:**
+
 1. Restart development server: `Ctrl+C` then `npm run dev`
 2. For production builds, rebuild the application: `npm run build`
 3. Server-only variables take effect immediately (no rebuild needed)
@@ -334,6 +349,7 @@ DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 ### Secret Management
 
 **DO:**
+
 - ✅ Use `openssl rand -base64 32` to generate secrets
 - ✅ Use different secrets for dev, staging, and production
 - ✅ Store production secrets in secure secret management (e.g., Vercel, AWS Secrets Manager)
@@ -341,6 +357,7 @@ DATABASE_URL="postgresql://postgres:password@db:5432/sunrise_db"
 - ✅ Audit who has access to production secrets
 
 **DON'T:**
+
 - ❌ Never commit `.env.local` or `.env` files to Git
 - ❌ Never share secrets via email, Slack, or unsecured channels
 - ❌ Never use the same secret across multiple environments
@@ -367,12 +384,14 @@ Be extremely careful about `NEXT_PUBLIC_*` variables:
 - ⚠️ **Only expose truly public values** (API URLs, feature flags, etc.)
 
 **Good use cases for `NEXT_PUBLIC_`:**
+
 - Application URL
 - Public API endpoints
 - Feature flag names (not values)
 - Analytics IDs (if public)
 
 **Never use `NEXT_PUBLIC_` for:**
+
 - API keys
 - Secrets
 - Private configuration
@@ -404,7 +423,7 @@ const envSchema = z.object({
   // ... existing variables
 
   NEW_VARIABLE: z.string().min(10, {
-    message: 'NEW_VARIABLE must be at least 10 characters'
+    message: 'NEW_VARIABLE must be at least 10 characters',
   }),
-})
+});
 ```

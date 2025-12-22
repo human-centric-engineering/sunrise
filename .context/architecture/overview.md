@@ -83,12 +83,14 @@ graph TB
 Route groups organize pages without affecting URL structure. Each group has its own layout and shared logic:
 
 **`app/(auth)/`** - Authentication flows
+
 - Login, signup, password reset, email verification
 - Unauthenticated users only (redirect if logged in)
 - Minimal layout, centered forms
 - Form validation with Zod
 
 **`app/(protected)/`** - All protected routes
+
 - Contains: `dashboard/`, `settings/`, `profile/` as subdirectories
 - No `page.tsx` at group root (subdirectories provide pages)
 - Requires authentication (protected by proxy)
@@ -97,6 +99,7 @@ Route groups organize pages without affecting URL structure. Each group has its 
 - **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
 
 **`app/(public)/`** - All public pages
+
 - Landing page (`page.tsx`), about, contact, pricing, etc.
 - No authentication required
 - SEO-optimized
@@ -105,6 +108,7 @@ Route groups organize pages without affecting URL structure. Each group has its 
 
 **Creating New Route Groups:**
 When you need a different layout or authentication model:
+
 - Admin panel with distinct UI: `app/(admin)/layout.tsx`
 - Documentation site: `app/(docs)/layout.tsx`
 - Customer portal: `app/(portal)/layout.tsx`
@@ -112,6 +116,7 @@ When you need a different layout or authentication model:
 ### Server vs. Client Components
 
 **Server Components** (default):
+
 ```typescript
 // app/(dashboard)/dashboard/page.tsx
 // Server component - runs on server, no 'use client' directive
@@ -131,6 +136,7 @@ export default async function DashboardPage() {
 **Benefits**: Direct database access, reduced client JS, better SEO, automatic code splitting
 
 **Client Components**:
+
 ```typescript
 // components/forms/login-form.tsx
 'use client'
@@ -166,10 +172,7 @@ export async function GET(request: NextRequest) {
   const session = await getServerSession();
 
   if (!session) {
-    return Response.json(
-      { success: false, error: { message: 'Unauthorized' } },
-      { status: 401 }
-    );
+    return Response.json({ success: false, error: { message: 'Unauthorized' } }, { status: 401 });
   }
 
   const users = await prisma.user.findMany();
@@ -177,7 +180,7 @@ export async function GET(request: NextRequest) {
   return Response.json({
     success: true,
     data: users,
-    meta: { count: users.length }
+    meta: { count: users.length },
   });
 }
 ```
@@ -189,6 +192,7 @@ export async function GET(request: NextRequest) {
 ## Data Flow Patterns
 
 ### Server Component Data Flow
+
 ```mermaid
 sequenceDiagram
     participant Browser
@@ -209,6 +213,7 @@ sequenceDiagram
 **Performance**: Single round-trip, no waterfall requests, automatic caching
 
 ### Client-Side API Flow
+
 ```mermaid
 sequenceDiagram
     participant Browser
@@ -255,6 +260,7 @@ graph LR
 ```
 
 **Container Details**:
+
 - **Nginx**: Reverse proxy, SSL termination, static asset serving
 - **Next.js**: Standalone build (~100MB image), Node.js 20 Alpine, non-root user
 - **PostgreSQL**: Persistent volume, automated backups, connection pooling
@@ -265,6 +271,7 @@ graph LR
 **Reasoning**: Monolithic architecture optimized for small-to-medium load
 
 **Future Horizontal Scaling** (if needed):
+
 1. Extract API routes to separate service
 2. Add load balancer (multiple Next.js instances)
 3. Implement session store (Redis) for stateless instances
@@ -276,14 +283,17 @@ graph LR
 ## Decision History & Trade-offs
 
 ### Monolith vs. Microservices
+
 **Decision**: Single Next.js application
 **Rationale**:
+
 - Faster development (shared code, types)
 - Simpler deployment (one container)
 - Reduced operational complexity
 - Lower latency (no network calls between services)
 
 **Trade-offs**:
+
 - Harder to scale individual components independently
 - All code in single repository (could become large)
 - Technology choices affect entire system
@@ -291,14 +301,17 @@ graph LR
 **Mitigation**: Clear separation of concerns, modular code organization, API versioning for future extraction
 
 ### Server Components as Default
+
 **Decision**: Use React Server Components by default, client components only when needed
 **Rationale**:
+
 - Reduced client-side JavaScript (faster page loads)
 - Direct database access (no API layer needed for pages)
 - Better SEO (fully rendered HTML)
 - Simplified data fetching (no useEffect waterfalls)
 
 **Trade-offs**:
+
 - Learning curve for developers used to SPA patterns
 - Some libraries incompatible with server components
 - Requires careful boundary management
@@ -306,8 +319,10 @@ graph LR
 **Mitigation**: Clear guidelines on when to use client components, comprehensive examples
 
 ### Route Groups for Organization
+
 **Decision**: Use route groups `(groupName)` vs. nested folders
 **Rationale**:
+
 - Cleaner URLs (groups don't appear in path)
 - Shared layouts per context (marketing vs. dashboard)
 - Clear separation of concerns
@@ -320,6 +335,7 @@ graph LR
 ## Performance Considerations
 
 ### Built-in Optimizations
+
 - **Automatic Code Splitting**: Each route only loads required JavaScript
 - **Image Optimization**: Next.js Image component with WebP conversion
 - **Font Optimization**: Automatic font subsetting and preloading
@@ -327,6 +343,7 @@ graph LR
 - **Streaming**: Progressive page rendering with React Suspense
 
 ### Caching Strategy
+
 ```typescript
 // Server component with caching
 export const revalidate = 3600; // Revalidate every hour
@@ -341,6 +358,7 @@ export default async function ProductsPage() {
 **On-Demand Revalidation**: Cache invalidation via API calls when data changes
 
 ### Database Query Optimization
+
 - Connection pooling (Prisma default: 10 connections)
 - Index strategy on frequently queried fields
 - Select only needed fields (`select: { id: true, name: true }`)
@@ -358,6 +376,7 @@ export default async function ProductsPage() {
 **Layer 6 - Output Encoding**: React's XSS protection, Content-Security-Policy headers
 
 ### Proxy Protection
+
 ```typescript
 // proxy.ts
 import { NextResponse } from 'next/server';
@@ -388,6 +407,7 @@ export function proxy(request: NextRequest) {
 **Decision**: Use `(auth)`, `(protected)`, and `(public)` instead of more specific groups like `(dashboard)` or `(marketing)`
 
 **Rationale**:
+
 - **Flexibility**: `(protected)` can contain any authenticated feature (dashboard, settings, analytics, admin tools)
 - **Clarity**: Clear authentication boundary - is it public or protected?
 - **Scalability**: Easy to add new features without restructuring
@@ -395,6 +415,7 @@ export function proxy(request: NextRequest) {
 - **Template-Friendly**: Users can easily extend without understanding complex organization
 
 **Trade-offs**:
+
 - Less granular than per-feature grouping
 - Requires subdirectories instead of top-level route groups
 
@@ -403,12 +424,14 @@ export function proxy(request: NextRequest) {
 ### When to Create a New Route Group
 
 Create a new route group when:
+
 1. **Different layout** needed (navigation, header, sidebar)
 2. **Different authentication model** (e.g., admin-only, customer-only)
 3. **Different page structure** (e.g., full-screen vs. contained)
 4. **Different metadata** (e.g., separate SEO strategy)
 
 **Examples**:
+
 - Admin panel with sidebar navigation: `(admin)` ✓
 - Docs site with different header: `(docs)` ✓
 - Same dashboard but different feature: `(protected)/analytics/` ✓ (subdirectory)

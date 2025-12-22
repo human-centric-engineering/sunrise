@@ -10,14 +10,14 @@
  *   - DELETE: Admin only, cannot delete self
  */
 
-import { NextRequest } from 'next/server'
-import { headers } from 'next/headers'
-import { auth } from '@/lib/auth/config'
-import { prisma } from '@/lib/db/client'
-import { successResponse, errorResponse } from '@/lib/api/responses'
-import { UnauthorizedError, ForbiddenError, NotFoundError, handleAPIError } from '@/lib/api/errors'
-import { validateQueryParams } from '@/lib/api/validation'
-import { userIdSchema } from '@/lib/validations/user'
+import { NextRequest } from 'next/server';
+import { headers } from 'next/headers';
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { successResponse, errorResponse } from '@/lib/api/responses';
+import { UnauthorizedError, ForbiddenError, NotFoundError, handleAPIError } from '@/lib/api/errors';
+import { validateQueryParams } from '@/lib/api/validation';
+import { userIdSchema } from '@/lib/validations/user';
 
 /**
  * GET /api/v1/users/:id
@@ -33,31 +33,25 @@ import { userIdSchema } from '@/lib/validations/user'
  * @throws NotFoundError if user doesn't exist
  * @throws ValidationError if ID format is invalid
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     // Await params (Next.js 16 requirement)
-    const { id: userId } = await params
+    const { id: userId } = await params;
 
     // Validate user ID parameter
-    const { id } = validateQueryParams(
-      new URLSearchParams({ id: userId }),
-      userIdSchema
-    )
+    const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
 
     // Authenticate
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     // Authorization: Admin can view any user, users can view own profile
     if (session.user.id !== id && session.user.role !== 'ADMIN') {
-      throw new ForbiddenError()
+      throw new ForbiddenError();
     }
 
     // Fetch user from database
@@ -74,15 +68,15 @@ export async function GET(
         updatedAt: true,
         // Exclude password
       },
-    })
+    });
 
     if (!user) {
-      throw new NotFoundError('User not found')
+      throw new NotFoundError('User not found');
     }
 
-    return successResponse(user)
+    return successResponse(user);
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 
@@ -110,45 +104,42 @@ export async function DELETE(
 ) {
   try {
     // Await params (Next.js 16 requirement)
-    const { id: userId } = await params
+    const { id: userId } = await params;
 
     // Validate user ID parameter
-    const { id } = validateQueryParams(
-      new URLSearchParams({ id: userId }),
-      userIdSchema
-    )
+    const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
 
     // Authenticate and authorize (admin only)
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session || session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required')
+      throw new ForbiddenError('Admin access required');
     }
 
     // Prevent self-deletion
     if (session.user.id === id) {
       return errorResponse('Cannot delete your own account', {
         status: 400,
-      })
+      });
     }
 
     // Check if user exists
     const user = await prisma.user.findUnique({
       where: { id },
-    })
+    });
 
     if (!user) {
-      throw new NotFoundError('User not found')
+      throw new NotFoundError('User not found');
     }
 
     // Delete user (cascade deletes accounts and sessions via Prisma schema)
     await prisma.user.delete({
       where: { id },
-    })
+    });
 
-    return successResponse({ id, deleted: true })
+    return successResponse({ id, deleted: true });
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }

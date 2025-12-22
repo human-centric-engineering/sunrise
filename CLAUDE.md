@@ -20,6 +20,7 @@ For comprehensive, domain-specific documentation, see the **`.context/` substrat
 - **[Guidelines](./.context/guidelines.md)** - Development workflow, testing, deployment procedures
 
 **When to Use**:
+
 - **Deep Implementation Details**: For detailed patterns, use `.context/[domain]/`
 - **Quick Reference**: For commands and common tasks, use this `CLAUDE.md`
 - **AI Context Loading**: Load specific domains for targeted context (e.g., `.context/auth/` for auth features)
@@ -42,6 +43,7 @@ This project has the **next-devtools** MCP server configured. When starting any 
    - Provides access to Cache Components knowledge, migration guides, and runtime diagnostics
 
 **When to use Next.js DevTools MCP tools:**
+
 - Before implementing ANY changes to the Next.js app (check current state with `nextjs_index` and `nextjs_call`)
 - For diagnostic questions ("What's happening?", "Why isn't this working?", "What routes exist?")
 - To search the running app (use MCP first, fallback to static codebase search if needed)
@@ -59,6 +61,7 @@ This project has the **context7** MCP server configured for accessing up-to-date
 ### When to Use Context7
 
 **Use Context7 automatically (without asking) when:**
+
 - Writing code that uses external libraries (React, Prisma, better-auth, etc.)
 - Implementing features with library-specific APIs
 - Troubleshooting library-related issues
@@ -66,6 +69,7 @@ This project has the **context7** MCP server configured for accessing up-to-date
 - Migrating between library versions
 
 **How to Use:**
+
 1. **For known libraries:** Use the library ID directly from the list below
 2. **For new libraries:** Call `mcp__context7__resolve-library-id` first to find the correct ID
 3. **Get documentation:** Call `mcp__context7__get-library-docs` with the library ID and topic
@@ -78,20 +82,24 @@ This project has the **context7** MCP server configured for accessing up-to-date
 Use these Context7-compatible library IDs directly (no need to resolve):
 
 **Core Framework & Tools:**
+
 - **Next.js:** `/vercel/next.js` (versions: v16.0.3, v15.1.8, v14.3.0-canary.87, v13.5.11, v12.3.7, v11.1.3)
 - **React:** TBC (use for React 19 patterns)
 - **Prisma:** `/prisma/docs` (check if version-specific is available)
 - **TypeScript:** `/microsoft/typescript`
 
 **Authentication & Security:**
+
 - **better-auth:** `/better-auth/better-auth`
 
 **UI & Styling:**
+
 - **Tailwind CSS:** `/websites/tailwindcss`
 - **Radix UI:** TBC
 - **shadcn/ui:** `/websites/ui_shadcn` (component library patterns)
 
 **Data & Validation:**
+
 - **Zod:** TBC
 - **React Hook Form:** TBC
 
@@ -102,17 +110,20 @@ Use these Context7-compatible library IDs directly (no need to resolve):
 ```typescript
 // When implementing better-auth patterns:
 // 1. Get documentation
-mcp__context7__get-library-docs({
-  context7CompatibleLibraryID: "/better-auth/better-auth/1.4.7",
-  topic: "session management server components",
-  mode: "code"
-})
+mcp__context7__get -
+  library -
+  docs({
+    context7CompatibleLibraryID: '/better-auth/better-auth/1.4.7',
+    topic: 'session management server components',
+    mode: 'code',
+  });
 
 // 2. Use the patterns from documentation in your code
 // 3. Add the library to the list above if not already present
 ```
 
 **Best Practices:**
+
 - Always use version-specific IDs when available (e.g., `/better-auth/better-auth/1.4.7` instead of `/better-auth/better-auth`)
 - Use `mode: "code"` for implementation tasks
 - Use `mode: "info"` for understanding architecture or concepts
@@ -122,6 +133,7 @@ mcp__context7__get-library-docs({
 ## Essential Commands
 
 ### Development
+
 ```bash
 npm run dev              # Start development server
 npm run build            # Build for production
@@ -135,6 +147,7 @@ npm run validate         # Run type-check + lint + format check
 ```
 
 ### Database (Prisma)
+
 ```bash
 npm run db:migrate       # Create and apply new migration
 npm run db:push          # Push schema changes without migration
@@ -144,6 +157,7 @@ npx prisma generate      # Regenerate Prisma client after schema changes
 ```
 
 ### Docker
+
 ```bash
 # Development environment (includes database)
 docker-compose up                    # Start all services
@@ -173,6 +187,7 @@ curl http://localhost:3000/api/health  # Test health endpoint
 ```
 
 ### Testing
+
 ```bash
 npm run test             # Run tests with Vitest
 npm run test:watch       # Run tests in watch mode
@@ -182,6 +197,7 @@ npm run test:coverage    # Run tests with coverage report
 ## Project Architecture
 
 ### Core Stack
+
 - **Framework:** Next.js 16 with App Router
 - **Language:** TypeScript (strict mode)
 - **Database:** PostgreSQL 15 + Prisma ORM
@@ -235,15 +251,18 @@ types/                   # Shared TypeScript types
 ### Important Patterns
 
 **1. Route Groups:** The `app/` directory uses route groups `(groupName)` to organize pages without affecting URLs. This allows clean separation with different layouts:
+
 - `(auth)` - Authentication pages with minimal layout
 - `(protected)` - All authenticated routes (dashboard, settings, profile, etc.)
 - `(public)` - All public routes (landing, about, pricing, etc.)
 
 **Adding new pages:**
+
 - Same layout as existing? Add as subdirectory: `(protected)/analytics/page.tsx`
 - Different layout needed? Create new route group: `(admin)/layout.tsx`
 
 **2. API Response Format:** All API endpoints use standardized responses:
+
 ```typescript
 // Success
 { success: true, data: { ... }, meta?: { ... } }
@@ -261,7 +280,9 @@ types/                   # Shared TypeScript types
 ## Development Guidelines
 
 ### Build Order
+
 This project follows a phased build plan documented in `.instructions/SUNRISE-BUILD-PLAN.md`. The phases are:
+
 1. **Phase 1:** Core Foundation (Next.js setup, database, auth, API structure, Docker)
 2. **Phase 2:** Developer Experience (linting, testing, types, documentation)
 3. **Phase 3:** Production Features (email, user management, security, landing page)
@@ -272,18 +293,21 @@ This project follows a phased build plan documented in `.instructions/SUNRISE-BU
 ### Code Style
 
 **TypeScript:**
+
 - Use strict mode (already configured)
 - Prefer interfaces over types for objects
 - Explicit return types for exported functions
 - No `any` types—use proper typing
 
 **React:**
+
 - Functional components only
 - Server components by default
 - Use `'use client'` only when needed (forms, hooks, interactivity)
 - TypeScript for all component props
 
 **File Naming:**
+
 - Components: `PascalCase.tsx`
 - Utilities: `kebab-case.ts`
 - Next.js pages: `page.tsx`
@@ -291,6 +315,7 @@ This project follows a phased build plan documented in `.instructions/SUNRISE-BU
 - Next.js layouts: `layout.tsx`
 
 **Component Structure:**
+
 ```typescript
 // 1. Imports
 import { ... } from '...'
@@ -308,6 +333,7 @@ export function ComponentName({ prop }: ComponentProps) {
 ```
 
 **API Route Structure:**
+
 ```typescript
 // app/api/v1/resource/route.ts
 import { NextRequest } from 'next/server'
@@ -342,6 +368,7 @@ export async function GET(request: NextRequest) {
 ### Common Tasks
 
 **Adding a New Page:**
+
 1. Determine if it's public or protected
 2. Choose appropriate route group:
    - Authentication flow → `(auth)/page-name/page.tsx`
@@ -352,11 +379,13 @@ export async function GET(request: NextRequest) {
 4. Add to navigation if needed
 
 **Examples:**
+
 - Analytics dashboard: `app/(protected)/analytics/page.tsx` (uses protected layout)
 - Pricing page: `app/(public)/pricing/page.tsx` (uses public layout)
 - Admin panel: `app/(admin)/layout.tsx` + `app/(admin)/users/page.tsx` (custom layout)
 
 **Adding a New API Endpoint:**
+
 1. Create `app/api/v1/[resource]/route.ts`
 2. Implement HTTP methods (GET, POST, PUT, DELETE)
 3. Create Zod validation schema in `lib/validations/`
@@ -365,6 +394,7 @@ export async function GET(request: NextRequest) {
 6. Document in `docs/api.md`
 
 **Adding a Database Model:**
+
 1. Update `prisma/schema.prisma`
 2. Run `npm run db:migrate` to create migration
 3. Run `npx prisma generate` to update Prisma client
@@ -372,6 +402,7 @@ export async function GET(request: NextRequest) {
 5. Create TypeScript types if needed in `types/`
 
 **Adding a Form:**
+
 1. Create Zod schema in `lib/validations/`
 2. Build form component in `components/forms/` using `react-hook-form`
 3. Use shadcn/ui form components (`Form`, `FormField`, etc.)
@@ -379,10 +410,12 @@ export async function GET(request: NextRequest) {
 5. Handle loading and error states
 
 **Adding a shadcn/ui Component:**
+
 ```bash
 npx shadcn-ui@latest add [component-name]
 # Example: npx shadcn-ui@latest add dialog
 ```
+
 Components are installed to `components/ui/` and can be customized.
 
 ## Docker Configuration
@@ -390,12 +423,14 @@ Components are installed to `components/ui/` and can be customized.
 **Production Build:** The project uses multi-stage Docker builds with Next.js standalone output for minimal image size.
 
 **Key Configuration:**
+
 - `next.config.js` has `output: 'standalone'` enabled
 - Production Dockerfile creates ~100MB images
 - Non-root user (`nextjs:nodejs`) for security
 - Health check endpoint at `/api/health`
 
 **Environment in Docker:**
+
 - Set environment variables in `docker-compose.yml` or pass with `-e` flag
 - Database service name is `db` (not `localhost`) in Docker Compose
 - Use `DATABASE_URL=postgresql://user:password@db:5432/dbname` format
@@ -416,6 +451,7 @@ NODE_ENV="development"                  # or "production"
 ```
 
 **After adding/changing environment variables:**
+
 1. Update `.env.example`
 2. Update `.instructions/SUNRISE-BUILD-PLAN.md` if it's a new variable
 3. Rebuild if variable starts with `NEXT_PUBLIC_` (embedded at build time)
@@ -424,6 +460,7 @@ NODE_ENV="development"                  # or "production"
 ## Documentation
 
 ### Core Documentation Files
+
 - `.instructions/SUNRISE-BUILD-PLAN.md` - Complete build plan (SOURCE OF TRUTH)
 - `.instructions/CLAUDE-CODE-GUIDE.md` - How to use the build plan effectively
 - `.instructions/BUILD-PROGRESS-TRACKER.md` - Checklist of features
@@ -431,6 +468,7 @@ NODE_ENV="development"                  # or "production"
 - `.instructions/DEPLOYMENT-QUICKSTART.md` - Quick deployment reference
 
 ### When to Reference Documentation
+
 - **Before starting any feature:** Read the relevant section in `SUNRISE-BUILD-PLAN.md`
 - **When making architectural decisions:** Consult the build plan's implementation guidelines
 - **When deploying:** Use `DEPLOYMENT.md` for platform-specific instructions
@@ -459,28 +497,33 @@ NODE_ENV="development"                  # or "production"
 ## Troubleshooting
 
 **Database connection fails:**
+
 - Check `DATABASE_URL` format in `.env.local`
 - Ensure PostgreSQL is running
 - In Docker: use service name `db`, not `localhost`
 
 **Build fails:**
+
 - Run `npm run type-check` to find TypeScript errors
 - Check that all environment variables are set
 - Verify Prisma schema is valid: `npx prisma validate`
 - Regenerate Prisma client: `npx prisma generate`
 
 **Authentication not working:**
+
 - Verify `BETTER_AUTH_SECRET` is set and valid
 - Check `BETTER_AUTH_URL` matches your app URL
 - Ensure database is connected and migrations are applied
 - Check browser console for session errors
 
 **Docker build fails:**
+
 - Ensure `output: 'standalone'` is in `next.config.js`
 - Check Docker has enough memory (4GB+ recommended)
 - Verify `.dockerignore` includes `node_modules` and `.next`
 
 **NPM peer dependency warnings:**
+
 - **Known Issue**: better-auth@1.4.7 expects @prisma/client@^5.22.0, but we use Prisma 7.1.0
 - **Status**: Works correctly in practice; better-auth is compatible with Prisma 7
 - **Solution**: `.npmrc` is configured with `legacy-peer-deps=true` to handle this
@@ -497,4 +540,5 @@ NODE_ENV="development"                  # or "production"
 6. Review Next.js 14 App Router documentation
 7. Check shadcn/ui documentation for component usage
 8. Review Prisma documentation for database operations
+
 - Remember to use Tailwind v4, which is quite different from v3. Check the Tailwind v4 documentation on context7 when working with styling

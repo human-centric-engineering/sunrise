@@ -33,6 +33,7 @@ docker-compose up
 ```
 
 **What to look for:**
+
 - ✅ PostgreSQL container starts and shows "ready to accept connections"
 - ✅ Web container builds successfully (may take 2-3 minutes first time)
 - ✅ Dependencies install via `npm ci`
@@ -41,6 +42,7 @@ docker-compose up
 - ✅ No error messages in the logs
 
 **Expected output (last few lines):**
+
 ```
 sunrise-db-dev   | ... ready to accept connections
 sunrise-dev      | ✓ Ready in 2.5s
@@ -57,6 +59,7 @@ docker-compose ps
 ```
 
 **Expected output:**
+
 ```
 NAME                IMAGE                  STATUS
 sunrise-db-dev      postgres:15-alpine     Up (healthy)
@@ -77,6 +80,7 @@ Both containers should be "Up" and database should show "(healthy)".
    - Should return JSON with `status: "ok"` and database connection info
 
    **Expected response:**
+
    ```json
    {
      "status": "ok",
@@ -100,6 +104,7 @@ Both containers should be "Up" and database should show "(healthy)".
 4. **Refresh browser:** Changes should appear immediately
 
 **What's happening:**
+
 - Source code is mounted as a volume: `.:/app`
 - Next.js Fast Refresh detects changes
 - Browser auto-reloads with new code
@@ -123,6 +128,7 @@ docker-compose exec db psql -U postgres -d sunrise
 ```
 
 Then run:
+
 ```sql
 \dt  -- List tables
 SELECT * FROM "User";  -- View users
@@ -132,10 +138,12 @@ SELECT * FROM "User";  -- View users
 ### 1.7 View Logs
 
 **In the first terminal** (where docker-compose up is running):
+
 - You should see live logs from both containers
 - Try navigating pages in the browser and watch the logs
 
 **Or in a separate terminal:**
+
 ```bash
 docker-compose logs -f web      # Follow app logs
 docker-compose logs -f db       # Follow database logs
@@ -149,11 +157,13 @@ docker-compose down
 ```
 
 **What happens:**
+
 - Containers stop gracefully
 - Network is removed
 - **Data persists** in volumes (database data is preserved)
 
 **To remove data as well:**
+
 ```bash
 docker-compose down -v  # Remove volumes (deletes database data)
 ```
@@ -169,6 +179,7 @@ docker build -t sunrise:latest .
 ```
 
 **What to look for:**
+
 - ✅ Multi-stage build completes (deps → builder → runner)
 - ✅ No errors during `npm ci`
 - ✅ Prisma client generates successfully
@@ -177,6 +188,7 @@ docker build -t sunrise:latest .
 - ✅ Build completes in ~3-5 minutes
 
 **Expected output (final lines):**
+
 ```
  => [runner 6/6] COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
  => exporting to image
@@ -190,6 +202,7 @@ docker images sunrise:latest
 ```
 
 **Expected:**
+
 - Image size should be **~150-200MB**
 - If it's over 500MB, something went wrong (likely .dockerignore issue)
 
@@ -216,6 +229,7 @@ docker run --rm -p 3001:3000 --env-file .env.test sunrise:latest
 **Note:** This will fail to connect to the database (because we're not running the db container), but it confirms the build is valid.
 
 **Expected:**
+
 - Container starts
 - Next.js server starts on port 3000 (mapped to 3001 on host)
 - May show database connection errors (expected, since db isn't running)
@@ -242,6 +256,7 @@ docker-compose -f docker-compose.prod.yml ps
 ```
 
 **Expected:**
+
 ```
 NAME            STATUS
 sunrise-web     Up (healthy)
@@ -280,6 +295,7 @@ docker-compose -f docker-compose.prod.yml down
 After completing the tests above, verify:
 
 ### Development Environment ✓
+
 - [ ] Containers start without errors
 - [ ] App accessible at http://localhost:3000
 - [ ] Health endpoint returns 200 OK
@@ -289,12 +305,14 @@ After completing the tests above, verify:
 - [ ] Logs show no errors
 
 ### Production Build ✓
+
 - [ ] Production image builds successfully
 - [ ] Image size is ~150-200MB
 - [ ] No .env files copied to image (security check)
 - [ ] Standalone output created correctly
 
 ### Production Stack ✓
+
 - [ ] All services start and show (healthy) status
 - [ ] Migrations run successfully
 - [ ] Health endpoint returns 200 OK
@@ -307,12 +325,14 @@ After completing the tests above, verify:
 ### Issue: "Cannot connect to Docker daemon"
 
 **Solution:**
+
 - Start Docker Desktop (macOS/Windows)
 - Or start Docker service: `sudo systemctl start docker` (Linux)
 
 ### Issue: "Port 3000 already in use"
 
 **Solution:**
+
 ```bash
 # Stop local dev server if running
 # Or change port in docker-compose.yml:
@@ -323,6 +343,7 @@ ports:
 ### Issue: "Database connection failed"
 
 **Check:**
+
 1. Database container is healthy: `docker-compose ps`
 2. Health check passed (wait 30 seconds after start)
 3. DATABASE_URL uses service name `db` not `localhost`
@@ -330,6 +351,7 @@ ports:
 ### Issue: Hot reload not working
 
 **Check:**
+
 1. Volume mounts are correct in docker-compose.yml
 2. You're editing files in the mounted directory
 3. File system watching is enabled in Docker Desktop settings
@@ -337,6 +359,7 @@ ports:
 ### Issue: Build fails with "npm ci" errors
 
 **Solution:**
+
 ```bash
 # Rebuild without cache
 docker-compose build --no-cache
@@ -352,16 +375,16 @@ docker-compose build --no-cache
 
 **Expected performance:**
 
-| Metric | Expected Value |
-|--------|----------------|
-| First build time | 3-5 minutes |
-| Rebuild time (with cache) | 30-60 seconds |
-| Container startup | 10-20 seconds |
-| Hot reload time | 1-2 seconds |
-| Production image size | 150-200MB |
-| Dev image size | 800MB-1GB |
-| Memory usage (dev) | ~500MB |
-| Memory usage (prod) | ~200MB |
+| Metric                    | Expected Value |
+| ------------------------- | -------------- |
+| First build time          | 3-5 minutes    |
+| Rebuild time (with cache) | 30-60 seconds  |
+| Container startup         | 10-20 seconds  |
+| Hot reload time           | 1-2 seconds    |
+| Production image size     | 150-200MB      |
+| Dev image size            | 800MB-1GB      |
+| Memory usage (dev)        | ~500MB         |
+| Memory usage (prod)       | ~200MB         |
 
 ---
 
@@ -370,11 +393,13 @@ docker-compose build --no-cache
 Once all tests pass:
 
 1. **Stop all containers:**
+
    ```bash
    docker-compose down
    ```
 
 2. **Clean up test files:**
+
    ```bash
    rm .env.test DOCKER-TESTING.md  # Optional
    ```

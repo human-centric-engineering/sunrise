@@ -1,7 +1,7 @@
-import { betterAuth } from 'better-auth'
-import { prismaAdapter } from 'better-auth/adapters/prisma'
-import { prisma } from '@/lib/db/client'
-import { env } from '@/lib/env'
+import { betterAuth } from 'better-auth';
+import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
 
 /**
  * Better Auth Configuration
@@ -80,7 +80,7 @@ export const auth = betterAuth({
       generateId: () => false,
     },
   },
-})
+});
 
 // Export the auth handler type for use in API routes
-export type Auth = typeof auth
+export type Auth = typeof auth;

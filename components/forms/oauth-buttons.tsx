@@ -1,9 +1,9 @@
-'use client'
+'use client';
 
-import { OAuthButton } from './oauth-button'
+import { OAuthButton } from './oauth-button';
 
 interface OAuthButtonsProps {
-  callbackUrl?: string
+  callbackUrl?: string;
 }
 
 /**
@@ -28,10 +28,10 @@ export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
   // Check if OAuth is configured
   // In production, better-auth won't expose providers if not configured
   // For now, we always show the button - better-auth will handle the error
-  const hasOAuthProviders = true // TODO: Can add runtime check if needed
+  const hasOAuthProviders = true; // TODO: Can add runtime check if needed
 
   if (!hasOAuthProviders) {
-    return null
+    return null;
   }
 
   return (
@@ -57,13 +57,11 @@ export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
           <span className="w-full border-t" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-background px-2 text-muted-foreground">
-            Or continue with email
-          </span>
+          <span className="bg-background text-muted-foreground px-2">Or continue with email</span>
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 /**
@@ -74,11 +72,7 @@ export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
  */
 function GoogleIcon() {
   return (
-    <svg
-      className="h-5 w-5"
-      viewBox="0 0 24 24"
-      xmlns="http://www.w3.org/2000/svg"
-    >
+    <svg className="h-5 w-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
       <path
         d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
         fill="#4285F4"
@@ -96,5 +90,5 @@ function GoogleIcon() {
         fill="#EA4335"
       />
     </svg>
-  )
+  );
 }
