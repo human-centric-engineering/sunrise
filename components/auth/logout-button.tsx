@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { Button } from '@/components/ui/button';
+import { logger } from '@/lib/logging';
 
 interface LogoutButtonProps {
   /**
@@ -57,13 +58,13 @@ export function LogoutButton({
             router.refresh();
           },
           onError: (ctx) => {
-            console.error('Logout failed:', ctx.error);
+            logger.error('Logout failed', ctx.error);
             setIsLoading(false);
           },
         },
       });
     } catch (error) {
-      console.error('Logout error:', error);
+      logger.error('Logout error', error);
       setIsLoading(false);
     }
   };

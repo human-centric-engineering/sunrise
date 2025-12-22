@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { authClient } from '@/lib/auth/client';
 import { Button } from '@/components/ui/button';
+import { logger } from '@/lib/logging';
 
 interface OAuthButtonProps {
   provider: 'google'; // Can add more providers later: 'github' | 'facebook' etc.
@@ -50,7 +51,7 @@ export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProp
     } catch (error) {
       // Reset loading state if redirect fails
       setIsLoading(false);
-      console.error('OAuth sign-in error:', error);
+      logger.error('OAuth sign-in error', error, { provider });
     }
   };
 

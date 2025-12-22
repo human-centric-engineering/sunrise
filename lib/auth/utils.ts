@@ -1,5 +1,6 @@
 import { auth } from './config';
 import { headers } from 'next/headers';
+import { logger } from '@/lib/logging';
 
 /**
  * Session type from better-auth
@@ -73,7 +74,7 @@ export async function getServerSession(): Promise<AuthSession | null> {
 
     return session;
   } catch (error) {
-    console.error('Failed to get server session:', error);
+    logger.error('Failed to get server session', error);
     return null;
   }
 }
