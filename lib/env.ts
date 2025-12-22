@@ -58,6 +58,12 @@ const envSchema = z.object({
     message:
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
+
+  // Logging Configuration (optional)
+  LOG_LEVEL: z
+    .enum(['debug', 'info', 'warn', 'error'])
+    .optional()
+    .describe('Logging verbosity level. Defaults to "debug" in development, "info" in production'),
 });
 
 /**
