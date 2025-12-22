@@ -354,6 +354,30 @@ export async function GET(request: NextRequest) {
 }
 ```
 
+### Git Hooks
+
+**Pre-commit:**
+
+- Runs `lint-staged` automatically on staged files
+- Formats with Prettier
+- Fixes ESLint issues
+- Fast (<5 seconds for typical changes)
+
+**Pre-push:**
+
+- Runs TypeScript type-check
+- Catches type errors before pushing
+- ~10 seconds
+
+**Bypassing Hooks (Emergency Only):**
+
+```bash
+git commit --no-verify -m "emergency fix"
+git push --no-verify
+```
+
+**Why bypass?** Only for urgent production hotfixes or when hooks are genuinely blocking valid commits.
+
 ### Security Practices
 
 - **Never commit `.env.local`** - only commit `.env.example`

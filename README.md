@@ -166,7 +166,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
    ```bash
    git clone https://github.com/human-centric-engineering/sunrise.git
    cd sunrise
-   npm install
+   npm install  # This automatically sets up git hooks via Husky
    ```
 
 2. **Set up environment variables:**
@@ -275,6 +275,23 @@ docker-compose logs -f web     # View app logs
 
 - **User**: test@example.com / password123
 - **Admin**: admin@example.com / password123
+
+### VSCode Setup (Recommended)
+
+The project includes VSCode workspace settings for an optimal development experience. When you open the project in VSCode, you'll be prompted to install recommended extensions:
+
+- **Prettier** (esbenp.prettier-vscode) - Code formatting
+- **ESLint** (dbaeumer.vscode-eslint) - Linting
+- **Tailwind CSS IntelliSense** (bradlc.vscode-tailwindcss) - Tailwind class completion
+- **Prisma** (prisma.prisma) - Prisma schema support
+- **Docker** (ms-azuretools.vscode-docker) - Docker container support
+- **Error Lens** (usernamehw.errorlens) - Inline errors and warnings
+
+**Automatic Features:**
+
+- **Format on save** - Code is automatically formatted with Prettier
+- **ESLint auto-fix** - Linting issues are fixed automatically on save
+- **Tailwind IntelliSense** - Autocomplete for Tailwind classes in `cn()` and `cva()` functions
 
 ### Development Commands
 
