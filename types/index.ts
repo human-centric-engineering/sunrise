@@ -1,7 +1,96 @@
 /**
- * Shared TypeScript types for the Sunrise application
- * Add commonly used types here as the application grows
+ * Domain-Specific Types
+ *
+ * Application-level types that represent business domain concepts.
+ * For database model types, see @/types/prisma
+ * For API types, see @/types/api
  */
 
-// Placeholder type - will be populated as we build features
-export type Placeholder = Record<string, unknown>;
+import type { User } from './prisma';
+import type { APIResponse } from './api';
+
+/**
+ * User Role Types
+ *
+ * Defines the possible roles a user can have in the system.
+ */
+export type UserRole = 'USER' | 'ADMIN' | 'MODERATOR';
+
+/**
+ * Public User Type
+ *
+ * User data safe for public exposure (no sensitive fields).
+ * Note: Prisma User model doesn't contain passwords (they're in Account),
+ * so this is just an alias for clarity.
+ *
+ * @example
+ * ```typescript
+ * const user: PublicUser = await prisma.user.findUnique({
+ *   where: { id: userId },
+ * });
+ * ```
+ */
+export type PublicUser = User;
+
+/**
+ * User List Item Type
+ *
+ * Subset of user fields for displaying in lists (e.g., admin user management).
+ * Only includes essential fields to reduce payload size.
+ *
+ * @example
+ * ```typescript
+ * const users: UserListItem[] = await prisma.user.findMany({
+ *   select: {
+ *     id: true,
+ *     name: true,
+ *     email: true,
+ *     role: true,
+ *     createdAt: true,
+ *   },
+ * });
+ * ```
+ */
+export type UserListItem = Pick<User, 'id' | 'name' | 'email' | 'role' | 'createdAt'>;
+
+/**
+ * User Profile Type
+ *
+ * User data for the current authenticated user's profile.
+ * Includes all fields the user should see about themselves.
+ *
+ * Currently identical to PublicUser, but kept as separate type for future
+ * expansion (e.g., adding fields only visible to the user themselves).
+ */
+export type UserProfile = PublicUser;
+
+/**
+ * Auth Session Type
+ *
+ * Represents an authenticated user session with user information.
+ * Used in components and hooks to type the current user.
+ *
+ * @example
+ * ```typescript
+ * const session: AuthSession | null = await getSession();
+ * if (session) {
+ *   console.log(session.user.name);
+ * }
+ * ```
+ */
+export interface AuthSession {
+  user: PublicUser;
+  expiresAt: Date;
+}
+
+/**
+ * API Response Types
+ *
+ * Type-safe wrappers for common API responses
+ */
+
+/** Single user response */
+export type UserResponse = APIResponse<PublicUser>;
+
+/** Paginated user list response (meta will contain PaginationMeta) */
+export type UserListResponse = APIResponse<UserListItem[]>;
