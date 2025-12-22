@@ -20,6 +20,7 @@ import { AlertTriangle, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { logger } from '@/lib/logging';
+import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 export default function PublicError({
   error,
@@ -36,11 +37,17 @@ export default function PublicError({
       digest: error.digest,
     });
 
-    // TODO: Send to error tracking service (implemented in Day 4)
-    // trackError(error, {
-    //   tags: { boundary: 'public' },
-    //   extra: { digest: error.digest }
-    // });
+    // Send to error tracking service
+    trackError(error, {
+      tags: {
+        boundary: 'public',
+        errorType: 'boundary',
+      },
+      extra: {
+        digest: error.digest,
+      },
+      level: ErrorSeverity.Error,
+    });
   }, [error]);
 
   return (

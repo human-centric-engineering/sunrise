@@ -31,6 +31,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { trackError, ErrorSeverity } from './sentry';
 
 /**
  * Fields that contain sensitive data
@@ -238,11 +239,20 @@ export function handleClientError(error: unknown, context: Record<string, unknow
     url: typeof window !== 'undefined' ? window.location.href : undefined,
   });
 
-  // TODO: Send to error tracking service (implemented in Day 4)
-  // trackError(normalized.error, {
-  //   tags: { errorType: 'unhandled' },
-  //   extra: { ...scrubbedContext, ...scrubbedMetadata }
-  // });
+  // Send to error tracking service
+  trackError(normalized.error, {
+    tags: {
+      errorType: 'unhandled',
+      source: 'globalHandler',
+    },
+    extra: {
+      ...scrubbedContext,
+      ...scrubbedMetadata,
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      url: typeof window !== 'undefined' ? window.location.href : undefined,
+    },
+    level: ErrorSeverity.Error,
+  });
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ThemeProvider } from '@/hooks/use-theme';
+import { ErrorHandlingProvider } from './error-handling-provider';
 
 export const metadata: Metadata = {
   title: 'Sunrise - Next.js Starter',
@@ -37,7 +38,9 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ErrorHandlingProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </ErrorHandlingProvider>
       </body>
     </html>
   );

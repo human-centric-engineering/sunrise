@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { logger } from '@/lib/logging';
 import { authClient } from '@/lib/auth/client';
+import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 export default function ProtectedError({
   error,
@@ -59,12 +60,19 @@ export default function ProtectedError({
 
     void checkSession();
 
-    // TODO: Send to error tracking service (implemented in Day 4)
-    // trackError(error, {
-    //   tags: { boundary: 'protected' },
-    //   extra: { digest: error.digest }
-    // });
-  }, [error]);
+    // Send to error tracking service
+    trackError(error, {
+      tags: {
+        boundary: 'protected',
+        errorType: 'boundary',
+      },
+      extra: {
+        digest: error.digest,
+        isSessionExpired: isSessionExpired.toString(),
+      },
+      level: ErrorSeverity.Error,
+    });
+  }, [error, isSessionExpired]);
 
   // If session expired, show login prompt
   if (isSessionExpired) {

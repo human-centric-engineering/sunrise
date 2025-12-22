@@ -16,6 +16,7 @@ import { AlertTriangle, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { logger } from '@/lib/logging';
+import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 export default function Error({
   error,
@@ -32,11 +33,18 @@ export default function Error({
       digest: error.digest,
     });
 
-    // TODO: Send to error tracking service (implemented in Day 4)
-    // trackError(error, {
-    //   tags: { boundary: 'root' },
-    //   extra: { digest: error.digest }
-    // });
+    // Send to error tracking service
+    trackError(error, {
+      tags: {
+        boundary: 'root',
+        errorType: 'boundary',
+      },
+      extra: {
+        digest: error.digest,
+        componentStack: 'root',
+      },
+      level: ErrorSeverity.Error,
+    });
   }, [error]);
 
   return (
