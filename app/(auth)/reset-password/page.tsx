@@ -1,12 +1,6 @@
-import Link from 'next/link'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import Link from 'next/link';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 /**
  * Password Reset Page (Placeholder)
@@ -24,12 +18,11 @@ export default function ResetPasswordPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-          <p className="font-medium mb-2">Coming in Phase 3</p>
+        <div className="bg-muted text-muted-foreground rounded-md p-4 text-sm">
+          <p className="mb-2 font-medium">Coming in Phase 3</p>
           <p>
-            Password reset requires the Resend email service integration,
-            which will be implemented in Phase 3.1 of the build plan. This will
-            enable sending password reset links via email.
+            Password reset requires the Resend email service integration, which will be implemented
+            in Phase 3.1 of the build plan. This will enable sending password reset links via email.
           </p>
         </div>
 
@@ -41,14 +34,11 @@ export default function ResetPasswordPage() {
 
         <div className="text-center text-sm">
           <span className="text-muted-foreground">Need help? </span>
-          <Link
-            href="/signup"
-            className="text-primary hover:underline font-medium"
-          >
+          <Link href="/signup" className="text-primary font-medium hover:underline">
             Create a new account
           </Link>
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }

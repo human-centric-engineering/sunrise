@@ -20,12 +20,15 @@ We're using **better-auth v1.4.7** instead of NextAuth.js v5 as specified in the
 ### Key Differences
 
 #### 1. No Provider Wrapper Required
+
 **What Changed:**
+
 - NextAuth.js requires `<SessionProvider>` wrapper in client components
 - better-auth uses nanostore - no provider wrapper needed
 - Simpler client-side setup
 
 **Migration:**
+
 ```typescript
 // NextAuth.js v5 - OLD
 import { SessionProvider } from 'next-auth/react'
@@ -52,35 +55,41 @@ export default function RootLayout({ children }) {
 ```
 
 #### 2. API Route Structure Changed
+
 **What Changed:**
+
 - NextAuth.js uses catch-all: `app/api/auth/[...nextauth]/route.ts`
 - better-auth uses catch-all: `app/api/auth/[...all]/route.ts`
 
 **Migration:**
+
 ```typescript
 // NextAuth.js v5 - OLD
 // app/api/auth/[...nextauth]/route.ts
-import NextAuth from 'next-auth'
-import { authOptions } from '@/lib/auth/config'
+import NextAuth from 'next-auth';
+import { authOptions } from '@/lib/auth/config';
 
-const handler = NextAuth(authOptions)
-export { handler as GET, handler as POST }
+const handler = NextAuth(authOptions);
+export { handler as GET, handler as POST };
 
 // better-auth - NEW
 // app/api/auth/[...all]/route.ts
-import { auth } from '@/lib/auth/config'
-import { toNextJsHandler } from 'better-auth/next-js'
+import { auth } from '@/lib/auth/config';
+import { toNextJsHandler } from 'better-auth/next-js';
 
-export const { POST, GET } = toNextJsHandler(auth)
+export const { POST, GET } = toNextJsHandler(auth);
 ```
 
 #### 3. Configuration Structure Different
+
 **What Changed:**
+
 - NextAuth.js uses `NextAuthOptions` object exported separately
 - better-auth uses `betterAuth()` function with inline config
 - Different adapter syntax
 
 **Migration:**
+
 ```typescript
 // NextAuth.js v5 - OLD
 import { NextAuthOptions } from 'next-auth'
@@ -104,13 +113,16 @@ export const auth = betterAuth({
 ```
 
 #### 4. Environment Variables Renamed
+
 **Impact:** MEDIUM - Must update all environment variables
 
 **What Changed:**
+
 - `NEXTAUTH_URL` → `BETTER_AUTH_URL`
 - `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET`
 
 **Migration:**
+
 ```bash
 # .env - OLD (NextAuth.js v5)
 NEXTAUTH_URL="http://localhost:3000"
@@ -122,40 +134,46 @@ BETTER_AUTH_SECRET="your-secret-here"
 ```
 
 #### 5. Session Access Patterns
+
 **What Changed:**
+
 - Server: Different import paths and function names
 - Client: `useSession` from different package
 
 **Migration:**
+
 ```typescript
 // Server Components - OLD
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth/config'
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth/config';
 
-const session = await getServerSession(authOptions)
+const session = await getServerSession(authOptions);
 
 // Server Components - NEW
-import { auth } from '@/lib/auth/config'
-import { headers } from 'next/headers'
+import { auth } from '@/lib/auth/config';
+import { headers } from 'next/headers';
 
-const requestHeaders = await headers()
-const session = await auth.api.getSession({ headers: requestHeaders })
+const requestHeaders = await headers();
+const session = await auth.api.getSession({ headers: requestHeaders });
 
 // Client Components - OLD
-import { useSession } from 'next-auth/react'
+import { useSession } from 'next-auth/react';
 
 // Client Components - NEW
-import { useSession } from '@/lib/auth/client'
+import { useSession } from '@/lib/auth/client';
 // (wrapper around better-auth's useSession)
 ```
 
 #### 6. Database Schema Changes
+
 **What Changed:**
+
 - No `Role` enum - uses string-based role field
 - Different field names and structure
 - Model names: `VerificationToken` → `Verification`
 
 **Migration:**
+
 ```prisma
 // NextAuth.js v5 Schema - OLD
 enum Role {
@@ -208,14 +226,17 @@ We're using **Next.js 16.0.10** which has breaking changes from Next.js 14 and 1
 ### Removed Features
 
 #### 1. `next lint` Command Removed
+
 **Impact:** HIGH - Changes development workflow
 
 **What Changed:**
+
 - The `next lint` command no longer exists
 - `next build` no longer automatically runs linting
 - Must use ESLint CLI directly: `eslint .`
 
 **Migration:**
+
 ```json
 // package.json - OLD (Next.js 14/15)
 {
@@ -235,40 +256,45 @@ We're using **Next.js 16.0.10** which has breaking changes from Next.js 14 and 1
 ```
 
 **Why This Matters:**
+
 - CI/CD pipelines need explicit linting steps
 - Pre-commit hooks must call `eslint` directly
 - Build processes won't catch linting errors automatically
 
 **References:**
+
 - https://nextjs.org/docs/app/guides/upgrading/version-16
 - https://nextjs.org/docs/app/api-reference/config/eslint
 
 #### 2. ESLint Configuration in next.config.js Removed
+
 **Impact:** MEDIUM
 
 **What Changed:**
+
 - The `eslint` option in `next.config.js` is deprecated and ignored
 - Must use `eslint.config.js` (flat config) instead
 
 **Migration:**
+
 ```javascript
 // next.config.js - OLD (Next.js 14/15)
 module.exports = {
   eslint: {
     dirs: ['pages', 'components', 'lib'],
-    ignoreDuringBuilds: false
-  }
-}
+    ignoreDuringBuilds: false,
+  },
+};
 
 // next.config.js - NEW (Next.js 16)
 module.exports = {
   // No eslint config here anymore
-}
+};
 
 // eslint.config.mjs - NEW (required)
 export default tseslint.config({
-  ignores: ['.next/**', 'node_modules/**']
-})
+  ignores: ['.next/**', 'node_modules/**'],
+});
 ```
 
 ---
@@ -280,14 +306,17 @@ We're using **ESLint 9.39.1** which requires a completely different configuratio
 ### Flat Config Required
 
 #### 1. `.eslintrc.json` Deprecated
+
 **Impact:** HIGH - Complete configuration rewrite required
 
 **What Changed:**
+
 - Legacy config files (`.eslintrc.*`) are deprecated
 - Must use flat config: `eslint.config.js`, `eslint.config.mjs`, or `eslint.config.cjs`
 - Will be removed entirely in ESLint v10
 
 **Migration:**
+
 ```javascript
 // .eslintrc.json - OLD (ESLint 8)
 {
@@ -320,13 +349,16 @@ export default tseslint.config(
 ```
 
 #### 2. Plugin Installation Changed
+
 **Impact:** MEDIUM - Must install plugins explicitly
 
 **What Changed:**
+
 - Config packages like `eslint-config-next` can't automatically install peer dependencies
 - Must install ESLint plugins directly
 
 **Required Installations:**
+
 ```bash
 npm install -D --save-exact \
   typescript-eslint \
@@ -337,6 +369,7 @@ npm install -D --save-exact \
 ```
 
 **References:**
+
 - https://eslint.org/docs/latest/use/configure/migration-guide
 - https://chris.lu/web_development/tutorials/next-js-16-linting-setup-eslint-9-flat-config
 
@@ -349,13 +382,16 @@ We're using **Tailwind CSS 4.1.18** which has a new CSS architecture.
 ### New CSS Syntax
 
 #### 1. Import Syntax Changed
+
 **Impact:** LOW - Simple find/replace
 
 **What Changed:**
+
 - Removed `@tailwind` directives
 - New unified `@import` syntax
 
 **Migration:**
+
 ```css
 /* globals.css - OLD (Tailwind v3) */
 @tailwind base;
@@ -363,40 +399,45 @@ We're using **Tailwind CSS 4.1.18** which has a new CSS architecture.
 @tailwind utilities;
 
 /* globals.css - NEW (Tailwind v4) */
-@import "tailwindcss";
+@import 'tailwindcss';
 ```
 
 #### 2. PostCSS Plugin Changed
+
 **Impact:** LOW - Different package required
 
 **What Changed:**
+
 - `tailwindcss` no longer works as a PostCSS plugin directly
 - Must use `@tailwindcss/postcss` package
 
 **Migration:**
+
 ```javascript
 // postcss.config.js - OLD (Tailwind v3)
 module.exports = {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
-  }
-}
+  },
+};
 
 // postcss.config.js - NEW (Tailwind v4)
 module.exports = {
   plugins: {
     '@tailwindcss/postcss': {},
-  }
-}
+  },
+};
 ```
 
 **Installation:**
+
 ```bash
 npm install -D @tailwindcss/postcss
 ```
 
 **References:**
+
 - Tailwind CSS 4 Beta documentation
 - Error messages from Next.js build process
 
@@ -428,15 +469,16 @@ Any CI/CD pipelines must now include:
 ```yaml
 # Example GitHub Actions workflow
 - name: Lint
-  run: npm run lint  # Calls 'eslint .' not 'next lint'
+  run: npm run lint # Calls 'eslint .' not 'next lint'
 
 - name: Build
-  run: npm run build  # No longer lints automatically
+  run: npm run build # No longer lints automatically
 ```
 
 ### Developer Onboarding
 
 New developers should know:
+
 1. `next lint` doesn't exist - use `npm run lint`
 2. ESLint config is in `eslint.config.mjs`, not `.eslintrc.json`
 3. Tailwind CSS uses `@import "tailwindcss"` syntax
@@ -445,16 +487,16 @@ New developers should know:
 
 ## Compatibility Matrix
 
-| Technology | Plan Version | Actual Version | Breaking Changes |
-|------------|-------------|----------------|------------------|
-| Next.js | 14+ | 16.0.10 | Yes - Major |
-| React | 18+ | 19.2.3 | Minor API changes |
+| Technology     | Plan Version   | Actual Version    | Breaking Changes       |
+| -------------- | -------------- | ----------------- | ---------------------- |
+| Next.js        | 14+            | 16.0.10           | Yes - Major            |
+| React          | 18+            | 19.2.3            | Minor API changes      |
 | Authentication | NextAuth.js v5 | better-auth 1.4.7 | Yes - Complete rewrite |
-| ESLint | 8.x | 9.39.1 | Yes - Config format |
-| Tailwind CSS | 3.x | 4.1.18 | Yes - CSS syntax |
-| TypeScript | 5+ | 5.9.3 | No |
-| Prisma | 6+ | 7.1.0 | Yes - Adapter pattern |
-| Node.js | 20+ | 20+ | No |
+| ESLint         | 8.x            | 9.39.1            | Yes - Config format    |
+| Tailwind CSS   | 3.x            | 4.1.18            | Yes - CSS syntax       |
+| TypeScript     | 5+             | 5.9.3             | No                     |
+| Prisma         | 6+             | 7.1.0             | Yes - Adapter pattern  |
+| Node.js        | 20+            | 20+               | No                     |
 
 ---
 
@@ -463,18 +505,21 @@ New developers should know:
 Despite breaking changes, these versions provide:
 
 ### Next.js 16
+
 - Better Turbopack performance
 - Improved developer experience
 - Latest React 19 features
 - Future-proof for long-term maintenance
 
 ### ESLint 9
+
 - Better performance with flat config
 - Easier to understand configuration
 - Improved plugin composition
 - Aligned with ESLint's future direction
 
 ### Tailwind CSS 4
+
 - Faster compilation
 - Smaller CSS output
 - Better IntelliSense support
@@ -496,6 +541,7 @@ Despite breaking changes, these versions provide:
 ### Q: Can we downgrade to the original plan versions?
 
 **A:** Yes, but not recommended:
+
 - Next.js 14/15 + ESLint 8 would work with legacy `.eslintrc.json`
 - Tailwind CSS 3 would use old `@tailwind` directives
 - Would miss performance and feature improvements
@@ -503,6 +549,7 @@ Despite breaking changes, these versions provide:
 ### Q: Will this affect future phases?
 
 **A:** Minimal impact:
+
 - Database/Prisma: No changes needed
 - Authentication/NextAuth: No changes needed
 - Docker: Next.js standalone output works the same
@@ -511,6 +558,7 @@ Despite breaking changes, these versions provide:
 ### Q: What if ESLint breaks during development?
 
 **A:** Check:
+
 1. `eslint.config.mjs` syntax is valid
 2. All plugins are installed (`typescript-eslint`, etc.)
 3. TypeScript files are in `tsconfig.json` include paths
@@ -520,11 +568,11 @@ Despite breaking changes, these versions provide:
 
 ## Version Update History
 
-| Date | Component | From | To | Reason |
-|------|-----------|------|-----|---------|
+| Date       | Component      | From           | To                | Reason                                     |
+| ---------- | -------------- | -------------- | ----------------- | ------------------------------------------ |
 | 2025-12-15 | Authentication | NextAuth.js v5 | better-auth 1.4.7 | Official recommendation from NextAuth team |
-| 2025-12-12 | Next.js | 14+ (plan) | 16.0.10 | Latest stable release |
-| 2025-12-12 | ESLint | 8.x (implied) | 9.39.1 | Installed with latest packages |
-| 2025-12-12 | Tailwind | 3.x (plan) | 4.1.18 | Latest stable release |
-| 2025-12-12 | React | 18+ (plan) | 19.2.3 | Required by Next.js 16 |
-| 2025-12-12 | Prisma | 6+ (plan) | 7.1.0 | Latest stable release |
+| 2025-12-12 | Next.js        | 14+ (plan)     | 16.0.10           | Latest stable release                      |
+| 2025-12-12 | ESLint         | 8.x (implied)  | 9.39.1            | Installed with latest packages             |
+| 2025-12-12 | Tailwind       | 3.x (plan)     | 4.1.18            | Latest stable release                      |
+| 2025-12-12 | React          | 18+ (plan)     | 19.2.3            | Required by Next.js 16                     |
+| 2025-12-12 | Prisma         | 6+ (plan)      | 7.1.0             | Latest stable release                      |

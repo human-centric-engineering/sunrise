@@ -1,6 +1,7 @@
 # API Endpoints
 
 > **Implementation Status:** December 2025
+>
 > - ✅ **Implemented** - Endpoints currently available (with file references)
 > - 📋 **Planned** - Endpoints defined for future development
 
@@ -55,6 +56,7 @@ GET /api/health
 **Authentication**: None required
 
 **Response** (200 OK):
+
 ```json
 {
   "status": "ok",
@@ -66,6 +68,7 @@ GET /api/health
 ```
 
 **Response** (503 Service Unavailable - database disconnected):
+
 ```json
 {
   "status": "error",
@@ -89,6 +92,7 @@ GET /api/v1/users/me
 **Authentication**: Required (session)
 
 **Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -106,6 +110,7 @@ GET /api/v1/users/me
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
   ```json
   {
@@ -130,6 +135,7 @@ PATCH /api/v1/users/me
 **Authentication**: Required (session)
 
 **Request Body** (all fields optional):
+
 ```json
 {
   "name": "Jane Doe",
@@ -140,6 +146,7 @@ PATCH /api/v1/users/me
 **Validation**: Uses `updateUserSchema` from `lib/validations/user.ts`
 
 **Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -157,6 +164,7 @@ PATCH /api/v1/users/me
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
 - **400 Validation Error**: Invalid input data
   ```json
@@ -166,9 +174,7 @@ PATCH /api/v1/users/me
       "message": "Invalid request body",
       "code": "VALIDATION_ERROR",
       "details": {
-        "errors": [
-          { "path": "email", "message": "Invalid email format" }
-        ]
+        "errors": [{ "path": "email", "message": "Invalid email format" }]
       }
     }
   }
@@ -197,6 +203,7 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
 **Authentication**: Required (ADMIN role)
 
 **Query Parameters** (all optional):
+
 - `page`: Page number (default: 1, min: 1)
 - `limit`: Items per page (default: 20, max: 100)
 - `search`: Search by name or email (case-insensitive)
@@ -206,6 +213,7 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
 **Validation**: Uses `listUsersQuerySchema` from `lib/validations/user.ts`
 
 **Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -228,6 +236,7 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
   ```json
@@ -254,6 +263,7 @@ POST /api/v1/users
 **Authentication**: Required (ADMIN role)
 
 **Request Body**:
+
 ```json
 {
   "name": "Jane Doe",
@@ -264,12 +274,14 @@ POST /api/v1/users
 ```
 
 **Validation**: Uses `createUserSchema` from `lib/validations/user.ts`
+
 - `name`: Required, 1-100 characters
 - `email`: Required, valid email format
 - `password`: Required, minimum 8 characters
 - `role`: Optional, one of `USER`, `ADMIN`, `MODERATOR` (default: `USER`)
 
 **Response** (201 Created):
+
 ```json
 {
   "success": true,
@@ -287,6 +299,7 @@ POST /api/v1/users
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
 - **400 Validation Error**: Invalid request body
@@ -309,6 +322,7 @@ GET /api/v1/users/:id
 **Authorization**: Users can view their own profile. Admins can view any user profile.
 
 **Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -326,6 +340,7 @@ GET /api/v1/users/:id
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User is not ADMIN and not requesting own profile
   ```json
@@ -363,6 +378,7 @@ DELETE /api/v1/users/:id
 **Authorization**: Admins only. Cannot delete own account.
 
 **Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -374,6 +390,7 @@ DELETE /api/v1/users/:id
 ```
 
 **Error Responses**:
+
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
   ```json
@@ -414,6 +431,7 @@ POST /api/auth/sign-up/email
 ```
 
 **Request Body**:
+
 ```json
 {
   "name": "John Doe",
@@ -429,6 +447,7 @@ POST /api/auth/sign-in/email
 ```
 
 **Request Body**:
+
 ```json
 {
   "email": "john@example.com",
@@ -443,6 +462,7 @@ GET /api/auth/sign-in/social
 ```
 
 **Query Parameters**:
+
 - `provider`: `google`
 - `callbackURL`: URL to redirect after successful authentication
 
@@ -459,6 +479,7 @@ GET /api/auth/session
 ```
 
 **Response**:
+
 ```json
 {
   "user": {
@@ -513,6 +534,7 @@ POST /api/v1/users/invite
 **Authentication**: Required (ADMIN role)
 
 **Request Body**:
+
 ```json
 {
   "name": "Jane Doe",
@@ -522,6 +544,7 @@ POST /api/v1/users/invite
 ```
 
 **Response** (201 Created):
+
 ```json
 {
   "success": true,
@@ -537,6 +560,7 @@ POST /api/v1/users/invite
 ```
 
 **Flow**:
+
 1. Admin creates user without password
 2. Invitation token generated and stored
 3. Email sent with invitation link: `/auth/accept-invite?token=...`
@@ -553,9 +577,11 @@ GET /auth/accept-invite?token=...
 ```
 
 **Query Parameters**:
+
 - `token`: Invitation token from email
 
 **Flow**:
+
 1. Validate invitation token
 2. Display password form
 3. Update user record with password
@@ -619,32 +645,32 @@ const sortBy = searchParams.get('sortBy') || 'createdAt';
 const sortOrder = searchParams.get('sortOrder') || 'desc';
 
 const validSortFields = ['name', 'email', 'createdAt'];
-const orderBy = validSortFields.includes(sortBy)
-  ? { [sortBy]: sortOrder }
-  : { createdAt: 'desc' };
+const orderBy = validSortFields.includes(sortBy) ? { [sortBy]: sortOrder } : { createdAt: 'desc' };
 
 const results = await prisma.user.findMany({ orderBy });
 ```
 
 ## Error Codes
 
-| Code | HTTP Status | Meaning |
-|------|-------------|---------|
-| `UNAUTHORIZED` | 401 | No valid session |
-| `FORBIDDEN` | 403 | Authenticated but lacks permissions |
-| `NOT_FOUND` | 404 | Resource doesn't exist |
-| `VALIDATION_ERROR` | 400 | Input validation failed |
-| `EMAIL_TAKEN` | 400 | Email already registered |
-| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
-| `INTERNAL_ERROR` | 500 | Server error |
+| Code                  | HTTP Status | Meaning                             |
+| --------------------- | ----------- | ----------------------------------- |
+| `UNAUTHORIZED`        | 401         | No valid session                    |
+| `FORBIDDEN`           | 403         | Authenticated but lacks permissions |
+| `NOT_FOUND`           | 404         | Resource doesn't exist              |
+| `VALIDATION_ERROR`    | 400         | Input validation failed             |
+| `EMAIL_TAKEN`         | 400         | Email already registered            |
+| `RATE_LIMIT_EXCEEDED` | 429         | Too many requests                   |
+| `INTERNAL_ERROR`      | 500         | Server error                        |
 
 ## Decision History & Trade-offs
 
 📋 **Guidance** - Documentation of API design decisions and architectural trade-offs
 
 ### Versioned API Path
+
 **Decision**: `/api/v1/` prefix for all public APIs
 **Rationale**:
+
 - Allows breaking changes in v2 without affecting v1 clients
 - Clear separation from internal APIs (`/api/auth/`, `/api/health/`)
 - Industry standard practice
@@ -652,8 +678,10 @@ const results = await prisma.user.findMany({ orderBy });
 **Trade-offs**: Slightly longer URLs
 
 ### Standard Response Format
+
 **Decision**: `{ success, data, error }` over varying formats
 **Rationale**:
+
 - Client code can always check `success` field
 - TypeScript type safety for responses
 - Easy to add metadata without breaking changes
@@ -661,8 +689,10 @@ const results = await prisma.user.findMany({ orderBy });
 **Trade-offs**: Slightly verbose for simple responses
 
 ### Pagination Defaults
+
 **Decision**: Default 20 items, max 100 per page
 **Rationale**:
+
 - 20 items: Good balance of data transfer and UX
 - Max 100: Prevents excessive database load
 - Standard across industry
@@ -690,10 +720,7 @@ const user = await prisma.user.findUnique({ where: { id } });
 
 ```typescript
 // Good: Parallel execution
-const [users, total] = await Promise.all([
-  prisma.user.findMany(),
-  prisma.user.count(),
-]);
+const [users, total] = await Promise.all([prisma.user.findMany(), prisma.user.count()]);
 
 // Bad: Sequential execution
 const users = await prisma.user.findMany();

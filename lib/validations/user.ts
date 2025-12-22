@@ -5,8 +5,8 @@
  * Reuses email and password validation from auth schemas for consistency
  */
 
-import { z } from 'zod'
-import { emailSchema, passwordSchema } from './auth'
+import { z } from 'zod';
+import { emailSchema, passwordSchema } from './auth';
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)
@@ -22,7 +22,7 @@ export const updateUserSchema = z.object({
     .trim()
     .optional(),
   email: emailSchema.optional(),
-})
+});
 
 /**
  * List users query parameters schema (GET /api/v1/users)
@@ -54,7 +54,7 @@ export const listUsersQuerySchema = z.object({
 
   /** Sort order */
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-})
+});
 
 /**
  * User ID parameter validation
@@ -73,7 +73,7 @@ export const userIdSchema = z.object({
     .string()
     .min(1, 'User ID is required')
     .regex(/^c[a-z0-9]{24}$/i, 'Invalid user ID format (must be a valid CUID)'),
-})
+});
 
 /**
  * Create user schema (POST /api/v1/users - admin only)
@@ -100,13 +100,13 @@ export const createUserSchema = z.object({
 
   /** User's role (defaults to USER) */
   role: z.enum(['USER', 'ADMIN', 'MODERATOR']).default('USER'),
-})
+});
 
 /**
  * TypeScript types inferred from schemas
  * Use these for type-safe API handling
  */
-export type CreateUserInput = z.infer<typeof createUserSchema>
-export type UpdateUserInput = z.infer<typeof updateUserSchema>
-export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>
-export type UserIdParam = z.infer<typeof userIdSchema>
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
+export type UserIdParam = z.infer<typeof userIdSchema>;

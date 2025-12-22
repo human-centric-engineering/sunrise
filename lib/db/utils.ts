@@ -1,4 +1,4 @@
-import { prisma } from './client'
+import { prisma } from './client';
 
 /**
  * Database utility functions
@@ -9,11 +9,11 @@ import { prisma } from './client'
  */
 export async function checkDatabaseConnection(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`
-    return true
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
   } catch (error) {
-    console.error('Database connection failed:', error)
-    return false
+    console.error('Database connection failed:', error);
+    return false;
   }
 }
 
@@ -22,7 +22,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
  * Call this when shutting down the application
  */
 export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect()
+  await prisma.$disconnect();
 }
 
 /**
@@ -30,24 +30,24 @@ export async function disconnectDatabase(): Promise<void> {
  * Useful for health check endpoints
  */
 export async function getDatabaseHealth(): Promise<{
-  connected: boolean
-  latency?: number
+  connected: boolean;
+  latency?: number;
 }> {
-  const start = Date.now()
+  const start = Date.now();
 
   try {
-    await prisma.$queryRaw`SELECT 1`
-    const latency = Date.now() - start
+    await prisma.$queryRaw`SELECT 1`;
+    const latency = Date.now() - start;
 
     return {
       connected: true,
       latency,
-    }
+    };
   } catch (error) {
-    console.error('Database health check failed:', error)
+    console.error('Database health check failed:', error);
     return {
       connected: false,
-    }
+    };
   }
 }
 
@@ -65,11 +65,8 @@ export async function getDatabaseHealth(): Promise<{
  */
 export async function executeTransaction<T>(
   callback: (
-    tx: Omit<
-      typeof prisma,
-      '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'
-    >
+    tx: Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>
   ) => Promise<T>
 ): Promise<T> {
-  return await prisma.$transaction(callback)
+  return await prisma.$transaction(callback);
 }

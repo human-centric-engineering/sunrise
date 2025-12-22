@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 /**
  * Next.js Proxy
@@ -23,77 +23,69 @@ import type { NextRequest } from 'next/server'
 /**
  * Define which routes require authentication
  */
-const protectedRoutes = ['/dashboard', '/settings', '/profile']
+const protectedRoutes = ['/dashboard', '/settings', '/profile'];
 
 /**
  * Define which routes are auth pages (login, signup, etc.)
  * Authenticated users will be redirected away from these
  */
-const authRoutes = ['/login', '/signup', '/reset-password']
+const authRoutes = ['/login', '/signup', '/reset-password'];
 
 /**
  * Check if a user is authenticated by looking for the better-auth session cookie
  */
 function isAuthenticated(request: NextRequest): boolean {
   // better-auth sets a session cookie named 'better-auth.session_token'
-  const sessionToken = request.cookies.get('better-auth.session_token')
-  return !!sessionToken
+  const sessionToken = request.cookies.get('better-auth.session_token');
+  return !!sessionToken;
 }
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const authenticated = isAuthenticated(request)
+  const { pathname } = request.nextUrl;
+  const authenticated = isAuthenticated(request);
 
   // Check if the current route is protected
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    pathname.startsWith(route)
-  )
+  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
 
   // Check if the current route is an auth page
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
 
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !authenticated) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('callbackUrl', pathname)
-    return NextResponse.redirect(loginUrl)
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('callbackUrl', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
   // Add security headers to all responses
-  const response = NextResponse.next()
+  const response = NextResponse.next();
 
   // Prevent clickjacking attacks
-  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Frame-Options', 'DENY');
 
   // Prevent MIME type sniffing
-  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('X-Content-Type-Options', 'nosniff');
 
   // Enable XSS filter
-  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('X-XSS-Protection', '1; mode=block');
 
   // Control referrer information
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   // Permissions policy - disable unnecessary features
-  response.headers.set(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=()'
-  )
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
   // Force HTTPS in production
   if (process.env.NODE_ENV === 'production') {
-    response.headers.set(
-      'Strict-Transport-Security',
-      'max-age=31536000; includeSubDomains'
-    )
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
-  return response
+  return response;
 }
 
 /**
@@ -117,4 +109,4 @@ export const config = {
      */
     '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-}
+};

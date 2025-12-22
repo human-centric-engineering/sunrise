@@ -4,4 +4,4 @@
  */
 
 // Placeholder type - will be populated as we build features
-export type Placeholder = Record<string, unknown>
+export type Placeholder = Record<string, unknown>;

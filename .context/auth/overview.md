@@ -59,9 +59,9 @@ sequenceDiagram
 
 ```typescript
 // lib/auth/config.ts
-import { betterAuth } from 'better-auth'
-import { prismaAdapter } from 'better-auth/adapters/prisma'
-import { prisma } from '@/lib/db/client'
+import { betterAuth } from 'better-auth';
+import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { prisma } from '@/lib/db/client';
 
 export const auth = betterAuth({
   // Database adapter
@@ -110,20 +110,20 @@ export const auth = betterAuth({
       },
     },
   },
-})
+});
 
 // Export the auth handler type for use in API routes
-export type Auth = typeof auth
+export type Auth = typeof auth;
 ```
 
 ### API Route Handler
 
 ```typescript
 // app/api/auth/[...all]/route.ts
-import { auth } from '@/lib/auth/config'
-import { toNextJsHandler } from 'better-auth/next-js'
+import { auth } from '@/lib/auth/config';
+import { toNextJsHandler } from 'better-auth/next-js';
 
-export const { POST, GET } = toNextJsHandler(auth)
+export const { POST, GET } = toNextJsHandler(auth);
 ```
 
 ## Session Management
@@ -152,25 +152,22 @@ export default async function DashboardPage() {
 
 ```typescript
 // In API Routes
-import { auth } from '@/lib/auth/config'
-import { headers } from 'next/headers'
+import { auth } from '@/lib/auth/config';
+import { headers } from 'next/headers';
 
 export async function GET(request: NextRequest) {
-  const requestHeaders = await headers()
+  const requestHeaders = await headers();
   const session = await auth.api.getSession({
     headers: requestHeaders,
-  })
+  });
 
   if (!session) {
-    return Response.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    )
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   // Access session.user.id, session.user.email, etc.
-  const data = await fetchUserData(session.user.id)
-  return Response.json({ data })
+  const data = await fetchUserData(session.user.id);
+  return Response.json({ data });
 }
 ```
 
@@ -178,46 +175,46 @@ export async function GET(request: NextRequest) {
 
 ```typescript
 // lib/auth/utils.ts
-import { auth } from './config'
-import { headers } from 'next/headers'
+import { auth } from './config';
+import { headers } from 'next/headers';
 
 type AuthSession = {
   session: {
-    id: string
-    userId: string
-    token: string
-    expiresAt: Date
-    ipAddress?: string | null
-    userAgent?: string | null
-    createdAt: Date
-    updatedAt: Date
-  }
+    id: string;
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
   user: {
-    id: string
-    name: string
-    email: string
-    emailVerified: boolean
-    image?: string | null
-    role?: string | null
-    createdAt: Date
-    updatedAt: Date
-  }
-}
+    id: string;
+    name: string;
+    email: string;
+    emailVerified: boolean;
+    image?: string | null;
+    role?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+};
 
 /**
  * Get the current user session on the server
  */
 export async function getServerSession(): Promise<AuthSession | null> {
   try {
-    const requestHeaders = await headers()
+    const requestHeaders = await headers();
     const session = await auth.api.getSession({
       headers: requestHeaders,
-    })
+    });
 
-    return session
+    return session;
   } catch (error) {
-    console.error('Failed to get server session:', error)
-    return null
+    console.error('Failed to get server session:', error);
+    return null;
   }
 }
 
@@ -225,47 +222,47 @@ export async function getServerSession(): Promise<AuthSession | null> {
  * Get the current authenticated user on the server
  */
 export async function getServerUser(): Promise<AuthSession['user'] | null> {
-  const session = await getServerSession()
-  return session?.user ?? null
+  const session = await getServerSession();
+  return session?.user ?? null;
 }
 
 /**
  * Check if the current user has a specific role
  */
 export async function hasRole(requiredRole: string): Promise<boolean> {
-  const user = await getServerUser()
+  const user = await getServerUser();
 
   if (!user) {
-    return false
+    return false;
   }
 
-  return user.role === requiredRole
+  return user.role === requiredRole;
 }
 
 /**
  * Require authentication for a server component or API route
  */
 export async function requireAuth(): Promise<AuthSession> {
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   if (!session) {
-    throw new Error('Authentication required')
+    throw new Error('Authentication required');
   }
 
-  return session
+  return session;
 }
 
 /**
  * Require a specific role for a server component or API route
  */
 export async function requireRole(requiredRole: string): Promise<AuthSession> {
-  const session = await requireAuth()
+  const session = await requireAuth();
 
   if (session.user.role !== requiredRole) {
-    throw new Error(`Role ${requiredRole} required`)
+    throw new Error(`Role ${requiredRole} required`);
   }
 
-  return session
+  return session;
 }
 ```
 
@@ -275,15 +272,15 @@ export async function requireRole(requiredRole: string): Promise<AuthSession> {
 
 ```typescript
 // lib/auth/client.ts
-'use client'
+'use client';
 
-import { createAuthClient } from 'better-auth/react'
+import { createAuthClient } from 'better-auth/react';
 
 export const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-})
+});
 
-export const { useSession } = authClient
+export const { useSession } = authClient;
 ```
 
 ```typescript
@@ -313,7 +310,7 @@ export function UserProfile() {
 
 ```typescript
 // lib/validations/auth.ts
-import { z } from 'zod'
+import { z } from 'zod';
 
 export const passwordSchema = z
   .string()
@@ -322,7 +319,7 @@ export const passwordSchema = z
   .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
   .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
   .regex(/[0-9]/, 'Password must contain at least one number')
-  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character')
+  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character');
 
 export const emailSchema = z
   .string()
@@ -330,7 +327,7 @@ export const emailSchema = z
   .email('Invalid email address')
   .max(255)
   .toLowerCase()
-  .trim()
+  .trim();
 
 export const signUpSchema = z
   .object({
@@ -342,12 +339,12 @@ export const signUpSchema = z
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
     path: ['confirmPassword'],
-  })
+  });
 
 export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, 'Password is required'),
-})
+});
 ```
 
 ## Route Protection
@@ -356,61 +353,65 @@ export const loginSchema = z.object({
 
 ```typescript
 // middleware.ts
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server';
 
-const protectedRoutes = ['/dashboard', '/settings', '/profile']
-const authRoutes = ['/login', '/signup', '/reset-password']
+const protectedRoutes = ['/dashboard', '/settings', '/profile'];
+const authRoutes = ['/login', '/signup', '/reset-password'];
 
 function isAuthenticated(request: NextRequest): boolean {
-  const sessionToken = request.cookies.get('better-auth.session_token')
-  return !!sessionToken
+  const sessionToken = request.cookies.get('better-auth.session_token');
+  return !!sessionToken;
 }
 
 export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const authenticated = isAuthenticated(request)
+  const { pathname } = request.nextUrl;
+  const authenticated = isAuthenticated(request);
 
-  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route))
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
+  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
 
   // Redirect unauthenticated users to login
   if (isProtectedRoute && !authenticated) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('callbackUrl', pathname)
-    return NextResponse.redirect(loginUrl)
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('callbackUrl', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  const response = NextResponse.next()
+  const response = NextResponse.next();
 
   // Security headers
-  response.headers.set('X-Frame-Options', 'DENY')
-  response.headers.set('X-Content-Type-Options', 'nosniff')
-  response.headers.set('X-XSS-Protection', '1; mode=block')
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
   if (process.env.NODE_ENV === 'production') {
-    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
-  return response
+  return response;
 }
 
 export const config = {
-  matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
-}
+  matcher: [
+    '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
+};
 ```
 
 ## Decision History & Trade-offs
 
 ### better-auth vs. NextAuth.js v5
+
 **Decision**: Use better-auth instead of NextAuth.js v5
 **Rationale**:
+
 - Official recommendation from NextAuth team
 - Simpler architecture (no provider wrapper)
 - Modern patterns (nanostore instead of React context)
@@ -419,6 +420,7 @@ export const config = {
 - TypeScript-first design
 
 **Trade-offs**:
+
 - Smaller community than NextAuth.js
 - Fewer examples and tutorials
 - Newer framework (less battle-tested)
@@ -426,8 +428,10 @@ export const config = {
 **Mitigation**: Comprehensive documentation, tested patterns in this codebase
 
 ### Session Management
+
 **Decision**: Cookie-based sessions with better-auth defaults
 **Rationale**:
+
 - HTTP-only cookies prevent XSS attacks
 - Automatic CSRF protection
 - Works with Server Components
@@ -436,8 +440,10 @@ export const config = {
 **Trade-offs**: Sessions tied to domain (no cross-domain auth without additional setup)
 
 ### Password Hashing
+
 **Decision**: Let better-auth handle password hashing (uses bcrypt internally)
 **Rationale**:
+
 - Framework handles security best practices
 - Consistent hashing across auth flows
 - Reduces custom code and potential errors
@@ -447,10 +453,13 @@ export const config = {
 ## Performance Considerations
 
 ### Session Caching
+
 better-auth caches sessions client-side for 5 minutes (configurable). Server-side calls to `getSession()` are fast cookie reads, no database hit per request.
 
 ### Database Connection Pooling
+
 Prisma handles connection pooling (default: 10 connections). For high-traffic auth endpoints, adjust in `DATABASE_URL`:
+
 ```
 DATABASE_URL="postgresql://user:pass@host:5432/db?connection_limit=20"
 ```

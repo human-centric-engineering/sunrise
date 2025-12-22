@@ -1,23 +1,21 @@
-import { Button } from '@/components/ui/button'
-import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { ThemeToggle } from '@/components/theme-toggle'
-import Link from 'next/link'
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { ThemeToggle } from '@/components/theme-toggle';
+import Link from 'next/link';
 
 export default function HomePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-between p-8">
-      <div className="w-full flex justify-end p-4">
+      <div className="flex w-full justify-end p-4">
         <ThemeToggle />
       </div>
 
-      <div className="flex flex-col items-center justify-center flex-1">
-        <div className="z-10 w-full max-w-3xl items-center justify-center text-center space-y-6">
-          <h1 className="text-5xl font-bold tracking-tight">
-            Welcome to Sunrise
-          </h1>
-          <p className="text-xl text-muted-foreground max-w-2xl">
-            A production-ready Next.js starter template designed for rapid
-            application development with AI assistance
+      <div className="flex flex-1 flex-col items-center justify-center">
+        <div className="z-10 w-full max-w-3xl items-center justify-center space-y-6 text-center">
+          <h1 className="text-5xl font-bold tracking-tight">Welcome to Sunrise</h1>
+          <p className="text-muted-foreground max-w-2xl text-xl">
+            A production-ready Next.js starter template designed for rapid application development
+            with AI assistance
           </p>
 
           <div className="flex justify-center gap-4 pt-4">
@@ -29,7 +27,7 @@ export default function HomePage() {
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-8 max-w-2xl">
+          <div className="grid max-w-2xl grid-cols-1 gap-4 pt-8 md:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle>Next.js 16</CardTitle>
@@ -50,5 +48,5 @@ export default function HomePage() {
         </div>
       </div>
     </main>
-  )
+  );
 }

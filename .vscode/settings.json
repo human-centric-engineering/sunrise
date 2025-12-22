@@ -1,0 +1,63 @@
+{
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.validate": ["javascript", "javascriptreact", "typescript", "typescriptreact"],
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "[markdown]": {
+    "files.trimTrailingWhitespace": false
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/dist": true,
+    "**/out": true,
+    "**/.vercel": true,
+    "**/coverage": true
+  },
+  "tailwindCSS.experimental.classRegex": [
+    ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"],
+    ["cn\\(([^)]*)\\)", "(?:'|\"|`)([^']*)(?:'|\"|`)"]
+  ],
+  "workbench.editor.customLabels.patterns": {
+    "**/app/(auth)/*/page.tsx": "Auth - ${dirname}",
+    "**/app/(protected)/*/page.tsx": "Protected - ${dirname}",
+    "**/app/(public)/*/page.tsx": "Public - ${dirname}",
+    "**/app/(auth)/layout.tsx": "Auth Layout",
+    "**/app/(protected)/layout.tsx": "Protected Layout",
+    "**/app/(public)/layout.tsx": "Public Layout",
+    "**/app/layout.tsx": "Root Layout",
+    "**/app/page.tsx": "Home Page",
+    "**/app/error.tsx": "Root Error",
+    "**/app/not-found.tsx": "404 Page",
+    "**/app/api/health/route.ts": "API - Health",
+    "**/app/api/auth/[...all]/route.ts": "API - Auth Handler",
+    "**/app/api/auth/*/route.ts": "API - Auth/${dirname}",
+    "**/app/api/v1/*/route.ts": "API - v1/${dirname}",
+    "**/app/api/v1/*/*/route.ts": "API - v1/${dirname(1)}/${dirname}",
+    "**/components/ui/*.tsx": "${filename} - UI",
+    "**/components/forms/*.tsx": "${filename} - Form",
+    "**/components/auth/*.tsx": "${filename} - Auth",
+    "**/components/layouts/*.tsx": "${filename} - Layout",
+    "**/components/providers/*.tsx": "${filename} - Provider",
+    "**/lib/auth/*.ts": "${filename} - Auth",
+    "**/lib/api/*.ts": "${filename} - API",
+    "**/lib/db/*.ts": "${filename} - DB",
+    "**/lib/validations/*.ts": "${filename} - Validation",
+    "**/lib/email/*.ts": "${filename} - Email",
+    "**/lib/security/*.ts": "${filename} - Security",
+    "**/lib/utils/*.ts": "${filename} - Utils",
+    "**/hooks/*.tsx": "${filename} - Hook",
+    "**/types/*.ts": "${filename} - Type",
+    "**/prisma/schema.prisma": "Prisma Schema",
+    "**/prisma/seed.ts": "Prisma Seed",
+    "**/.context/**/*.md": "Context - ${dirname}/${filename}",
+    "**/.instructions/*.md": "Docs - ${filename}"
+  }
+}

@@ -5,7 +5,7 @@
  * All API routes should use these functions instead of manually constructing responses.
  */
 
-import type { PaginationMeta } from '@/types/api'
+import type { PaginationMeta } from '@/types/api';
 
 /**
  * Create a successful API response
@@ -46,7 +46,7 @@ export function successResponse<T>(
     success: true,
     data,
     ...(meta && { meta }),
-  }
+  };
 
   return Response.json(body, {
     status: options?.status || 200,
@@ -54,7 +54,7 @@ export function successResponse<T>(
       'Content-Type': 'application/json; charset=utf-8',
       ...options?.headers,
     },
-  })
+  });
 }
 
 /**
@@ -88,10 +88,10 @@ export function successResponse<T>(
 export function errorResponse(
   message: string,
   options?: {
-    code?: string
-    status?: number
-    details?: Record<string, unknown>
-    headers?: HeadersInit
+    code?: string;
+    status?: number;
+    details?: Record<string, unknown>;
+    headers?: HeadersInit;
   }
 ): Response {
   const body = {
@@ -101,7 +101,7 @@ export function errorResponse(
       ...(options?.code && { code: options.code }),
       ...(options?.details && { details: options.details }),
     },
-  }
+  };
 
   return Response.json(body, {
     status: options?.status || 500,
@@ -109,7 +109,7 @@ export function errorResponse(
       'Content-Type': 'application/json; charset=utf-8',
       ...options?.headers,
     },
-  })
+  });
 }
 
 /**
@@ -141,20 +141,20 @@ export function errorResponse(
 export function paginatedResponse<T>(
   data: T[],
   pagination: {
-    page: number
-    limit: number
-    total: number
+    page: number;
+    limit: number;
+    total: number;
   },
   options?: { status?: number; headers?: HeadersInit }
 ): Response {
-  const totalPages = Math.ceil(pagination.total / pagination.limit)
+  const totalPages = Math.ceil(pagination.total / pagination.limit);
 
   const meta: PaginationMeta = {
     page: pagination.page,
     limit: pagination.limit,
     total: pagination.total,
     totalPages,
-  }
+  };
 
-  return successResponse(data, meta, options)
+  return successResponse(data, meta, options);
 }

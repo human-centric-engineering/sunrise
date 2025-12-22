@@ -1,12 +1,6 @@
-import Link from 'next/link'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import Link from 'next/link';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 /**
  * Email Verification Page (Placeholder)
@@ -24,11 +18,11 @@ export default function VerifyEmailPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-          <p className="font-medium mb-2">Coming in Phase 3</p>
+        <div className="bg-muted text-muted-foreground rounded-md p-4 text-sm">
+          <p className="mb-2 font-medium">Coming in Phase 3</p>
           <p>
-            Email verification requires the Resend email service integration,
-            which will be implemented in Phase 3.1 of the build plan.
+            Email verification requires the Resend email service integration, which will be
+            implemented in Phase 3.1 of the build plan.
           </p>
         </div>
 
@@ -39,14 +33,11 @@ export default function VerifyEmailPage() {
         </div>
 
         <div className="text-center text-sm">
-          <Link
-            href="/login"
-            className="text-muted-foreground hover:text-primary hover:underline"
-          >
+          <Link href="/login" className="text-muted-foreground hover:text-primary hover:underline">
             Back to login
           </Link>
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }

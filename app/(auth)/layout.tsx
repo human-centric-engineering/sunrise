@@ -1,10 +1,10 @@
-import type { Metadata } from 'next'
-import { ThemeToggle } from '@/components/theme-toggle'
+import type { Metadata } from 'next';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 export const metadata: Metadata = {
   title: 'Authentication - Sunrise',
   description: 'Sign in or create an account',
-}
+};
 
 /**
  * Auth Layout
@@ -15,16 +15,16 @@ export const metadata: Metadata = {
 export default function AuthLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-background min-h-screen">
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>
-      <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-md">{children}</div>
       </div>
     </div>
-  )
+  );
 }

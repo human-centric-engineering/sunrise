@@ -7,14 +7,14 @@
  * Authentication: Required (session-based via better-auth)
  */
 
-import { NextRequest } from 'next/server'
-import { headers } from 'next/headers'
-import { auth } from '@/lib/auth/config'
-import { prisma } from '@/lib/db/client'
-import { successResponse, errorResponse } from '@/lib/api/responses'
-import { UnauthorizedError, handleAPIError, ErrorCodes } from '@/lib/api/errors'
-import { validateRequestBody } from '@/lib/api/validation'
-import { updateUserSchema } from '@/lib/validations/user'
+import { NextRequest } from 'next/server';
+import { headers } from 'next/headers';
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { successResponse, errorResponse } from '@/lib/api/responses';
+import { UnauthorizedError, handleAPIError, ErrorCodes } from '@/lib/api/errors';
+import { validateRequestBody } from '@/lib/api/validation';
+import { updateUserSchema } from '@/lib/validations/user';
 
 /**
  * GET /api/v1/users/me
@@ -28,11 +28,11 @@ import { updateUserSchema } from '@/lib/validations/user'
 export async function GET(_request: NextRequest) {
   try {
     // Get session from better-auth
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     // Fetch user from database
@@ -49,15 +49,15 @@ export async function GET(_request: NextRequest) {
         updatedAt: true,
         // Explicitly exclude password
       },
-    })
+    });
 
     if (!user) {
-      throw new UnauthorizedError('User not found')
+      throw new UnauthorizedError('User not found');
     }
 
-    return successResponse(user)
+    return successResponse(user);
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }
 
@@ -79,27 +79,27 @@ export async function GET(_request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authenticate
-    const requestHeaders = await headers()
-    const session = await auth.api.getSession({ headers: requestHeaders })
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
 
     if (!session) {
-      throw new UnauthorizedError()
+      throw new UnauthorizedError();
     }
 
     // Validate request body
-    const body = await validateRequestBody(request, updateUserSchema)
+    const body = await validateRequestBody(request, updateUserSchema);
 
     // Check email uniqueness if changing email
     if (body.email) {
       const existingUser = await prisma.user.findUnique({
         where: { email: body.email },
-      })
+      });
 
       if (existingUser && existingUser.id !== session.user.id) {
         return errorResponse('Email already in use', {
           code: ErrorCodes.EMAIL_TAKEN,
           status: 400,
-        })
+        });
       }
     }
 
@@ -114,10 +114,10 @@ export async function PATCH(request: NextRequest) {
         role: true,
         updatedAt: true,
       },
-    })
+    });
 
-    return successResponse(updatedUser)
+    return successResponse(updatedUser);
   } catch (error) {
-    return handleAPIError(error)
+    return handleAPIError(error);
   }
 }

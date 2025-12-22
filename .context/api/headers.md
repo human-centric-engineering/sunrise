@@ -1,6 +1,7 @@
 # API Headers & Middleware
 
 > **Implementation Status:** December 2025
+>
 > - ✅ **Implemented** - Headers and patterns currently configured
 > - 📋 **Planned** - Patterns defined for future implementation
 
@@ -16,45 +17,39 @@ Sunrise implements comprehensive HTTP header management for security, performanc
 
 ```typescript
 // proxy.ts
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const authenticated = isAuthenticated(request)
+  const { pathname } = request.nextUrl;
+  const authenticated = isAuthenticated(request);
 
   // ... route protection logic ...
 
   // Add security headers to all responses
-  const response = NextResponse.next()
+  const response = NextResponse.next();
 
   // Prevent clickjacking attacks
-  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Frame-Options', 'DENY');
 
   // Prevent MIME type sniffing
-  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('X-Content-Type-Options', 'nosniff');
 
   // Enable XSS filter
-  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('X-XSS-Protection', '1; mode=block');
 
   // Control referrer information
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   // Permissions policy - disable unnecessary features
-  response.headers.set(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=()'
-  )
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
   // Force HTTPS in production
   if (process.env.NODE_ENV === 'production') {
-    response.headers.set(
-      'Strict-Transport-Security',
-      'max-age=31536000; includeSubDomains'
-    )
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
-  return response
+  return response;
 }
 
 /**
@@ -65,7 +60,7 @@ export const config = {
     // Match all routes except api/auth, _next/static, _next/image, favicon, and image files
     '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-}
+};
 ```
 
 ### Additional Headers via next.config.js
@@ -103,14 +98,14 @@ async headers() {
 
 ✅ **Currently Implemented**
 
-| Header | Value | Purpose |
-|--------|-------|---------|
-| `X-Frame-Options` | `DENY` | Prevent clickjacking by blocking iframe embedding |
-| `X-Content-Type-Options` | `nosniff` | Prevent MIME type sniffing attacks |
-| `X-XSS-Protection` | `1; mode=block` | Enable browser XSS filter (legacy browsers) |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | Control referrer information leakage |
-| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` | Disable geolocation, microphone, camera |
-| `Strict-Transport-Security` (production) | `max-age=31536000; includeSubDomains` | Force HTTPS for 1 year, include subdomains |
+| Header                                   | Value                                      | Purpose                                           |
+| ---------------------------------------- | ------------------------------------------ | ------------------------------------------------- |
+| `X-Frame-Options`                        | `DENY`                                     | Prevent clickjacking by blocking iframe embedding |
+| `X-Content-Type-Options`                 | `nosniff`                                  | Prevent MIME type sniffing attacks                |
+| `X-XSS-Protection`                       | `1; mode=block`                            | Enable browser XSS filter (legacy browsers)       |
+| `Referrer-Policy`                        | `strict-origin-when-cross-origin`          | Control referrer information leakage              |
+| `Permissions-Policy`                     | `geolocation=(), microphone=(), camera=()` | Disable geolocation, microphone, camera           |
+| `Strict-Transport-Security` (production) | `max-age=31536000; includeSubDomains`      | Force HTTPS for 1 year, include subdomains        |
 
 ### Content Security Policy (CSP)
 
@@ -124,14 +119,14 @@ response.headers.set(
   'Content-Security-Policy',
   [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",  // Required for Next.js and React
-    "style-src 'self' 'unsafe-inline'",                 // Required for Tailwind
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Required for Next.js and React
+    "style-src 'self' 'unsafe-inline'", // Required for Tailwind
     "img-src 'self' data: https:",
     "font-src 'self' data:",
     "connect-src 'self'",
     "frame-ancestors 'none'",
   ].join('; ')
-)
+);
 ```
 
 **Note**: CSP implementation requires careful configuration with Next.js and Tailwind CSS due to their use of inline scripts and styles.
@@ -182,21 +177,12 @@ export function setCORSHeaders(
     response.headers.set('Access-Control-Allow-Credentials', 'true');
   }
 
-  response.headers.set(
-    'Access-Control-Allow-Methods',
-    options.methods?.join(', ') || ''
-  );
+  response.headers.set('Access-Control-Allow-Methods', options.methods?.join(', ') || '');
 
-  response.headers.set(
-    'Access-Control-Allow-Headers',
-    options.allowedHeaders?.join(', ') || ''
-  );
+  response.headers.set('Access-Control-Allow-Headers', options.allowedHeaders?.join(', ') || '');
 
   if (options.exposedHeaders) {
-    response.headers.set(
-      'Access-Control-Expose-Headers',
-      options.exposedHeaders.join(', ')
-    );
+    response.headers.set('Access-Control-Expose-Headers', options.exposedHeaders.join(', '));
   }
 
   if (options.maxAge) {
@@ -204,10 +190,7 @@ export function setCORSHeaders(
   }
 }
 
-function isOriginAllowed(
-  origin: string,
-  allowed?: string | string[]
-): boolean {
+function isOriginAllowed(origin: string, allowed?: string | string[]): boolean {
   if (!allowed) return false;
   if (allowed === '*') return true;
   if (typeof allowed === 'string') return origin === allowed;
@@ -293,12 +276,12 @@ export function proxy(request: NextRequest) {
 
 ### Rate Limit Headers
 
-| Header | Description | Example |
-|--------|-------------|---------|
-| `X-RateLimit-Limit` | Maximum requests allowed in window | `100` |
-| `X-RateLimit-Remaining` | Requests remaining in current window | `42` |
-| `X-RateLimit-Reset` | Timestamp when limit resets | `1640995200` |
-| `Retry-After` | Seconds to wait before retrying | `60` |
+| Header                  | Description                          | Example      |
+| ----------------------- | ------------------------------------ | ------------ |
+| `X-RateLimit-Limit`     | Maximum requests allowed in window   | `100`        |
+| `X-RateLimit-Remaining` | Requests remaining in current window | `42`         |
+| `X-RateLimit-Reset`     | Timestamp when limit resets          | `1640995200` |
+| `Retry-After`           | Seconds to wait before retrying      | `60`         |
 
 ## Content Type Headers
 
@@ -564,10 +547,7 @@ export async function GET(request: NextRequest) {
     const decoded = await verifyJWT(token);
     // Continue with request
   } catch (error) {
-    return Response.json(
-      { success: false, error: { message: 'Invalid token' } },
-      { status: 401 }
-    );
+    return Response.json({ success: false, error: { message: 'Invalid token' } }, { status: 401 });
   }
 }
 ```
@@ -577,8 +557,10 @@ export async function GET(request: NextRequest) {
 📋 **Guidance** - Documentation of design decisions and architectural trade-offs
 
 ### Proxy vs. Route-Level Headers
+
 **Decision**: Set security headers in proxy (middleware), CORS per-route (when implemented)
 **Rationale**:
+
 - Security headers: Same for all routes (centralized)
 - CORS: May vary per endpoint (public vs. authenticated)
 - Reduces duplication while maintaining flexibility
@@ -586,8 +568,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Proxy runs on every matched request (minimal overhead)
 
 ### CSP Inline Script Allowance
+
 **Decision**: Allow `unsafe-inline` for scripts/styles
 **Rationale**:
+
 - Next.js and React require inline scripts for hydration
 - Tailwind uses inline styles
 - Stricter CSP would break core functionality
@@ -595,8 +579,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Reduced XSS protection (mitigated by React's auto-escaping)
 
 ### HSTS Configuration
+
 **Decision**: Enable HSTS in production without `preload` directive
 **Rationale**:
+
 - ✅ Implemented: `max-age=31536000; includeSubDomains` provides strong HTTPS enforcement
 - Omit `preload`: More flexibility during development and deployment
 - Can add `preload` later when ready for HSTS preload list submission
@@ -608,12 +594,16 @@ export async function GET(request: NextRequest) {
 📋 **Guidance** - Performance optimization patterns for headers
 
 ### Header Size
+
 Headers are sent with every request. Keep custom headers minimal:
+
 - **Good**: `X-Request-ID: uuid` (~50 bytes)
 - **Bad**: Embedding large JSON in headers (use response body instead)
 
 ### Proxy Overhead
+
 The proxy (middleware) runs on every matched request:
+
 ```typescript
 // Efficient: Simple header setting
 response.headers.set('X-API-Version', 'v1');

@@ -1,10 +1,10 @@
-import type { Metadata } from 'next'
-import { ThemeToggle } from '@/components/theme-toggle'
+import type { Metadata } from 'next';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 export const metadata: Metadata = {
   title: 'Dashboard - Sunrise',
   description: 'Your dashboard',
-}
+};
 
 /**
  * Protected Layout
@@ -15,13 +15,13 @@ export const metadata: Metadata = {
 export default function ProtectedLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-background min-h-screen">
       {/* Simple header - will be enhanced in future phases */}
       <header className="border-b">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="container mx-auto flex items-center justify-between px-4 py-4">
           <h1 className="text-xl font-bold">Sunrise</h1>
           <ThemeToggle />
         </div>
@@ -30,5 +30,5 @@ export default function ProtectedLayout({
       {/* Main content */}
       <main className="container mx-auto px-4 py-8">{children}</main>
     </div>
-  )
+  );
 }

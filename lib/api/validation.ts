@@ -6,9 +6,9 @@
  * for invalid input that can be caught and handled by handleAPIError.
  */
 
-import { z } from 'zod'
-import { NextRequest } from 'next/server'
-import { ValidationError } from './errors'
+import { z } from 'zod';
+import { NextRequest } from 'next/server';
+import { ValidationError } from './errors';
 
 /**
  * Validate and parse request JSON body
@@ -38,8 +38,8 @@ export async function validateRequestBody<T>(
   schema: z.ZodSchema<T>
 ): Promise<T> {
   try {
-    const body = (await request.json()) as unknown
-    return schema.parse(body)
+    const body = (await request.json()) as unknown;
+    return schema.parse(body);
   } catch (error) {
     if (error instanceof z.ZodError) {
       // Transform Zod errors into ValidationError
@@ -48,11 +48,11 @@ export async function validateRequestBody<T>(
           path: err.path.join('.'),
           message: err.message,
         })),
-      })
+      });
     }
 
     // JSON parsing error
-    throw new ValidationError('Invalid JSON in request body')
+    throw new ValidationError('Invalid JSON in request body');
   }
 }
 
@@ -80,18 +80,15 @@ export async function validateRequestBody<T>(
  * }
  * ```
  */
-export function validateQueryParams<T>(
-  searchParams: URLSearchParams,
-  schema: z.ZodSchema<T>
-): T {
+export function validateQueryParams<T>(searchParams: URLSearchParams, schema: z.ZodSchema<T>): T {
   try {
     // Convert URLSearchParams to plain object
-    const params: Record<string, string> = {}
+    const params: Record<string, string> = {};
     searchParams.forEach((value, key) => {
-      params[key] = value
-    })
+      params[key] = value;
+    });
 
-    return schema.parse(params)
+    return schema.parse(params);
   } catch (error) {
     if (error instanceof z.ZodError) {
       throw new ValidationError('Invalid query parameters', {
@@ -99,10 +96,10 @@ export function validateQueryParams<T>(
           path: err.path.join('.'),
           message: err.message,
         })),
-      })
+      });
     }
 
-    throw new ValidationError('Failed to parse query parameters')
+    throw new ValidationError('Failed to parse query parameters');
   }
 }
 
@@ -131,28 +128,28 @@ export function validateQueryParams<T>(
  * ```
  */
 export function parsePaginationParams(searchParams: URLSearchParams): {
-  page: number
-  limit: number
-  skip: number
+  page: number;
+  limit: number;
+  skip: number;
 } {
   // Parse page (default: 1, min: 1)
-  const pageParam = searchParams.get('page')
-  const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1
+  const pageParam = searchParams.get('page');
+  const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
 
   // Parse limit (default: 20, min: 1, max: 100)
-  const limitParam = searchParams.get('limit')
-  const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 20
+  const limitParam = searchParams.get('limit');
+  const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 20;
 
   // Calculate skip for Prisma
-  const skip = (page - 1) * limit
+  const skip = (page - 1) * limit;
 
   // Validate that page and limit are valid numbers
   if (isNaN(page) || isNaN(limit)) {
     throw new ValidationError('Invalid pagination parameters', {
       page: isNaN(page) ? ['Must be a valid number'] : undefined,
       limit: isNaN(limit) ? ['Must be a valid number'] : undefined,
-    })
+    });
   }
 
-  return { page, limit, skip }
+  return { page, limit, skip };
 }

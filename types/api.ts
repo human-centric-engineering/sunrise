@@ -32,14 +32,14 @@
  */
 export type APIResponse<T> =
   | {
-      success: true
-      data: T
-      meta?: PaginationMeta | Record<string, unknown>
+      success: true;
+      data: T;
+      meta?: PaginationMeta | Record<string, unknown>;
     }
   | {
-      success: false
-      error: APIError
-    }
+      success: false;
+      error: APIError;
+    };
 
 /**
  * Error structure for API responses
@@ -49,11 +49,11 @@ export type APIResponse<T> =
  */
 export interface APIError {
   /** Human-readable error message */
-  message: string
+  message: string;
   /** Machine-readable error code for client-side error handling */
-  code?: string
+  code?: string;
   /** Additional context about the error (validation errors, stack traces in dev, etc.) */
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>;
 }
 
 /**
@@ -77,13 +77,13 @@ export interface APIError {
  */
 export interface PaginationMeta {
   /** Current page number (1-indexed) */
-  page: number
+  page: number;
   /** Number of items per page */
-  limit: number
+  limit: number;
   /** Total number of items across all pages */
-  total: number
+  total: number;
   /** Total number of pages (calculated from total and limit) */
-  totalPages: number
+  totalPages: number;
 }
 
 /**
@@ -91,7 +91,7 @@ export interface PaginationMeta {
  *
  * Used for type-safe method handling in middleware and utilities
  */
-export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'
+export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
 
 /**
  * Request validation result
@@ -101,9 +101,9 @@ export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'
  */
 export interface ValidationResult<T> {
   /** Whether validation succeeded */
-  success: boolean
+  success: boolean;
   /** Validated and parsed data (only present if success is true) */
-  data?: T
+  data?: T;
   /** Validation errors keyed by field name (only present if success is false) */
-  errors?: Record<string, string[]>
+  errors?: Record<string, string[]>;
 }

@@ -87,6 +87,7 @@ export default function LoginPage() {
 ### Route Organization Patterns
 
 **Adding Protected Pages:**
+
 ```typescript
 // app/(protected)/analytics/page.tsx
 // New protected feature - uses (protected) layout automatically
@@ -101,6 +102,7 @@ export default async function AnalyticsPage() {
 ```
 
 **Adding Public Pages:**
+
 ```typescript
 // app/(public)/pricing/page.tsx
 // New public page - uses (public) layout automatically
@@ -110,6 +112,7 @@ export default function PricingPage() {
 ```
 
 **Creating New Route Group (Different Layout):**
+
 ```typescript
 // app/(admin)/layout.tsx
 // New route group for admin-specific UI
@@ -131,6 +134,7 @@ export default async function AdminUsersPage() {
 ```
 
 **Decision Guide:**
+
 - Same navigation/UI as existing pages? → Use existing route group as subdirectory
 - Different navigation/UI needed? → Create new route group with `layout.tsx`
 - Just authentication difference? → Use `(protected)` vs `(public)`
@@ -177,7 +181,10 @@ export class AppError extends Error {
 }
 
 export class ValidationError extends AppError {
-  constructor(message: string, public details?: any) {
+  constructor(
+    message: string,
+    public details?: any
+  ) {
     super(message, 400, 'VALIDATION_ERROR');
   }
 }
@@ -205,10 +212,7 @@ import { errorResponse } from '@/lib/api/responses';
 import { getServerSession } from '@/lib/auth/utils';
 import { prisma } from '@/lib/db/client';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     // Check authentication
     const session = await getServerSession();
@@ -232,18 +236,12 @@ export async function GET(
   } catch (error) {
     // Handle known errors
     if (error instanceof AppError) {
-      return Response.json(
-        errorResponse(error.message, error.code),
-        { status: error.statusCode }
-      );
+      return Response.json(errorResponse(error.message, error.code), { status: error.statusCode });
     }
 
     // Handle unexpected errors
     console.error('Unexpected error:', error);
-    return Response.json(
-      errorResponse('Internal server error', 'INTERNAL_ERROR'),
-      { status: 500 }
-    );
+    return Response.json(errorResponse('Internal server error', 'INTERNAL_ERROR'), { status: 500 });
   }
 }
 ```
@@ -545,17 +543,20 @@ export async function GET(request: NextRequest) {
 ## Naming Conventions
 
 ### File Naming
+
 - **Components**: `PascalCase.tsx` → `UserProfile.tsx`
 - **Utilities**: `kebab-case.ts` → `format-date.ts`
 - **Next.js Special**: `page.tsx`, `layout.tsx`, `route.ts`, `error.tsx`, `loading.tsx`
 
 ### Variable Naming
+
 - **Constants**: `UPPER_SNAKE_CASE` → `MAX_LOGIN_ATTEMPTS`
 - **Functions**: `camelCase` → `getUserById`
 - **Components**: `PascalCase` → `LoginForm`
 - **Types/Interfaces**: `PascalCase` → `UserProfile`, `CreateUserInput`
 
 ### Function Naming Conventions
+
 - **Get**: Retrieve data → `getUserById()`, `getServerSession()`
 - **Create**: Create new entity → `createUser()`, `createPost()`
 - **Update**: Modify existing → `updateUserProfile()`, `updatePassword()`
@@ -566,8 +567,10 @@ export async function GET(request: NextRequest) {
 ## Decision History & Trade-offs
 
 ### Error Handling Strategy
+
 **Decision**: Custom error classes + standardized responses
 **Rationale**:
+
 - Type-safe error handling
 - Consistent API responses
 - Easy to add error tracking later (Sentry)
@@ -576,8 +579,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: More boilerplate than throwing strings
 
 ### Zod for Validation
+
 **Decision**: Single Zod schema for client and server
 **Rationale**:
+
 - DRY principle (don't duplicate validation logic)
 - Type inference (TypeScript types from schemas)
 - Runtime safety (catch invalid data)
@@ -585,8 +590,10 @@ export async function GET(request: NextRequest) {
 **Trade-offs**: Adds ~14KB to client bundle when used in client components
 
 ### Repository Pattern (Optional)
+
 **Decision**: Allow both repository pattern and direct Prisma
 **Rationale**:
+
 - Flexibility for different complexity levels
 - Repositories for complex queries with business logic
 - Direct Prisma for simple CRUD

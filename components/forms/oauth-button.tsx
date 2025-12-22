@@ -1,14 +1,14 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { authClient } from '@/lib/auth/client'
-import { Button } from '@/components/ui/button'
+import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { authClient } from '@/lib/auth/client';
+import { Button } from '@/components/ui/button';
 
 interface OAuthButtonProps {
-  provider: 'google' // Can add more providers later: 'github' | 'facebook' etc.
-  children: React.ReactNode
-  callbackUrl?: string
+  provider: 'google'; // Can add more providers later: 'github' | 'facebook' etc.
+  children: React.ReactNode;
+  callbackUrl?: string;
 }
 
 /**
@@ -30,29 +30,29 @@ interface OAuthButtonProps {
  * ```
  */
 export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProps) {
-  const [isLoading, setIsLoading] = useState(false)
-  const searchParams = useSearchParams()
-  const redirect = callbackUrl || searchParams.get('callbackUrl') || '/dashboard'
+  const [isLoading, setIsLoading] = useState(false);
+  const searchParams = useSearchParams();
+  const redirect = callbackUrl || searchParams.get('callbackUrl') || '/dashboard';
 
   const handleOAuthSignIn = async () => {
     try {
-      setIsLoading(true)
+      setIsLoading(true);
 
       // Initiate OAuth flow
       await authClient.signIn.social({
         provider,
         callbackURL: redirect,
-      })
+      });
 
       // Note: better-auth will redirect to provider's OAuth page
       // User will be redirected back to /api/auth/callback/[provider]
       // Then redirected to callbackURL after successful authentication
     } catch (error) {
       // Reset loading state if redirect fails
-      setIsLoading(false)
-      console.error('OAuth sign-in error:', error)
+      setIsLoading(false);
+      console.error('OAuth sign-in error:', error);
     }
-  }
+  };
 
   return (
     <Button
@@ -64,5 +64,5 @@ export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProp
     >
       {isLoading ? 'Redirecting...' : children}
     </Button>
-  )
+  );
 }

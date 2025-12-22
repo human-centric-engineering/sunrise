@@ -1,5 +1,5 @@
-import { auth } from './config'
-import { headers } from 'next/headers'
+import { auth } from './config';
+import { headers } from 'next/headers';
 
 /**
  * Session type from better-auth
@@ -7,26 +7,26 @@ import { headers } from 'next/headers'
  */
 type AuthSession = {
   session: {
-    id: string
-    userId: string
-    token: string
-    expiresAt: Date
-    ipAddress?: string | null
-    userAgent?: string | null
-    createdAt: Date
-    updatedAt: Date
-  }
+    id: string;
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
   user: {
-    id: string
-    name: string
-    email: string
-    emailVerified: boolean
-    image?: string | null
-    role?: string | null
-    createdAt: Date
-    updatedAt: Date
-  }
-}
+    id: string;
+    name: string;
+    email: string;
+    emailVerified: boolean;
+    image?: string | null;
+    role?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+};
 
 /**
  * Get the current user session on the server
@@ -66,15 +66,15 @@ type AuthSession = {
  */
 export async function getServerSession(): Promise<AuthSession | null> {
   try {
-    const requestHeaders = await headers()
+    const requestHeaders = await headers();
     const session = await auth.api.getSession({
       headers: requestHeaders,
-    })
+    });
 
-    return session
+    return session;
   } catch (error) {
-    console.error('Failed to get server session:', error)
-    return null
+    console.error('Failed to get server session:', error);
+    return null;
   }
 }
 
@@ -99,8 +99,8 @@ export async function getServerSession(): Promise<AuthSession | null> {
  * ```
  */
 export async function getServerUser(): Promise<AuthSession['user'] | null> {
-  const session = await getServerSession()
-  return session?.user ?? null
+  const session = await getServerSession();
+  return session?.user ?? null;
 }
 
 /**
@@ -123,13 +123,13 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
  * ```
  */
 export async function hasRole(requiredRole: string): Promise<boolean> {
-  const user = await getServerUser()
+  const user = await getServerUser();
 
   if (!user) {
-    return false
+    return false;
   }
 
-  return user.role === requiredRole
+  return user.role === requiredRole;
 }
 
 /**
@@ -151,13 +151,13 @@ export async function hasRole(requiredRole: string): Promise<boolean> {
  * ```
  */
 export async function requireAuth(): Promise<AuthSession> {
-  const session = await getServerSession()
+  const session = await getServerSession();
 
   if (!session) {
-    throw new Error('Authentication required')
+    throw new Error('Authentication required');
   }
 
-  return session
+  return session;
 }
 
 /**
@@ -179,13 +179,13 @@ export async function requireAuth(): Promise<AuthSession> {
  * ```
  */
 export async function requireRole(requiredRole: string): Promise<AuthSession> {
-  const session = await requireAuth()
+  const session = await requireAuth();
 
   if (session.user.role !== requiredRole) {
-    throw new Error(`Role ${requiredRole} required`)
+    throw new Error(`Role ${requiredRole} required`);
   }
 
-  return session
+  return session;
 }
 
 /**
@@ -203,8 +203,6 @@ export async function requireRole(requiredRole: string): Promise<AuthSession> {
  * }
  * ```
  */
-export function isAuthenticated(
-  session: AuthSession | null
-): session is AuthSession {
-  return session !== null
+export function isAuthenticated(session: AuthSession | null): session is AuthSession {
+  return session !== null;
 }

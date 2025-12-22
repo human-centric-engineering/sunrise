@@ -11,6 +11,7 @@ Sunrise is a modern full-stack starter that gets you from zero to production-rea
 Most starter templates are either too minimal (just a scaffold) or too opinionated (locked into specific patterns). Sunrise strikes the balance: comprehensive yet customizable, production-ready yet approachable.
 
 **Built for:**
+
 - Teams shipping MVPs quickly
 - Solo developers who want to focus on features, not infrastructure
 - Projects that need production-grade auth, database, and APIs from day one
@@ -19,12 +20,14 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 ## Tech Stack
 
 **Core:**
+
 - Next.js 16 (App Router) with TypeScript
 - PostgreSQL + Prisma ORM
 - better-auth for authentication
 - Tailwind CSS + shadcn/ui components
 
 **Production Ready:**
+
 - Docker containerization
 - Email with Resend + React Email
 - Zod validation throughout
@@ -52,6 +55,7 @@ claude mcp add next-devtools npx next-devtools-mcp@latest
 ```
 
 Then restart your Claude session to enable:
+
 - Real-time Next.js documentation access
 - Runtime diagnostics and error detection
 - Browser automation testing
@@ -74,14 +78,17 @@ The app uses Next.js 14+ route groups for clean separation of concerns:
 ### Adding New Pages
 
 **Same layout as existing section?** Add as a subdirectory
+
 - Protected feature with dashboard UI → `app/(protected)/analytics/page.tsx`
 - Public page with marketing UI → `app/(public)/pricing/page.tsx`
 
 **Different layout needed?** Create a new route group
+
 - Admin panel with different UI → `app/(admin)/layout.tsx` + `app/(admin)/users/page.tsx`
 - Documentation site → `app/(docs)/layout.tsx` + `app/(docs)/getting-started/page.tsx`
 
 **Examples:**
+
 - Blog with same marketing UI: `(public)/blog/` ✓
 - Admin panel with different UI: `(admin)/` with custom layout ✓
 - Customer portal: `(protected)/portal/` if same dashboard UI, or `(portal)/` if different ✓
@@ -91,6 +98,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 ## Styling & Theming
 
 **Theme System:**
+
 - Dark mode toggle available via `<ThemeToggle />` component
 - Toggles between light and dark modes
 - On first visit: detects system preference, saves to localStorage, defaults to light
@@ -98,6 +106,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 - Modify theme variables in `app/globals.css` (HSL-based color system)
 
 **UI Components:**
+
 - **shadcn/ui** - Pre-built, customizable components in `components/ui/`
   - Add more components: `npx shadcn-ui@latest add [component-name]`
   - Customize components directly in `components/ui/` - they're your code
@@ -108,6 +117,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 ## Database Setup
 
 **Quick Start:**
+
 1. Set your PostgreSQL connection string in `.env`:
    ```bash
    DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
@@ -123,6 +133,7 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 4. Verify connection: Visit http://localhost:3000/api/health
 
 **Database Scripts:**
+
 - `npm run db:migrate` - Create and apply migrations
 - `npm run db:push` - Push schema changes without migration (development)
 - `npm run db:studio` - Open Prisma Studio (database GUI)
@@ -151,18 +162,21 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 ### Setup
 
 1. **Clone and install dependencies:**
+
    ```bash
    git clone https://github.com/human-centric-engineering/sunrise.git
    cd sunrise
-   npm install
+   npm install  # This automatically sets up git hooks via Husky
    ```
 
 2. **Set up environment variables:**
+
    ```bash
    cp .env.example .env.local
    ```
 
    Edit `.env.local` and configure the required variables:
+
    ```bash
    # Database (Required)
    DATABASE_URL="postgresql://user:password@localhost:5432/sunrise"
@@ -184,12 +198,14 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
    - Security best practices
 
 3. **Set up the database:**
+
    ```bash
    npm run db:migrate    # Create database schema
    npm run db:seed       # (Optional) Add test users
    ```
 
 4. **Start the development server:**
+
    ```bash
    npm run dev
    ```
@@ -203,12 +219,14 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
 If you prefer Docker, the entire development environment (Next.js + PostgreSQL) is containerized and ready to use:
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/human-centric-engineering/sunrise.git
    cd sunrise
    ```
 
 2. **Start the development environment:**
+
    ```bash
    docker-compose up
    ```
@@ -220,6 +238,7 @@ If you prefer Docker, the entire development environment (Next.js + PostgreSQL) 
    - ✅ Handles all port mapping
 
 3. **Run database migrations** (in a new terminal, first time only):
+
    ```bash
    docker-compose exec web npx prisma migrate dev
    ```
@@ -230,6 +249,7 @@ If you prefer Docker, the entire development environment (Next.js + PostgreSQL) 
    - When you modify `prisma/schema.prisma`
 
 4. **(Optional) Seed with test data:**
+
    ```bash
    docker-compose exec web npm run db:seed
    ```
@@ -240,6 +260,7 @@ If you prefer Docker, the entire development environment (Next.js + PostgreSQL) 
    - Health check: http://localhost:3000/api/health
 
 **Daily development commands:**
+
 ```bash
 docker-compose up              # Start dev environment
 docker-compose down            # Stop all services
@@ -247,12 +268,30 @@ docker-compose logs -f web     # View app logs
 ```
 
 **Note:** The Docker development environment uses volume mounts, so changes to your code trigger hot-reload just like `npm run dev` locally.
-   - Database GUI: `npm run db:studio`
+
+- Database GUI: `npm run db:studio`
 
 ### Test Accounts (after seeding)
 
 - **User**: test@example.com / password123
 - **Admin**: admin@example.com / password123
+
+### VSCode Setup (Recommended)
+
+The project includes VSCode workspace settings for an optimal development experience. When you open the project in VSCode, you'll be prompted to install recommended extensions:
+
+- **Prettier** (esbenp.prettier-vscode) - Code formatting
+- **ESLint** (dbaeumer.vscode-eslint) - Linting
+- **Tailwind CSS IntelliSense** (bradlc.vscode-tailwindcss) - Tailwind class completion
+- **Prisma** (prisma.prisma) - Prisma schema support
+- **Docker** (ms-azuretools.vscode-docker) - Docker container support
+- **Error Lens** (usernamehw.errorlens) - Inline errors and warnings
+
+**Automatic Features:**
+
+- **Format on save** - Code is automatically formatted with Prettier
+- **ESLint auto-fix** - Linting issues are fixed automatically on save
+- **Tailwind IntelliSense** - Autocomplete for Tailwind classes in `cn()` and `cva()` functions
 
 ### Development Commands
 

@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+
+# Build outputs
+.next
+out
+build
+dist
+
+# Caches
+.cache
+.turbo
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment
+.env*
+!.env.example
+
+# Generated files
+*.generated.*
+.vercel
+.swc
+
+# Prisma migrations (generated SQL)
+prisma/migrations/**/*.sql
+
+# Public assets
+public
+
+# Documentation
+CHANGELOG.md
+
+# Coverage
+coverage
+.nyc_output
