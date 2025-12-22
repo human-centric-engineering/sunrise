@@ -433,6 +433,58 @@ git push --no-verify
 4. Connect to API endpoint
 5. Handle loading and error states
 
+**Making API Calls from Frontend:**
+
+Use the type-safe `apiClient` for all API calls from client components:
+
+```typescript
+import { apiClient, APIClientError } from '@/lib/api/client';
+import type { PublicUser } from '@/types';
+
+// GET request
+const user = await apiClient.get<PublicUser>('/api/v1/users/me');
+
+// GET with query parameters
+const users = await apiClient.get<PublicUser[]>('/api/v1/users', {
+  params: { page: 1, limit: 10, q: 'search' },
+});
+
+// POST request with body
+const newUser = await apiClient.post<PublicUser>('/api/v1/users', {
+  body: { name: 'John', email: 'john@example.com' },
+});
+
+// PATCH request
+const updated = await apiClient.patch<PublicUser>('/api/v1/users/me', {
+  body: { name: 'Jane' },
+});
+
+// DELETE request
+await apiClient.delete('/api/v1/users/123');
+
+// Error handling
+try {
+  const user = await apiClient.get<PublicUser>('/api/v1/users/me');
+} catch (error) {
+  if (error instanceof APIClientError) {
+    console.error(error.message, error.code, error.details);
+
+    // Handle validation errors
+    if (error.code === 'VALIDATION_ERROR' && error.details) {
+      // error.details contains field-specific validation errors
+    }
+  }
+}
+```
+
+**Benefits:**
+
+- Type safety with generics
+- Automatic JSON parsing
+- Consistent error handling
+- Query parameter serialization
+- Integration with API response types
+
 **Adding a shadcn/ui Component:**
 
 ```bash

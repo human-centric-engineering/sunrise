@@ -3,10 +3,12 @@
  *
  * Zod schemas for user-related API operations (profile updates, user management, etc.)
  * Reuses email and password validation from auth schemas for consistency
+ * Reuses common validation patterns (pagination, sorting, CUID) from common schemas
  */
 
 import { z } from 'zod';
 import { emailSchema, passwordSchema } from './auth';
+import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from './common';
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)
@@ -29,16 +31,15 @@ export const updateUserSchema = z.object({
  *
  * Validates query parameters for the user list endpoint (admin only).
  * Supports pagination, search, and sorting.
+ *
+ * Reuses pagination and sorting patterns from common schemas, with domain-specific
+ * customizations (limit default of 20, sortBy field options).
  */
 export const listUsersQuerySchema = z.object({
-  /** Page number (1-indexed) */
-  page: z.coerce
-    .number()
-    .int('Page must be an integer')
-    .positive('Page must be positive')
-    .default(1),
+  /** Page number (1-indexed) - from common pagination schema */
+  page: paginationQuerySchema.shape.page,
 
-  /** Items per page (max 100) */
+  /** Items per page (max 100) - domain-specific default of 20 */
   limit: z.coerce
     .number()
     .int('Limit must be an integer')
@@ -49,11 +50,11 @@ export const listUsersQuerySchema = z.object({
   /** Search query (searches name and email) */
   search: z.string().trim().optional(),
 
-  /** Field to sort by */
+  /** Field to sort by - domain-specific enum for user fields */
   sortBy: z.enum(['name', 'email', 'createdAt']).default('createdAt'),
 
-  /** Sort order */
-  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  /** Sort order - from common sorting schema */
+  sortOrder: sortingQuerySchema.shape.sortOrder,
 });
 
 /**
@@ -67,12 +68,11 @@ export const listUsersQuerySchema = z.object({
  *
  * Note: better-auth is configured to delegate ID generation to Prisma's
  * @default(cuid()), ensuring all users have this consistent format.
+ *
+ * Uses common CUID validation schema for consistency across the application.
  */
 export const userIdSchema = z.object({
-  id: z
-    .string()
-    .min(1, 'User ID is required')
-    .regex(/^c[a-z0-9]{24}$/i, 'Invalid user ID format (must be a valid CUID)'),
+  id: cuidSchema,
 });
 
 /**
