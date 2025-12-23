@@ -1,0 +1,38 @@
+name: testing
+version: 1.0.0
+description: |
+  Expert testing skill for Sunrise. Implements comprehensive testing patterns
+  including unit tests, integration tests, and component tests. Uses hybrid
+  autonomy to handle simple tests autonomously while consulting the user for
+  complex architectural decisions.
+
+triggers:
+  - 'add tests'
+  - 'write tests for'
+  - 'test this code'
+  - 'implement testing'
+  - 'phase 2.4'
+
+contexts:
+  - '.claude/skills/testing/overview.md'
+  - '.claude/skills/testing/templates/*.md'
+  - '.claude/skills/testing/mocking/*.md'
+  - '.claude/skills/testing/priority-guide.md'
+  - '.claude/skills/testing/success-criteria.md'
+  - '.context/testing/*.md'
+  - 'vitest.config.ts'
+  - '__tests__/**/*.test.ts'
+  - 'lib/test-utils/**/*'
+
+mcp_integrations:
+  context7:
+    libraries:
+      - vitest: '/vitejs/vitest'
+      - react-testing-library: '/testing-library/react-testing-library'
+      - testcontainers: '/testcontainers/testcontainers-node'
+  next_devtools: true
+
+parameters:
+  autonomy_level: hybrid
+  complexity_threshold: medium
+  test_coverage_goal: 80
