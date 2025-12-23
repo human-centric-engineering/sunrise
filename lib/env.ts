@@ -26,8 +26,8 @@ import { z } from 'zod';
  * @see .context/environment/reference.md for complete variable reference
  */
 
-// Define schema for all environment variables
-const envSchema = z.object({
+// Server-only environment variables
+const serverEnvSchema = z.object({
   // Database
   DATABASE_URL: z.string().url({
     message:
@@ -54,11 +54,24 @@ const envSchema = z.object({
 
   // App Configuration
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // Logging Configuration (optional)
+  LOG_LEVEL: z
+    .enum(['debug', 'info', 'warn', 'error'])
+    .optional()
+    .describe('Logging verbosity level. Defaults to "debug" in development, "info" in production'),
+});
+
+// Client-side environment variables (NEXT_PUBLIC_* vars)
+const clientEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url({
     message:
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
 });
+
+// Combined schema for type inference
+const envSchema = serverEnvSchema.merge(clientEnvSchema);
 
 /**
  * Validated environment variables with type safety.
@@ -71,8 +84,22 @@ const envSchema = z.object({
  */
 export type Env = z.infer<typeof envSchema>;
 
+// Check if we're running in a browser
+const isBrowser = typeof window !== 'undefined';
+
 // Parse and validate environment variables
-const parsed = envSchema.safeParse(process.env);
+// On the client, only validate NEXT_PUBLIC_* variables
+// On the server, validate all variables
+//
+// IMPORTANT: In the browser, we must explicitly construct the env object
+// because Next.js only does static replacement for direct property access
+// (e.g., process.env.NEXT_PUBLIC_APP_URL), not when passing the entire
+// process.env object to a function.
+const parsed = isBrowser
+  ? clientEnvSchema.safeParse({
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    })
+  : envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment variables:');
@@ -88,18 +115,21 @@ if (!parsed.success) {
  * All required variables are guaranteed to exist and be valid.
  * Use this throughout the application instead of process.env.
  *
+ * On the client, only NEXT_PUBLIC_* variables are validated.
+ * On the server, all variables are validated.
+ *
  * @example
  * ```typescript
  * import { env } from '@/lib/env'
  *
  * // Type-safe access with autocomplete
- * const secret = env.BETTER_AUTH_SECRET
- * const isDev = env.NODE_ENV === 'development'
+ * const secret = env.BETTER_AUTH_SECRET // Server-side only
+ * const appUrl = env.NEXT_PUBLIC_APP_URL // Available on both
  * ```
  */
-export const env = parsed.data;
+export const env = parsed.data as Env;
 
-// Log successful validation in development
-if (env.NODE_ENV === 'development') {
+// Log successful validation in development (server-side only)
+if (!isBrowser && env.NODE_ENV === 'development') {
   console.log('✅ Environment variables validated successfully');
 }

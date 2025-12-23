@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { errorResponse } from './responses';
 import { env } from '@/lib/env';
+import { logger } from '@/lib/logging';
 
 /**
  * Error code constants for consistent error handling across the API
@@ -155,10 +156,13 @@ export class NotFoundError extends APIError {
  * ```
  */
 export function handleAPIError(error: unknown): Response {
-  // Log error in development for debugging
-  if (env.NODE_ENV === 'development') {
-    console.error('API Error:', error);
-  }
+  // Log all API errors with structured logger
+  // In production: JSON format for log aggregation
+  // In development: human-readable format for debugging
+  logger.error('API Error', error, {
+    errorType: 'api',
+    isDevelopment: env.NODE_ENV === 'development',
+  });
 
   // Handle custom APIError instances
   if (error instanceof APIError) {

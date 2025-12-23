@@ -1,4 +1,5 @@
 import { prisma } from './client';
+import { logger } from '@/lib/logging';
 
 /**
  * Database utility functions
@@ -12,7 +13,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     await prisma.$queryRaw`SELECT 1`;
     return true;
   } catch (error) {
-    console.error('Database connection failed:', error);
+    logger.error('Database connection failed', error);
     return false;
   }
 }
@@ -44,7 +45,7 @@ export async function getDatabaseHealth(): Promise<{
       latency,
     };
   } catch (error) {
-    console.error('Database health check failed:', error);
+    logger.error('Database health check failed', error);
     return {
       connected: false,
     };

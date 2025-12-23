@@ -205,6 +205,8 @@ npm run test:coverage    # Run tests with coverage report
 - **Styling:** Tailwind CSS + shadcn/ui components
 - **Email:** Resend + React Email templates
 - **Validation:** Zod schemas
+- **Logging:** Structured logging with environment-aware output
+- **Error Handling:** Global error handler, error boundaries, Sentry integration
 
 ### Directory Structure Philosophy
 
@@ -353,6 +355,77 @@ export async function GET(request: NextRequest) {
   }
 }
 ```
+
+**Logging:**
+
+**CRITICAL: Use the structured logger instead of `console` for all production code.**
+
+- ✅ **Use `logger`** from `@/lib/logging` for:
+  - API routes and server actions
+  - Business logic and data operations
+  - Error tracking and monitoring
+  - User actions and important events
+  - Any code that runs in production
+
+- ⚠️ **Only use `console`** for:
+  - Quick local debugging (temporary, remove before commit)
+  - Build scripts and tooling (not application code)
+
+**Why:**
+
+- Structured logs work in production (JSON format for log aggregation)
+- Environment-aware output (colored in dev, JSON in prod)
+- Request tracing (automatic request ID propagation)
+- PII sanitization (sensitive data scrubbed automatically)
+- AI-friendly observability (machine-parseable for debugging)
+
+**Examples:**
+
+```typescript
+import { logger } from '@/lib/logging';
+
+// ✅ GOOD - Use structured logger
+export async function GET(request: NextRequest) {
+  const requestLogger = logger.withContext({ requestId: 'abc123' });
+  requestLogger.info('User list requested', { limit: 10 });
+
+  try {
+    const users = await db.user.findMany();
+    requestLogger.info('Users fetched', { count: users.length });
+    return Response.json({ success: true, data: users });
+  } catch (error) {
+    requestLogger.error('Failed to fetch users', error, { endpoint: '/api/v1/users' });
+    return handleAPIError(error);
+  }
+}
+
+// ❌ BAD - Don't use console in production code
+export async function GET(request: NextRequest) {
+  console.log('Getting users...'); // No structure, no context, disappears in production
+  try {
+    const users = await db.user.findMany();
+    console.log('Found users:', users); // May leak PII, not sanitized
+    return Response.json({ success: true, data: users });
+  } catch (error) {
+    console.error('Error:', error); // No request context, hard to debug
+    return handleAPIError(error);
+  }
+}
+```
+
+**Log Levels:**
+
+- `logger.debug()` - Verbose debugging (only in development)
+- `logger.info()` - Important application events (user actions, data changes)
+- `logger.warn()` - Warnings (deprecated APIs, fallback paths)
+- `logger.error()` - Errors requiring attention (exceptions, failures)
+
+**Documentation:** See [`.context/errors/logging.md`](./.context/errors/logging.md) for:
+
+- When to log and what not to log
+- Request context best practices
+- Performance considerations
+- PII sanitization guidelines
 
 ### Git Hooks
 

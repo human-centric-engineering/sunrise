@@ -1,11 +1,20 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { generateRequestId } from '@/lib/logging/context';
 
 /**
  * Next.js Proxy
  *
- * Runs before every request to check authentication and handle protected routes.
- * Uses better-auth session cookies to determine if a user is authenticated.
+ * Runs before every request to:
+ * 1. Generate/propagate request IDs for distributed tracing
+ * 2. Check authentication and handle protected routes
+ * 3. Add security headers to all responses
+ *
+ * Request IDs enable tracing user actions across:
+ * - Client (browser logs)
+ * - Server (API route logs)
+ * - Database operations
+ * - Error tracking systems
  *
  * Protected routes:
  * - /dashboard/*
@@ -44,6 +53,10 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authenticated = isAuthenticated(request);
 
+  // Generate or extract request ID for distributed tracing
+  // Check if request already has an ID (from client propagation)
+  const requestId = request.headers.get('x-request-id') || generateRequestId();
+
   // Check if the current route is protected
   const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
 
@@ -54,16 +67,29 @@ export function proxy(request: NextRequest) {
   if (isProtectedRoute && !authenticated) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
-    return NextResponse.redirect(loginUrl);
+    const redirectResponse = NextResponse.redirect(loginUrl);
+    // Add request ID to redirect response
+    redirectResponse.headers.set('x-request-id', requestId);
+    return redirectResponse;
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    const redirectResponse = NextResponse.redirect(new URL('/dashboard', request.url));
+    // Add request ID to redirect response
+    redirectResponse.headers.set('x-request-id', requestId);
+    return redirectResponse;
   }
 
   // Add security headers to all responses
   const response = NextResponse.next();
+
+  // Add request ID to response headers for tracing
+  // This allows clients to:
+  // 1. See the request ID in DevTools Network tab
+  // 2. Include it in subsequent requests for correlation
+  // 3. Use it when reporting errors or issues
+  response.headers.set('x-request-id', requestId);
 
   // Prevent clickjacking attacks
   response.headers.set('X-Frame-Options', 'DENY');

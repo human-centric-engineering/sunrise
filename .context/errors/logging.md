@@ -1,0 +1,835 @@
+# Structured Logging - Best Practices
+
+**Last Updated**: 2025-12-22
+**Related**: [Error Handling Overview](./overview.md)
+
+This document provides guidelines for effective structured logging in Sunrise.
+
+## Table of Contents
+
+- [When to Log](#when-to-log)
+- [What NOT to Log](#what-not-to-log)
+- [Log Levels](#log-levels)
+- [Request Context](#request-context)
+- [Structured Metadata](#structured-metadata)
+- [Performance Considerations](#performance-considerations)
+- [Log Aggregation](#log-aggregation)
+- [Common Patterns](#common-patterns)
+
+## When to Log
+
+### ✅ Always Log
+
+**Errors and Exceptions**:
+
+```typescript
+try {
+  await database.query();
+} catch (error) {
+  logger.error('Database query failed', error, {
+    query: 'SELECT * FROM users',
+    table: 'users',
+  });
+  throw error;
+}
+```
+
+**Authentication Events**:
+
+```typescript
+// Successful login
+logger.info('User logged in', { userId: user.id, method: 'email' });
+
+// Failed login
+logger.warn('Login failed', { email, reason: 'invalid_password' });
+
+// Logout
+logger.info('User logged out', { userId: user.id });
+```
+
+**Security Events**:
+
+```typescript
+// Suspicious activity
+logger.warn('Multiple failed login attempts', {
+  email,
+  attempts: 5,
+  ip: clientIp,
+  timeWindow: '5 minutes',
+});
+
+// Permission denied
+logger.warn('Unauthorized access attempt', {
+  userId: user.id,
+  resource: 'admin_panel',
+  action: 'access',
+});
+```
+
+**Important State Changes**:
+
+```typescript
+// Resource creation
+logger.info('User created', {
+  userId: newUser.id,
+  email: newUser.email,
+  role: newUser.role,
+});
+
+// Resource deletion
+logger.info('User deleted', {
+  userId: deletedUser.id,
+  deletedBy: currentUser.id,
+});
+
+// Status changes
+logger.info('Order status changed', {
+  orderId: order.id,
+  oldStatus: 'pending',
+  newStatus: 'completed',
+});
+```
+
+**External API Calls**:
+
+```typescript
+// Before call
+logger.info('Calling payment API', {
+  provider: 'stripe',
+  amount: 99.99,
+  currency: 'USD',
+});
+
+// After call (success)
+logger.info('Payment API succeeded', {
+  provider: 'stripe',
+  chargeId: 'ch_123',
+  duration_ms: 234,
+});
+
+// After call (failure)
+logger.error('Payment API failed', error, {
+  provider: 'stripe',
+  duration_ms: 234,
+  statusCode: 500,
+});
+```
+
+**Performance Issues**:
+
+```typescript
+const start = Date.now();
+await slowOperation();
+const duration = Date.now() - start;
+
+if (duration > 1000) {
+  // Slower than 1 second
+  logger.warn('Slow operation detected', {
+    operation: 'database_query',
+    duration_ms: duration,
+    threshold_ms: 1000,
+  });
+}
+```
+
+### ⚠️ Consider Logging
+
+**User Actions** (in moderation):
+
+```typescript
+// High-value actions
+logger.info('User purchased subscription', {
+  userId: user.id,
+  plan: 'premium',
+  amount: 29.99,
+});
+
+// Don't log every click
+// ❌ logger.info('User clicked button', { button: 'next' });
+```
+
+**Configuration Changes**:
+
+```typescript
+logger.info('Settings updated', {
+  userId: user.id,
+  changed: ['theme', 'notifications'],
+  oldTheme: 'light',
+  newTheme: 'dark',
+});
+```
+
+**Rate Limiting**:
+
+```typescript
+logger.warn('Rate limit approached', {
+  userId: user.id,
+  endpoint: '/api/v1/users',
+  requests: 95,
+  limit: 100,
+  windowSeconds: 60,
+});
+```
+
+## What NOT to Log
+
+### ❌ Never Log (PII and Secrets)
+
+**Passwords** (even hashed):
+
+```typescript
+// ❌ BAD
+logger.info('User created', {
+  email: user.email,
+  password: hashedPassword, // Never!
+});
+
+// ✅ GOOD
+logger.info('User created', {
+  email: user.email,
+});
+```
+
+**Authentication Tokens**:
+
+```typescript
+// ❌ BAD
+logger.info('Request received', {
+  token: request.headers.get('authorization'), // Never!
+});
+
+// ✅ GOOD
+logger.info('Request received', {
+  authenticated: !!request.headers.get('authorization'),
+});
+```
+
+**API Keys and Secrets**:
+
+```typescript
+// ❌ BAD
+logger.info('Calling external API', {
+  apiKey: process.env.STRIPE_SECRET_KEY, // Never!
+});
+
+// ✅ GOOD
+logger.info('Calling external API', {
+  provider: 'stripe',
+  keyPresent: !!process.env.STRIPE_SECRET_KEY,
+});
+```
+
+**Credit Card Numbers**:
+
+```typescript
+// ❌ BAD
+logger.info('Payment processed', {
+  cardNumber: '4111111111111111', // Never!
+});
+
+// ✅ GOOD
+logger.info('Payment processed', {
+  cardLast4: '1111',
+  cardBrand: 'visa',
+});
+```
+
+**Social Security Numbers**:
+
+```typescript
+// ❌ BAD
+logger.info('User profile updated', {
+  ssn: '123-45-6789', // Never!
+});
+
+// ✅ GOOD
+logger.info('User profile updated', {
+  fields: ['name', 'address'], // Don't include SSN field
+});
+```
+
+**Full Request/Response Bodies** (may contain secrets):
+
+```typescript
+// ❌ BAD
+logger.info('API request', {
+  body: JSON.stringify(request.body), // May contain secrets!
+});
+
+// ✅ GOOD
+logger.info('API request', {
+  bodyFields: Object.keys(request.body),
+  bodySize: JSON.stringify(request.body).length,
+});
+```
+
+### 🔒 Automatic PII Sanitization
+
+The logger automatically sanitizes sensitive fields:
+
+```typescript
+logger.info('User data', {
+  email: 'user@example.com',
+  password: 'secret123',  // ← Automatically redacted
+  token: 'abc123',        // ← Automatically redacted
+  apiKey: 'key_xyz'       // ← Automatically redacted
+});
+
+// Logged as:
+{
+  "email": "user@example.com",
+  "password": "[REDACTED]",
+  "token": "[REDACTED]",
+  "apiKey": "[REDACTED]"
+}
+```
+
+**Sensitive fields** (automatically redacted):
+
+- `password`, `token`, `apiKey`, `secret`
+- `creditCard`, `ssn`, `authorization`
+- `sessionToken`, `refreshToken`, `accessToken`
+
+## Log Levels
+
+### DEBUG - Verbose Debugging Info
+
+**When**: Development only, detailed execution flow
+**Default**: Enabled in development, disabled in production
+
+```typescript
+logger.debug('Processing user input', {
+  input: formData,
+  validationRules: rules,
+  step: 'validation',
+});
+
+logger.debug('Cache hit', {
+  key: cacheKey,
+  ttl: 3600,
+  size: cachedData.length,
+});
+```
+
+### INFO - General Application Flow
+
+**When**: Important events, normal operations
+**Default**: Always enabled
+
+```typescript
+logger.info('User logged in', { userId: user.id });
+logger.info('Order created', { orderId: order.id, total: 99.99 });
+logger.info('Email sent', { recipient: user.email, template: 'welcome' });
+```
+
+### WARN - Degraded States
+
+**When**: Something unexpected but non-breaking
+**Default**: Always enabled
+
+```typescript
+logger.warn('Database slow query', {
+  query: 'SELECT * FROM users',
+  duration_ms: 2500,
+  threshold_ms: 1000,
+});
+
+logger.warn('External API timeout', {
+  provider: 'stripe',
+  timeout_ms: 5000,
+  fallback: 'cache',
+});
+
+logger.warn('Deprecated API used', {
+  endpoint: '/api/v1/users',
+  userId: user.id,
+  migrate_to: '/api/v2/users',
+});
+```
+
+### ERROR - Breaking Errors
+
+**When**: Feature broken, needs immediate attention
+**Default**: Always enabled
+
+```typescript
+logger.error('Payment failed', error, {
+  orderId: order.id,
+  provider: 'stripe',
+  errorCode: error.code,
+});
+
+logger.error('Database connection lost', error, {
+  host: dbHost,
+  retryAttempt: 3,
+});
+```
+
+### Choosing the Right Level
+
+```
+DEBUG → Can I ignore this in production?
+  YES → Use DEBUG
+  NO  ↓
+
+INFO → Is this an error or warning?
+  NO  → Use INFO
+  YES ↓
+
+WARN → Does this break functionality?
+  NO  → Use WARN
+  YES ↓
+
+ERROR → Use ERROR
+```
+
+## Request Context
+
+### Request ID Propagation
+
+**How it works**:
+
+1. `proxy.ts` generates unique request ID for each request
+2. Stored in `x-request-id` response header
+3. Client includes it in subsequent requests
+4. Logs across client and server share same request ID
+
+**Example flow**:
+
+```typescript
+// 1. Client makes request
+// Request ID generated: "abc123def456..."
+
+// 2. Server logs with request ID
+import { getRequestId } from '@/lib/logging/context';
+
+export async function POST(request: NextRequest) {
+  const requestId = await getRequestId();
+  const requestLogger = logger.withContext({ requestId });
+
+  requestLogger.info('Request received', {
+    endpoint: '/api/v1/users',
+    method: 'POST',
+  });
+
+  // All logs from this logger include requestId
+  requestLogger.info('Validating input');
+  requestLogger.info('Creating user');
+  requestLogger.info('Request complete');
+}
+```
+
+**Output**:
+
+```json
+{"timestamp":"...","level":"info","message":"Request received","context":{"requestId":"abc123..."},"meta":{"endpoint":"/api/v1/users","method":"POST"}}
+{"timestamp":"...","level":"info","message":"Validating input","context":{"requestId":"abc123..."}}
+{"timestamp":"...","level":"info","message":"Creating user","context":{"requestId":"abc123..."}}
+{"timestamp":"...","level":"info","message":"Request complete","context":{"requestId":"abc123..."}}
+```
+
+### User Context
+
+**Add user context to logs**:
+
+```typescript
+import { getUserContext } from '@/lib/logging/context';
+
+export async function POST(request: NextRequest) {
+  const userContext = await getUserContext();
+  const userLogger = logger.withContext(userContext);
+
+  // All logs include userId, sessionId, email (if authenticated)
+  userLogger.info('User action', { action: 'create-post' });
+}
+```
+
+### Combined Context
+
+**Full context (request + user)**:
+
+```typescript
+import { getFullContext } from '@/lib/logging/context';
+
+export async function POST(request: NextRequest) {
+  const context = await getFullContext(request);
+  const contextLogger = logger.withContext(context);
+
+  // Includes: requestId, userId, sessionId, email, method, url, userAgent
+  contextLogger.info('Processing request');
+}
+```
+
+## Structured Metadata
+
+### ✅ Good Structured Metadata
+
+**Use objects, not concatenated strings**:
+
+```typescript
+// ❌ BAD - String concatenation
+logger.info(`User ${userId} created order ${orderId} for $${amount}`);
+
+// ✅ GOOD - Structured metadata
+logger.info('Order created', {
+  userId,
+  orderId,
+  amount,
+  currency: 'USD',
+});
+```
+
+**Use consistent field names**:
+
+```typescript
+// ✅ GOOD - Consistent naming
+logger.info('User created', { userId: user.id });
+logger.info('Order created', { userId: user.id, orderId: order.id });
+
+// ❌ BAD - Inconsistent naming
+logger.info('User created', { user_id: user.id });
+logger.info('Order created', { userId: user.id, order_id: order.id });
+```
+
+**Include units in field names**:
+
+```typescript
+// ✅ GOOD - Units clear
+logger.warn('Slow query', {
+  duration_ms: 2500,
+  threshold_ms: 1000,
+  timeout_seconds: 30,
+});
+
+// ❌ BAD - Units unclear
+logger.warn('Slow query', {
+  duration: 2500, // Milliseconds? Seconds?
+  threshold: 1000,
+  timeout: 30,
+});
+```
+
+### 📊 Queryable Metadata
+
+**Structure metadata for log aggregation**:
+
+```typescript
+// ✅ GOOD - Easy to query in log aggregation
+logger.info('Payment processed', {
+  provider: 'stripe',
+  amount: 99.99,
+  currency: 'USD',
+  paymentMethod: 'card',
+  success: true,
+});
+
+// Query examples:
+// - provider:"stripe" AND success:false
+// - amount:>100 AND currency:"USD"
+// - paymentMethod:"card"
+```
+
+**Use enums/constants for filterability**:
+
+```typescript
+// ✅ GOOD - Consistent values
+const PaymentStatus = {
+  PENDING: 'pending',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+} as const;
+
+logger.info('Payment status changed', {
+  status: PaymentStatus.COMPLETED,
+});
+
+// ❌ BAD - Inconsistent values
+logger.info('Payment status changed', {
+  status: 'Complete', // or 'completed' or 'COMPLETED'?
+});
+```
+
+## Performance Considerations
+
+### Log Sampling
+
+**Don't log every request**:
+
+```typescript
+// ❌ BAD - Logs flood in high traffic
+export async function GET(request: NextRequest) {
+  logger.info('Request received'); // 1000 requests/sec = 1000 logs/sec
+  // ...
+}
+
+// ✅ GOOD - Sample logs
+let requestCount = 0;
+
+export async function GET(request: NextRequest) {
+  requestCount++;
+  if (requestCount % 100 === 0) {
+    // Log every 100th request
+    logger.info('Request stats', {
+      totalRequests: requestCount,
+      sample: '1/100',
+    });
+  }
+  // ...
+}
+```
+
+### Lazy Evaluation
+
+**Don't compute expensive metadata unless logging**:
+
+```typescript
+// ❌ BAD - Always computes expensive data
+const stats = await computeExpensiveStats(); // Always runs
+logger.debug('Stats computed', { stats });
+
+// ✅ GOOD - Only compute if debug enabled
+if (logger.getLevel() === LogLevel.DEBUG) {
+  const stats = await computeExpensiveStats(); // Only runs in debug
+  logger.debug('Stats computed', { stats });
+}
+```
+
+### Avoid Logging in Tight Loops
+
+```typescript
+// ❌ BAD - Logs in loop
+for (const item of items) {
+  logger.debug('Processing item', { item }); // 1000 items = 1000 logs
+  processItem(item);
+}
+
+// ✅ GOOD - Log summary
+logger.debug('Processing items', { count: items.length });
+items.forEach(processItem);
+logger.debug('Items processed', { count: items.length });
+```
+
+## Log Aggregation
+
+### Production Log Aggregation Setup
+
+**Supported services**:
+
+- **DataDog** - Full-featured APM and logging
+- **AWS CloudWatch** - AWS-native logging
+- **Grafana Loki** - Open-source, Prometheus-compatible
+- **Splunk** - Enterprise log management
+- **Elasticsearch + Kibana** - Self-hosted, powerful search
+
+**Why use log aggregation**:
+
+- ✅ Centralized search across all servers
+- ✅ Real-time alerting on error patterns
+- ✅ Performance monitoring and dashboards
+- ✅ Correlation with metrics and traces
+- ✅ Long-term log retention and analysis
+
+### Querying Logs
+
+**Example queries** (DataDog syntax):
+
+```
+# Find all errors from specific user
+level:error AND userId:"user_123"
+
+# Find slow database queries
+duration_ms:>1000 AND query:*
+
+# Find failed payment attempts
+provider:stripe AND success:false
+
+# Trace specific request
+requestId:"abc123def456..."
+
+# Find authentication failures
+message:"Login failed" AND @timestamp:[now-1h TO now]
+```
+
+### Setting Up Alerts
+
+**Example alert rules**:
+
+```yaml
+# Alert on high error rate
+- name: High Error Rate
+  condition: count(level:error) > 100 in 5 minutes
+  severity: critical
+  notify: oncall-team
+
+# Alert on payment failures
+- name: Payment Failures
+  condition: count(provider:stripe AND success:false) > 10 in 1 hour
+  severity: high
+  notify: finance-team
+
+# Alert on slow queries
+- name: Slow Database Queries
+  condition: avg(duration_ms) > 2000 in 10 minutes
+  severity: warning
+  notify: engineering-team
+```
+
+## Common Patterns
+
+### Pattern 1: API Route Logging
+
+```typescript
+import { logger } from '@/lib/logging';
+import { getFullContext } from '@/lib/logging/context';
+
+export async function POST(request: NextRequest) {
+  const context = await getFullContext(request);
+  const routeLogger = logger.withContext(context);
+
+  routeLogger.info('Request received', {
+    endpoint: '/api/v1/users',
+    method: 'POST',
+  });
+
+  try {
+    const data = await request.json();
+
+    routeLogger.debug('Input validated', {
+      fields: Object.keys(data),
+    });
+
+    const user = await createUser(data);
+
+    routeLogger.info('User created', {
+      userId: user.id,
+      email: user.email,
+    });
+
+    return Response.json({ success: true, data: user });
+  } catch (error) {
+    routeLogger.error('User creation failed', error, {
+      endpoint: '/api/v1/users',
+    });
+
+    return handleAPIError(error);
+  }
+}
+```
+
+### Pattern 2: Database Operation Logging
+
+```typescript
+export async function createUser(data: CreateUserInput) {
+  logger.debug('Creating user', {
+    email: data.email,
+    role: data.role,
+  });
+
+  const start = Date.now();
+
+  try {
+    const user = await prisma.user.create({ data });
+    const duration = Date.now() - start;
+
+    logger.info('User created in database', {
+      userId: user.id,
+      duration_ms: duration,
+    });
+
+    if (duration > 1000) {
+      logger.warn('Slow database write', {
+        operation: 'user.create',
+        duration_ms: duration,
+        threshold_ms: 1000,
+      });
+    }
+
+    return user;
+  } catch (error) {
+    logger.error('Database write failed', error, {
+      operation: 'user.create',
+      duration_ms: Date.now() - start,
+    });
+    throw error;
+  }
+}
+```
+
+### Pattern 3: External API Logging
+
+```typescript
+export async function callStripeAPI(charge: ChargeInput) {
+  logger.info('Calling Stripe API', {
+    provider: 'stripe',
+    amount: charge.amount,
+    currency: charge.currency,
+  });
+
+  const start = Date.now();
+
+  try {
+    const result = await stripe.charges.create(charge);
+    const duration = Date.now() - start;
+
+    logger.info('Stripe API succeeded', {
+      provider: 'stripe',
+      chargeId: result.id,
+      duration_ms: duration,
+    });
+
+    return result;
+  } catch (error) {
+    logger.error('Stripe API failed', error, {
+      provider: 'stripe',
+      duration_ms: Date.now() - start,
+      statusCode: error.statusCode,
+      errorType: error.type,
+    });
+    throw error;
+  }
+}
+```
+
+### Pattern 4: Child Logger for Context Inheritance
+
+```typescript
+// Parent logger with base context
+const jobLogger = logger.withContext({
+  jobType: 'email-batch',
+  batchId: '123',
+});
+
+jobLogger.info('Starting batch job');
+
+// Child logger inherits parent context
+users.forEach((user) => {
+  const userLogger = jobLogger.withContext({
+    userId: user.id,
+  });
+
+  // All logs include: jobType, batchId, userId
+  userLogger.info('Sending email');
+
+  try {
+    sendEmail(user);
+    userLogger.info('Email sent');
+  } catch (error) {
+    userLogger.error('Email failed', error);
+  }
+});
+
+jobLogger.info('Batch job complete');
+```
+
+## Related Documentation
+
+- **[Error Handling Overview](./overview.md)** - Complete error handling architecture
+- **[API Endpoints](./../api/endpoints.md)** - API logging patterns
+- **[Environment Variables](./../environment/overview.md)** - LOG_LEVEL configuration
+
+## See Also
+
+- `lib/logging/index.ts` - Logger implementation
+- `lib/logging/context.ts` - Context utilities
+- `proxy.ts` - Request ID generation
+- `.env.example` - LOG_LEVEL configuration

@@ -114,6 +114,67 @@ See [`.context/architecture/overview.md`](./.context/architecture/overview.md) f
   - Import icons: `import { IconName } from 'lucide-react'`
   - Browse icons: [lucide.dev](https://lucide.dev)
 
+## Logging & Error Handling
+
+**Structured Logging:**
+
+Sunrise includes a production-grade structured logging system:
+
+- **Environment-aware output:**
+  - Development: Human-readable colored logs for debugging
+  - Production: JSON format for log aggregation (DataDog, CloudWatch, etc.)
+- **Log levels:** DEBUG, INFO, WARN, ERROR with environment defaults
+- **Request tracing:** Automatic request ID propagation for distributed tracing
+- **PII sanitization:** Automatic scrubbing of sensitive data in production
+
+**Usage:**
+
+```typescript
+import { logger } from '@/lib/logging';
+
+// Basic logging
+logger.info('User logged in', { userId: '123' });
+logger.error('Database query failed', error, { query: 'SELECT ...' });
+
+// Request-scoped logging
+const requestLogger = logger.withContext({ requestId: 'abc123' });
+requestLogger.info('Processing request'); // Includes requestId automatically
+```
+
+**Error Handling:**
+
+- **Global error handler:** Catches unhandled errors and promise rejections
+- **Error boundaries:** Reusable React error boundaries for component error isolation
+- **User-friendly messages:** Error code to message mapping for better UX
+- **Error tracking:** Sentry integration ready (environment-based activation)
+
+**Adding Sentry (Optional):**
+
+To enable error tracking with Sentry:
+
+1. Install Sentry SDK (already installed):
+
+   ```bash
+   npm install @sentry/nextjs
+   ```
+
+2. Set your Sentry DSN in `.env.local`:
+
+   ```bash
+   NEXT_PUBLIC_SENTRY_DSN="https://[key]@[org].ingest.sentry.io/[project]"
+   ```
+
+3. Create Sentry config files (see [`.context/errors/overview.md`](./.context/errors/overview.md) for setup guide)
+
+4. Restart your dev server - error tracking is now enabled!
+
+No code changes needed. The error tracking abstraction automatically detects Sentry and activates it when the DSN is configured.
+
+**📖 For detailed documentation:**
+
+- [Error Handling Overview](./.context/errors/overview.md) - Error patterns, boundaries, user-friendly messages
+- [Logging Best Practices](./.context/errors/logging.md) - When to log, what to log, performance considerations
+
 ## Database Setup
 
 **Quick Start:**
