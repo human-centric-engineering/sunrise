@@ -88,6 +88,17 @@ Deployment strategies, Docker configuration, and platform-specific guides. Inclu
 
 **Key Features**: Multi-stage Docker builds, migration workflow, health checks, platform guides
 
+### 🛡️ [Error Handling & Logging](./errors/overview.md)
+
+Comprehensive error handling, structured logging, and error tracking. Includes:
+
+- [Overview](./errors/overview.md) - Four-layer error architecture, error boundaries, distributed tracing
+- [Logging Best Practices](./errors/logging.md) - Structured logging guidelines, log levels, performance
+
+**Use When**: Implementing error handling, adding logging, debugging production issues, setting up error tracking
+
+**Key Features**: Structured logging (JSON/colored), request ID tracing, Sentry integration, user-friendly messages, automatic PII sanitization
+
 ### 📋 [Guidelines](./guidelines.md)
 
 Development workflow, testing, deployment, and operational procedures.
@@ -136,6 +147,9 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 | Deploy application    | deployment/overview.md   | environment/overview.md, database/migrations.md |
 | Set up Docker         | deployment/overview.md   | environment/overview.md                         |
 | Configure CI/CD       | deployment/overview.md   | guidelines.md                                   |
+| Add error handling    | errors/overview.md       | errors/logging.md                               |
+| Debug production      | errors/logging.md        | errors/overview.md, api/endpoints.md            |
+| Set up error tracking | errors/overview.md       | environment/overview.md                         |
 
 ## Technology Stack
 

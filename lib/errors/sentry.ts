@@ -183,37 +183,17 @@ function isSentryAvailable(): boolean {
 }
 
 /**
- * Sentry SDK interface
- * Defines the methods we use from @sentry/nextjs
+ * Get Sentry SDK
+ * Returns undefined if Sentry is not configured (no DSN set)
  */
-interface SentrySDK {
-  captureException: (error: unknown, context?: unknown) => string;
-  captureMessage: (message: string, level?: string) => string;
-  setUser: (user: unknown) => void;
-  setContext: (name: string, context: unknown) => void;
-  setTag: (key: string, value: string) => void;
-  setTags: (tags: Record<string, string>) => void;
-}
-
-/**
- * Get Sentry instance if available
- * Returns undefined if Sentry is not installed or not configured
- */
-function getSentry(): SentrySDK | undefined {
+function getSentry(): typeof import('@sentry/nextjs') | undefined {
   if (!isSentryAvailable()) {
     return undefined;
   }
 
-  try {
-    // Dynamic import of Sentry SDK
-    // This allows the app to work without Sentry installed
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Sentry = require('@sentry/nextjs') as SentrySDK;
-    return Sentry;
-  } catch {
-    // Sentry not installed
-    return undefined;
-  }
+  // Sentry is installed as a dependency, safe to import
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-return
+  return require('@sentry/nextjs');
 }
 
 /**
@@ -272,13 +252,18 @@ export function initErrorTracking(): void {
  * ```
  */
 export function trackError(error: Error | string, context?: ErrorContext): string {
-  const Sentry = getSentry();
-
   // Prepare context
   const { user, tags, extra, level } = context || {};
 
+  // Always log
+  logger.error('Error tracked', typeof error === 'string' ? new Error(error) : error, {
+    ...tags,
+    ...extra,
+  });
+
+  // Send to Sentry if configured
+  const Sentry = getSentry();
   if (Sentry) {
-    // Send to Sentry
     const sentryContext: Record<string, unknown> = {};
 
     if (user) {
@@ -297,27 +282,10 @@ export function trackError(error: Error | string, context?: ErrorContext): strin
       sentryContext.level = level;
     }
 
-    const errorId = Sentry.captureException(error, sentryContext);
-
-    // Also log to structured logger
-    logger.error('Error tracked', typeof error === 'string' ? new Error(error) : error, {
-      errorId,
-      ...tags,
-      ...extra,
-      sentryEnabled: true,
-    });
-
-    return errorId;
-  } else {
-    // No-op mode: just log
-    logger.error('Error (not tracked)', typeof error === 'string' ? new Error(error) : error, {
-      ...tags,
-      ...extra,
-      sentryEnabled: false,
-    });
-
-    return 'logged';
+    return Sentry.captureException(error, sentryContext);
   }
+
+  return 'logged';
 }
 
 /**
@@ -344,12 +312,27 @@ export function trackMessage(
   level: ErrorSeverity,
   context?: Omit<ErrorContext, 'level'>
 ): string {
-  const Sentry = getSentry();
-
   const { user, tags, extra } = context || {};
 
+  // Always log
+  const metadata = {
+    message,
+    level,
+    ...tags,
+    ...extra,
+  };
+
+  if (level === ErrorSeverity.Error) {
+    logger.error('Message tracked', undefined, metadata);
+  } else if (level === ErrorSeverity.Warning) {
+    logger.warn('Message tracked', metadata);
+  } else {
+    logger.info('Message tracked', metadata);
+  }
+
+  // Send to Sentry if configured
+  const Sentry = getSentry();
   if (Sentry) {
-    // Send to Sentry
     if (user) {
       Sentry.setUser(user);
     }
@@ -362,39 +345,10 @@ export function trackMessage(
       Sentry.setContext('extra', extra);
     }
 
-    const messageId = Sentry.captureMessage(message, level);
-
-    // Also log to structured logger
-    logger.info('Message tracked', {
-      message,
-      messageId,
-      level,
-      ...tags,
-      ...extra,
-      sentryEnabled: true,
-    });
-
-    return messageId;
-  } else {
-    // No-op mode: just log
-    const metadata = {
-      message,
-      level,
-      ...tags,
-      ...extra,
-      sentryEnabled: false,
-    };
-
-    if (level === ErrorSeverity.Error) {
-      logger.error('Message (not tracked)', undefined, metadata);
-    } else if (level === ErrorSeverity.Warning) {
-      logger.warn('Message (not tracked)', metadata);
-    } else {
-      logger.info('Message (not tracked)', metadata);
-    }
-
-    return 'logged';
+    return Sentry.captureMessage(message, level);
   }
+
+  return 'logged';
 }
 
 /**
@@ -416,11 +370,11 @@ export function trackMessage(
  * ```
  */
 export function setErrorTrackingUser(user: { id: string; email?: string; name?: string }): void {
-  const Sentry = getSentry();
+  logger.debug('Error tracking user set', { userId: user.id });
 
+  const Sentry = getSentry();
   if (Sentry) {
     Sentry.setUser(user);
-    logger.debug('Error tracking user set', { userId: user.id });
   }
 }
 
@@ -435,10 +389,10 @@ export function setErrorTrackingUser(user: { id: string; email?: string; name?: 
  * ```
  */
 export function clearErrorTrackingUser(): void {
-  const Sentry = getSentry();
+  logger.debug('Error tracking user cleared');
 
+  const Sentry = getSentry();
   if (Sentry) {
     Sentry.setUser(null);
-    logger.debug('Error tracking user cleared');
   }
 }
