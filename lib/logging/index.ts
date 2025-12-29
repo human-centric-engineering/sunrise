@@ -89,9 +89,9 @@ interface LogEntry {
 const SENSITIVE_FIELDS = [
   'password',
   'token',
-  'apiKey',
+  'apikey',
   'secret',
-  'creditCard',
+  'creditcard',
   'ssn',
   'authorization',
 ];
@@ -112,7 +112,7 @@ const Colors = {
  * Logger class for structured logging
  * Supports different output formats based on environment
  */
-class Logger {
+export class Logger {
   private level: LogLevel;
   private context: LogContext;
 

@@ -71,6 +71,60 @@ it('should validate request body', () => {
 
 ---
 
+### 1b. ESLint `unbound-method` Errors with Vitest Mocks
+
+**SEVERITY**: High - 25+ errors in Week 3 tests
+
+**The Problem**:
+ESLint rule `@typescript-eslint/unbound-method` flags Vitest mock assertions as unsafe, even though they are perfectly safe.
+
+```typescript
+// ❌ ESLint error: "Unbound method may cause scoping issues"
+import { vi } from 'vitest';
+import { logger } from '@/lib/logging';
+
+expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Error message', error);
+expect(prisma.$queryRaw).toHaveBeenCalledWith(['SELECT 1']);
+```
+
+**Why It Happens**:
+
+- ESLint thinks the method might lose its `this` context when called separately from its object
+- This is a **false positive** for Vitest mocks - they don't need `this` binding
+- This is the standard pattern from Vitest official documentation
+
+**Solution**: ESLint rule disabled for test files (as of Week 3 fix):
+
+```javascript
+// eslint.config.mjs
+{
+  files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', '**/tests/**/*.{ts,tsx}'],
+  rules: {
+    '@typescript-eslint/require-await': 'off',
+    '@typescript-eslint/unbound-method': 'off',  // ← NEW
+    'no-console': 'off',
+  },
+}
+```
+
+**Safe Patterns** (both work):
+
+```typescript
+// ✅ PATTERN 1: Direct usage (recommended, cleaner)
+expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Error', error);
+expect(prisma.$queryRaw).toHaveBeenCalledWith(['SELECT 1']);
+
+// ✅ PATTERN 2: Assignment (more verbose but also valid)
+const mockError = vi.mocked(logger.error);
+expect(mockError).toHaveBeenCalledWith('Error', error);
+```
+
+**Status**: ✅ **IMPLEMENTED** - ESLint rule disabled for test files. Both patterns are safe to use.
+
+**Reference**: See `.claude/skills/testing/LINTING-ANALYSIS.md` for full analysis and decision rationale.
+
+---
+
 ### 2. NODE_ENV Is Read-Only in Tests
 
 **SEVERITY**: Critical - Environment-dependent behavior can't be tested

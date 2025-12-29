@@ -223,10 +223,24 @@ describe('[Module Name]', () => {
 
 ### Phase 5: Verify & Document
 
+**CRITICAL**: All validation steps must pass before marking tests as complete.
+
 1. **Run tests**: `npm test -- [test-file]`
-2. **Check coverage**: `npm run test:coverage`
-3. **Verify assertions pass**
-4. **Update documentation**: If new patterns emerge, document in `.context/testing/`
+2. **Run linter**: `npm run lint` - MUST pass with zero errors
+3. **Run type-check**: `npm run type-check` - MUST pass with zero errors
+4. **Check coverage**: `npm run test:coverage`
+5. **Verify all checks pass**: Tests + lint + types all green
+6. **Review checklist**: See `PRE-COMMIT-CHECKLIST.md` for full validation
+7. **Update documentation**: If new patterns emerge, document in `.context/testing/`
+
+**Shortcut**: Run `npm run validate && npm test` to check everything at once.
+
+**DO NOT mark tests as complete unless**:
+
+- ✅ All tests pass
+- ✅ Linting clean (0 errors, 0 warnings in test files)
+- ✅ Type-check clean (0 errors)
+- ✅ Coverage meets targets
 
 ## Autonomy Decision Examples
 
@@ -355,9 +369,24 @@ it('should catch and display errors', () => {
 
 ## Related Files
 
+- **Linting Analysis**: `LINTING-ANALYSIS.md` - **READ FOR SYSTEMIC ISSUES**
+  - Root cause analysis of recurring linting problems
+  - ESLint rule decisions and rationale
+  - Week 1, 2, 3 issue patterns
+  - Systemic prevention measures
+  - Success metrics and validation requirements
+
+- **Pre-Commit Checklist**: `PRE-COMMIT-CHECKLIST.md` - **USE BEFORE COMMITTING**
+  - Required validation steps
+  - Code quality standards
+  - Exact commands to run
+  - Known gotchas reference
+  - Ready-to-commit criteria
+
 - **Gotchas & Best Practices**: `gotchas.md` - **READ THIS FIRST!**
   - Critical issues from Week 1 & 2 (404 tests)
-  - ESLint auto-fix problems with async tests
+  - ESLint auto-fix problems with async tests (FIXED)
+  - Unbound method rule issues (FIXED)
   - NODE_ENV read-only workarounds
   - Type safety patterns for Response objects
   - Mock setup timing requirements
@@ -381,16 +410,34 @@ it('should catch and display errors', () => {
 
 ## Remember
 
-1. **Read `gotchas.md` before writing tests** - avoid common pitfalls
+1. **Read documentation before writing tests**:
+   - `LINTING-ANALYSIS.md` - Understand systemic issues and prevention
+   - `gotchas.md` - Avoid common pitfalls
+   - `PRE-COMMIT-CHECKLIST.md` - Validation requirements
+
 2. **Always fetch docs from Context7** before generating tests
+
 3. **Follow Arrange-Act-Assert** pattern with comments
+
 4. **Test behavior, not implementation**
+
 5. **Mock at boundaries** (database, auth, external APIs)
+
 6. **Use real data for integration tests** (Testcontainers)
+
 7. **Reset mocks between tests** (`vi.restoreAllMocks()`)
+
 8. **Coverage is a guide, not a goal** - focus on critical paths
+
 9. **Define response type interfaces** for type-safe assertions
-10. **Review ESLint auto-fixes** - they may break async tests
+
+10. **Validate before completion**:
+    - ✅ Tests pass
+    - ✅ Linting clean
+    - ✅ Type-check clean
+    - ✅ Coverage targets met
+
+11. **ESLint rules are configured for tests** - `unbound-method` and `require-await` disabled
 
 ## Next Steps
 

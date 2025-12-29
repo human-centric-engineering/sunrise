@@ -99,6 +99,12 @@ export default tseslint.config(
       // Auto-fix removing async breaks tests. See: .claude/skills/testing/gotchas.md
       '@typescript-eslint/require-await': 'off',
 
+      // Disable unbound-method rule for test files
+      // Reason: Vitest mocks using vi.mocked() are safe and don't need this binding
+      // This is the standard Vitest pattern from official documentation
+      // See: .claude/skills/testing/LINTING-ANALYSIS.md
+      '@typescript-eslint/unbound-method': 'off',
+
       // Allow console in tests (for debugging)
       'no-console': 'off',
     },

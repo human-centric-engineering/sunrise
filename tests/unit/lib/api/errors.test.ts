@@ -333,7 +333,7 @@ describe('handleAPIError', () => {
 
     it('should log APIError with correct context', () => {
       const error = new APIError('Test error', 'TEST', 500);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
+
       const mockError = logger.error as unknown as ReturnType<typeof vi.fn>;
       handleAPIError(error);
 
@@ -484,7 +484,6 @@ describe('handleAPIError', () => {
 
       handleAPIError(zodError!);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
         'API Error',
         zodError,
@@ -713,7 +712,6 @@ describe('handleAPIError', () => {
 
       handleAPIError(prismaError);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
         'API Error',
         prismaError,
@@ -786,7 +784,6 @@ describe('handleAPIError', () => {
       const error = new Error('Generic error');
       handleAPIError(error);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
         'API Error',
         error,
@@ -875,9 +872,8 @@ describe('handleAPIError', () => {
       const error = new Error('Test error');
       handleAPIError(error);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
+
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
         'API Error',
         error,
@@ -894,7 +890,6 @@ describe('handleAPIError', () => {
       const error = new Error('Test error');
       handleAPIError(error);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
         'API Error',
         error,
@@ -910,7 +905,7 @@ describe('handleAPIError', () => {
       const response = handleAPIError(error);
 
       // Logger should be called before response is created
-      // eslint-disable-next-line @typescript-eslint/unbound-method
+
       expect(logger.error as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalled();
       expect(response).toBeInstanceOf(Response);
     });

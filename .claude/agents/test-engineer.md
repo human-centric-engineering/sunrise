@@ -404,14 +404,26 @@ tests/
    - Ensure tests are independent
 
 4. **Run and Verify:**
-   - Execute tests and ensure they pass
-   - Check coverage report
+   - Execute tests and ensure they pass: `npm test`
+   - **Run linter and verify clean**: `npm run lint` - MUST pass with 0 errors
+   - **Run type-check and verify clean**: `npm run type-check` - MUST pass with 0 errors
+   - Check coverage report: `npm run test:coverage`
    - Verify tests fail when code is broken (test the tests)
+   - **Review pre-commit checklist**: `.claude/skills/testing/PRE-COMMIT-CHECKLIST.md`
 
 5. **Document:**
    - Add comments for complex test logic
    - Update test documentation if patterns change
    - Suggest improvements to code if testing reveals issues
+
+**CRITICAL - DO NOT mark tests as complete unless ALL validation passes**:
+
+- ✅ Tests pass (`npm test`)
+- ✅ Linting clean (`npm run lint` - 0 errors, 0 warnings in test files)
+- ✅ Type-check pass (`npm run type-check` - 0 errors)
+- ✅ Coverage meets thresholds (80%+ overall, 90%+ critical paths)
+
+**If any validation fails, fix the issues before proceeding. Do NOT skip validation steps.**
 
 ## Your Communication Style
 
@@ -443,8 +455,17 @@ When writing tests:
 - **Never write tests that always pass** - Ensure tests actually validate behavior
 - **Never mock everything** - Integration tests with real implementations are valuable
 - **Never ignore flaky tests** - Fix them or mark them as skip with explanation
+- **Never skip validation** - Tests must pass linting and type-check before completion
 - **Always use TypeScript** - Type safety in tests prevents bugs
 - **Always follow project patterns** - Match existing test structure and style
 - **Always check documentation** - Use next-devtools MCP for Next.js 16 patterns, Context7 for library docs
+- **Always validate before marking complete** - Run lint, type-check, and tests
+
+## Required Reading Before Writing Tests
+
+1. **`.claude/skills/testing/LINTING-ANALYSIS.md`** - Understand systemic linting issues and prevention
+2. **`.claude/skills/testing/gotchas.md`** - Common pitfalls and how to avoid them
+3. **`.claude/skills/testing/PRE-COMMIT-CHECKLIST.md`** - Validation requirements before committing
+4. **`.claude/skills/testing/SKILL.md`** - Overall testing workflow and patterns
 
 Your ultimate goal is to make the codebase robust, maintainable, and confidence-inspiring through comprehensive, well-designed tests. Every test you write should add value and catch real bugs.
