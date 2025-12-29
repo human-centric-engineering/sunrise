@@ -87,5 +87,20 @@ export default tseslint.config(
       'react/react-in-jsx-scope': 'off', // Not needed with Next.js
       'react/prop-types': 'off', // Using TypeScript
     },
+  },
+
+  // Test file overrides to prevent auto-fix issues with async/await
+  {
+    files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', '**/tests/**/*.{ts,tsx}'],
+    rules: {
+      // Disable require-await rule for test files
+      // Reason: Vitest test functions often use helper functions that internally await,
+      // or use matchers like expect().rejects.toThrow() where async appears "unused"
+      // Auto-fix removing async breaks tests. See: .claude/skills/testing/gotchas.md
+      '@typescript-eslint/require-await': 'off',
+
+      // Allow console in tests (for debugging)
+      'no-console': 'off',
+    },
   }
 );

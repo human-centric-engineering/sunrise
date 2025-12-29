@@ -67,6 +67,8 @@ it('should validate request body', () => {
 
 **Best Practice**: Add the ESLint override to your project configuration to prevent this issue for all developers.
 
+**Status**: ✅ **IMPLEMENTED** - This project now has ESLint overrides configured in `eslint.config.mjs` to disable `@typescript-eslint/require-await` for all test files. ESLint auto-fix will not remove `async` keywords from test functions.
+
 ---
 
 ### 2. NODE_ENV Is Read-Only in Tests
