@@ -9,10 +9,9 @@
  * - Error logging with stack traces
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Logger, LogLevel, createLogger, logger } from '@/lib/logging';
+import { assertDefined } from '@/tests/helpers/assertions';
 
 /**
  * Type for parsed JSON log output
@@ -259,7 +258,8 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.user.password).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).user.password).toBe('[REDACTED]');
     });
 
     it('should sanitize token fields', () => {
@@ -275,7 +275,8 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.token).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).token).toBe('[REDACTED]');
     });
 
     it('should sanitize apiKey fields', () => {
@@ -291,7 +292,8 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.apiKey).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).apiKey).toBe('[REDACTED]');
     });
 
     it('should sanitize secret fields', () => {
@@ -307,7 +309,8 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.secret).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).secret).toBe('[REDACTED]');
     });
 
     it('should sanitize nested sensitive fields recursively', () => {
@@ -331,9 +334,12 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.user.credentials.password).toBe('[REDACTED]');
-      expect(parsed.meta.user.credentials.token).toBe('[REDACTED]');
-      expect(parsed.meta.user.name).toBe('John'); // Non-sensitive preserved
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).user.credentials.password).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).user.credentials.token).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).user.name).toBe('John'); // Non-sensitive preserved
     });
 
     it('should use case-insensitive matching for sensitive fields', () => {
@@ -353,9 +359,12 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.PASSWORD).toBe('[REDACTED]');
-      expect(parsed.meta.Token).toBe('[REDACTED]');
-      expect(parsed.meta.ApiKey).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).PASSWORD).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).Token).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).ApiKey).toBe('[REDACTED]');
     });
 
     it('should preserve non-sensitive data', () => {
@@ -375,9 +384,12 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.name).toBe('John Doe');
-      expect(parsed.meta.email).toBe('john@example.com');
-      expect(parsed.meta.age).toBe(30);
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).name).toBe('John Doe');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).email).toBe('john@example.com');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).age).toBe(30);
     });
 
     it('should sanitize arrays containing sensitive data', () => {
@@ -398,10 +410,14 @@ describe('Logger', () => {
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.meta.users[0].password).toBe('[REDACTED]');
-      expect(parsed.meta.users[1].password).toBe('[REDACTED]');
-      expect(parsed.meta.users[0].name).toBe('John');
-      expect(parsed.meta.users[1].name).toBe('Jane');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).users[0].password).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).users[1].password).toBe('[REDACTED]');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).users[0].name).toBe('John');
+      assertDefined(parsed.meta);
+      expect((parsed.meta as any).users[1].name).toBe('Jane');
     });
   });
 
@@ -484,6 +500,7 @@ describe('Logger', () => {
       // Assert
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
+      assertDefined(parsed.meta);
       expect(parsed.meta).toEqual(meta);
     });
 
@@ -514,9 +531,12 @@ describe('Logger', () => {
       // Assert
       const output = consoleErrorSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
-      expect(parsed.error.name).toBe('Error');
-      expect(parsed.error.message).toBe('Test error');
-      expect(parsed.error.stack).toBeDefined();
+      assertDefined(parsed.error);
+      expect((parsed.error as any).name).toBe('Error');
+      assertDefined(parsed.error);
+      expect((parsed.error as any).message).toBe('Test error');
+      assertDefined(parsed.error);
+      expect((parsed.error as any).stack).toBeDefined();
     });
   });
 
@@ -547,7 +567,9 @@ describe('Logger', () => {
       // Assert
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
+      assertDefined(parsed.context);
       expect(parsed.context.requestId).toBe('123');
+      assertDefined(parsed.context);
       expect(parsed.context.userId).toBe('456');
     });
 
@@ -563,6 +585,7 @@ describe('Logger', () => {
       // Assert
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
+      assertDefined(parsed.context);
       expect(parsed.context.sessionId).toBe('abc');
     });
 
@@ -578,7 +601,9 @@ describe('Logger', () => {
       // Assert: Parent context unchanged
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
+      assertDefined(parsed.context);
       expect(parsed.context.requestId).toBe('123');
+      assertDefined(parsed.context);
       expect(parsed.context.userId).toBeUndefined();
     });
 
@@ -593,6 +618,7 @@ describe('Logger', () => {
       // Assert
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
+      // Don't assert defined when testing undefined
       expect(parsed.context).toBeUndefined();
     });
 

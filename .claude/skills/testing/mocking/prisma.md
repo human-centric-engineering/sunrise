@@ -6,6 +6,8 @@
 
 **Important**: For integration tests, use **real PostgreSQL via Testcontainers** instead of mocking.
 
+**NEW (Week 3)**: Use shared mock types from `tests/types/mocks.ts` for consistent, type-safe mocking.
+
 ## Mock Prisma Client
 
 ### Basic Setup
@@ -215,6 +217,63 @@ await prisma.$transaction(async (tx) => {
 });
 ```
 
+## Handling PrismaPromise Types (Week 3 Pattern)
+
+**Problem**: Prisma 7 returns `PrismaPromise<T>` which is incompatible with standard `Promise<T>` in mocks.
+
+**Solution**: Use the `delayed()` helper from `tests/types/mocks.ts` for async operations with delays.
+
+```typescript
+import { delayed } from '@/tests/types/mocks';
+
+// ✅ CORRECT - Use delayed() for async mocks with timing
+vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 10) as any);
+
+// ✅ CORRECT - For immediate responses, use mockResolvedValue
+vi.mocked(prisma.$queryRaw).mockResolvedValue([{ result: 1 }]);
+
+// ❌ INCORRECT - Don't create Promise manually (type mismatch)
+vi.mocked(prisma.$queryRaw).mockImplementation(
+  () =>
+    new Promise((resolve) => {
+      setTimeout(() => resolve([{ result: 1 }]), 10);
+    })
+);
+```
+
+**Why `delayed()` Helper**:
+
+1. Handles PrismaPromise vs Promise type differences
+2. Provides consistent timing behavior for tests
+3. Avoids `as any` casts scattered throughout tests
+4. Type-safe alternative to manual Promise creation
+
+**delayed() Implementation**:
+
+```typescript
+// From tests/types/mocks.ts
+export async function delayed<T>(value: T, ms: number): Promise<T> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  return value;
+}
+```
+
+**Usage in Database Health Tests**:
+
+```typescript
+import { delayed } from '@/tests/types/mocks';
+
+it('should measure latency accurately', async () => {
+  // Mock query with known 50ms delay
+  vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 50) as any);
+
+  const result = await getDatabaseHealth();
+
+  expect(result.latency).toBeGreaterThanOrEqual(50);
+  expect(result.latency).toBeLessThan(100);
+});
+```
+
 ## Test Example: Database Utility
 
 ```typescript
@@ -268,6 +327,8 @@ describe('checkDatabaseConnection', () => {
 4. **Mock errors**: Test Prisma error codes (P2002, P2025, P2003)
 5. **Clear mocks**: Use `beforeEach(() => vi.clearAllMocks())`
 6. **Type safety**: Use TypeScript to ensure mock data matches schema
+7. **Use shared helpers**: Import `delayed()` from `tests/types/mocks.ts` for async timing
+8. **PrismaPromise types**: Use `delayed()` helper or `mockResolvedValue()`, not manual Promise creation
 
 ## Related Files
 

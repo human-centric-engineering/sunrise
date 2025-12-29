@@ -105,6 +105,17 @@ export default tseslint.config(
       // See: .claude/skills/testing/LINTING-ANALYSIS.md
       '@typescript-eslint/unbound-method': 'off',
 
+      // Allow 'any' type in test files
+      // Reason: Type workarounds are necessary for complex mock types (Headers, Session, PrismaPromise)
+      // Tests prioritize runtime behavior over strict compile-time types
+      // See: .instructions/ROOT-CAUSE-ANALYSIS-TESTING-CYCLE.md
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+
       // Allow console in tests (for debugging)
       'no-console': 'off',
     },

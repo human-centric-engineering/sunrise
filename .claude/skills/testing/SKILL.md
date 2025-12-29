@@ -309,6 +309,81 @@ Choose [A/B]:"
 
 ## Common Patterns
 
+### Shared Mock Types and Assertion Helpers (Week 3)
+
+**CRITICAL**: Use shared mock types to prevent recurring lint/type error cycles.
+
+**Import from `tests/types/mocks.ts`**:
+
+```typescript
+import {
+  createMockHeaders,
+  createMockSession,
+  delayed,
+  type MockHeaders,
+  type MockSession,
+} from '@/tests/types/mocks';
+```
+
+**Import from `tests/helpers/assertions.ts`**:
+
+```typescript
+import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
+```
+
+**Complete Mock Creation** (prevents type errors):
+
+```typescript
+// ✅ CORRECT - Use factory functions
+vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'test-123' }) as any);
+
+vi.mocked(getSession).mockResolvedValue(createMockSession({ userId: 'user-123' }) as any);
+
+// ❌ INCORRECT - Inline mocks (incomplete types)
+vi.mocked(headers).mockResolvedValue({
+  get: vi.fn(() => 'test-123'),
+} as any);
+```
+
+**Type-Safe Assertions** (eliminates "possibly undefined" errors):
+
+```typescript
+// ✅ CORRECT - Use assertDefined for type narrowing
+const parsed = JSON.parse(output);
+assertDefined(parsed.meta);
+expect(parsed.meta.userId).toBe('user-123'); // Type-safe!
+
+// ✅ CORRECT - Use assertHasProperty for property checks
+assertHasProperty(parsed, 'error');
+expect(parsed.error.code).toBe('VALIDATION_ERROR');
+
+// ❌ INCORRECT - Direct access (type error)
+expect(parsed.meta.userId).toBe('user-123'); // Error: meta possibly undefined
+```
+
+**Async Timing with delayed()** (fixes PrismaPromise issues):
+
+```typescript
+import { delayed } from '@/tests/types/mocks';
+
+// ✅ CORRECT - Use delayed() for timed async operations
+vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 50) as any);
+
+// ❌ INCORRECT - Manual Promise (type mismatch)
+vi.mocked(prisma.$queryRaw).mockImplementation(
+  () => new Promise((resolve) => setTimeout(() => resolve([{ result: 1 }]), 50))
+);
+```
+
+**Why This Matters**:
+
+- Prevents the recurring lint/type error cycle
+- Complete types eliminate need for workarounds
+- Centralized patterns reduce code duplication
+- Type guards provide better error messages than non-null assertions
+
+**See Also**: `gotchas.md` Section 5 for root cause analysis and prevention details.
+
 ### Test Data Factories
 
 Use factories from `lib/test-utils/factories.ts`:
@@ -369,6 +444,25 @@ it('should catch and display errors', () => {
 
 ## Related Files
 
+- **Root Cause Analysis**: `../../.instructions/ROOT-CAUSE-ANALYSIS-TESTING-CYCLE.md` - **MUST READ**
+  - Comprehensive analysis of recurring lint/type error cycle
+  - 6 root causes identified (incomplete mocks, type assertions, config issues)
+  - Phase 1 & 2 solutions implemented (shared types, assertions, ESLint config)
+  - Prevention strategies and success metrics
+  - **Week 3 breakthrough**: Solved systemic issue saving 6-9 hours per week
+
+- **Shared Mock Types**: `../../tests/types/mocks.ts` - **USE FOR ALL MOCKS**
+  - Complete mock type definitions (MockHeaders, MockSession)
+  - Factory functions (createMockHeaders, createMockSession)
+  - Async helpers (delayed() for PrismaPromise compatibility)
+  - Prevents incomplete type definitions that trigger lint/type cycles
+
+- **Assertion Helpers**: `../../tests/helpers/assertions.ts` - **USE FOR TYPE GUARDS**
+  - Type-safe assertion functions (assertDefined, assertHasProperty)
+  - parseJSON for type-safe response parsing
+  - Eliminates "possibly undefined" errors
+  - Better error messages than non-null assertions
+
 - **Linting Analysis**: `LINTING-ANALYSIS.md` - **READ FOR SYSTEMIC ISSUES**
   - Root cause analysis of recurring linting problems
   - ESLint rule decisions and rationale
@@ -384,9 +478,10 @@ it('should catch and display errors', () => {
   - Ready-to-commit criteria
 
 - **Gotchas & Best Practices**: `gotchas.md` - **READ THIS FIRST!**
-  - Critical issues from Week 1 & 2 (404 tests)
+  - Critical issues from Week 1, 2, 3 (545 tests)
   - ESLint auto-fix problems with async tests (FIXED)
   - Unbound method rule issues (FIXED)
+  - **NEW**: Recurring lint/type cycle (SOLVED - Week 3)
   - NODE_ENV read-only workarounds
   - Type safety patterns for Response objects
   - Mock setup timing requirements
@@ -411,33 +506,39 @@ it('should catch and display errors', () => {
 ## Remember
 
 1. **Read documentation before writing tests**:
-   - `LINTING-ANALYSIS.md` - Understand systemic issues and prevention
-   - `gotchas.md` - Avoid common pitfalls
+   - `../../.instructions/ROOT-CAUSE-ANALYSIS-TESTING-CYCLE.md` - **CRITICAL**: Understand systemic solutions
+   - `gotchas.md` - Avoid common pitfalls (includes Week 3 lint/type cycle solution)
+   - `LINTING-ANALYSIS.md` - ESLint config and prevention measures
    - `PRE-COMMIT-CHECKLIST.md` - Validation requirements
 
-2. **Always fetch docs from Context7** before generating tests
+2. **Use shared mock types** (Week 3 breakthrough - prevents recurring issues):
+   - Import from `tests/types/mocks.ts` (MockHeaders, MockSession, delayed)
+   - Import from `tests/helpers/assertions.ts` (assertDefined, assertHasProperty)
+   - **Never create inline incomplete mocks** - always use factory functions
 
-3. **Follow Arrange-Act-Assert** pattern with comments
+3. **Always fetch docs from Context7** before generating tests
 
-4. **Test behavior, not implementation**
+4. **Follow Arrange-Act-Assert** pattern with comments
 
-5. **Mock at boundaries** (database, auth, external APIs)
+5. **Test behavior, not implementation**
 
-6. **Use real data for integration tests** (Testcontainers)
+6. **Mock at boundaries** (database, auth, external APIs)
 
-7. **Reset mocks between tests** (`vi.restoreAllMocks()`)
+7. **Use real data for integration tests** (Testcontainers)
 
-8. **Coverage is a guide, not a goal** - focus on critical paths
+8. **Reset mocks between tests** (`vi.restoreAllMocks()`)
 
-9. **Define response type interfaces** for type-safe assertions
+9. **Coverage is a guide, not a goal** - focus on critical paths
 
-10. **Validate before completion**:
+10. **Define response type interfaces** for type-safe assertions
+
+11. **Validate before completion**:
     - ✅ Tests pass
-    - ✅ Linting clean
-    - ✅ Type-check clean
+    - ✅ Linting clean (0 errors, 0 warnings)
+    - ✅ Type-check clean (0 errors)
     - ✅ Coverage targets met
 
-11. **ESLint rules are configured for tests** - `unbound-method` and `require-await` disabled
+12. **ESLint rules are configured for tests** - `unbound-method`, `require-await`, and type-safety rules disabled
 
 ## Next Steps
 

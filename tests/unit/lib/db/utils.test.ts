@@ -21,6 +21,7 @@ import {
   executeTransaction,
   disconnectDatabase,
 } from '@/lib/db/utils';
+import { delayed } from '@/tests/types/mocks';
 
 /**
  * Mock dependencies
@@ -187,12 +188,7 @@ describe('getDatabaseHealth', () => {
 
   it('should return connected=true with latency when database is healthy', async () => {
     // Arrange: Mock successful query with delay
-    vi.mocked(prisma.$queryRaw).mockImplementation(
-      () =>
-        new Promise<unknown[]>((resolve) => {
-          setTimeout(() => resolve([{ result: 1 }]), 10);
-        })
-    );
+    vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 10) as any);
 
     // Act: Check database health
     const result = await getDatabaseHealth();
@@ -209,12 +205,7 @@ describe('getDatabaseHealth', () => {
 
   it('should measure latency accurately', async () => {
     // Arrange: Mock query with known delay
-    vi.mocked(prisma.$queryRaw).mockImplementation(
-      () =>
-        new Promise<unknown[]>((resolve) => {
-          setTimeout(() => resolve([{ result: 1 }]), 50);
-        })
-    );
+    vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 50) as any);
 
     // Act: Check database health
     const result = await getDatabaseHealth();
@@ -327,7 +318,7 @@ describe('executeTransaction', () => {
 
   it('should pass transaction client to callback', async () => {
     // Arrange: Mock transaction
-    const mockTx = { ...prisma };
+    const mockTx = prisma; // Use prisma directly instead of spread (maintains type compatibility)
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (tx: typeof prisma) => Promise<unknown>) => {
         return callback(mockTx);
@@ -393,14 +384,14 @@ describe('executeTransaction', () => {
     );
 
     // Act: Execute multiple operations
-    const callback = vi.fn(async (tx: typeof prisma) => {
+    const callback = vi.fn(async (tx: typeof prisma): Promise<{ success: boolean }> => {
       // Simulate multiple database operations
       await tx.$queryRaw`INSERT INTO users ...`;
       await tx.$queryRaw`INSERT INTO posts ...`;
       return { success: true };
     });
 
-    const result = await executeTransaction(callback);
+    const result = await executeTransaction(callback as any);
 
     // Assert: All operations executed
     expect(result).toEqual({ success: true });

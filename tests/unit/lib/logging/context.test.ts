@@ -21,6 +21,7 @@ import {
   getEndpointPath,
   getClientIp,
 } from '@/lib/logging/context';
+import { createMockHeaders } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('next/headers', () => ({
@@ -43,26 +44,6 @@ vi.mock('nanoid', () => ({
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { nanoid } from 'nanoid';
-
-/**
- * Type for mocked Headers object
- */
-type MockHeaders = {
-  get: (header: string) => string | null;
-};
-
-/**
- * Type for mocked Session object (partial for testing)
- */
-type MockSession = {
-  user: {
-    id: string;
-    email: string;
-  };
-  session: {
-    id: string;
-  };
-};
 
 describe('Logging Context Utilities', () => {
   beforeEach(() => {
@@ -111,9 +92,9 @@ describe('Logging Context Utilities', () => {
     it('should return existing request ID from headers', async () => {
       // Arrange
       const existingId = 'existing-req-id';
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-request-id' ? existingId : null)),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({ 'x-request-id': existingId }) as any
+      );
 
       // Act
       const id = await getRequestId();
@@ -124,9 +105,7 @@ describe('Logging Context Utilities', () => {
 
     it('should generate new ID if header is missing', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const id = await getRequestId();
@@ -138,9 +117,7 @@ describe('Logging Context Utilities', () => {
 
     it('should call headers() to get header list', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       await getRequestId();
@@ -154,7 +131,7 @@ describe('Logging Context Utilities', () => {
       const mockGet = vi.fn();
       vi.mocked(headers).mockResolvedValue({
         get: mockGet,
-      } as MockHeaders);
+      } as any);
 
       // Act
       await getRequestId();
@@ -172,15 +149,12 @@ describe('Logging Context Utilities', () => {
         url: 'http://localhost:3000/api/users',
       } as Request;
 
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => {
-          const headerMap: Record<string, string> = {
-            'x-request-id': 'req-123',
-            'user-agent': 'Mozilla/5.0',
-          };
-          return headerMap[header] || null;
-        }),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({
+          'x-request-id': 'req-123',
+          'user-agent': 'Mozilla/5.0',
+        }) as any
+      );
 
       // Act
       const context = await getRequestContext(mockRequest);
@@ -191,14 +165,14 @@ describe('Logging Context Utilities', () => {
         method: 'POST',
         url: 'http://localhost:3000/api/users',
         userAgent: 'Mozilla/5.0',
-      });
+      } as any);
     });
 
     it('should work without request object', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-request-id' ? 'req-456' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-request-id': 'req-456' }).get,
+      } as any);
 
       // Act
       const context = await getRequestContext();
@@ -217,9 +191,7 @@ describe('Logging Context Utilities', () => {
         url: 'http://localhost:3000/api/health',
       } as Request;
 
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const context = await getRequestContext(mockRequest);
@@ -232,8 +204,8 @@ describe('Logging Context Utilities', () => {
     it('should handle missing user agent gracefully', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-request-id' ? 'req-789' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-request-id': 'req-789' }).get,
+      } as any);
 
       // Act
       const context = await getRequestContext();
@@ -256,8 +228,8 @@ describe('Logging Context Utilities', () => {
         },
       };
 
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as MockSession);
-      vi.mocked(headers).mockResolvedValue({} as MockHeaders);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const context = await getUserContext();
@@ -267,13 +239,13 @@ describe('Logging Context Utilities', () => {
         userId: 'user-123',
         sessionId: 'session-456',
         email: 'john@example.com',
-      });
+      } as any);
     });
 
     it('should return empty object when not authenticated', async () => {
       // Arrange
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
-      vi.mocked(headers).mockResolvedValue({} as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const context = await getUserContext();
@@ -285,7 +257,7 @@ describe('Logging Context Utilities', () => {
     it('should handle auth errors gracefully without throwing', async () => {
       // Arrange
       vi.mocked(auth.api.getSession).mockRejectedValue(new Error('Auth failed'));
-      vi.mocked(headers).mockResolvedValue({} as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act & Assert: Should not throw
       const context = await getUserContext();
@@ -294,8 +266,8 @@ describe('Logging Context Utilities', () => {
 
     it('should call getSession with headers', async () => {
       // Arrange
-      const mockHeaders = {} as MockHeaders;
-      vi.mocked(headers).mockResolvedValue(mockHeaders);
+      const mockHeaders = createMockHeaders();
+      vi.mocked(headers).mockResolvedValue(mockHeaders as any);
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
 
       // Act
@@ -304,13 +276,13 @@ describe('Logging Context Utilities', () => {
       // Assert
       expect(auth.api.getSession).toHaveBeenCalledWith({
         headers: mockHeaders,
-      });
+      } as any);
     });
 
     it('should return empty object if session is null', async () => {
       // Arrange
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
-      vi.mocked(headers).mockResolvedValue({} as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const context = await getUserContext();
@@ -341,17 +313,14 @@ describe('Logging Context Utilities', () => {
         },
       };
 
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => {
-          const headerMap: Record<string, string> = {
-            'x-request-id': 'req-789',
-            'user-agent': 'Chrome',
-          };
-          return headerMap[header] || null;
-        }),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({
+          'x-request-id': 'req-789',
+          'user-agent': 'Chrome',
+        }) as any
+      );
 
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as MockSession);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
 
       // Act
       const context = await getFullContext(mockRequest);
@@ -365,7 +334,7 @@ describe('Logging Context Utilities', () => {
         userId: 'user-123',
         sessionId: 'session-456',
         email: 'john@example.com',
-      });
+      } as any);
     });
 
     it('should work when not authenticated', async () => {
@@ -376,8 +345,8 @@ describe('Logging Context Utilities', () => {
       } as Request;
 
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-request-id' ? 'req-999' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-request-id': 'req-999' }).get,
+      } as any);
 
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
 
@@ -404,11 +373,9 @@ describe('Logging Context Utilities', () => {
         },
       };
 
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as MockSession);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
 
       // Act
       const context = await getFullContext();
@@ -422,9 +389,7 @@ describe('Logging Context Utilities', () => {
 
     it('should call both getRequestContext and getUserContext in parallel', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
 
       // Act
@@ -520,8 +485,8 @@ describe('Logging Context Utilities', () => {
     it('should extract IP from x-forwarded-for header', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-forwarded-for' ? '1.2.3.4' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-forwarded-for': '1.2.3.4' }).get,
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -532,11 +497,9 @@ describe('Logging Context Utilities', () => {
 
     it('should extract first IP from x-forwarded-for with multiple IPs', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) =>
-          header === 'x-forwarded-for' ? '1.2.3.4, 5.6.7.8, 9.10.11.12' : null
-        ),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({ 'x-forwarded-for': '1.2.3.4, 5.6.7.8, 9.10.11.12' }) as any
+      );
 
       // Act
       const ip = await getClientIp();
@@ -547,11 +510,9 @@ describe('Logging Context Utilities', () => {
 
     it('should trim whitespace from extracted IP', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) =>
-          header === 'x-forwarded-for' ? '  1.2.3.4  , 5.6.7.8' : null
-        ),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({ 'x-forwarded-for': '  1.2.3.4  , 5.6.7.8' }) as any
+      );
 
       // Act
       const ip = await getClientIp();
@@ -563,8 +524,8 @@ describe('Logging Context Utilities', () => {
     it('should extract IP from x-real-ip header', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-real-ip' ? '2.3.4.5' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-real-ip': '2.3.4.5' }).get,
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -576,8 +537,8 @@ describe('Logging Context Utilities', () => {
     it('should extract IP from cf-connecting-ip header (Cloudflare)', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'cf-connecting-ip' ? '3.4.5.6' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'cf-connecting-ip': '3.4.5.6' }).get,
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -589,8 +550,8 @@ describe('Logging Context Utilities', () => {
     it('should extract IP from x-client-ip header', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-client-ip' ? '4.5.6.7' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-client-ip': '4.5.6.7' }).get,
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -602,8 +563,8 @@ describe('Logging Context Utilities', () => {
     it('should extract IP from x-cluster-client-ip header', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => (header === 'x-cluster-client-ip' ? '5.6.7.8' : null)),
-      } as MockHeaders);
+        get: createMockHeaders({ 'x-cluster-client-ip': '5.6.7.8' }).get,
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -614,9 +575,7 @@ describe('Logging Context Utilities', () => {
 
     it('should return undefined if no IP headers present', async () => {
       // Arrange
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn(() => null),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
 
       // Act
       const ip = await getClientIp();
@@ -636,7 +595,7 @@ describe('Logging Context Utilities', () => {
           };
           return headerMap[header] || null;
         }),
-      } as MockHeaders);
+      } as any);
 
       // Act
       const ip = await getClientIp();
@@ -647,15 +606,12 @@ describe('Logging Context Utilities', () => {
 
     it('should use second priority header if first is missing', async () => {
       // Arrange: x-real-ip should be used if x-forwarded-for is missing
-      vi.mocked(headers).mockResolvedValue({
-        get: vi.fn((header: string) => {
-          const headerMap: Record<string, string> = {
-            'x-real-ip': '2.2.2.2',
-            'cf-connecting-ip': '3.3.3.3',
-          };
-          return headerMap[header] || null;
-        }),
-      } as MockHeaders);
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({
+          'x-real-ip': '2.2.2.2',
+          'cf-connecting-ip': '3.3.3.3',
+        }) as any
+      );
 
       // Act
       const ip = await getClientIp();
