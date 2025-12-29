@@ -355,6 +355,14 @@ it('should catch and display errors', () => {
 
 ## Related Files
 
+- **Gotchas & Best Practices**: `gotchas.md` - **READ THIS FIRST!**
+  - Critical issues from Week 1 & 2 (404 tests)
+  - ESLint auto-fix problems with async tests
+  - NODE_ENV read-only workarounds
+  - Type safety patterns for Response objects
+  - Mock setup timing requirements
+  - Proven patterns from production implementation
+
 - **Test Templates**: See `templates/` folder for detailed examples
   - `simple.md` - Validation schema tests
   - `medium.md` - API utility tests
@@ -373,14 +381,16 @@ it('should catch and display errors', () => {
 
 ## Remember
 
-1. **Always fetch docs from Context7** before generating tests
-2. **Follow Arrange-Act-Assert** pattern
-3. **Test behavior, not implementation**
-4. **Mock at boundaries** (database, auth, external APIs)
-5. **Use real data for integration tests** (Testcontainers)
-6. **Reset mocks between tests** (`vi.restoreAllMocks()`)
-7. **Coverage is a guide, not a goal** - focus on critical paths
-8. **Document new patterns** in `.context/testing/` as you discover them
+1. **Read `gotchas.md` before writing tests** - avoid common pitfalls
+2. **Always fetch docs from Context7** before generating tests
+3. **Follow Arrange-Act-Assert** pattern with comments
+4. **Test behavior, not implementation**
+5. **Mock at boundaries** (database, auth, external APIs)
+6. **Use real data for integration tests** (Testcontainers)
+7. **Reset mocks between tests** (`vi.restoreAllMocks()`)
+8. **Coverage is a guide, not a goal** - focus on critical paths
+9. **Define response type interfaces** for type-safe assertions
+10. **Review ESLint auto-fixes** - they may break async tests
 
 ## Next Steps
 

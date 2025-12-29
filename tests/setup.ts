@@ -7,8 +7,24 @@
  * - Environment variables for testing
  */
 
+/**
+ * Set up test environment variables BEFORE any imports
+ * This is critical because lib/env.ts validates environment variables at module load time
+ */
+// Use Object.defineProperty to set read-only NODE_ENV
+Object.defineProperty(process.env, 'NODE_ENV', {
+  value: 'test',
+  writable: true,
+  enumerable: true,
+  configurable: true,
+});
+process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
+process.env.BETTER_AUTH_SECRET = 'test-secret-key-for-testing-only';
+process.env.BETTER_AUTH_URL = 'http://localhost:3000';
+process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+
 import '@testing-library/jest-dom';
-import { expect, vi, beforeAll, afterEach } from 'vitest';
+import { expect, vi, afterEach } from 'vitest';
 
 /**
  * Mock Next.js navigation hooks
@@ -46,17 +62,6 @@ vi.mock('next/headers', () => ({
   })),
   headers: vi.fn(() => new Map()),
 }));
-
-/**
- * Set up test environment variables
- */
-beforeAll(() => {
-  // Set required environment variables for tests
-  // Note: NODE_ENV is already set to 'test' by Vitest
-  process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
-  process.env.BETTER_AUTH_SECRET = 'test-secret-key-for-testing-only';
-  process.env.BETTER_AUTH_URL = 'http://localhost:3000';
-});
 
 /**
  * Clean up after each test

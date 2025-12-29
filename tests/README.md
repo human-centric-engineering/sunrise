@@ -396,6 +396,83 @@ it('should call mock', () => {
 });
 ```
 
+## Critical Gotchas (Week 1 & 2 Learnings)
+
+### ESLint Auto-Fix Breaks Async Tests
+
+**CRITICAL**: ESLint auto-fix may remove `async` from test functions.
+
+**Problem**:
+
+```typescript
+// BEFORE ESLint auto-fix
+it('should validate request', async () => {
+  await validateRequestBody(request, schema);
+});
+
+// AFTER auto-fix (BROKEN!)
+it('should validate request', () => {
+  // async removed!
+  await validateRequestBody(request, schema); // Error!
+});
+```
+
+**Solution**: Disable `@typescript-eslint/require-await` for test files in `.eslintrc.json`:
+
+```json
+{
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "@typescript-eslint/require-await": "off"
+      }
+    }
+  ]
+}
+```
+
+### NODE_ENV Cannot Be Set Directly
+
+**Problem**: `process.env.NODE_ENV = 'production'` fails (read-only property).
+
+**Solution**: Use `Object.defineProperty()`:
+
+```typescript
+Object.defineProperty(process.env, 'NODE_ENV', {
+  value: 'production',
+  writable: true,
+  enumerable: true,
+  configurable: true,
+});
+```
+
+### Response.json() Loses Type Safety
+
+**Problem**: `await response.json()` returns `any`.
+
+**Solution**: Define response type interfaces:
+
+```typescript
+interface ErrorResponse {
+  success: false;
+  error: {
+    message: string;
+    code?: string;
+    details?: Record<string, unknown>;
+  };
+}
+
+const body = (await response.json()) as ErrorResponse;
+```
+
+**For complete gotchas documentation, see:**
+
+- `.claude/skills/testing/gotchas.md` - Critical issues and solutions
+- `.context/testing/patterns.md` - Best practices from 404 implemented tests
+
+---
+
 ## Common Issues
 
 ### Issue: "Cannot find module '@/lib/...'"
