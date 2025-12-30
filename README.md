@@ -203,6 +203,29 @@ No code changes needed. The error tracking abstraction automatically detects Sen
 
 **Note:** This project uses Prisma 7 with PostgreSQL. The database schema includes User, Account, Session, and Verification models ready for better-auth authentication.
 
+## Testing
+
+**Tech Stack:** Vitest, React Testing Library, Testcontainers (future)
+
+**Quick Start:**
+
+```bash
+npm test                  # Run all tests
+npm run test:watch        # Watch mode for development
+npm run test:coverage     # With coverage report
+npm run validate          # Type-check + lint + format check + tests
+```
+
+**Documentation:**
+
+- [`tests/README.md`](./tests/README.md) - Quick reference for developers
+- [`.context/testing/`](./.context/testing/) - Comprehensive testing documentation
+- [`.claude/skills/testing/`](./.claude/skills/testing/) - AI skill execution guides
+
+**Coverage Goals:** 80%+ overall, 90%+ for critical paths (authentication, validation, security)
+
+**Current Status:** 559 tests passing across unit and integration tests
+
 ## Philosophy
 
 1. **Production-First** - Security, performance, and reliability are not afterthoughts

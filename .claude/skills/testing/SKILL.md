@@ -223,10 +223,23 @@ describe('[Module Name]', () => {
 
 ### Phase 5: Verify & Document
 
+**CRITICAL**: All validation steps must pass before marking tests as complete.
+
 1. **Run tests**: `npm test -- [test-file]`
-2. **Check coverage**: `npm run test:coverage`
-3. **Verify assertions pass**
-4. **Update documentation**: If new patterns emerge, document in `.context/testing/`
+2. **Run linter**: `npm run lint` - MUST pass with zero errors
+3. **Run type-check**: `npm run type-check` - MUST pass with zero errors
+4. **Check coverage**: `npm run test:coverage`
+5. **Verify all checks pass**: Tests + lint + types all green
+6. **Update documentation**: If new patterns emerge, document in `.context/testing/`
+
+**Shortcut**: Run `npm run validate && npm test` to check everything at once.
+
+**DO NOT mark tests as complete unless**:
+
+- ✅ All tests pass
+- ✅ Linting clean (0 errors, 0 warnings in test files)
+- ✅ Type-check clean (0 errors)
+- ✅ Coverage meets targets
 
 ## Autonomy Decision Examples
 
@@ -295,101 +308,49 @@ Choose [A/B]:"
 
 ## Common Patterns
 
-### Test Data Factories
+**See `.context/testing/` for comprehensive documentation**:
 
-Use factories from `lib/test-utils/factories.ts`:
+- **overview.md** - Testing philosophy, tech stack, test types
+- **patterns.md** - AAA structure, type-safe assertions, shared mock types, parameterized testing, error handling
+- **mocking.md** - Mock strategies by dependency (Prisma, better-auth, Next.js, logger)
+- **decisions.md** - Architectural rationale and ESLint rule decisions
+- **history.md** - Key learnings and solutions (lint/type cycle prevention)
 
-```typescript
-const user = createMockUser({ role: 'ADMIN' });
-const session = createMockSession(user);
-const request = createMockRequest({
-  method: 'POST',
-  body: { name: 'Test' },
-});
-```
-
-### Async Testing
+**Quick Reference**:
 
 ```typescript
-it('should handle async operations', async () => {
-  const promise = asyncFunction();
+// Import shared mock factories (CRITICAL - prevents lint/type cycles)
+import { createMockHeaders, createMockSession, delayed } from '@/tests/types/mocks';
 
-  await expect(promise).resolves.toBe(expected);
-  // or
-  await expect(promise).rejects.toThrow('error');
-});
+// Import type-safe assertion helpers
+import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
 ```
 
-### Parameterized Tests
+**Test Templates**: See `templates/` subdirectory for code examples by complexity:
 
-```typescript
-describe.each([
-  { input: 'test@example.com', valid: true },
-  { input: 'invalid', valid: false },
-  { input: '', valid: false },
-])('email validation with $input', ({ input, valid }) => {
-  it(`should ${valid ? 'accept' : 'reject'}`, () => {
-    const result = emailSchema.safeParse(input);
-    expect(result.success).toBe(valid);
-  });
-});
-```
+- `simple.md` - Validation schema tests
+- `medium.md` - API utility tests
+- `complex.md` - Integration tests
+- `component.md` - React component tests
 
-### Testing Error Boundaries
+## Related Documentation
 
-```typescript
-it('should catch and display errors', () => {
-  const ThrowError = () => {
-    throw new Error('Test error');
-  };
+**Context Documentation** (evergreen patterns and rationale):
 
-  render(
-    <ErrorBoundary>
-      <ThrowError />
-    </ErrorBoundary>
-  );
+- `.context/testing/overview.md` - Testing philosophy and tech stack
+- `.context/testing/patterns.md` - Best practices and code patterns
+- `.context/testing/mocking.md` - Dependency mocking strategies
+- `.context/testing/decisions.md` - Architectural rationale
+- `.context/testing/history.md` - Key learnings and solutions
 
-  expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-});
-```
+**Skill Execution Files** (workflow and troubleshooting):
 
-## Related Files
+- `gotchas.md` - Common pitfalls and solutions
+- `priority-guide.md` - Test creation order and priorities
+- `success-criteria.md` - Coverage thresholds and quality gates
+- `templates/` - Code examples by complexity (simple, medium, complex, component)
 
-- **Test Templates**: See `templates/` folder for detailed examples
-  - `simple.md` - Validation schema tests
-  - `medium.md` - API utility tests
-  - `complex.md` - Integration tests
-  - `component.md` - React component tests
+**Shared Code** (import in tests):
 
-- **Mock Strategies**: See `mocking/` folder for dependency mocking
-  - `better-auth.md` - Authentication mocking
-  - `prisma.md` - Database mocking
-  - `nextjs.md` - Next.js mocking
-  - `logger.md` - Logger mocking
-
-- **Implementation Guides**:
-  - `priority-guide.md` - Test creation order and priorities
-  - `success-criteria.md` - Coverage thresholds and quality gates
-
-## Remember
-
-1. **Always fetch docs from Context7** before generating tests
-2. **Follow Arrange-Act-Assert** pattern
-3. **Test behavior, not implementation**
-4. **Mock at boundaries** (database, auth, external APIs)
-5. **Use real data for integration tests** (Testcontainers)
-6. **Reset mocks between tests** (`vi.restoreAllMocks()`)
-7. **Coverage is a guide, not a goal** - focus on critical paths
-8. **Document new patterns** in `.context/testing/` as you discover them
-
-## Next Steps
-
-After creating tests:
-
-1. Run tests and ensure they pass
-2. Check coverage meets thresholds
-3. Document any new patterns discovered
-4. Update `.context/testing/` documentation if needed
-5. Commit tests with descriptive messages
-
-Good luck! 🧪
+- `tests/types/mocks.ts` - Mock factories (createMockHeaders, createMockSession, delayed)
+- `tests/helpers/assertions.ts` - Type guards (assertDefined, assertHasProperty, parseJSON)

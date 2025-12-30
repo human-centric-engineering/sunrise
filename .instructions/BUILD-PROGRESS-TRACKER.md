@@ -4,14 +4,15 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-23
-**Current Phase:** Phase 2.3 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 In Progress (3/5)
+**Last Updated:** 2025-12-30
+**Current Phase:** Phase 2.4 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 In Progress (4/5)
 **Blockers:** None
-**Next Steps:** Phase 2.4 - Testing Framework (Vitest setup, test utilities, example tests)
+**Next Steps:** Phase 2.5 - Documentation Structure
 
 **Recent Completions:**
 
+- ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
 - ✅ Phase 2.3 - Error Handling & Logging (Structured logging, global error handler, error boundaries, Sentry integration)
 - ✅ Phase 2.2 - Type Safety & Validation (Type-safe API client, common schemas, Zod 4 updates, comprehensive documentation)
 - ✅ Phase 2.1 - Code Quality Tools (Prettier, Husky, lint-staged, VSCode custom labels)
@@ -225,14 +226,54 @@ Use this checklist to track progress through the build. Check off items as they'
 - **Error Context**: User, tags, and extra metadata for all tracked errors
 - **No-Op Mode**: Error tracking works without Sentry installed (logs to console)
 
-### 2.4 Testing Framework
+### 2.4 Testing Framework ✅
 
-- [ ] Install and configure Vitest
-- [ ] Create test utilities
-- [ ] Write example unit tests
-- [ ] Write example integration tests
-- [ ] Document testing patterns
-- [ ] Add coverage reporting
+**Completed:** 2025-12-30
+
+- [x] Install and configure Vitest
+- [x] Create test utilities
+- [x] Write example unit tests
+- [x] Write example integration tests
+- [x] Document testing patterns
+- [x] Add coverage reporting
+
+**Key Files:**
+
+- `vitest.config.ts` - Vitest configuration with Next.js support
+- `tests/setup.ts` - Global test setup and environment configuration
+- `tests/types/mocks.ts` - Shared mock factories (createMockHeaders, createMockSession, delayed)
+- `tests/helpers/assertions.ts` - Type-safe assertion helpers (assertDefined, assertHasProperty, parseJSON)
+- `.context/testing/overview.md` - Testing philosophy and tech stack
+- `.context/testing/patterns.md` - Best practices and code patterns
+- `.context/testing/mocking.md` - Dependency mocking strategies
+- `.context/testing/decisions.md` - Architectural rationale
+- `.context/testing/history.md` - Key learnings and solutions
+- `.claude/skills/testing/SKILL.md` - AI testing skill (357 lines)
+- `.claude/skills/testing/gotchas.md` - Common pitfalls and solutions (265 lines)
+- `tests/README.md` - Developer quick reference (320 lines)
+
+**Key Features:**
+
+- **559 tests passing**: Comprehensive coverage across unit and integration tests
+- **Vitest framework**: Fast, modern, Vite-integrated testing
+- **React Testing Library**: Component testing with user-centric approach
+- **Shared mock types**: Prevents lint/type error cycles with factory functions
+- **Type-safe assertions**: Better error messages with type guard helpers
+- **ESLint overrides**: Test-specific rules to prevent false positives
+- **Streamlined documentation**: Reduced from ~6,200 to ~2,600 lines (58% reduction)
+
+**Test Coverage:**
+
+- Unit tests: 545+ tests (validations, utilities, API, logging, database)
+- Integration tests: 14+ tests (API endpoints, real HTTP requests)
+- Coverage targets: 80%+ overall, 90%+ for critical paths
+
+**Documentation Organization:**
+
+- `.context/testing/` - Evergreen patterns and rationale (5 files, ~990 lines)
+- `.claude/skills/testing/` - AI skill execution guides (streamlined)
+- `tests/README.md` - Developer quick reference
+- Main README.md - Concise testing overview
 
 ### 2.5 Documentation Structure
 
@@ -1046,3 +1087,92 @@ Phase 1 establishes the complete foundation for the Sunrise starter template. Al
 - Well-documented (comprehensive context substrate)
 
 **Ready for Phase 2:** Developer Experience (linting, testing, type safety, logging)
+
+---
+
+### 2025-12-30 - Phase 2.4 Complete
+
+**Testing Framework Implemented:**
+
+- Installed and configured Vitest with Next.js 16 support
+- Created comprehensive test infrastructure (setup, utilities, helpers)
+- Wrote 559 passing tests (545 unit, 14 integration)
+- Implemented shared mock factories to prevent lint/type error cycles
+- Created type-safe assertion helpers for better error messages
+- Configured ESLint overrides for test-specific patterns
+- Documented testing philosophy, patterns, and best practices
+- Streamlined testing documentation (6,200 → 2,600 lines, 58% reduction)
+
+**Testing Infrastructure:**
+
+- **Vitest Configuration**: Path aliases, Next.js module mocking, globals setup
+- **Shared Mock Types**: `createMockHeaders()`, `createMockSession()`, `delayed()` helpers
+- **Assertion Helpers**: `assertDefined()`, `assertHasProperty()`, `parseJSON()` for type safety
+- **Test Organization**: `tests/unit/`, `tests/integration/`, `tests/helpers/`, `tests/types/`
+
+**Test Coverage Achieved:**
+
+- **Unit Tests (545)**: Validations (171 tests), API utilities (163 tests), Logging (80 tests), Auth utilities (38 tests), Database utilities (23 tests), General utilities (70 tests)
+- **Integration Tests (14)**: Health check endpoint, API response formats, error handling
+- **Coverage Targets**: 80%+ overall, 90%+ for critical paths (auth, validation, security)
+
+**Documentation Organization:**
+
+Three-tier documentation system with clear separation:
+
+1. **`.context/testing/`** (Evergreen patterns, ~990 lines):
+   - `overview.md` - Testing philosophy and tech stack (181 lines)
+   - `patterns.md` - Best practices and code patterns (797 lines)
+   - `mocking.md` - Dependency mocking strategies (337 lines)
+   - `decisions.md` - Architectural rationale (157 lines)
+   - `history.md` - Key learnings and solutions (237 lines)
+
+2. **`.claude/skills/testing/`** (AI skill execution):
+   - `SKILL.md` - Testing workflow (357 lines, reduced from 553)
+   - `gotchas.md` - Common pitfalls (265 lines, reduced from 786)
+   - `priority-guide.md`, `success-criteria.md`, `templates/` (unchanged)
+
+3. **Developer quick reference**:
+   - `tests/README.md` - Quick reference (320 lines, reduced from 529)
+   - Main `README.md` - Concise testing overview
+
+**Key Learnings & Solutions:**
+
+1. **Recurring Lint/Type Error Cycle Problem**:
+   - **Root Cause**: Incomplete mock type definitions, type assertion abuse, ESLint false positives
+   - **Solution**: Shared mock factories, type-safe assertion helpers, ESLint test overrides
+   - **Impact**: Reduced fix iterations from 3-4 to 1-2 per batch
+
+2. **Prisma 7 Compatibility**:
+   - **Issue**: `PrismaPromise<T>` vs standard `Promise<T>` type mismatch
+   - **Solution**: `delayed()` helper function for PrismaPromise-compatible mocks
+   - **Pattern**: Always use `mockResolvedValue()` or `delayed()`, never manual Promise creation
+
+3. **ESLint Test Overrides**:
+   - Disabled `@typescript-eslint/require-await` (prevents async removal)
+   - Disabled `@typescript-eslint/unbound-method` (false positives for Vitest mocks)
+   - Allowed strategic `any` in test mocks with documentation
+
+**Documentation Cleanup:**
+
+Removed 13 redundant historical/planning files:
+
+- 4 mocking subdirectory files (consolidated into single mocking.md)
+- 3 planning/analysis files from `.instructions/`
+- 3 root-level planning files
+- 3 skill-level redundant files
+
+**Git Commits:**
+
+1. Multiple commits implementing testing infrastructure (Phase 2.4)
+2. `a7ee320` - docs: streamline testing documentation and remove redundancy
+
+**Testing Stack:**
+
+- **Framework**: Vitest (fast, modern, Vite-integrated)
+- **Component Testing**: React Testing Library (user-centric)
+- **Future Integration**: Testcontainers for real PostgreSQL (planned)
+- **Mocking**: Vitest `vi.mock()` with shared factories
+- **Coverage**: Vitest coverage with c8
+
+**Branch:** `feature/phase-2.4-testing-framework`

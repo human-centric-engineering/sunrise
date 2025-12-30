@@ -87,5 +87,37 @@ export default tseslint.config(
       'react/react-in-jsx-scope': 'off', // Not needed with Next.js
       'react/prop-types': 'off', // Using TypeScript
     },
+  },
+
+  // Test file overrides to prevent auto-fix issues with async/await
+  {
+    files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', '**/tests/**/*.{ts,tsx}'],
+    rules: {
+      // Disable require-await rule for test files
+      // Reason: Vitest test functions often use helper functions that internally await,
+      // or use matchers like expect().rejects.toThrow() where async appears "unused"
+      // Auto-fix removing async breaks tests. See: .claude/skills/testing/gotchas.md
+      '@typescript-eslint/require-await': 'off',
+
+      // Disable unbound-method rule for test files
+      // Reason: Vitest mocks using vi.mocked() are safe and don't need this binding
+      // This is the standard Vitest pattern from official documentation
+      // See: .claude/skills/testing/LINTING-ANALYSIS.md
+      '@typescript-eslint/unbound-method': 'off',
+
+      // Allow 'any' type in test files
+      // Reason: Type workarounds are necessary for complex mock types (Headers, Session, PrismaPromise)
+      // Tests prioritize runtime behavior over strict compile-time types
+      // See: .instructions/ROOT-CAUSE-ANALYSIS-TESTING-CYCLE.md
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+
+      // Allow console in tests (for debugging)
+      'no-console': 'off',
+    },
   }
 );
