@@ -36,10 +36,11 @@ Most starter templates are either too minimal (just a scaffold) or too opinionat
 
 ## Project Status
 
-🚧 **Under Development** - Core foundation complete, production features in progress. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap and [`.instructions/BUILD-PROGRESS-TRACKER.md`](./.instructions/BUILD-PROGRESS-TRACKER.md) for detailed progress tracking
+🚧 **Under Development** - Phase 1 (Core Foundation) and Phase 2 (Developer Experience) complete. Production features in progress. See [`.instructions/SUNRISE-BUILD-PLAN.md`](./.instructions/SUNRISE-BUILD-PLAN.md) for the complete build roadmap and [`.instructions/BUILD-PROGRESS-TRACKER.md`](./.instructions/BUILD-PROGRESS-TRACKER.md) for detailed progress tracking
 
 ## Documentation
 
+- **[CUSTOMIZATION.md](./CUSTOMIZATION.md)** - Quick guide to adapt Sunrise for your project
 - **[CLAUDE.md](./CLAUDE.md)** - Quick reference for AI-assisted development
 - **[.context/substrate.md](./.context/substrate.md)** - Comprehensive architecture and implementation docs
 - **[Build Plan](./.instructions/SUNRISE-BUILD-PLAN.md)** - Detailed implementation roadmap

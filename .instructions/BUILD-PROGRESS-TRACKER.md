@@ -5,13 +5,14 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Current Status
 
 **Last Updated:** 2025-12-30
-**Current Phase:** Phase 2.4 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 In Progress (4/5)
+**Current Phase:** Phase 2 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5)
 **Blockers:** None
-**Next Steps:** Phase 2.5 - Documentation Structure
+**Next Steps:** Phase 3.1 - Email System
 
 **Recent Completions:**
 
+- ✅ Phase 2.5 - Documentation Structure (CUSTOMIZATION.md - concise fork-and-adapt guide)
 - ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
 - ✅ Phase 2.3 - Error Handling & Logging (Structured logging, global error handler, error boundaries, Sentry integration)
 - ✅ Phase 2.2 - Type Safety & Validation (Type-safe API client, common schemas, Zod 4 updates, comprehensive documentation)
@@ -275,17 +276,44 @@ Use this checklist to track progress through the build. Check off items as they'
 - `tests/README.md` - Developer quick reference
 - Main README.md - Concise testing overview
 
-### 2.5 Documentation Structure
+### 2.5 Documentation Structure ✅
 
-- [ ] Write README.md
-- [ ] Create CONTRIBUTING.md
-- [ ] Document architecture
-- [ ] Create API documentation
-- [ ] Write feature docs
-- [ ] Document common tasks
-- [ ] Create troubleshooting guide
+**Completed:** 2025-12-30
 
-**Phase 2 Complete:** [ ]
+- [x] Write README.md (Already comprehensive - 13.6K)
+- [x] Document architecture (Complete in .context/architecture/)
+- [x] Create API documentation (Complete in .context/api/)
+- [x] Write feature docs (Complete across .context/ domains)
+- [x] Document common tasks (Complete in CLAUDE.md and .context/guidelines.md)
+- [x] Create troubleshooting guide (Complete in .context/guidelines.md)
+- [x] **NEW:** Create CUSTOMIZATION.md - Concise fork-and-adapt guide (178 lines)
+
+**Note:** Phase 2.5 adapted to use existing .context/ substrate instead of creating duplicate docs/ folder. Created CUSTOMIZATION.md as the key missing piece for starter template users.
+
+**Key Files:**
+
+- `CUSTOMIZATION.md` - Quick guide to adapt Sunrise for new projects (NEW - 178 lines)
+- `README.md` - Comprehensive project overview (13.6K)
+- `CLAUDE.md` - AI development guide with MCP integration (25.7K)
+- `.context/` - 27 domain-specific documentation files (~29.5K lines total)
+- `.instructions/` - Build plan, progress tracker, breaking changes
+
+**Key Features:**
+
+- **CUSTOMIZATION.md**: Super concise (100-200 line target), pure checklists and bullets
+- **7 Sections**: First steps, branding, auth, database, routes, removing features, references
+- **Actionable**: Every item is a task or file path reference
+- **Links to Details**: References .context/ documentation instead of duplicating content
+- **Scannable**: Can be read in under 2 minutes
+
+**Implementation Highlights:**
+
+- User preference: Concise, to-the-point documentation (no verbose prose)
+- Template-focused: Designed for developers forking Sunrise
+- Complementary: Works alongside existing comprehensive .context/ substrate
+- Format: Checklists, bullet points, file paths, commands
+
+**Phase 2 Complete:** [x]
 
 ---
 
