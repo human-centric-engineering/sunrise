@@ -1,8 +1,6 @@
 # Testing Patterns for Sunrise
 
-**Best practices and patterns from Week 1 & 2 implementation**
-
-This document provides proven patterns for writing tests in the Sunrise project, extracted from 404 successfully implemented tests across validation, utility, and API layers.
+Best practices and proven patterns for writing tests in the Sunrise project.
 
 ---
 
@@ -161,6 +159,203 @@ describe('successResponse', () => {
   });
 });
 ```
+
+---
+
+## Shared Mock Types
+
+### Use Centralized Mock Factories
+
+Always import mock factories from `tests/types/mocks.ts` instead of creating inline mocks.
+
+**Why**: Complete type implementations prevent incomplete mock errors that trigger lint/type error cycles.
+
+```typescript
+import {
+  createMockHeaders,
+  createMockSession,
+  delayed,
+  type MockHeaders,
+  type MockSession,
+} from '@/tests/types/mocks';
+```
+
+### createMockHeaders()
+
+**Purpose**: Complete Headers mock with all required methods.
+
+```typescript
+import { createMockHeaders } from '@/tests/types/mocks';
+
+// Mock Next.js headers() function
+vi.mock('next/headers', () => ({
+  headers: vi.fn(),
+}));
+
+import { headers } from 'next/headers';
+
+it('should read request headers', async () => {
+  // Arrange: Create mock with custom headers
+  vi.mocked(headers).mockResolvedValue(
+    createMockHeaders({
+      'x-request-id': 'test-123',
+      'user-agent': 'test-agent',
+    }) as any
+  );
+
+  // Act
+  const requestId = await getRequestId();
+
+  // Assert
+  expect(requestId).toBe('test-123');
+});
+```
+
+### createMockSession()
+
+**Purpose**: Complete better-auth session structure.
+
+```typescript
+import { createMockSession } from '@/tests/types/mocks';
+
+vi.mock('@/lib/auth/config', () => ({
+  auth: {
+    api: {
+      getSession: vi.fn(),
+    },
+  },
+}));
+
+import { auth } from '@/lib/auth/config';
+
+it('should require authentication', async () => {
+  // Arrange: Mock authenticated user
+  vi.mocked(auth.api.getSession).mockResolvedValue(
+    createMockSession({
+      user: { id: 'user-123', email: 'test@example.com' },
+    }) as any
+  );
+
+  // Act
+  const result = await protectedFunction();
+
+  // Assert
+  expect(result).toBeDefined();
+});
+```
+
+### delayed()
+
+**Purpose**: PrismaPromise-compatible async helper for timing tests.
+
+```typescript
+import { delayed } from '@/tests/types/mocks';
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    $queryRaw: vi.fn(),
+  },
+}));
+
+import { prisma } from '@/lib/db/client';
+
+it('should measure database latency', async () => {
+  // Arrange: Mock query with known 50ms delay
+  vi.mocked(prisma.$queryRaw).mockImplementation(() => delayed([{ result: 1 }], 50) as any);
+
+  // Act
+  const result = await getDatabaseHealth();
+
+  // Assert
+  expect(result.latency).toBeGreaterThanOrEqual(50);
+  expect(result.latency).toBeLessThan(100);
+});
+```
+
+**Reference**: See `.context/testing/mocking.md` for complete mock strategies by dependency.
+
+---
+
+## Type-Safe Assertion Helpers
+
+### Use Type Guards Instead of Non-Null Assertions
+
+Always import assertion helpers from `tests/helpers/assertions.ts` for type narrowing.
+
+**Why**: Better error messages and type safety than `!` non-null assertions.
+
+```typescript
+import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
+```
+
+### assertDefined()
+
+**Purpose**: Type guard for optional properties.
+
+```typescript
+import { assertDefined } from '@/tests/helpers/assertions';
+
+it('should include metadata in response', () => {
+  // Arrange
+  const output = logger.format('test message', { userId: 'user-123' });
+  const parsed = JSON.parse(output);
+
+  // Assert: Use assertDefined for type narrowing
+  assertDefined(parsed.meta);
+  expect(parsed.meta.userId).toBe('user-123'); // Type-safe!
+});
+
+// ❌ AVOID: Direct access (type error)
+expect(parsed.meta.userId).toBe('user-123'); // Error: meta possibly undefined
+
+// ❌ AVOID: Non-null assertion (runtime risk)
+expect(parsed.meta!.userId).toBe('user-123'); // Could fail if meta is undefined
+```
+
+### assertHasProperty()
+
+**Purpose**: Type guard for property existence.
+
+```typescript
+import { assertHasProperty } from '@/tests/helpers/assertions';
+
+it('should include error details', () => {
+  // Arrange
+  const error = new ValidationError('Test error');
+  const response = handleAPIError(error);
+
+  // Assert: Use assertHasProperty for property checks
+  assertHasProperty(response, 'error');
+  expect(response.error.code).toBe('VALIDATION_ERROR');
+});
+```
+
+### parseJSON()
+
+**Purpose**: Type-safe response parsing.
+
+```typescript
+import { parseJSON } from '@/tests/helpers/assertions';
+
+interface UserResponse {
+  success: boolean;
+  data: { id: string; email: string };
+}
+
+it('should return user data', async () => {
+  // Arrange
+  const response = await GET();
+
+  // Act: Parse with type safety
+  const body = await parseJSON<UserResponse>(response);
+
+  // Assert: Type-safe access
+  expect(body.success).toBe(true);
+  expect(body.data.id).toBeDefined();
+});
+```
+
+**Reference**: See `.context/testing/history.md` for background on why these helpers were created.
 
 ---
 
@@ -561,18 +756,20 @@ describe('environment-aware behavior', () => {
 
 ## Summary
 
-**Key Patterns from 404 Tests**:
+**Key Testing Patterns**:
 
 1. **Structure**: Use consistent file structure with documentation headers
 2. **AAA**: Always include Arrange-Act-Assert comments
-3. **Type Safety**: Define response interfaces for type-safe assertions
-4. **Error Testing**: Use `instanceof` for type narrowing
-5. **Async**: Properly handle promises with `async/await` and `.rejects`
-6. **Mocking**: Mock at boundaries (database, auth, external APIs)
-7. **Parameterized**: Use test case arrays or `describe.each` to reduce duplication
-8. **Edge Cases**: Test boundaries, null/undefined, empty values
-9. **Organization**: Group related tests with nested `describe` blocks
-10. **Descriptive Names**: Test names should explain scenario and expected outcome
+3. **Shared Mocks**: Use `createMockHeaders()`, `createMockSession()`, `delayed()` from `tests/types/mocks.ts`
+4. **Type Guards**: Use `assertDefined()`, `assertHasProperty()`, `parseJSON()` from `tests/helpers/assertions.ts`
+5. **Type Safety**: Define response interfaces for type-safe assertions
+6. **Error Testing**: Use `instanceof` for type narrowing
+7. **Async**: Properly handle promises with `async/await` and `.rejects`
+8. **Mocking**: Mock at boundaries (database, auth, external APIs)
+9. **Parameterized**: Use test case arrays or `describe.each` to reduce duplication
+10. **Edge Cases**: Test boundaries, null/undefined, empty values
+11. **Organization**: Group related tests with nested `describe` blocks
+12. **Descriptive Names**: Test names should explain scenario and expected outcome
 
 **Test Quality Metrics**:
 
@@ -583,8 +780,18 @@ describe('environment-aware behavior', () => {
 
 **Before Writing Tests**:
 
-1. Read `gotchas.md` for critical issues to avoid
-2. Review existing test files for similar patterns
-3. Define response type interfaces
-4. Set up proper mocks in `beforeEach`
-5. Use AAA pattern with comments
+1. Read `.context/testing/` documentation for comprehensive guidance
+2. Import shared mock factories from `tests/types/mocks.ts`
+3. Import assertion helpers from `tests/helpers/assertions.ts`
+4. Review `.claude/skills/testing/gotchas.md` for critical issues to avoid
+5. Define response type interfaces
+6. Set up proper mocks in `beforeEach`
+7. Use AAA pattern with comments
+
+**Related Documentation**:
+
+- `.context/testing/overview.md` - Testing philosophy and tech stack
+- `.context/testing/mocking.md` - Dependency mocking strategies
+- `.context/testing/decisions.md` - Architectural rationale
+- `.context/testing/history.md` - Key learnings and solutions
+- `.claude/skills/testing/gotchas.md` - Common pitfalls and solutions

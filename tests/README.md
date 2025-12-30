@@ -1,324 +1,71 @@
 # Sunrise Test Suite
 
-This directory contains all tests for the Sunrise starter template.
+Quick reference for running and writing tests in the Sunrise project.
+
+**For comprehensive testing documentation**, see [`.context/testing/`](../.context/testing/):
+
+- **overview.md** - Testing philosophy, tech stack, test types
+- **patterns.md** - Best practices, AAA structure, shared mocks
+- **mocking.md** - Dependency mocking strategies
+- **decisions.md** - Architectural rationale
+- **history.md** - Key learnings and solutions
+
+---
 
 ## Quick Start
 
 ```bash
-# Install dependencies (if not already installed)
-npm install -D vitest @vitest/ui @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom @vitejs/plugin-react
-
 # Run all tests
 npm test
 
 # Run tests in watch mode (recommended during development)
 npm run test:watch
 
-# Run tests with coverage
+# Run tests with coverage report
 npm run test:coverage
 
 # Run tests with UI
 npm run test:ui
+
+# Type-check + lint + tests (before committing)
+npm run validate
 ```
+
+---
 
 ## Directory Structure
 
 ```
 tests/
 ├── README.md                       # This file
-├── setup.ts                        # Global test setup and mocks
-├── helpers/                        # Test utilities and helpers
-│   ├── mocks/                      # Mock implementations
-│   │   ├── auth.ts                 # Mock auth sessions and users
-│   │   ├── database.ts             # Mock Prisma client
-│   │   ├── next.ts                 # Mock Next.js modules
-│   │   └── logger.ts               # Mock logger
-│   ├── factories/                  # Data factories for test fixtures
-│   │   ├── user.ts                 # User data factory
-│   │   ├── session.ts              # Session data factory
-│   │   └── api.ts                  # API request/response factory
-│   └── assertions/                 # Custom assertions
-│       └── api.ts                  # API response assertions
-├── unit/                           # Unit tests (isolated, mocked dependencies)
-│   ├── auth/
-│   │   └── utils.test.ts           # Auth utility tests
-│   ├── validations/
-│   │   ├── auth.test.ts            # Auth validation schema tests
-│   │   ├── user.test.ts            # User validation schema tests
-│   │   └── common.test.ts          # Common validation schema tests
-│   ├── utils/
-│   │   ├── utils.test.ts           # General utility tests (cn function)
-│   │   └── password-strength.test.ts  # Password strength calculator tests
-│   ├── api/
-│   │   ├── responses.test.ts       # API response utility tests
-│   │   ├── errors.test.ts          # Error handling tests
-│   │   └── validation.test.ts      # Request validation tests
-│   ├── db/
-│   │   └── utils.test.ts           # Database utility tests
-│   └── logging/
-│       ├── logger.test.ts          # Logger class tests
-│       └── context.test.ts         # Logging context utility tests
-└── integration/                    # Integration tests (real dependencies where possible)
-    ├── api/
-    │   └── health.test.ts          # Health endpoint integration test
-    └── README.md                   # Integration test guidelines
+├── setup.ts                        # Global test setup and environment configuration
+├── helpers/                        # Shared test utilities
+│   └── assertions.ts               # Type-safe assertion helpers
+├── types/                          # Shared mock type definitions
+│   └── mocks.ts                    # Mock factories (createMockHeaders, createMockSession, delayed)
+├── unit/                           # Unit tests (545+ tests)
+│   ├── auth/                       # Authentication utilities
+│   ├── validations/                # Zod schema validation
+│   ├── utils/                      # General utilities
+│   ├── api/                        # API response formatting, error handling
+│   ├── db/                         # Database utilities
+│   └── logging/                    # Structured logging
+└── integration/                    # Integration tests (14+ tests)
+    └── api/                        # API endpoint integration tests
 ```
+
+---
 
 ## Testing Philosophy
 
-1. **Example-Driven**: Tests serve as examples of best practices, not exhaustive coverage
-2. **Quality over Quantity**: Well-crafted tests that demonstrate patterns
-3. **Independence**: Each test is independent and can run in any order
-4. **Clarity**: Test names explain what is being tested and why
-5. **Pragmatism**: Mock external dependencies, test real logic
+- **Example-Driven**: Tests demonstrate best practices
+- **Quality over Quantity**: Well-crafted tests that verify behavior
+- **Test Behavior, Not Implementation**: Focus on outcomes, not internals
+- **Mock at Boundaries**: Mock external systems (database, APIs), not business logic
 
-## Test Types
+**See** [`.context/testing/overview.md`](../.context/testing/overview.md) for comprehensive philosophy and rationale.
 
-### Unit Tests (`tests/unit/`)
-
-Tests for individual functions and modules in isolation. External dependencies are mocked.
-
-**When to write unit tests:**
-
-- Pure functions (validation, utilities)
-- Complex algorithms (password strength, scoring)
-- API utilities (response formatting, error handling)
-- Authentication logic (session management, role checking)
-
-**Example:**
-
-```typescript
-describe('passwordSchema', () => {
-  it('should accept valid password', () => {
-    const result = passwordSchema.parse('Test@123');
-    expect(result).toBe('Test@123');
-  });
-
-  it('should reject password without uppercase', () => {
-    expect(() => passwordSchema.parse('test@123')).toThrow(
-      'must contain at least one uppercase letter'
-    );
-  });
-});
-```
-
-### Integration Tests (`tests/integration/`)
-
-Tests that verify multiple components working together. Use real implementations where practical.
-
-**When to write integration tests:**
-
-- API endpoints (request → validation → business logic → response)
-- Database operations (queries, transactions)
-- Authentication flows (login → session → protected route)
-
-**Example:**
-
-```typescript
-describe('GET /api/health', () => {
-  it('should return healthy status with database connection', async () => {
-    const response = await fetch('http://localhost:3000/api/health');
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.data.status).toBe('healthy');
-  });
-});
-```
-
-## Mock Strategy
-
-### What to Mock
-
-**Always Mock:**
-
-- External APIs and services
-- Next.js server-only modules (`next/headers`, `next/navigation`)
-- Authentication (better-auth sessions)
-- Database calls (Prisma client for unit tests)
-- Environment variables
-- Date/time (for deterministic tests)
-
-**Never Mock:**
-
-- Validation schemas (Zod)
-- Pure utility functions
-- Type definitions
-- Constants
-
-**Sometimes Mock:**
-
-- Logger (mock for unit tests, use real for integration tests)
-- Configuration objects (use real unless testing specific config scenarios)
-
-### How to Mock
-
-**Global Mocks** (in `tests/setup.ts`):
-
-```typescript
-// Mock Next.js modules for all tests
-vi.mock('next/headers', () => ({
-  headers: vi.fn(() => ({ get: vi.fn() })),
-}));
-```
-
-**Per-Test Mocks**:
-
-```typescript
-// Mock specific behavior for this test
-import { auth } from '@/lib/auth/config';
-vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
-```
-
-**Using Mock Helpers**:
-
-```typescript
-// Use predefined mocks from helpers
-import { mockSession } from '@/tests/helpers/mocks/auth';
-import { mockPrisma } from '@/tests/helpers/mocks/database';
-```
-
-## Test Patterns
-
-### Arrange-Act-Assert (AAA)
-
-Structure every test with clear sections:
-
-```typescript
-it('should calculate password strength correctly', () => {
-  // Arrange: Set up test data
-  const password = 'MyP@ssw0rd123';
-
-  // Act: Execute the code under test
-  const result = calculatePasswordStrength(password);
-
-  // Assert: Verify the outcome
-  expect(result.score).toBeGreaterThanOrEqual(3);
-  expect(result.label).toBe('Good');
-});
-```
-
-### Testing Async Functions
-
-```typescript
-it('should return user session when authenticated', async () => {
-  // Mock async dependency
-  vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
-
-  // Await async function
-  const result = await getServerSession();
-
-  // Assert result
-  expect(result).toEqual(mockSession);
-});
-```
-
-### Testing Error Handling
-
-```typescript
-it('should throw error when user not found', async () => {
-  // Mock to throw error
-  vi.mocked(prisma.user.findUnique).mockRejectedValue(new Error('Not found'));
-
-  // Assert error is thrown
-  await expect(getUser('invalid-id')).rejects.toThrow('Not found');
-});
-```
-
-### Testing Validation
-
-```typescript
-it('should validate email format', () => {
-  // Valid case
-  expect(emailSchema.parse('user@example.com')).toBe('user@example.com');
-
-  // Invalid case
-  expect(() => emailSchema.parse('invalid')).toThrow('Invalid email');
-});
-```
-
-## Writing Good Tests
-
-### Good Test Names
-
-✅ **Good**: Descriptive and explains the scenario
-
-- `should return user when authenticated`
-- `should throw error when password is too short`
-- `should sanitize PII from log output`
-
-❌ **Bad**: Vague or implementation-focused
-
-- `test getUser`
-- `should work`
-- `returns data`
-
-### Test One Thing
-
-✅ **Good**: Each test verifies one behavior
-
-```typescript
-it('should return 400 when email is invalid', () => {
-  const response = validateEmail('invalid');
-  expect(response.status).toBe(400);
-});
-
-it('should return error message when email is invalid', () => {
-  const response = validateEmail('invalid');
-  expect(response.error.message).toContain('Invalid email');
-});
-```
-
-❌ **Bad**: Testing multiple behaviors
-
-```typescript
-it('should validate email and password and username', () => {
-  // Testing too many things
-});
-```
-
-### Keep Tests Independent
-
-✅ **Good**: Each test sets up its own data
-
-```typescript
-it('should create user', () => {
-  const user = createUser({ email: 'test@example.com' });
-  expect(user).toBeDefined();
-});
-
-it('should update user', () => {
-  const user = createUser({ email: 'test@example.com' });
-  const updated = updateUser(user.id, { name: 'New Name' });
-  expect(updated.name).toBe('New Name');
-});
-```
-
-❌ **Bad**: Tests depend on shared state
-
-```typescript
-let sharedUser;
-
-it('should create user', () => {
-  sharedUser = createUser(); // Don't share state
-});
-
-it('should update user', () => {
-  updateUser(sharedUser.id, ...); // Depends on previous test
-});
-```
-
-## Coverage Goals
-
-We aim for **meaningful coverage**, not 100%:
-
-- **Critical paths** (auth, validation, security): 80%+
-- **Business logic** (API routes, utilities): 70%+
-- **UI components** (forms, layouts): 60%+
-- **Simple utilities** (helpers): 50%+
-
-**Priority**: Focus on testing complex logic, edge cases, and security-critical code.
+---
 
 ## Running Tests
 
@@ -328,201 +75,235 @@ We aim for **meaningful coverage**, not 100%:
 npm test
 ```
 
-### Watch Mode (Best for Development)
+### Specific Test File
+
+```bash
+npm test -- tests/unit/validations/auth.test.ts
+```
+
+### By Pattern
+
+```bash
+# Run all validation tests
+npm test -- validations
+
+# Run all API tests
+npm test -- api
+```
+
+### Watch Mode
 
 ```bash
 npm run test:watch
 ```
 
-### Specific Test File
+Changes to test files or source files trigger automatic re-runs.
 
-```bash
-npx vitest run tests/unit/validations/auth.test.ts
-```
-
-### Tests Matching Pattern
-
-```bash
-npx vitest run --grep "passwordSchema"
-```
-
-### Coverage Report
+### Coverage
 
 ```bash
 npm run test:coverage
 ```
 
-### UI Mode (Browser-based)
+Generates coverage report in `coverage/` directory. Open `coverage/index.html` in browser for detailed view.
 
-```bash
-npm run test:ui
+**Coverage Targets**:
+
+- 80%+ overall coverage
+- 90%+ for critical paths (authentication, validation, security)
+
+---
+
+## Writing Tests
+
+### Import Shared Utilities
+
+**CRITICAL**: Always use shared mock factories and type guards to prevent lint/type errors.
+
+```typescript
+// Import mock factories
+import { createMockHeaders, createMockSession, delayed } from '@/tests/types/mocks';
+
+// Import type-safe assertions
+import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
 ```
+
+### Test Structure (AAA Pattern)
+
+```typescript
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+describe('Feature Name', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); // Reset mocks before each test
+  });
+
+  it('should [expected behavior] when [condition]', () => {
+    // Arrange: Set up test data and mocks
+    const input = { name: 'Test' };
+
+    // Act: Execute the function under test
+    const result = functionUnderTest(input);
+
+    // Assert: Verify the outcome
+    expect(result).toEqual({ success: true });
+  });
+});
+```
+
+**See** [`.context/testing/patterns.md`](../.context/testing/patterns.md) for comprehensive patterns and examples.
+
+---
+
+## Mocking Dependencies
+
+### Prisma (Database)
+
+```typescript
+import { createMockSession } from '@/tests/types/mocks';
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+    },
+  },
+}));
+
+import { prisma } from '@/lib/db/client';
+
+vi.mocked(prisma.user.findUnique).mockResolvedValue({
+  id: 'user-123',
+  email: 'test@example.com',
+  // ... other fields
+});
+```
+
+### better-auth (Authentication)
+
+```typescript
+import { createMockSession } from '@/tests/types/mocks';
+
+vi.mock('@/lib/auth/config', () => ({
+  auth: {
+    api: {
+      getSession: vi.fn(),
+    },
+  },
+}));
+
+import { auth } from '@/lib/auth/config';
+
+vi.mocked(auth.api.getSession).mockResolvedValue(
+  createMockSession({ user: { id: 'user-123' } }) as any
+);
+```
+
+### Next.js (Headers, Cookies, Navigation)
+
+```typescript
+import { createMockHeaders } from '@/tests/types/mocks';
+
+vi.mock('next/headers', () => ({
+  headers: vi.fn(),
+}));
+
+import { headers } from 'next/headers';
+
+vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'test-123' }) as any);
+```
+
+**See** [`.context/testing/mocking.md`](../.context/testing/mocking.md) for complete mocking strategies.
+
+---
+
+## Critical Gotchas
+
+### 1. Use Shared Mock Factories
+
+**Always** import from `tests/types/mocks.ts` instead of creating inline mocks. This prevents recurring lint/type error cycles.
+
+### 2. Use Type-Safe Assertions
+
+Use `assertDefined()`, `assertHasProperty()`, and `parseJSON()` from `tests/helpers/assertions.ts` instead of non-null assertions (`!`).
+
+### 3. ESLint Auto-Fix Won't Remove `async`
+
+ESLint rule `@typescript-eslint/require-await` is disabled for test files. Your `async` keywords are safe.
+
+### 4. Response.json() Type Safety
+
+Always use `parseJSON<T>()` helper instead of direct `.json()` calls to maintain type safety.
+
+### 5. Mock Setup Timing
+
+Set environment variables BEFORE module imports in `setup.ts`, otherwise modules that validate env vars at import time will fail.
+
+**See** [`.claude/skills/testing/gotchas.md`](../.claude/skills/testing/gotchas.md) for complete list with solutions.
+
+---
 
 ## Debugging Tests
 
-### VSCode Debugging
+### Console Output
 
-Add to `.vscode/launch.json`:
+```bash
+# Run with console output
+npm test
 
-```json
-{
-  "type": "node",
-  "request": "launch",
-  "name": "Debug Vitest Tests",
-  "runtimeExecutable": "npm",
-  "runtimeArgs": ["run", "test:watch"],
-  "console": "integratedTerminal",
-  "internalConsoleOptions": "neverOpen"
-}
+# Verbose mode
+npm test -- --reporter=verbose
 ```
 
-### Console Logging
+### Breakpoints (VS Code)
+
+1. Add breakpoint in test file
+2. Click "Debug" in test sidebar
+3. Or use "JavaScript Debug Terminal"
+
+### Isolate Failing Test
 
 ```typescript
-it('should debug test', () => {
-  const result = myFunction();
-  console.log('Result:', result); // Shows in test output
-  expect(result).toBe(expected);
-});
-```
-
-### Inspect Mocks
-
-```typescript
-it('should call mock', () => {
-  myFunction();
-  console.log(mockFn.mock.calls); // See all calls
-  expect(mockFn).toHaveBeenCalled();
-});
-```
-
-## Critical Gotchas (Week 1 & 2 Learnings)
-
-### ESLint Auto-Fix Breaks Async Tests
-
-**CRITICAL**: ESLint auto-fix may remove `async` from test functions.
-
-**Problem**:
-
-```typescript
-// BEFORE ESLint auto-fix
-it('should validate request', async () => {
-  await validateRequestBody(request, schema);
+// Run only this test
+it.only('should test specific behavior', () => {
+  // ...
 });
 
-// AFTER auto-fix (BROKEN!)
-it('should validate request', () => {
-  // async removed!
-  await validateRequestBody(request, schema); // Error!
+// Skip this test
+it.skip('should be fixed later', () => {
+  // ...
 });
 ```
-
-**Solution**: Disable `@typescript-eslint/require-await` for test files in `.eslintrc.json`:
-
-```json
-{
-  "overrides": [
-    {
-      "files": ["**/*.test.ts", "**/*.test.tsx"],
-      "rules": {
-        "@typescript-eslint/require-await": "off"
-      }
-    }
-  ]
-}
-```
-
-### NODE_ENV Cannot Be Set Directly
-
-**Problem**: `process.env.NODE_ENV = 'production'` fails (read-only property).
-
-**Solution**: Use `Object.defineProperty()`:
-
-```typescript
-Object.defineProperty(process.env, 'NODE_ENV', {
-  value: 'production',
-  writable: true,
-  enumerable: true,
-  configurable: true,
-});
-```
-
-### Response.json() Loses Type Safety
-
-**Problem**: `await response.json()` returns `any`.
-
-**Solution**: Define response type interfaces:
-
-```typescript
-interface ErrorResponse {
-  success: false;
-  error: {
-    message: string;
-    code?: string;
-    details?: Record<string, unknown>;
-  };
-}
-
-const body = (await response.json()) as ErrorResponse;
-```
-
-**For complete gotchas documentation, see:**
-
-- `.claude/skills/testing/gotchas.md` - Critical issues and solutions
-- `.context/testing/patterns.md` - Best practices from 404 implemented tests
 
 ---
 
-## Common Issues
+## Pre-Commit Checklist
 
-### Issue: "Cannot find module '@/lib/...'"
+Before committing test code:
 
-**Solution**: Check `vitest.config.ts` has path aliases:
-
-```typescript
-resolve: {
-  alias: {
-    '@': path.resolve(__dirname, './'),
-  },
-}
-```
-
-### Issue: Tests pass individually but fail together
-
-**Solution**: Clear mocks in `beforeEach`:
-
-```typescript
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-```
-
-### Issue: "Cannot access before initialization"
-
-**Solution**: Use `vi.mocked()` for typed mocks:
-
-```typescript
-import { myModule } from '@/lib/module';
-vi.mocked(myModule.method).mockReturnValue('value');
-```
-
-## Resources
-
-- **Vitest Docs**: https://vitest.dev/
-- **Testing Library**: https://testing-library.com/docs/react-testing-library/intro/
-- **Test Plan**: See `/TEST-PLAN.md` for comprehensive implementation guide
-- **Quick Reference**: See `/TEST-PLAN-SUMMARY.md` for quick start guide
-
-## Contributing
-
-When adding new features:
-
-1. Write tests BEFORE or ALONGSIDE implementation
-2. Follow existing test patterns in this directory
-3. Use factories and mocks from `helpers/`
-4. Keep tests focused and independent
-5. Update this README if adding new patterns
+1. **Run tests**: `npm test` - All tests must pass
+2. **Run linter**: `npm run lint` - Zero errors, zero warnings
+3. **Run type-check**: `npm run type-check` - Zero type errors
+4. **Check coverage**: `npm run test:coverage` - Meet coverage targets
+5. **Run validate**: `npm run validate` - All checks in one command
 
 ---
 
-**Happy Testing!** 🧪
+## Tech Stack
+
+- **Test Framework**: Vitest (fast, modern, Vite-integrated)
+- **Component Testing**: React Testing Library (user-centric testing)
+- **Mocking**: Vitest `vi.mock()` with shared factories
+- **Assertions**: Vitest `expect()` with type-safe helpers
+- **Coverage**: Vitest coverage with c8
+
+**Why these choices?** See [`.context/testing/decisions.md`](../.context/testing/decisions.md)
+
+---
+
+## Getting Help
+
+1. **Quick patterns**: [`.context/testing/patterns.md`](../.context/testing/patterns.md)
+2. **Mocking strategies**: [`.context/testing/mocking.md`](../.context/testing/mocking.md)
+3. **Common problems**: [`.claude/skills/testing/gotchas.md`](../.claude/skills/testing/gotchas.md)

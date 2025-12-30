@@ -409,7 +409,6 @@ tests/
    - **Run type-check and verify clean**: `npm run type-check` - MUST pass with 0 errors
    - Check coverage report: `npm run test:coverage`
    - Verify tests fail when code is broken (test the tests)
-   - **Review pre-commit checklist**: `.claude/skills/testing/PRE-COMMIT-CHECKLIST.md`
 
 5. **Document:**
    - Add comments for complex test logic
@@ -463,9 +462,10 @@ When writing tests:
 
 ## Required Reading Before Writing Tests
 
-1. **`.claude/skills/testing/LINTING-ANALYSIS.md`** - Understand systemic linting issues and prevention
-2. **`.claude/skills/testing/gotchas.md`** - Common pitfalls and how to avoid them
-3. **`.claude/skills/testing/PRE-COMMIT-CHECKLIST.md`** - Validation requirements before committing
-4. **`.claude/skills/testing/SKILL.md`** - Overall testing workflow and patterns
+1. **`.context/testing/overview.md`** - Testing philosophy and tech stack
+2. **`.context/testing/patterns.md`** - Best practices and code patterns
+3. **`.context/testing/mocking.md`** - Dependency mocking strategies
+4. **`.claude/skills/testing/gotchas.md`** - Common pitfalls and how to avoid them
+5. **`.claude/skills/testing/SKILL.md`** - Overall testing workflow and patterns
 
 Your ultimate goal is to make the codebase robust, maintainable, and confidence-inspiring through comprehensive, well-designed tests. Every test you write should add value and catch real bugs.
