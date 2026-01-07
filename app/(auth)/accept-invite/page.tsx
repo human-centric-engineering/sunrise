@@ -40,10 +40,12 @@ export default function AcceptInvitePage() {
   const emailFromUrl = searchParams.get('email') || '';
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetchingMetadata, setIsFetchingMetadata] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [invitationName, setInvitationName] = useState<string>('');
 
   const {
     register,
@@ -64,6 +66,39 @@ export default function AcceptInvitePage() {
 
   // Watch password field for strength meter
   const password = watch('password');
+
+  // Fetch invitation metadata on mount
+  useEffect(() => {
+    async function fetchInvitation() {
+      if (!token || !emailFromUrl) {
+        setError('Invalid invitation link');
+        setIsFetchingMetadata(false);
+        return;
+      }
+
+      try {
+        setIsFetchingMetadata(true);
+        // Fetch invitation metadata
+        const response = await apiClient.get<{ name: string; role: string }>(
+          `/api/v1/invitations/metadata?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
+        );
+
+        // Store invitation name
+        setInvitationName(response.name);
+        setError(null);
+      } catch (err) {
+        if (err instanceof APIClientError) {
+          setError(err.message || 'Failed to load invitation details');
+        } else {
+          setError('Failed to load invitation details');
+        }
+      } finally {
+        setIsFetchingMetadata(false);
+      }
+    }
+
+    void fetchInvitation();
+  }, [token, emailFromUrl]);
 
   // Update token and email when URL params change
   useEffect(() => {
@@ -152,6 +187,20 @@ export default function AcceptInvitePage() {
             {/* Hidden Token Field */}
             <input type="hidden" {...register('token')} />
 
+            {/* Name Field (Disabled, Pre-filled from invitation) */}
+            {invitationName && (
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  value={invitationName}
+                  disabled={true}
+                  className="bg-muted"
+                />
+              </div>
+            )}
+
             {/* Email Field (Disabled, Pre-filled) */}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -234,8 +283,16 @@ export default function AcceptInvitePage() {
             )}
 
             {/* Submit Button */}
-            <Button type="submit" className="w-full" disabled={isLoading || success}>
-              {isLoading ? 'Activating account...' : 'Activate Account'}
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isLoading || success || isFetchingMetadata}
+            >
+              {isFetchingMetadata
+                ? 'Loading...'
+                : isLoading
+                  ? 'Activating account...'
+                  : 'Activate Account'}
             </Button>
           </form>
         )}

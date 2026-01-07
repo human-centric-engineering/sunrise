@@ -51,6 +51,16 @@ const serverEnvSchema = z.object({
   // Email (optional for Phase 1, required in Phase 3)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
+  REQUIRE_EMAIL_VERIFICATION: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (val === undefined) return undefined;
+      if (val === 'true') return true;
+      if (val === 'false') return false;
+      return undefined;
+    })
+    .describe('Require email verification (defaults to true in production, false in development)'),
 
   // App Configuration
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

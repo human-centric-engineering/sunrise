@@ -14,11 +14,13 @@
  * 1. Authenticate user (require session)
  * 2. Authorize user (require ADMIN role)
  * 3. Validate request body
- * 4. Check if user already exists
- * 5. Create user without password (emailVerified=false)
- * 6. Generate invitation token
+ * 4. Check if user account already exists (409 error if exists)
+ * 5. Check if invitation already sent (return existing details if exists)
+ * 6. Generate invitation token and store in Verification table with metadata
  * 7. Send invitation email
- * 8. Return created user with status: 'invited'
+ * 8. Return invitation details (NOT user object)
+ *
+ * Note: User is NOT created until invitation is accepted (Option B pattern)
  */
 
 import { NextRequest } from 'next/server';
@@ -38,7 +40,7 @@ import { env } from '@/lib/env';
 /**
  * POST /api/v1/users/invite
  *
- * Invites a new user by creating an account without password and sending
+ * Invites a new user by storing invitation metadata and sending
  * an invitation email with a secure token to complete registration.
  *
  * @example
@@ -49,10 +51,11 @@ import { env } from '@/lib/env';
  *   "role": "USER"
  * }
  *
- * @returns Created user object with status: 'invited'
+ * @returns Invitation details with token link
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  * @throws ValidationError if invalid request body
+ * @throws ConflictError if user already exists
  */
 export async function POST(request: NextRequest) {
   try {
@@ -72,45 +75,77 @@ export async function POST(request: NextRequest) {
     // 3. Validate request body
     const body = await validateRequestBody(request, inviteUserSchema);
 
-    // 4. Check if user already exists
+    // 4. Check if user account already exists (409 error)
     const existingUser = await prisma.user.findUnique({
       where: { email: body.email },
     });
 
     if (existingUser) {
-      return errorResponse('Email already in use', {
+      return errorResponse('User already exists with this email', {
         code: ErrorCodes.EMAIL_TAKEN,
-        status: 400,
+        status: 409,
       });
     }
 
-    // 5. Create user without password (emailVerified=false)
-    const newUser = await prisma.user.create({
-      data: {
-        name: body.name,
-        email: body.email,
-        emailVerified: false,
-        role: body.role,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        emailVerified: true,
-        createdAt: true,
+    // 5. Check if invitation already sent (return existing details)
+    const existingInvitation = await prisma.verification.findFirst({
+      where: {
+        identifier: `invitation:${body.email}`,
+        expiresAt: { gte: new Date() },
       },
     });
 
-    logger.info('User created via invitation', {
-      userId: newUser.id,
-      email: newUser.email,
-      role: newUser.role,
+    if (existingInvitation) {
+      // Return existing invitation details
+      const metadata = existingInvitation.metadata as {
+        name: string;
+        role: string;
+        invitedBy: string;
+        invitedAt: string;
+      };
+
+      // Generate new token for link (for security, don't reuse stored hash)
+      const { randomBytes } = await import('crypto');
+      const token = randomBytes(32).toString('hex');
+      const appUrl =
+        env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3000';
+      const invitationUrl = `${appUrl}/accept-invite?token=${token}&email=${encodeURIComponent(body.email)}`;
+
+      logger.info('Returning existing invitation', {
+        email: body.email,
+        invitedAt: metadata.invitedAt,
+      });
+
+      return successResponse(
+        {
+          message: 'Invitation already sent',
+          invitation: {
+            email: body.email,
+            name: metadata.name,
+            role: metadata.role,
+            invitedAt: metadata.invitedAt,
+            expiresAt: existingInvitation.expiresAt.toISOString(),
+            link: invitationUrl,
+          },
+        },
+        undefined,
+        { status: 200 }
+      );
+    }
+
+    // 6. Generate invitation token and store with metadata (NO USER CREATION)
+    const token = await generateInvitationToken(body.email, {
+      name: body.name,
+      role: body.role || 'USER',
+      invitedBy: session.user.id,
+      invitedAt: new Date().toISOString(),
+    });
+
+    logger.info('Invitation created', {
+      email: body.email,
+      role: body.role,
       invitedBy: session.user.id,
     });
-
-    // 6. Generate invitation token
-    const token = await generateInvitationToken(body.email);
 
     // 7. Send invitation email
     const appUrl =
@@ -136,23 +171,28 @@ export async function POST(request: NextRequest) {
     // Email sending failure should NOT fail the request (just log warning)
     if (!emailResult.success) {
       logger.warn('Failed to send invitation email', {
-        userId: newUser.id,
-        email: newUser.email,
+        email: body.email,
         error: emailResult.error,
       });
     } else {
       logger.info('Invitation email sent', {
-        userId: newUser.id,
-        email: newUser.email,
+        email: body.email,
         emailId: emailResult.id,
       });
     }
 
-    // 8. Return created user with status: 'invited'
+    // 8. Return invitation details (NOT user object)
     return successResponse(
       {
-        ...newUser,
-        status: 'invited',
+        message: 'Invitation sent successfully',
+        invitation: {
+          email: body.email,
+          name: body.name,
+          role: body.role || 'USER',
+          invitedAt: new Date().toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          link: invitationUrl,
+        },
       },
       undefined,
       { status: 201 }

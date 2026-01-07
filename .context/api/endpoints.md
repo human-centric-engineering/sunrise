@@ -250,17 +250,17 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
   ```
 - **400 Validation Error**: Invalid query parameters
 
-### Create User (Admin)
+### Create User (Self-Signup)
 
-✅ **Implemented in:** `app/api/v1/users/route.ts` (POST handler)
+✅ **Implemented by:** better-auth (`/api/auth/sign-up/email`)
 
-**Purpose**: Create a new user account (admin only, delegates to better-auth signup API)
+**Purpose**: User self-registration (public endpoint)
 
 ```
-POST /api/v1/users
+POST /api/auth/sign-up/email
 ```
 
-**Authentication**: Required (ADMIN role)
+**Authentication**: None (public endpoint)
 
 **Request Body**:
 
@@ -268,44 +268,39 @@ POST /api/v1/users
 {
   "name": "Jane Doe",
   "email": "jane@example.com",
-  "password": "SecurePassword123!",
-  "role": "USER"
+  "password": "SecurePassword123!"
 }
 ```
 
-**Validation**: Uses `createUserSchema` from `lib/validations/user.ts`
-
-- `name`: Required, 1-100 characters
-- `email`: Required, valid email format
-- `password`: Required, minimum 8 characters
-- `role`: Optional, one of `USER`, `ADMIN`, `MODERATOR` (default: `USER`)
-
-**Response** (201 Created):
+**Response** (200 OK):
 
 ```json
 {
-  "success": true,
-  "data": {
+  "user": {
     "id": "clxxxx",
     "name": "Jane Doe",
     "email": "jane@example.com",
-    "role": "USER",
-    "emailVerified": null,
-    "image": null,
-    "createdAt": "2025-01-15T14:30:00.000Z",
-    "updatedAt": "2025-01-15T14:30:00.000Z"
+    "role": "USER"
+  },
+  "session": {
+    "token": "...",
+    "expiresAt": "..."
   }
 }
 ```
 
+**Email Verification**:
+
+- **Development**: Disabled by default (immediate login)
+- **Production**: Enabled by default (must verify email first)
+- **Override**: Set `REQUIRE_EMAIL_VERIFICATION=true/false`
+
 **Error Responses**:
 
-- **401 Unauthorized**: No valid session
-- **403 Forbidden**: User does not have ADMIN role
 - **400 Validation Error**: Invalid request body
-- **400 Email Taken**: Email already in use
+- **400 Email Taken**: Email already registered
 
-**Note**: This endpoint delegates to better-auth's signup API (`auth.api.signUpEmail()`) for secure user creation with password hashing.
+**Note**: For admin-created accounts, use the invitation-based flow instead. See [User Creation Patterns](../auth/user-creation.md) for details.
 
 ### Get User by ID
 
@@ -517,15 +512,13 @@ GET /api/auth/clear-session
 
 **Note**: Refer to better-auth documentation for complete API reference and configuration options.
 
-## Planned Endpoints
-
-The following endpoints are defined for future implementation:
+## Invitation Endpoints
 
 ### Invite User (Admin)
 
-📋 **Planned** - Phase 3.1 (Email System)
+✅ **Implemented in:** `app/api/v1/users/invite/route.ts`
 
-**Purpose**: Create user account without password, send invitation email
+**Purpose**: Invite new user via email (admin only)
 
 ```
 POST /api/v1/users/invite
@@ -543,52 +536,141 @@ POST /api/v1/users/invite
 }
 ```
 
+**Validation**: Uses `inviteUserSchema` from `lib/validations/user.ts`
+
+- `name`: Required, 1-100 characters
+- `email`: Required, valid email format
+- `role`: Optional, one of `USER`, `ADMIN`, `MODERATOR` (default: `USER`)
+
 **Response** (201 Created):
 
 ```json
 {
   "success": true,
   "data": {
-    "id": "clxxxx",
-    "name": "Jane Doe",
-    "email": "jane@example.com",
-    "role": "USER",
-    "invitationToken": "...",
-    "invitationSentAt": "2025-01-15T14:30:00.000Z"
+    "message": "Invitation sent successfully",
+    "invitation": {
+      "email": "jane@example.com",
+      "name": "Jane Doe",
+      "role": "USER",
+      "invitedAt": "2026-01-07T14:30:00.000Z",
+      "expiresAt": "2026-01-14T14:30:00.000Z",
+      "link": "http://localhost:3000/accept-invite?token=...&email=jane@example.com"
+    }
   }
 }
 ```
 
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User does not have ADMIN role
+- **400 Validation Error**: Invalid request body
+- **409 Conflict**: User already exists with this email
+
 **Flow**:
 
-1. Admin creates user without password
-2. Invitation token generated and stored
-3. Email sent with invitation link: `/auth/accept-invite?token=...`
-4. User clicks link, sets password, account activated
+1. Check if user already exists (409 if exists)
+2. Check if invitation already sent (return existing if valid)
+3. Generate secure token (SHA-256 hashed)
+4. Store invitation in `Verification` table with metadata
+5. Send invitation email
+6. Return invitation details
 
-### Accept Invitation
+**Note**: User is NOT created until invitation is accepted. See [User Creation Patterns](../auth/user-creation.md) for complete flow.
 
-📋 **Planned** - Phase 3.1 (Email System)
+### Get Invitation Metadata
 
-**Purpose**: Allow invited user to set password and activate account
+✅ **Implemented in:** `app/api/v1/invitations/metadata/route.ts`
+
+**Purpose**: Get invitation metadata for acceptance form (public with token validation)
 
 ```
-GET /auth/accept-invite?token=...
+GET /api/v1/invitations/metadata?token={token}&email={email}
 ```
+
+**Authentication**: None (validated via token)
 
 **Query Parameters**:
 
-- `token`: Invitation token from email
+- `token`: Invitation token (required)
+- `email`: Email address (required)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "name": "Jane Doe",
+    "role": "USER"
+  }
+}
+```
+
+**Error Responses**:
+
+- **400 Validation Error**: Invalid or expired token
+- **404 Not Found**: Invitation not found
+
+**Usage**: Pre-fill user details in acceptance form before user sets password
+
+### Accept Invitation
+
+✅ **Implemented in:** `app/api/auth/accept-invite/route.ts`
+
+**Purpose**: Accept invitation and set password (public with token validation)
+
+```
+POST /api/auth/accept-invite
+```
+
+**Authentication**: None (validated via token)
+
+**Request Body**:
+
+```json
+{
+  "token": "abc123...",
+  "email": "jane@example.com",
+  "password": "SecurePassword123!",
+  "confirmPassword": "SecurePassword123!"
+}
+```
+
+**Validation**: Uses `acceptInvitationSchema` from `lib/validations/user.ts`
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Invitation accepted successfully. You can now log in."
+  }
+}
+```
+
+**Error Responses**:
+
+- **400 Validation Error**: Invalid token, passwords don't match, etc.
+- **404 Not Found**: Invitation not found
+- **500 Internal Error**: User creation failed
 
 **Flow**:
 
-1. Validate invitation token
-2. Display password form
-3. Update user record with password
-4. Clear invitation token
-5. Redirect to login
+1. Validate token and email
+2. Get invitation metadata (name, role)
+3. Create user via better-auth signup (stable User ID)
+4. Update role if non-default
+5. Mark email as verified
+6. Delete invitation token
+7. Send welcome email (non-blocking)
+8. Return success (user must log in)
 
-**Implementation**: Page route in `app/(auth)/accept-invite/page.tsx`
+**Security**: Token hashed (SHA-256), single-use, expires in 7 days
+
+**Implementation**: Page route at `app/(auth)/accept-invite/page.tsx`
 
 ## Common Patterns
 

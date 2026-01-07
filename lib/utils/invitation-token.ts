@@ -37,18 +37,38 @@ function hashToken(token: string): string {
 }
 
 /**
- * Generate a secure invitation token and store it in the database
+ * Invitation metadata structure
+ */
+export type InvitationMetadata = {
+  name: string;
+  role: string;
+  invitedBy: string;
+  invitedAt: string;
+  [key: string]: string; // Index signature for Prisma JSON compatibility
+};
+
+/**
+ * Generate a secure invitation token and store it in the database with metadata
  *
  * @param email - The email address to associate with the invitation
+ * @param metadata - Invitation metadata (name, role, invitedBy, invitedAt)
  * @returns The unhashed token string (to be sent in invitation email)
  *
  * @example
  * ```typescript
- * const token = await generateInvitationToken('user@example.com');
+ * const token = await generateInvitationToken('user@example.com', {
+ *   name: 'John Doe',
+ *   role: 'USER',
+ *   invitedBy: 'admin-user-id',
+ *   invitedAt: new Date().toISOString(),
+ * });
  * await sendInvitationEmail(email, token);
  * ```
  */
-export async function generateInvitationToken(email: string): Promise<string> {
+export async function generateInvitationToken(
+  email: string,
+  metadata: InvitationMetadata
+): Promise<string> {
   try {
     // Generate cryptographically secure random token
     const token = randomBytes(TOKEN_BYTE_LENGTH).toString('hex');
@@ -58,18 +78,20 @@ export async function generateInvitationToken(email: string): Promise<string> {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + TOKEN_EXPIRY_DAYS);
 
-    // Store hashed token in database
+    // Store hashed token in database with metadata
     await prisma.verification.create({
       data: {
         identifier: `${IDENTIFIER_PREFIX}${email}`,
         value: hashedToken,
         expiresAt,
+        metadata: metadata,
       },
     });
 
     logger.info('Invitation token generated', {
       email,
       expiresAt: expiresAt.toISOString(),
+      metadata,
     });
 
     // Return unhashed token (this is what gets sent in the email)

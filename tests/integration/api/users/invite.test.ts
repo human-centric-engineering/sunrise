@@ -4,12 +4,15 @@
  * Tests the POST /api/v1/users/invite endpoint for inviting new users.
  *
  * Test Coverage:
- * - Successful invitation (admin user)
+ * - Successful invitation (stores in Verification table, NOT User table)
  * - Unauthorized (non-admin user)
  * - Unauthenticated (no session)
- * - Duplicate email (user already exists)
+ * - User already exists (409 conflict)
+ * - Invitation already exists (200 with existing details)
  * - Invalid input (validation errors)
  * - Email sending (mocked)
+ *
+ * Note: Phase 2 refactor - users NOT created until invitation acceptance
  *
  * @see app/api/v1/users/invite/route.ts
  */
@@ -42,6 +45,9 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     user: {
       findUnique: vi.fn(),
+    },
+    verification: {
+      findFirst: vi.fn(),
       create: vi.fn(),
     },
   },
@@ -109,13 +115,15 @@ async function parseResponse<T>(response: Response): Promise<T> {
 interface SuccessResponse {
   success: true;
   data: {
-    id: string;
-    name: string;
-    email: string;
-    role: string;
-    emailVerified: boolean;
-    createdAt: string;
-    status: string;
+    message: string;
+    invitation: {
+      email: string;
+      name: string;
+      role: string;
+      invitedAt: string;
+      expiresAt: string;
+      link: string;
+    };
   };
 }
 
@@ -141,7 +149,7 @@ describe('POST /api/v1/users/invite', () => {
    * Success Scenarios
    */
   describe('Success scenarios', () => {
-    it('should invite user successfully (admin user)', async () => {
+    it('should create invitation successfully without creating user (admin user)', async () => {
       // Arrange: Mock admin session
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
@@ -149,16 +157,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock user creation
-      const mockUser = {
-        id: 'new-user-id',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'USER',
-        emailVerified: false,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      };
-      vi.mocked(prisma.user.create).mockResolvedValue(mockUser as never);
+      // Mock no existing invitation
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
@@ -178,35 +178,26 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Response structure and values
       expect(response.status).toBe(201);
       expect(body.success).toBe(true);
-      expect(body.data).toMatchObject({
-        id: 'new-user-id',
-        name: 'John Doe',
+      expect(body.data.message).toBe('Invitation sent successfully');
+      expect(body.data.invitation).toMatchObject({
         email: 'john@example.com',
+        name: 'John Doe',
         role: 'USER',
-        emailVerified: false,
-        status: 'invited',
       });
+      expect(body.data.invitation.invitedAt).toBeDefined();
+      expect(body.data.invitation.expiresAt).toBeDefined();
+      expect(body.data.invitation.link).toContain('accept-invite');
+      expect(body.data.invitation.link).toContain('invitation-token-123');
 
-      // Assert: User was created without password
-      expect(vi.mocked(prisma.user.create)).toHaveBeenCalledWith({
-        data: {
+      // Assert: Invitation token was generated with metadata
+      expect(vi.mocked(generateInvitationToken)).toHaveBeenCalledWith(
+        'john@example.com',
+        expect.objectContaining({
           name: 'John Doe',
-          email: 'john@example.com',
-          emailVerified: false,
           role: 'USER',
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          emailVerified: true,
-          createdAt: true,
-        },
-      });
-
-      // Assert: Invitation token was generated
-      expect(vi.mocked(generateInvitationToken)).toHaveBeenCalledWith('john@example.com');
+          invitedBy: adminSession.user.id,
+        })
+      );
 
       // Assert: Email was sent
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith({
@@ -217,15 +208,15 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Success logged
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
-        'User created via invitation',
+        'Invitation created',
         expect.objectContaining({
-          userId: 'new-user-id',
           email: 'john@example.com',
+          role: 'USER',
         })
       );
     });
 
-    it('should invite user with default role when not specified', async () => {
+    it('should create invitation with default role when not specified', async () => {
       // Arrange: Mock admin session
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
@@ -233,16 +224,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock user creation
-      const mockUser = {
-        id: 'new-user-id',
-        name: 'Jane Doe',
-        email: 'jane@example.com',
-        role: 'USER',
-        emailVerified: false,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      };
-      vi.mocked(prisma.user.create).mockResolvedValue(mockUser as never);
+      // Mock no existing invitation
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-456');
@@ -264,7 +247,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Response has default USER role
       expect(response.status).toBe(201);
-      expect(body.data.role).toBe('USER');
+      expect(body.data.invitation.role).toBe('USER');
     });
 
     it('should continue even if email sending fails', async () => {
@@ -275,16 +258,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock user creation
-      const mockUser = {
-        id: 'new-user-id',
-        name: 'Bob Smith',
-        email: 'bob@example.com',
-        role: 'USER',
-        emailVerified: false,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      };
-      vi.mocked(prisma.user.create).mockResolvedValue(mockUser as never);
+      // Mock no existing invitation
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-789');
@@ -304,7 +279,8 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Request still succeeds (201) despite email failure
       expect(response.status).toBe(201);
       expect(body.success).toBe(true);
-      expect(body.data.status).toBe('invited');
+      expect(body.data.message).toBe('Invitation sent successfully');
+      expect(body.data.invitation.email).toBe('bob@example.com');
 
       // Assert: Warning was logged
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
@@ -338,8 +314,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
 
-      // Assert: No user was created
-      expect(vi.mocked(prisma.user.create)).not.toHaveBeenCalled();
+      // Assert: No invitation was created
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
     });
 
     it('should return 403 when user is not admin', async () => {
@@ -362,8 +338,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.error.code).toBe('FORBIDDEN');
       expect(body.error.message).toBe('Admin access required');
 
-      // Assert: No user was created
-      expect(vi.mocked(prisma.user.create)).not.toHaveBeenCalled();
+      // Assert: No invitation was created
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
     });
   });
 
@@ -371,7 +347,7 @@ describe('POST /api/v1/users/invite', () => {
    * Validation Scenarios
    */
   describe('Validation scenarios', () => {
-    it('should return 400 when email already exists', async () => {
+    it('should return 409 when user already exists', async () => {
       // Arrange: Mock admin session
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
@@ -397,14 +373,71 @@ describe('POST /api/v1/users/invite', () => {
       const response = await POST(request);
       const body = await parseResponse<ErrorResponse>(response);
 
-      // Assert: Email taken error
-      expect(response.status).toBe(400);
+      // Assert: Email taken error (409 conflict)
+      expect(response.status).toBe(409);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('EMAIL_TAKEN');
-      expect(body.error.message).toBe('Email already in use');
+      expect(body.error.message).toBe('User already exists with this email');
 
-      // Assert: No user was created
-      expect(vi.mocked(prisma.user.create)).not.toHaveBeenCalled();
+      // Assert: No invitation was created
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
+    });
+
+    it('should return 200 with existing invitation details when invitation already exists', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock existing invitation
+      const existingInvitation = {
+        id: 'verification-id',
+        identifier: 'invitation:existing@example.com',
+        value: 'hashed-token',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        metadata: {
+          name: 'Existing User',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
+      };
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+
+      // Act: Call the invite endpoint with existing invitation
+      const request = createMockRequest({
+        name: 'Existing User',
+        email: 'existing@example.com',
+        role: 'USER',
+      });
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponse>(response);
+
+      // Assert: Returns existing invitation (200 status)
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.data.message).toBe('Invitation already sent');
+      expect(body.data.invitation).toMatchObject({
+        email: 'existing@example.com',
+        name: 'Existing User',
+        role: 'USER',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      });
+      expect(body.data.invitation.link).toContain('accept-invite');
+
+      // Assert: Logged return of existing invitation
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Returning existing invitation',
+        expect.objectContaining({
+          email: 'existing@example.com',
+        })
+      );
+
+      // Assert: No new invitation was created
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
     });
 
     it('should return 400 when name is missing', async () => {
@@ -481,16 +514,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock user creation
-      const mockUser = {
-        id: 'new-user-id',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'USER',
-        emailVerified: false,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      };
-      vi.mocked(prisma.user.create).mockResolvedValue(mockUser as never);
+      // Mock no existing invitation
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');

@@ -4,10 +4,12 @@
  * Tests the POST /api/auth/accept-invite endpoint for accepting user invitations.
  *
  * Test Coverage:
- * - Successful invitation acceptance
+ * - Successful invitation acceptance (first-time user creation)
  * - Invalid/expired token
- * - User not found
- * - Invitation already accepted (user has password)
+ * - Invitation not found
+ * - User ID stability (same ID used throughout)
+ * - Welcome email sent after acceptance
+ * - Role assignment for non-default roles
  * - Validation errors (password mismatch, weak password, etc.)
  *
  * @see app/api/auth/accept-invite/route.ts
@@ -24,9 +26,10 @@ import type { NextRequest } from 'next/server';
 // Mock Prisma client
 vi.mock('@/lib/db/client', () => ({
   prisma: {
+    verification: {
+      findFirst: vi.fn(),
+    },
     user: {
-      findUnique: vi.fn(),
-      delete: vi.fn(),
       update: vi.fn(),
     },
     session: {
@@ -59,10 +62,16 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+// Mock email sending
+vi.mock('@/lib/email/send', () => ({
+  sendEmail: vi.fn().mockResolvedValue({ success: true, id: 'mock-email-id' }),
+}));
+
 // Import mocked modules
 import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
 import { logger } from '@/lib/logging';
+import { sendEmail } from '@/lib/email/send';
 
 /**
  * Helper function to create a mock NextRequest
@@ -92,7 +101,6 @@ interface SuccessResponse {
   success: true;
   data: {
     message: string;
-    email: string;
   };
 }
 
@@ -136,36 +144,37 @@ describe('POST /api/auth/accept-invite', () => {
    * Success Scenarios
    */
   describe('Success scenarios', () => {
-    it('should accept invitation successfully with valid token', async () => {
+    it('should accept invitation successfully and create user for the first time', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock user without password (invited but not accepted yet)
-      const mockUser = {
-        id: 'user-id-123',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'USER',
-        emailVerified: false,
-        image: null,
+      // Mock invitation metadata
+      const mockInvitation = {
+        id: 'invitation-id-123',
+        identifier: 'invitation:john@example.com',
+        value: 'valid-token-123',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        accounts: [], // No credential account yet
+        metadata: {
+          name: 'John Doe',
+          role: 'USER',
+          invitedBy: 'admin@example.com',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
       };
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
-      // Mock user deletion (before re-creation via signup)
-      vi.mocked(prisma.user.delete).mockResolvedValue(mockUser as any);
-
-      // Mock better-auth signup response
+      // Mock better-auth signup response (creates user for the FIRST TIME)
+      const createdUserId = 'user-id-123';
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
           user: {
-            id: 'new-user-id-456',
+            id: createdUserId,
             name: 'John Doe',
             email: 'john@example.com',
-            emailVerified: true,
+            emailVerified: false, // Not verified yet by better-auth
           },
           session: {
             token: 'session-token-123',
@@ -173,11 +182,16 @@ describe('POST /api/auth/accept-invite', () => {
         }),
       });
 
-      // Mock user updates (role, image, emailVerified)
+      // Mock user updates (emailVerified)
       vi.mocked(prisma.user.update).mockResolvedValue({
-        ...mockUser,
-        id: 'new-user-id-456',
+        id: createdUserId,
+        name: 'John Doe',
+        email: 'john@example.com',
+        role: 'USER',
         emailVerified: true,
+        image: null,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
       } as any);
 
       // Mock session cleanup
@@ -185,6 +199,9 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock token deletion
       vi.mocked(deleteInvitationToken).mockResolvedValue();
+
+      // Mock welcome email
+      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'mock-email-id' });
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -200,8 +217,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.data).toMatchObject({
-        message: 'Invitation accepted successfully. You can now sign in.',
-        email: 'john@example.com',
+        message: 'Invitation accepted successfully. You can now log in.',
       });
 
       // Assert: Token was validated
@@ -210,27 +226,20 @@ describe('POST /api/auth/accept-invite', () => {
         'valid-token-123'
       );
 
-      // Assert: User was found
-      expect(vi.mocked(prisma.user.findUnique)).toHaveBeenCalledWith({
-        where: { email: 'john@example.com' },
-        include: {
-          accounts: {
-            where: { providerId: 'credential' },
-          },
-        },
+      // Assert: Invitation metadata was fetched
+      expect(vi.mocked(prisma.verification.findFirst)).toHaveBeenCalledWith({
+        where: { identifier: 'invitation:john@example.com' },
       });
 
-      // Assert: Old user was deleted
-      expect(vi.mocked(prisma.user.delete)).toHaveBeenCalledWith({
-        where: { id: 'user-id-123' },
-      });
-
-      // Assert: User was re-created via better-auth signup
+      // Assert: User was created via better-auth signup (FIRST TIME)
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3000/api/auth/sign-up/email',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'X-Better-Auth': 'true',
+          }),
           body: JSON.stringify({
             name: 'John Doe',
             email: 'john@example.com',
@@ -239,9 +248,9 @@ describe('POST /api/auth/accept-invite', () => {
         })
       );
 
-      // Assert: Email was marked as verified
+      // Assert: Email was marked as verified (same User ID used)
       expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
-        where: { id: 'new-user-id-456' },
+        where: { id: createdUserId },
         data: { emailVerified: true },
       });
 
@@ -253,46 +262,55 @@ describe('POST /api/auth/accept-invite', () => {
       // Assert: Invitation token was deleted
       expect(vi.mocked(deleteInvitationToken)).toHaveBeenCalledWith('john@example.com');
 
-      // Assert: Success logged
+      // Assert: Welcome email was sent
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'john@example.com',
+          subject: 'Welcome to Sunrise',
+        })
+      );
+
+      // Assert: Success logged with stable User ID
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
         'Invitation accepted successfully',
         expect.objectContaining({
           email: 'john@example.com',
-          userId: 'new-user-id-456',
+          userId: createdUserId,
         })
       );
     });
 
-    it('should preserve user role when accepting invitation', async () => {
+    it('should assign non-default role when accepting invitation', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock ADMIN user without password
-      const mockAdminUser = {
-        id: 'admin-id-123',
-        name: 'Admin User',
-        email: 'admin@example.com',
-        role: 'ADMIN',
-        emailVerified: false,
-        image: null,
+      // Mock invitation metadata with ADMIN role
+      const mockInvitation = {
+        id: 'invitation-id-456',
+        identifier: 'invitation:admin@example.com',
+        value: 'valid-token-456',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        accounts: [],
+        metadata: {
+          name: 'Admin User',
+          role: 'ADMIN', // Non-default role
+          invitedBy: 'superadmin@example.com',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
       };
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockAdminUser as any);
-
-      // Mock user deletion
-      vi.mocked(prisma.user.delete).mockResolvedValue(mockAdminUser as any);
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       // Mock better-auth signup response (creates USER by default)
+      const createdUserId = 'admin-id-123';
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
           user: {
-            id: 'new-admin-id-456',
+            id: createdUserId,
             name: 'Admin User',
             email: 'admin@example.com',
-            emailVerified: true,
+            emailVerified: false,
           },
           session: {
             token: 'session-token-456',
@@ -300,11 +318,16 @@ describe('POST /api/auth/accept-invite', () => {
         }),
       });
 
-      // Mock user updates
+      // Mock user updates (role and emailVerified)
       vi.mocked(prisma.user.update).mockResolvedValue({
-        ...mockAdminUser,
-        id: 'new-admin-id-456',
+        id: createdUserId,
+        name: 'Admin User',
+        email: 'admin@example.com',
+        role: 'ADMIN',
         emailVerified: true,
+        image: null,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
       } as any);
 
       // Mock session cleanup
@@ -312,6 +335,9 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock token deletion
       vi.mocked(deleteInvitationToken).mockResolvedValue();
+
+      // Mock welcome email
+      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'mock-email-id' });
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -322,43 +348,50 @@ describe('POST /api/auth/accept-invite', () => {
       });
       await POST(request);
 
-      // Assert: Role was updated to ADMIN
+      // Assert: Role was updated to ADMIN (before emailVerified update)
       expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
-        where: { id: 'new-admin-id-456' },
+        where: { id: createdUserId },
         data: { role: 'ADMIN' },
+      });
+
+      // Assert: Email was marked as verified (after role update)
+      expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
+        where: { id: createdUserId },
+        data: { emailVerified: true },
       });
     });
 
-    it('should preserve user image when accepting invitation', async () => {
+    it('should handle welcome email failure gracefully (non-blocking)', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock user with image
-      const mockUser = {
-        id: 'user-id-789',
-        name: 'Jane Doe',
-        email: 'jane@example.com',
-        role: 'USER',
-        emailVerified: false,
-        image: 'https://example.com/avatar.jpg',
+      // Mock invitation metadata
+      const mockInvitation = {
+        id: 'invitation-id-789',
+        identifier: 'invitation:jane@example.com',
+        value: 'valid-token-789',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        accounts: [],
+        metadata: {
+          name: 'Jane Doe',
+          role: 'USER',
+          invitedBy: 'admin@example.com',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
       };
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
-
-      // Mock user deletion
-      vi.mocked(prisma.user.delete).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       // Mock better-auth signup response
+      const createdUserId = 'user-id-789';
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
           user: {
-            id: 'new-user-id-789',
+            id: createdUserId,
             name: 'Jane Doe',
             email: 'jane@example.com',
-            emailVerified: true,
+            emailVerified: false,
           },
           session: {
             token: 'session-token-789',
@@ -368,9 +401,14 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock user updates
       vi.mocked(prisma.user.update).mockResolvedValue({
-        ...mockUser,
-        id: 'new-user-id-789',
+        id: createdUserId,
+        name: 'Jane Doe',
+        email: 'jane@example.com',
+        role: 'USER',
         emailVerified: true,
+        image: null,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
       } as any);
 
       // Mock session cleanup
@@ -379,6 +417,12 @@ describe('POST /api/auth/accept-invite', () => {
       // Mock token deletion
       vi.mocked(deleteInvitationToken).mockResolvedValue();
 
+      // Mock welcome email failure (non-blocking error)
+      vi.mocked(sendEmail).mockResolvedValue({
+        success: false,
+        error: 'Email service unavailable',
+      });
+
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
         token: 'valid-token-789',
@@ -386,13 +430,17 @@ describe('POST /api/auth/accept-invite', () => {
         password: 'SecurePassword789!',
         confirmPassword: 'SecurePassword789!',
       });
-      await POST(request);
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponse>(response);
 
-      // Assert: Image was preserved
-      expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
-        where: { id: 'new-user-id-789' },
-        data: { image: 'https://example.com/avatar.jpg' },
-      });
+      // Assert: Invitation acceptance still succeeds despite email failure
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+
+      // Assert: Warning logged about email failure (non-blocking)
+      // Note: The warning is logged asynchronously in a .catch() block
+      // We can verify the email was attempted
+      expect(vi.mocked(sendEmail)).toHaveBeenCalled();
     });
   });
 
@@ -426,8 +474,8 @@ describe('POST /api/auth/accept-invite', () => {
         'invalid-token'
       );
 
-      // Assert: No user lookup was performed
-      expect(vi.mocked(prisma.user.findUnique)).not.toHaveBeenCalled();
+      // Assert: No invitation metadata lookup was performed
+      expect(vi.mocked(prisma.verification.findFirst)).not.toHaveBeenCalled();
 
       // Assert: Warning logged
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invalid invitation token', {
@@ -458,15 +506,15 @@ describe('POST /api/auth/accept-invite', () => {
   });
 
   /**
-   * User Validation Scenarios
+   * Invitation Metadata Scenarios
    */
-  describe('User validation scenarios', () => {
-    it('should return 404 when user not found', async () => {
+  describe('Invitation metadata scenarios', () => {
+    it('should return 404 when invitation metadata not found', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock user not found
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+      // Mock invitation not found
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -478,76 +526,57 @@ describe('POST /api/auth/accept-invite', () => {
       const response = await POST(request);
       const body = await parseResponse<ErrorResponse>(response);
 
-      // Assert: User not found error
+      // Assert: Invitation not found error
       expect(response.status).toBe(404);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(body.error.message).toBe('User not found');
+      expect(body.error.message).toBe('Invitation not found');
 
       // Assert: Warning logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('User not found for invitation', {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invitation not found', {
         email: 'nonexistent@example.com',
       });
+
+      // Assert: No signup attempt was made
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('should return 400 when invitation already accepted (user has password)', async () => {
+    it('should return 404 when invitation has no metadata', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock user with credential account and password
-      const mockUser = {
-        id: 'user-id-123',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'USER',
-        emailVerified: true,
-        image: null,
+      // Mock invitation without metadata
+      const mockInvitation = {
+        id: 'invitation-id-999',
+        identifier: 'invitation:corrupted@example.com',
+        value: 'valid-token',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        accounts: [
-          {
-            id: 'account-id-123',
-            providerId: 'credential',
-            password: 'hashed-password', // User already has password
-            accountId: 'john@example.com',
-            userId: 'user-id-123',
-            createdAt: new Date('2024-01-01T00:00:00.000Z'),
-            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-            accessToken: null,
-            refreshToken: null,
-            idToken: null,
-            accessTokenExpiresAt: null,
-            refreshTokenExpiresAt: null,
-            scope: null,
-          },
-        ],
+        metadata: null, // Missing metadata
       };
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
         token: 'valid-token',
-        email: 'john@example.com',
+        email: 'corrupted@example.com',
         password: 'SecurePassword123!',
         confirmPassword: 'SecurePassword123!',
       });
       const response = await POST(request);
       const body = await parseResponse<ErrorResponse>(response);
 
-      // Assert: Invitation already accepted error
-      expect(response.status).toBe(400);
+      // Assert: Invitation not found error
+      expect(response.status).toBe(404);
       expect(body.success).toBe(false);
-      expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.message).toBe('Invitation already accepted');
+      expect(body.error.code).toBe('NOT_FOUND');
+      expect(body.error.message).toBe('Invitation not found');
 
       // Assert: Warning logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-        'Invitation already accepted',
-        expect.objectContaining({
-          email: 'john@example.com',
-          userId: 'user-id-123',
-        })
-      );
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invitation not found', {
+        email: 'corrupted@example.com',
+      });
 
       // Assert: No signup attempt was made
       expect(mockFetch).not.toHaveBeenCalled();
@@ -655,35 +684,35 @@ describe('POST /api/auth/accept-invite', () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock user without password
-      const mockUser = {
-        id: 'user-id-123',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'USER',
-        emailVerified: false,
-        image: null,
+      // Mock invitation metadata
+      const mockInvitation = {
+        id: 'invitation-id-error',
+        identifier: 'invitation:error@example.com',
+        value: 'valid-token',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        accounts: [],
+        metadata: {
+          name: 'Error User',
+          role: 'USER',
+          invitedBy: 'admin@example.com',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
       };
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
-
-      // Mock user deletion
-      vi.mocked(prisma.user.delete).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       // Mock better-auth signup failure
       mockFetch.mockResolvedValue({
         ok: false,
         json: async () => ({
-          message: 'Signup failed',
+          message: 'Email already exists',
         }),
       });
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
         token: 'valid-token',
-        email: 'john@example.com',
+        email: 'error@example.com',
         password: 'SecurePassword123!',
         confirmPassword: 'SecurePassword123!',
       });
@@ -693,17 +722,28 @@ describe('POST /api/auth/accept-invite', () => {
       // Assert: Error response
       expect(response.status).toBe(500);
       expect(body.success).toBe(false);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      expect(body.error.message).toBe('Failed to create user account');
 
       // Assert: Error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalled();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'better-auth signup failed',
+        undefined,
+        expect.objectContaining({
+          email: 'error@example.com',
+          error: 'Email already exists',
+        })
+      );
     });
 
     it('should handle database errors gracefully', async () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock database error
-      vi.mocked(prisma.user.findUnique).mockRejectedValue(new Error('Database connection failed'));
+      // Mock database error when fetching invitation
+      vi.mocked(prisma.verification.findFirst).mockRejectedValue(
+        new Error('Database connection failed')
+      );
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({

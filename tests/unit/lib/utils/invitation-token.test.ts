@@ -65,8 +65,16 @@ const createMockVerification = (email: string, token: string, daysOffset = 0) =>
     expiresAt,
     createdAt: new Date(),
     updatedAt: new Date(),
+    metadata: null, // Added for Prisma schema compatibility
   };
 };
+
+const createMockMetadata = () => ({
+  name: 'Test User',
+  role: 'USER',
+  invitedBy: 'admin-123',
+  invitedAt: new Date().toISOString(),
+});
 
 /**
  * Test Suite: generateInvitationToken()
@@ -84,6 +92,7 @@ describe('generateInvitationToken()', () => {
     it('should generate a secure random token', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       vi.mocked(prisma.verification.create).mockResolvedValue({
         id: 'verification-123',
         identifier: `invitation:${email}`,
@@ -91,10 +100,11 @@ describe('generateInvitationToken()', () => {
         expiresAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
+        metadata: null,
       });
 
       // Act
-      const token = await generateInvitationToken(email);
+      const token = await generateInvitationToken(email, metadata);
 
       // Assert: Token should be 64 hex characters (32 bytes)
       expect(token).toMatch(/^[a-f0-9]{64}$/);
@@ -104,6 +114,7 @@ describe('generateInvitationToken()', () => {
     it('should store hashed token in database', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       let storedValue = '';
 
       vi.mocked(prisma.verification.create).mockImplementation((args: any) => {
@@ -115,11 +126,12 @@ describe('generateInvitationToken()', () => {
           expiresAt: args.data.expiresAt,
           createdAt: new Date(),
           updatedAt: new Date(),
+          metadata: null,
         }) as any;
       });
 
       // Act
-      const token = await generateInvitationToken(email);
+      const token = await generateInvitationToken(email, metadata);
 
       // Assert: Stored value should be hashed (different from plain token)
       expect(storedValue).not.toBe(token);
@@ -130,6 +142,7 @@ describe('generateInvitationToken()', () => {
     it('should store token with correct identifier format', async () => {
       // Arrange
       const email = 'test@example.com';
+      const metadata = createMockMetadata();
       vi.mocked(prisma.verification.create).mockResolvedValue({
         id: 'verification-123',
         identifier: `invitation:${email}`,
@@ -137,10 +150,11 @@ describe('generateInvitationToken()', () => {
         expiresAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
+        metadata: null,
       });
 
       // Act
-      await generateInvitationToken(email);
+      await generateInvitationToken(email, metadata);
 
       // Assert: Identifier should be prefixed with "invitation:"
       expect(prisma.verification.create).toHaveBeenCalledWith({
@@ -153,6 +167,7 @@ describe('generateInvitationToken()', () => {
     it('should set expiration to 7 days from now', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       const now = new Date();
       vi.mocked(prisma.verification.create).mockResolvedValue({
         id: 'verification-123',
@@ -161,10 +176,11 @@ describe('generateInvitationToken()', () => {
         expiresAt: now,
         createdAt: now,
         updatedAt: now,
+        metadata: null,
       });
 
       // Act
-      await generateInvitationToken(email);
+      await generateInvitationToken(email, metadata);
 
       // Assert: ExpiresAt should be ~7 days from now
       const callArgs = vi.mocked(prisma.verification.create).mock.calls[0][0];
@@ -179,6 +195,7 @@ describe('generateInvitationToken()', () => {
     it('should log token generation', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       vi.mocked(prisma.verification.create).mockResolvedValue({
         id: 'verification-123',
         identifier: `invitation:${email}`,
@@ -186,17 +203,19 @@ describe('generateInvitationToken()', () => {
         expiresAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
+        metadata: null,
       });
 
       // Act
-      await generateInvitationToken(email);
+      await generateInvitationToken(email, metadata);
 
-      // Assert: Should log info with email and expiration
+      // Assert: Should log info with email, expiration, and metadata
       expect(logger.info).toHaveBeenCalledWith(
         'Invitation token generated',
         expect.objectContaining({
           email,
           expiresAt: expect.any(String),
+          metadata: expect.any(Object),
         })
       );
     });
@@ -204,6 +223,7 @@ describe('generateInvitationToken()', () => {
     it('should generate unique tokens on each call', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       vi.mocked(prisma.verification.create).mockResolvedValue({
         id: 'verification-123',
         identifier: `invitation:${email}`,
@@ -211,12 +231,13 @@ describe('generateInvitationToken()', () => {
         expiresAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
+        metadata: null,
       });
 
       // Act: Generate multiple tokens
-      const token1 = await generateInvitationToken(email);
-      const token2 = await generateInvitationToken(email);
-      const token3 = await generateInvitationToken(email);
+      const token1 = await generateInvitationToken(email, metadata);
+      const token2 = await generateInvitationToken(email, metadata);
+      const token3 = await generateInvitationToken(email, metadata);
 
       // Assert: All tokens should be unique
       expect(token1).not.toBe(token2);
@@ -229,11 +250,12 @@ describe('generateInvitationToken()', () => {
     it('should throw error when database create fails', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       const dbError = new Error('Database connection failed');
       vi.mocked(prisma.verification.create).mockRejectedValue(dbError);
 
       // Act & Assert
-      await expect(generateInvitationToken(email)).rejects.toThrow(
+      await expect(generateInvitationToken(email, metadata)).rejects.toThrow(
         'Failed to generate invitation token'
       );
     });
@@ -241,12 +263,13 @@ describe('generateInvitationToken()', () => {
     it('should log error when generation fails', async () => {
       // Arrange
       const email = 'user@example.com';
+      const metadata = createMockMetadata();
       const dbError = new Error('Database error');
       vi.mocked(prisma.verification.create).mockRejectedValue(dbError);
 
       // Act
       try {
-        await generateInvitationToken(email);
+        await generateInvitationToken(email, metadata);
       } catch {
         // Expected to throw
       }
@@ -628,6 +651,7 @@ describe('Full invitation workflow', () => {
   it('should handle complete invitation flow', async () => {
     // Arrange
     const email = 'user@example.com';
+    const metadata = createMockMetadata();
     let storedToken = '';
 
     // Mock token generation
@@ -640,11 +664,12 @@ describe('Full invitation workflow', () => {
         expiresAt: args.data.expiresAt,
         createdAt: new Date(),
         updatedAt: new Date(),
+        metadata: null,
       }) as any;
     });
 
     // Act: Generate token
-    const token = await generateInvitationToken(email);
+    const token = await generateInvitationToken(email, metadata);
 
     // Mock token validation
     vi.mocked(prisma.verification.findFirst).mockResolvedValue({
@@ -654,6 +679,7 @@ describe('Full invitation workflow', () => {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
       createdAt: new Date(),
       updatedAt: new Date(),
+      metadata: null,
     });
 
     // Act: Validate token

@@ -6,18 +6,20 @@
  * Allows users to accept an invitation and set their password.
  * This is a PUBLIC endpoint - authentication is via the invitation token.
  *
- * Flow:
+ * Flow (Option B Pattern - User created ONCE on acceptance):
  * 1. Validate request body (token, email, password, confirmPassword)
  * 2. Validate invitation token (checks expiration and email match)
- * 3. Find user by email
- * 4. Check user hasn't already accepted (no password set)
- * 5. Set password using better-auth signup endpoint delegation
- * 6. Delete invitation token
- * 7. Return success response
+ * 3. Fetch invitation metadata (name, role, invitedBy, invitedAt)
+ * 4. Create user via better-auth signup endpoint (FIRST TIME - stable User ID)
+ * 5. Update role if non-default
+ * 6. Mark email as verified
+ * 7. Delete invitation token
+ * 8. Send welcome email (non-blocking)
+ * 9. Return success response
  *
  * Security:
  * - Token must be valid and not expired
- * - User must not have a password already (prevents re-acceptance)
+ * - User is created once (no delete/recreate - stable ID)
  * - Password is hashed via better-auth (scrypt)
  * - Email is verified automatically upon acceptance
  */
@@ -30,6 +32,9 @@ import { acceptInvitationSchema } from '@/lib/validations/user';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { env } from '@/lib/env';
+import { sendEmail } from '@/lib/email/send';
+import WelcomeEmail from '@/emails/welcome';
 
 /**
  * POST /api/auth/accept-invite
@@ -68,62 +73,39 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 3. Find user by email with their accounts
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-      include: {
-        accounts: {
-          where: { providerId: 'credential' },
-        },
-      },
+    // 3. Get invitation metadata
+    const invitation = await prisma.verification.findFirst({
+      where: { identifier: `invitation:${email}` },
     });
 
-    if (!user) {
-      logger.warn('User not found for invitation', { email });
-      return errorResponse('User not found', {
+    if (!invitation || !invitation.metadata) {
+      logger.warn('Invitation not found', { email });
+      return errorResponse('Invitation not found', {
         code: ErrorCodes.NOT_FOUND,
         status: 404,
       });
     }
 
-    // 4. Check if user already has a password (invitation already accepted)
-    const credentialAccount = user.accounts.find((account) => account.providerId === 'credential');
-
-    if (credentialAccount?.password) {
-      logger.warn('Invitation already accepted', { email, userId: user.id });
-      return errorResponse('Invitation already accepted', {
-        code: ErrorCodes.VALIDATION_ERROR,
-        status: 400,
-      });
-    }
-
-    // 5. Create credential account with password via better-auth signup
-    // Since user already exists (created during invitation), we need to:
-    // a) Delete the existing user
-    // b) Re-create via signup (which will hash password correctly)
-    // c) This ensures password compatibility with better-auth login
-
-    // Store user data before deletion
-    const userData = {
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      image: user.image,
+    const metadata = invitation.metadata as {
+      name: string;
+      role: string;
+      invitedBy: string;
+      invitedAt: string;
     };
 
-    // Delete existing user (and cascading sessions/accounts)
-    await prisma.user.delete({
-      where: { id: user.id },
-    });
+    logger.info('Invitation metadata retrieved', { email, metadata });
 
-    // Re-create user via better-auth signup endpoint
-    const signupResponse = await fetch(`${process.env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
+    // 4. Create user via better-auth signup (FIRST TIME - stable ID)
+    const signupResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Better-Auth': 'true',
+      },
       body: JSON.stringify({
-        name: userData.name,
-        email: userData.email,
-        password: password,
+        name: metadata.name,
+        email,
+        password,
       }),
     });
 
@@ -131,11 +113,14 @@ export async function POST(request: NextRequest) {
       const error = (await signupResponse.json().catch(() => ({ message: 'Signup failed' }))) as {
         message?: string;
       };
-      logger.error('Signup via better-auth failed', undefined, {
+      logger.error('better-auth signup failed', undefined, {
         email,
         error: error.message ?? 'Unknown error',
       });
-      throw new Error(error.message ?? 'Failed to set password');
+      return errorResponse('Failed to create user account', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
     }
 
     const signupData = (await signupResponse.json()) as {
@@ -144,23 +129,18 @@ export async function POST(request: NextRequest) {
     };
     const newUserId = signupData.user.id;
 
-    // Update role if it was different from default
-    if (userData.role && userData.role !== 'USER') {
+    logger.info('User created via better-auth', { email, userId: newUserId });
+
+    // 5. Update role if non-default
+    if (metadata.role && metadata.role !== 'USER') {
       await prisma.user.update({
         where: { id: newUserId },
-        data: { role: userData.role },
+        data: { role: metadata.role },
       });
+      logger.info('User role updated', { userId: newUserId, role: metadata.role });
     }
 
-    // Update image if it existed
-    if (userData.image) {
-      await prisma.user.update({
-        where: { id: newUserId },
-        data: { image: userData.image },
-      });
-    }
-
-    // Mark email as verified (accepting invitation verifies email)
+    // 6. Mark email as verified (accepting invitation verifies email)
     await prisma.user.update({
       where: { id: newUserId },
       data: { emailVerified: true },
@@ -177,16 +157,24 @@ export async function POST(request: NextRequest) {
         });
     }
 
-    // 6. Delete invitation token
+    // 7. Delete invitation token
     await deleteInvitationToken(email);
+
+    // 8. Send welcome email (non-blocking)
+    sendEmail({
+      to: email,
+      subject: 'Welcome to Sunrise',
+      react: WelcomeEmail({ userName: metadata.name, userEmail: email }),
+    }).catch((error) => {
+      logger.warn('Failed to send welcome email', { error, userId: newUserId });
+    });
 
     logger.info('Invitation accepted successfully', { email, userId: newUserId });
 
-    // 7. Return success response
+    // 9. Return success response
     return successResponse(
       {
-        message: 'Invitation accepted successfully. You can now sign in.',
-        email: userData.email,
+        message: 'Invitation accepted successfully. You can now log in.',
       },
       undefined,
       { status: 200 }

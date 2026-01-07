@@ -35,7 +35,9 @@ export const auth = betterAuth({
   // Enable email and password authentication
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false, // Keep optional
+    // Email verification: enabled by default in production, disabled in development
+    // Override with REQUIRE_EMAIL_VERIFICATION environment variable
+    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
     sendVerificationOnSignUp: true,
     sendVerificationEmail: async ({
       user,
