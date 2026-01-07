@@ -10,6 +10,8 @@ interface OAuthButtonProps {
   provider: 'google'; // Can add more providers later: 'github' | 'facebook' etc.
   children: React.ReactNode;
   callbackUrl?: string;
+  invitationToken?: string;
+  invitationEmail?: string;
 }
 
 /**
@@ -22,15 +24,33 @@ interface OAuthButtonProps {
  * - Loading states during OAuth redirect
  * - Callback URL preservation
  * - Error handling via URL params
+ * - Invitation flow support (pass invitation token and email via OAuth state)
  *
  * Usage:
  * ```tsx
+ * // Standard OAuth
  * <OAuthButton provider="google" callbackUrl="/dashboard">
  *   <GoogleIcon /> Continue with Google
  * </OAuthButton>
+ *
+ * // OAuth with invitation
+ * <OAuthButton
+ *   provider="google"
+ *   callbackUrl="/dashboard"
+ *   invitationToken="abc123..."
+ *   invitationEmail="user@example.com"
+ * >
+ *   <GoogleIcon /> Accept with Google
+ * </OAuthButton>
  * ```
  */
-export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProps) {
+export function OAuthButton({
+  provider,
+  children,
+  callbackUrl,
+  invitationToken,
+  invitationEmail,
+}: OAuthButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const searchParams = useSearchParams();
   const redirect = callbackUrl || searchParams.get('callbackUrl') || '/dashboard';
@@ -39,15 +59,30 @@ export function OAuthButton({ provider, children, callbackUrl }: OAuthButtonProp
     try {
       setIsLoading(true);
 
-      // Initiate OAuth flow
-      await authClient.signIn.social({
+      // Build OAuth request with optional invitation data
+      const oauthRequest: {
+        provider: string;
+        callbackURL: string;
+        invitationToken?: string;
+        invitationEmail?: string;
+      } = {
         provider,
         callbackURL: redirect,
-      });
+      };
+
+      // Add invitation data to OAuth state if provided
+      if (invitationToken && invitationEmail) {
+        oauthRequest.invitationToken = invitationToken;
+        oauthRequest.invitationEmail = invitationEmail;
+      }
+
+      // Initiate OAuth flow
+      await authClient.signIn.social(oauthRequest);
 
       // Note: better-auth will redirect to provider's OAuth page
       // User will be redirected back to /api/auth/callback/[provider]
       // Then redirected to callbackURL after successful authentication
+      // Custom OAuth state (invitationToken, invitationEmail) will be available in hooks
     } catch (error) {
       // Reset loading state if redirect fails
       setIsLoading(false);

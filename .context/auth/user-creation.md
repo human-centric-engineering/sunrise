@@ -1,26 +1,28 @@
 # User Creation Patterns
 
-**Version**: 2.1.0
+**Version**: 2.2.0
 **Last Updated**: 2026-01-07
 **Status**: Production-ready
 
 ## Overview
 
-Sunrise supports three user creation patterns: **self-signup** (email/password or OAuth), **OAuth signup** (social login), and **invitation-based** (admin-initiated). All patterns prioritize security and user experience.
+Sunrise supports three user creation patterns: **self-signup** (email/password or OAuth), **OAuth signup** (social login), and **invitation-based** (admin-initiated with password OR OAuth acceptance). All patterns prioritize security and user experience, and all patterns send welcome emails automatically.
 
 ## Pattern Comparison
 
-| Aspect             | Self-Signup (Email/Password)   | OAuth Signup (Social Login)      | Invitation-Based                     |
-| ------------------ | ------------------------------ | -------------------------------- | ------------------------------------ |
-| Initiated by       | User                           | User                             | Admin                                |
-| Endpoint           | `POST /api/auth/sign-up/email` | `GET /api/auth/oauth/{provider}` | `POST /api/v1/users/invite`          |
-| User provides      | Name, email, password          | OAuth consent                    | -                                    |
-| Admin provides     | -                              | -                                | Name, email, role                    |
-| Password required  | Yes                            | No                               | Yes (set by user on acceptance)      |
-| Email verification | Environment-based              | Auto-verified by OAuth provider  | Auto-verified on acceptance          |
-| Security           | High (user-controlled)         | High (OAuth provider)            | Highest (token-based)                |
-| UX                 | Excellent (self-service)       | Excellent (one-click)            | Good (invitation flow)               |
-| Recommended for    | Public user registration       | Quick signups, social accounts   | Team invites, admin-created accounts |
+| Aspect             | Self-Signup (Email/Password)   | OAuth Signup (Social Login)      | Invitation-Based                                      |
+| ------------------ | ------------------------------ | -------------------------------- | ----------------------------------------------------- |
+| Initiated by       | User                           | User                             | Admin                                                 |
+| Endpoint           | `POST /api/auth/sign-up/email` | `GET /api/auth/oauth/{provider}` | `POST /api/v1/users/invite`                           |
+| User provides      | Name, email, password          | OAuth consent                    | -                                                     |
+| Admin provides     | -                              | -                                | Name, email, role                                     |
+| Acceptance method  | N/A (direct signup)            | N/A (direct signup)              | Password setup OR OAuth (user choice)                 |
+| Password required  | Yes                            | No                               | Optional (password OR OAuth)                          |
+| Email verification | Environment-based              | Auto-verified by OAuth provider  | Auto-verified on acceptance                           |
+| Welcome email      | ✅ Sent on signup              | ✅ Sent on signup                | ✅ Sent on acceptance                                 |
+| Security           | High (user-controlled)         | High (OAuth provider)            | Highest (token-based + user choice)                   |
+| UX                 | Excellent (self-service)       | Excellent (one-click)            | Excellent (choice of password OR OAuth)               |
+| Recommended for    | Public user registration       | Quick signups, social accounts   | Team invites, admin-created accounts with flexibility |
 
 ## Self-Signup Pattern (Primary - User-Initiated)
 
@@ -31,8 +33,9 @@ Sunrise supports three user creation patterns: **self-signup** (email/password o
 1. User visits signup page
 2. User provides name, email, and password
 3. better-auth creates account with hashed password
-4. Email verification email sent (if enabled in environment)
-5. User verifies email (production) or logs in directly (development)
+4. **Welcome email sent** (all environments)
+5. **Verification email sent** (if enabled in production)
+6. User verifies email (production) or logs in directly (development)
 
 ### Implementation
 
@@ -130,7 +133,8 @@ emailAndPassword: {
 4. better-auth exchanges code for user profile
 5. User account created automatically (or linked if exists)
 6. Email auto-verified by OAuth provider
-7. User logged in immediately
+7. **Welcome email sent** (for new signups only, not existing user logins)
+8. User logged in immediately
 
 ### Implementation
 
@@ -214,15 +218,29 @@ async function signInWithGoogle() {
    - Link format: `/accept-invite?token={token}&email={email}`
    - Token expires in 7 days
 
-3. **User accepts invitation** via `POST /api/auth/accept-invite`
-   - User clicks link, arrives at password setup page
-   - User sets own password
+3. **User accepts invitation** - Two options available:
+
+   **Option A: Accept with OAuth (Recommended)**
+   - User clicks "Accept with Google" button on invitation page
+   - OAuth flow initiated with invitation token/email in state
+   - Google verifies user identity
+   - System creates user account via better-auth (stable User ID)
+   - Role from invitation metadata applied automatically
+   - Email auto-verified by OAuth provider
+   - Welcome email sent
+   - Invitation token deleted
+   - User logged in immediately
+
+   **Option B: Accept with Password**
+   - User sets password on invitation page
+   - Submits via `POST /api/auth/accept-invite`
    - System creates user account via better-auth (stable User ID)
    - Email auto-verified on acceptance
    - Welcome email sent
    - Invitation token deleted
+   - User must log in with new credentials
 
-4. **User logs in** with new credentials
+4. **User accesses dashboard** with assigned role
 
 ### Implementation
 
@@ -249,10 +267,95 @@ async function inviteUser(name: string, email: string, role: string) {
 }
 ```
 
-**User accepts invitation:**
+**User accepts invitation (Option A: OAuth):**
 
 ```typescript
-// Accept invitation page
+// Accept invitation page - OAuth button
+import { OAuthButtons } from '@/components/forms/oauth-buttons';
+
+export default function AcceptInvitePage({ searchParams }) {
+  const token = searchParams.get('token');
+  const email = searchParams.get('email');
+
+  return (
+    <div>
+      <h1>Accept Invitation</h1>
+
+      {/* OAuth acceptance (recommended) */}
+      <OAuthButtons
+        mode="invitation"
+        invitationToken={token}
+        invitationEmail={email}
+        callbackUrl="/dashboard"
+      />
+
+      {/* OR */}
+
+      {/* Password form (alternative) */}
+      <form onSubmit={handlePasswordAcceptance}>
+        {/* ... password fields ... */}
+      </form>
+    </div>
+  );
+}
+```
+
+**OAuth invitation flow is handled automatically:**
+
+```typescript
+// lib/auth/config.ts - Database hook (automatic)
+databaseHooks: {
+  user: {
+    create: {
+      after: async (user, ctx) => {
+        // Detect OAuth signup
+        if (ctx?.path?.includes('/callback/')) {
+          const oauthState = await getOAuthState();
+
+          // Check for invitation data in OAuth state
+          if (oauthState.invitationToken && oauthState.invitationEmail) {
+            // Validate token
+            const isValid = await validateInvitationToken(
+              oauthState.invitationEmail,
+              oauthState.invitationToken
+            );
+
+            if (isValid) {
+              // Get invitation metadata
+              const invitation = await prisma.verification.findFirst({
+                where: { identifier: `invitation:${oauthState.invitationEmail}` },
+              });
+
+              // Apply role from invitation
+              if (invitation?.metadata?.role) {
+                await prisma.user.update({
+                  where: { id: user.id },
+                  data: { role: invitation.metadata.role },
+                });
+              }
+
+              // Delete invitation token (single-use)
+              await deleteInvitationToken(oauthState.invitationEmail);
+            }
+          }
+        }
+
+        // Send welcome email (all signups)
+        await sendEmail({
+          to: user.email,
+          subject: 'Welcome to Sunrise',
+          react: WelcomeEmail({ userName: user.name, userEmail: user.email }),
+        });
+      };
+    }
+  }
+}
+```
+
+**User accepts invitation (Option B: Password):**
+
+```typescript
+// Accept invitation page - Password form
 async function acceptInvitation(
   token: string,
   email: string,
@@ -385,9 +488,11 @@ model Verification {
 
 **Welcome Email** (`emails/welcome.tsx`):
 
-- Sent: After invitation acceptance
-- Contains: Dashboard link, getting started tips
-- Non-blocking: Email failure doesn't fail acceptance
+- Sent: After **all user signups** (email/password, OAuth, and invitation acceptance)
+- Trigger: Database hook after user creation (`lib/auth/config.ts`)
+- Contains: Personalized greeting, dashboard link, getting started tips
+- Non-blocking: Email failure doesn't prevent signup/acceptance
+- Sent only once: Only for new user creation, not existing OAuth user logins
 
 ## Testing
 
@@ -428,7 +533,13 @@ curl -X POST http://localhost:3000/api/v1/users/invite \
 # 2. Check email for invitation link
 # Link format: /accept-invite?token={token}&email={email}
 
-# 3. User accepts invitation
+# 3a. User accepts invitation with OAuth (recommended)
+# - Visit invitation link in browser
+# - Click "Accept with Google" button
+# - Complete OAuth flow
+# - Automatically logged in with assigned role
+
+# 3b. User accepts invitation with password
 curl -X POST http://localhost:3000/api/auth/accept-invite \
   -H "Content-Type: application/json" \
   -d '{
@@ -438,7 +549,7 @@ curl -X POST http://localhost:3000/api/auth/accept-invite \
     "confirmPassword":"SecurePassword123!"
   }'
 
-# 4. User logs in
+# 4. User logs in (if password method used)
 curl -X POST http://localhost:3000/api/auth/sign-in/email \
   -H "Content-Type: application/json" \
   -d '{"email":"john@example.com","password":"SecurePassword123!"}'
@@ -446,9 +557,59 @@ curl -X POST http://localhost:3000/api/auth/sign-in/email \
 
 ## Decision History
 
+### Why OAuth Invitation Acceptance? (Added 2026-01-07)
+
+**Decision**: Allow invited users to accept invitations via OAuth instead of password-only
+
+**Rationale**:
+
+- **Better UX**: Users can accept invitations with their existing Google account (one-click)
+- **Reduced friction**: No need to create and remember another password
+- **Higher security**: OAuth providers (Google) have stronger authentication than most users' passwords
+- **Consistency**: OAuth is already available for standard signup, should be available for invitations
+- **Flexibility**: Users choose their preferred method (OAuth OR password)
+
+**Implementation**:
+
+- OAuth button added to accept-invite page with `mode="invitation"`
+- Invitation token/email passed through OAuth state
+- Database hook detects OAuth invitation in state and applies role automatically
+- Non-blocking: Invitation processing failures don't prevent OAuth signup
+
+**Trade-offs**:
+
+- ✅ **Pro**: Better UX, higher security, more flexibility
+- ⚠️ **Con**: Slightly more complex implementation (database hook logic)
+- ⚠️ **Con**: Requires OAuth provider configuration (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
+
+### Why Welcome Emails for All Signups? (Added 2026-01-07)
+
+**Decision**: Send welcome email for all user signups (email/password, OAuth, and invitation acceptance)
+
+**Rationale**:
+
+- **Consistent onboarding**: All users receive the same welcome experience
+- **User confirmation**: Confirms account creation and provides next steps
+- **Dashboard link**: Direct link to get started immediately
+- **Brand impression**: First interaction with the app via email
+
+**Implementation**:
+
+- Database hook `databaseHooks.user.create.after` sends welcome email
+- Triggers automatically after any user creation (OAuth, email/password, invitation)
+- Non-blocking: Email failures logged but don't prevent signup
+- Sent only once: Only for new user creation, not existing OAuth user logins
+
+**Trade-offs**:
+
+- ✅ **Pro**: Better UX, consistent onboarding, user confirmation
+- ⚠️ **Con**: Users may receive multiple emails (welcome + verification) in production
+- ⚠️ **Con**: Requires email configuration (RESEND_API_KEY, EMAIL_FROM)
+
 ### Why Environment-Based Email Verification?
 
 **Decision**: Email verification enabled in production, disabled in development
+
 **Rationale**:
 
 - Development: Fast iteration without email setup

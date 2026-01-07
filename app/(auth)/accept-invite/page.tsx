@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormError } from '@/components/forms/form-error';
 import { PasswordStrength } from '@/components/forms/password-strength';
+import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { Eye, EyeOff } from 'lucide-react';
 
 /**
@@ -22,14 +23,16 @@ import { Eye, EyeOff } from 'lucide-react';
  * and redirects to login after successful acceptance.
  *
  * Features:
+ * - OAuth/social login support (Google) for invitation acceptance
  * - Token and email from URL search params
- * - Password setting with strength meter
+ * - Password setting with strength meter (alternative to OAuth)
  * - Password confirmation with show/hide toggle
  * - Form validation with Zod schema
  * - Loading states during submission
  * - Error handling (validation, API, network errors)
  * - Success message before redirect
- * - Redirect to login with invited flag on success
+ * - Redirect to dashboard on success (OAuth auto-logs in)
+ * - Redirect to login with invited flag on success (password flow)
  */
 export default function AcceptInvitePage() {
   const router = useRouter();
@@ -183,118 +186,129 @@ export default function AcceptInvitePage() {
             </div>
           </div>
         ) : (
-          <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
-            {/* Hidden Token Field */}
-            <input type="hidden" {...register('token')} />
+          <>
+            {/* OAuth Buttons Section */}
+            <OAuthButtons
+              mode="invitation"
+              callbackUrl="/dashboard"
+              invitationToken={token}
+              invitationEmail={emailFromUrl}
+            />
 
-            {/* Name Field (Disabled, Pre-filled from invitation) */}
-            {invitationName && (
+            {/* Password Form Section */}
+            <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+              {/* Hidden Token Field */}
+              <input type="hidden" {...register('token')} />
+
+              {/* Name Field (Disabled, Pre-filled from invitation) */}
+              {invitationName && (
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name</Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    value={invitationName}
+                    disabled={true}
+                    className="bg-muted"
+                  />
+                </div>
+              )}
+
+              {/* Email Field (Disabled, Pre-filled) */}
               <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
+                <Label htmlFor="email">Email</Label>
                 <Input
-                  id="name"
-                  type="text"
-                  value={invitationName}
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
                   disabled={true}
+                  {...register('email')}
                   className="bg-muted"
                 />
+                <FormError message={errors.email?.message} />
               </div>
-            )}
 
-            {/* Email Field (Disabled, Pre-filled) */}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                autoComplete="email"
-                disabled={true}
-                {...register('email')}
-                className="bg-muted"
-              />
-              <FormError message={errors.email?.message} />
-            </div>
-
-            {/* Password Field with Show/Hide Toggle */}
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  disabled={isLoading}
-                  {...register('password')}
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+              {/* Password Field with Show/Hide Toggle */}
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    disabled={isLoading}
+                    {...register('password')}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <FormError message={errors.password?.message} />
+                <PasswordStrength password={password} />
+                <p className="text-muted-foreground text-xs">
+                  Must be at least 8 characters with uppercase, lowercase, number, and special
+                  character
+                </p>
               </div>
-              <FormError message={errors.password?.message} />
-              <PasswordStrength password={password} />
-              <p className="text-muted-foreground text-xs">
-                Must be at least 8 characters with uppercase, lowercase, number, and special
-                character
-              </p>
-            </div>
 
-            {/* Confirm Password Field with Show/Hide Toggle */}
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <div className="relative">
-                <Input
-                  id="confirmPassword"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  disabled={isLoading}
-                  {...register('confirmPassword')}
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
+              {/* Confirm Password Field with Show/Hide Toggle */}
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <div className="relative">
+                  <Input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    disabled={isLoading}
+                    {...register('confirmPassword')}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <FormError message={errors.confirmPassword?.message} />
               </div>
-              <FormError message={errors.confirmPassword?.message} />
-            </div>
 
-            {/* Error Message */}
-            {error && (
-              <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-                {error}
-              </div>
-            )}
+              {/* Error Message */}
+              {error && (
+                <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
+                  {error}
+                </div>
+              )}
 
-            {/* Submit Button */}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading || success || isFetchingMetadata}
-            >
-              {isFetchingMetadata
-                ? 'Loading...'
-                : isLoading
-                  ? 'Activating account...'
-                  : 'Activate Account'}
-            </Button>
-          </form>
+              {/* Submit Button */}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isLoading || success || isFetchingMetadata}
+              >
+                {isFetchingMetadata
+                  ? 'Loading...'
+                  : isLoading
+                    ? 'Activating account...'
+                    : 'Activate Account'}
+              </Button>
+            </form>
+          </>
         )}
 
         {/* Login Link */}

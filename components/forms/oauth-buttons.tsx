@@ -4,6 +4,9 @@ import { OAuthButton } from './oauth-button';
 
 interface OAuthButtonsProps {
   callbackUrl?: string;
+  invitationToken?: string;
+  invitationEmail?: string;
+  mode?: 'signin' | 'invitation';
 }
 
 /**
@@ -17,14 +20,29 @@ interface OAuthButtonsProps {
  * - Visual "or" divider separating OAuth from email/password
  * - Gracefully hidden if no OAuth providers configured
  * - Can easily add more providers (GitHub, Facebook, etc.)
+ * - Supports invitation flow (pass invitationToken and invitationEmail)
  *
  * Usage:
  * ```tsx
+ * // Standard OAuth sign-in
  * <OAuthButtons callbackUrl="/dashboard" />
  * <LoginForm /> // Email/password form below
+ *
+ * // OAuth for invitation acceptance
+ * <OAuthButtons
+ *   mode="invitation"
+ *   callbackUrl="/dashboard"
+ *   invitationToken="abc123..."
+ *   invitationEmail="user@example.com"
+ * />
  * ```
  */
-export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
+export function OAuthButtons({
+  callbackUrl,
+  invitationToken,
+  invitationEmail,
+  mode = 'signin',
+}: OAuthButtonsProps) {
   // Check if OAuth is configured
   // In production, better-auth won't expose providers if not configured
   // For now, we always show the button - better-auth will handle the error
@@ -34,19 +52,33 @@ export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
     return null;
   }
 
+  const isInvitationMode = mode === 'invitation';
+  const buttonText = isInvitationMode ? 'Accept with Google' : 'Continue with Google';
+  const dividerText = isInvitationMode ? 'Or set a password' : 'Or continue with email';
+
   return (
     <div className="space-y-4">
       {/* OAuth Provider Buttons */}
       <div className="space-y-2">
-        <OAuthButton provider="google" callbackUrl={callbackUrl}>
+        <OAuthButton
+          provider="google"
+          callbackUrl={callbackUrl}
+          invitationToken={invitationToken}
+          invitationEmail={invitationEmail}
+        >
           <GoogleIcon />
-          <span className="ml-2">Continue with Google</span>
+          <span className="ml-2">{buttonText}</span>
         </OAuthButton>
 
         {/* Add more OAuth providers here as needed:
-        <OAuthButton provider="github" callbackUrl={callbackUrl}>
+        <OAuthButton
+          provider="github"
+          callbackUrl={callbackUrl}
+          invitationToken={invitationToken}
+          invitationEmail={invitationEmail}
+        >
           <GithubIcon />
-          <span className="ml-2">Continue with GitHub</span>
+          <span className="ml-2">{isInvitationMode ? 'Accept with GitHub' : 'Continue with GitHub'}</span>
         </OAuthButton>
         */}
       </div>
@@ -57,7 +89,7 @@ export function OAuthButtons({ callbackUrl }: OAuthButtonsProps) {
           <span className="w-full border-t" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-background text-muted-foreground px-2">Or continue with email</span>
+          <span className="bg-background text-muted-foreground px-2">{dividerText}</span>
         </div>
       </div>
     </div>
