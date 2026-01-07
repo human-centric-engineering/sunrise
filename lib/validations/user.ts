@@ -103,6 +103,53 @@ export const createUserSchema = z.object({
 });
 
 /**
+ * Invite user schema (POST /api/v1/invitations - admin only)
+ *
+ * Validates user invitation requests by admins.
+ * Sends invitation email with token that user can use to complete registration.
+ */
+export const inviteUserSchema = z.object({
+  /** User's full name */
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
+
+  /** User's email address (must be unique) */
+  email: emailSchema,
+
+  /** User's role (defaults to USER) */
+  role: z.enum(['USER', 'ADMIN', 'MODERATOR']).default('USER'),
+});
+
+/**
+ * Accept invitation schema (POST /api/auth/accept-invitation)
+ *
+ * Validates invitation acceptance requests.
+ * User provides token from email, their email, and sets their password.
+ * Includes password confirmation to prevent typos.
+ */
+export const acceptInvitationSchema = z
+  .object({
+    /** Invitation token from email */
+    token: z.string().min(1, 'Token is required'),
+
+    /** User's email address (must match invitation) */
+    email: emailSchema,
+
+    /** User's chosen password */
+    password: passwordSchema,
+
+    /** Password confirmation (must match password) */
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
+
+/**
  * TypeScript types inferred from schemas
  * Use these for type-safe API handling
  */
@@ -110,3 +157,5 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 export type UserIdParam = z.infer<typeof userIdSchema>;
+export type InviteUserInput = z.infer<typeof inviteUserSchema>;
+export type AcceptInvitationInput = z.infer<typeof acceptInvitationSchema>;
