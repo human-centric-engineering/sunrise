@@ -33,6 +33,9 @@ import {
   parsePaginationParams,
 } from '@/lib/api/validation';
 import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
+import { sendEmail } from '@/lib/email/send';
+import WelcomeEmail from '@/emails/welcome';
+import { logger } from '@/lib/logging';
 
 /**
  * Type definitions for better-auth signup API responses
@@ -237,7 +240,20 @@ export async function POST(request: NextRequest) {
         });
     }
 
-    // 7. Return created user
+    // 7. Send welcome email (non-blocking)
+    sendEmail({
+      to: body.email,
+      subject: 'Welcome to Sunrise',
+      react: WelcomeEmail({ userName: body.name, userEmail: body.email }),
+    }).catch((error) => {
+      // Don't fail user creation if email fails
+      logger.warn('Failed to send welcome email', {
+        userId: createdUser.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    // 8. Return created user
     return successResponse(
       {
         id: createdUser.id,

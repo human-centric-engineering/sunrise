@@ -2,6 +2,9 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
+import { sendEmail } from '@/lib/email/send';
+import VerifyEmailEmail from '@/emails/verify-email';
+import ResetPasswordEmail from '@/emails/reset-password';
 
 /**
  * Better Auth Configuration
@@ -32,7 +35,42 @@ export const auth = betterAuth({
   // Enable email and password authentication
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false, // Will be enabled in Phase 3 with email system
+    requireEmailVerification: false, // Keep optional
+    sendVerificationOnSignUp: true,
+    sendVerificationEmail: async ({
+      user,
+      verificationLink,
+    }: {
+      user: { id: string; email: string; name: string | null };
+      verificationLink: string;
+    }) => {
+      await sendEmail({
+        to: user.email,
+        subject: 'Verify your email address',
+        react: VerifyEmailEmail({
+          userName: user.name || 'User',
+          verificationUrl: verificationLink,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+        }),
+      });
+    },
+    sendResetPasswordEmail: async ({
+      user,
+      resetLink,
+    }: {
+      user: { id: string; email: string; name: string | null };
+      resetLink: string;
+    }) => {
+      await sendEmail({
+        to: user.email,
+        subject: 'Reset your password',
+        react: ResetPasswordEmail({
+          userName: user.name || 'User',
+          resetUrl: resetLink,
+          expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
+        }),
+      });
+    },
   },
 
   // Social authentication providers
