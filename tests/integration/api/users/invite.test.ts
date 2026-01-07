@@ -543,5 +543,313 @@ describe('POST /api/v1/users/invite', () => {
         })
       );
     });
+
+    it('should log email success when email sends successfully', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock no existing invitation
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+
+      // Mock invitation token generation
+      vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-999');
+
+      // Mock email sending success with ID
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id-success-123');
+
+      // Act: Call the invite endpoint
+      const request = createMockRequest({
+        name: 'Test User',
+        email: 'test@example.com',
+        role: 'USER',
+      });
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponse>(response);
+
+      // Assert: Request succeeds
+      expect(response.status).toBe(201);
+      expect(body.success).toBe(true);
+
+      // Assert: Email success was logged with email ID
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Invitation email sent',
+        expect.objectContaining({
+          email: 'test@example.com',
+          emailId: 'email-id-success-123',
+        })
+      );
+    });
+
+    it('should use BETTER_AUTH_URL as fallback when NEXT_PUBLIC_APP_URL is not set', async () => {
+      // Arrange: Temporarily override env mock to test fallback
+      const envModule = await import('@/lib/env');
+      const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
+
+      // Intentionally override for test (env is readonly in types)
+      (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
+
+      // Also need to mock process.env for the fallback
+      const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
+      process.env.BETTER_AUTH_URL = 'http://auth.example.com';
+
+      try {
+        // Arrange: Mock admin session
+        const adminSession = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+        // Mock no existing user
+        vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+        // Mock no existing invitation
+        vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+
+        // Mock invitation token generation
+        vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-fallback');
+
+        // Mock email sending
+        mockEmailSuccess(vi.mocked(sendEmail), 'email-id-fallback');
+
+        // Act: Call the invite endpoint
+        const request = createMockRequest({
+          name: 'Fallback User',
+          email: 'fallback@example.com',
+          role: 'USER',
+        });
+        const response = await POST(request);
+        const body = await parseResponse<SuccessResponse>(response);
+
+        // Assert: Response includes invitation link with BETTER_AUTH_URL
+        expect(response.status).toBe(201);
+        expect(body.success).toBe(true);
+        expect(body.data.invitation.link).toContain('http://auth.example.com');
+        expect(body.data.invitation.link).toContain('accept-invite');
+      } finally {
+        // Restore original values
+        (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
+        process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
+      }
+    });
+
+    it('should use localhost as fallback when both NEXT_PUBLIC_APP_URL and BETTER_AUTH_URL are not set', async () => {
+      // Arrange: Temporarily override env mock to test final fallback
+      const envModule = await import('@/lib/env');
+      const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
+
+      // Intentionally override for test (env is readonly in types)
+      (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
+
+      // Also need to mock process.env for the fallback
+      const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
+      delete process.env.BETTER_AUTH_URL;
+
+      try {
+        // Arrange: Mock admin session
+        const adminSession = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+        // Mock no existing user
+        vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+        // Mock no existing invitation
+        vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+
+        // Mock invitation token generation
+        vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-localhost');
+
+        // Mock email sending
+        mockEmailSuccess(vi.mocked(sendEmail), 'email-id-localhost');
+
+        // Act: Call the invite endpoint
+        const request = createMockRequest({
+          name: 'Localhost User',
+          email: 'localhost@example.com',
+          role: 'USER',
+        });
+        const response = await POST(request);
+        const body = await parseResponse<SuccessResponse>(response);
+
+        // Assert: Response includes invitation link with localhost
+        expect(response.status).toBe(201);
+        expect(body.success).toBe(true);
+        expect(body.data.invitation.link).toContain('http://localhost:3000');
+        expect(body.data.invitation.link).toContain('accept-invite');
+      } finally {
+        // Restore original values
+        (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
+        if (originalBetterAuthUrl !== undefined) {
+          process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
+        }
+      }
+    });
+
+    it('should generate new token for existing invitation link (security)', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock existing invitation
+      const existingInvitation = {
+        id: 'verification-id-token',
+        identifier: 'invitation:security@example.com',
+        value: 'hashed-stored-token-should-not-be-reused',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        metadata: {
+          name: 'Security User',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
+      };
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+
+      // Act: Call the invite endpoint twice
+      const request1 = createMockRequest({
+        name: 'Security User',
+        email: 'security@example.com',
+        role: 'USER',
+      });
+      const response1 = await POST(request1);
+      const body1 = await parseResponse<SuccessResponse>(response1);
+
+      const request2 = createMockRequest({
+        name: 'Security User',
+        email: 'security@example.com',
+        role: 'USER',
+      });
+      const response2 = await POST(request2);
+      const body2 = await parseResponse<SuccessResponse>(response2);
+
+      // Assert: Each response has a different token (security measure)
+      expect(body1.data.invitation.link).toBeDefined();
+      expect(body2.data.invitation.link).toBeDefined();
+      // Extract tokens from URLs
+      const token1 = new URL(body1.data.invitation.link).searchParams.get('token');
+      const token2 = new URL(body2.data.invitation.link).searchParams.get('token');
+      expect(token1).not.toBe(token2);
+      expect(token1).not.toBe('hashed-stored-token-should-not-be-reused');
+      expect(token2).not.toBe('hashed-stored-token-should-not-be-reused');
+    });
+
+    it('should use BETTER_AUTH_URL fallback in existing invitation path', async () => {
+      // Arrange: Temporarily override env mock to test fallback in existing invitation branch
+      const envModule = await import('@/lib/env');
+      const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
+
+      // Intentionally override for test (env is readonly in types)
+      (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
+
+      const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
+      process.env.BETTER_AUTH_URL = 'http://existing-invite-auth.example.com';
+
+      try {
+        // Arrange: Mock admin session
+        const adminSession = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+        // Mock no existing user
+        vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+        // Mock existing invitation (to trigger existing invitation branch)
+        const existingInvitation = {
+          id: 'verification-id-existing-url',
+          identifier: 'invitation:existing-url@example.com',
+          value: 'hashed-token',
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          metadata: {
+            name: 'Existing URL User',
+            role: 'USER',
+            invitedBy: 'admin-id',
+            invitedAt: '2024-01-01T00:00:00.000Z',
+          },
+        };
+        vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+
+        // Act: Call the invite endpoint
+        const request = createMockRequest({
+          name: 'Existing URL User',
+          email: 'existing-url@example.com',
+          role: 'USER',
+        });
+        const response = await POST(request);
+        const body = await parseResponse<SuccessResponse>(response);
+
+        // Assert: Response uses BETTER_AUTH_URL
+        expect(response.status).toBe(200);
+        expect(body.success).toBe(true);
+        expect(body.data.invitation.link).toContain('http://existing-invite-auth.example.com');
+        expect(body.data.invitation.link).toContain('accept-invite');
+      } finally {
+        // Restore original values
+        (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
+        process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
+      }
+    });
+
+    it('should use localhost fallback in existing invitation path', async () => {
+      // Arrange: Temporarily override env mock to test final fallback in existing invitation branch
+      const envModule = await import('@/lib/env');
+      const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
+
+      // Intentionally override for test (env is readonly in types)
+      (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
+
+      const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
+      delete process.env.BETTER_AUTH_URL;
+
+      try {
+        // Arrange: Mock admin session
+        const adminSession = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+        // Mock no existing user
+        vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+        // Mock existing invitation (to trigger existing invitation branch)
+        const existingInvitation = {
+          id: 'verification-id-existing-localhost',
+          identifier: 'invitation:existing-localhost@example.com',
+          value: 'hashed-token',
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          metadata: {
+            name: 'Existing Localhost User',
+            role: 'USER',
+            invitedBy: 'admin-id',
+            invitedAt: '2024-01-01T00:00:00.000Z',
+          },
+        };
+        vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+
+        // Act: Call the invite endpoint
+        const request = createMockRequest({
+          name: 'Existing Localhost User',
+          email: 'existing-localhost@example.com',
+          role: 'USER',
+        });
+        const response = await POST(request);
+        const body = await parseResponse<SuccessResponse>(response);
+
+        // Assert: Response uses localhost
+        expect(response.status).toBe(200);
+        expect(body.success).toBe(true);
+        expect(body.data.invitation.link).toContain('http://localhost:3000');
+        expect(body.data.invitation.link).toContain('accept-invite');
+      } finally {
+        // Restore original values
+        (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
+        if (originalBetterAuthUrl !== undefined) {
+          process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
+        }
+      }
+    });
   });
 });
