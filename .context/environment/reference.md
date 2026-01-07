@@ -240,22 +240,69 @@ Same as `GOOGLE_CLIENT_ID` - both are provided when creating OAuth credentials i
 RESEND_API_KEY="re_123456789_abcdefghijklmnopqrstuvwxyz"
 ```
 
-**Setup:**
+**How to Obtain:**
 
 1. Create account at [resend.com](https://resend.com)
-2. Verify your sending domain
-3. Generate API key in dashboard
-4. Use test mode for development (free)
+2. Navigate to **API Keys** in dashboard
+3. Click **Create API Key**
+4. Choose permission level:
+   - **Sending access** - Recommended (send emails only)
+   - **Full access** - Use with caution (includes domain management)
+5. Name your key (e.g., "Development" or "Production")
+6. Copy the key immediately (shown only once)
+7. Store securely in environment variables
+
+**Test vs Production Keys:**
+
+**Development/Test Keys:**
+
+- Use Resend's test mode (no actual emails sent)
+- Free tier: 100 emails/day, 3,000 emails/month
+- No domain verification required for testing
+- Sandbox environment for development
+- Returns success responses without delivery
+
+**Production Keys:**
+
+- Requires verified domain (SPF, DKIM, DMARC records)
+- Paid plan required for higher volume
+- Actual email delivery to recipients
+- Delivery tracking and analytics
+- Bounce and complaint handling
+- Different key per environment (staging, production)
+
+**Key Management:**
+
+| Environment | Key Type     | Volume Limit       | Domain Required | Cost         |
+| ----------- | ------------ | ------------------ | --------------- | ------------ |
+| Development | Test mode    | 100/day            | ❌ No           | Free         |
+| Staging     | Test or Live | 3,000/month (free) | ⚠️ Recommended  | Free or Paid |
+| Production  | Live         | Based on plan      | ✅ Yes          | Paid         |
+
+**Security Considerations:**
+
+- ⚠️ **Never commit API keys to version control** - Always use `.env.local` or secret manager
+- ⚠️ **Use separate keys per environment** - Development, staging, and production should have different keys
+- ⚠️ **Rotate keys quarterly** - Generate new keys and invalidate old ones regularly
+- ⚠️ **Use minimum required permissions** - Prefer "Sending access" over "Full access"
+- ⚠️ **Monitor usage in dashboard** - Set up alerts for unusual activity
+- ⚠️ **Revoke compromised keys immediately** - Resend dashboard allows instant revocation
+- ⚠️ **Store in secret manager for production** - Use Vercel env vars, AWS Secrets Manager, etc.
+- ⚠️ **Audit key usage** - Review API key access logs periodically
 
 **Important Notes:**
 
 - Optional during Phase 1 and Phase 2 development
 - Required in Phase 3 when email functionality is implemented
-- Different keys for development and production recommended
-- Free tier available for testing
+- Free tier available for testing (no credit card required)
+- Test mode emails visible in Resend dashboard (not delivered to recipients)
 
-**Test Mode:**
-In development, Resend provides a test mode that doesn't actually send emails but returns success responses.
+**Troubleshooting:**
+
+- **"Invalid API key" error**: Verify key is copied correctly (starts with `re_`)
+- **Rate limit exceeded**: Upgrade plan or wait for limit reset
+- **Domain not verified**: Complete domain verification before production use
+- **Emails not sending**: Check Resend dashboard logs for delivery status
 
 #### `EMAIL_FROM`
 
@@ -269,32 +316,152 @@ In development, Resend provides a test mode that doesn't actually send emails bu
   - All email templates (Phase 3)
 - **Phase:** 3.1 (Email System)
 
-**Examples:**
+**Format Options:**
 
-Simple format:
+Simple format (email only):
 
 ```bash
 EMAIL_FROM="noreply@example.com"
 ```
 
-With display name:
+With display name (recommended):
 
 ```bash
 EMAIL_FROM="Sunrise App <noreply@example.com>"
 ```
 
+With display name (special characters):
+
+```bash
+EMAIL_FROM="\"Sunrise: Your App\" <noreply@example.com>"
+```
+
+**Domain Verification Requirements:**
+
+To send emails in production, you **must verify your domain** with Resend. This process proves you own the domain and improves email deliverability.
+
+**Verification Steps:**
+
+1. **Add Domain in Resend Dashboard:**
+   - Navigate to **Domains** → **Add Domain**
+   - Enter your domain (e.g., `example.com`)
+   - Choose subdomain for sending (e.g., `mail.example.com`) or use root domain
+
+2. **Add DNS Records:**
+   Resend provides three types of DNS records to add to your domain:
+
+   **SPF Record (Sender Policy Framework):**
+   - **Type:** TXT
+   - **Name:** `@` or root domain
+   - **Value:** `v=spf1 include:resend.com ~all`
+   - **Purpose:** Authorizes Resend to send emails on your behalf
+
+   **DKIM Record (DomainKeys Identified Mail):**
+   - **Type:** TXT
+   - **Name:** `resend._domainkey` (provided by Resend)
+   - **Value:** Long public key string (provided by Resend)
+   - **Purpose:** Cryptographically signs your emails for authenticity
+
+   **DMARC Record (Domain-based Message Authentication):**
+   - **Type:** TXT
+   - **Name:** `_dmarc`
+   - **Value:** `v=DMARC1; p=none; rua=mailto:dmarc@example.com`
+   - **Purpose:** Tells receiving servers how to handle failed authentication
+
+3. **Wait for DNS Propagation:**
+   - DNS changes can take 5 minutes to 48 hours
+   - Check status in Resend dashboard (shows "Verified" when complete)
+   - Use DNS lookup tools to verify records: `dig TXT example.com`
+
+4. **Test Verification:**
+   - Send test email from Resend dashboard
+   - Check email headers for SPF, DKIM, DMARC pass status
+
+**DNS Provider Examples:**
+
+| Provider       | SPF/DKIM/DMARC Support | Propagation Time | Notes                     |
+| -------------- | ---------------------- | ---------------- | ------------------------- |
+| Cloudflare     | ✅ Excellent           | 5-30 minutes     | Fast, easy DNS management |
+| Route 53       | ✅ Excellent           | 10-60 minutes    | AWS-native, reliable      |
+| GoDaddy        | ✅ Good                | 1-24 hours       | Slower propagation        |
+| Namecheap      | ✅ Good                | 30 minutes-4 hrs | Simple interface          |
+| Google Domains | ✅ Excellent           | 10-60 minutes    | Now part of Squarespace   |
+
+**Sender Reputation Impact:**
+
+Your sender email address and domain directly affect email deliverability and reputation. Follow these best practices:
+
+**Email Deliverability Factors:**
+
+1. **Domain Reputation:**
+   - New domains have no reputation (warm up slowly)
+   - Consistent sending patterns improve reputation
+   - High bounce rates damage reputation
+   - Spam complaints severely damage reputation
+
+2. **Email Address Choice:**
+   - ✅ **Good:** `noreply@`, `notifications@`, `hello@`, `team@`
+   - ⚠️ **Avoid:** `admin@`, `postmaster@`, `abuse@` (reserved addresses)
+   - ❌ **Bad:** `no-reply@`, `donotreply@` (poor UX, lower engagement)
+
+3. **Warming Up a New Domain:**
+   - Start with low volume (50-100 emails/day)
+   - Gradually increase over 2-4 weeks
+   - Send to engaged users first
+   - Monitor bounce and complaint rates
+   - Don't jump from 0 to 10,000 emails/day
+
+**Reputation Monitoring:**
+
+- **Bounce Rate:** Keep below 5% (hard bounces)
+- **Complaint Rate:** Keep below 0.1% (spam reports)
+- **Engagement:** Higher open/click rates improve reputation
+- **Consistency:** Regular sending patterns (not sporadic bursts)
+
+**Reputation Tools:**
+
+- [Google Postmaster Tools](https://postmaster.google.com/) - Gmail reputation metrics
+- [Microsoft SNDS](https://sendersupport.olc.protection.outlook.com/snds/) - Outlook reputation
+- [MXToolbox](https://mxtoolbox.com/blacklists.aspx) - Check if domain is blacklisted
+- Resend Dashboard - Bounce and complaint analytics
+
+**Display Name Best Practices:**
+
+- **Use your app name:** "Sunrise" or "Sunrise App"
+- **Add context for transactional emails:** "Sunrise - Account Verification"
+- **Be consistent:** Same display name across all emails
+- **Avoid spam triggers:** No ALL CAPS, excessive punctuation, or misleading names
+- **Keep it short:** 15-30 characters for best mobile display
+
+**Recommended Patterns by Email Type:**
+
+| Email Type           | Sender Address              | Display Name               |
+| -------------------- | --------------------------- | -------------------------- |
+| Verification         | `noreply@example.com`       | `Sunrise - Verify Email`   |
+| Password Reset       | `noreply@example.com`       | `Sunrise - Password Reset` |
+| Invitation           | `noreply@example.com`       | `Sunrise - You're Invited` |
+| Welcome              | `hello@example.com`         | `Sunrise Team`             |
+| Notifications        | `notifications@example.com` | `Sunrise Notifications`    |
+| Transactional        | `noreply@example.com`       | `Sunrise`                  |
+| Marketing (optional) | `newsletter@example.com`    | `Sunrise Newsletter`       |
+| Support              | `support@example.com`       | `Sunrise Support`          |
+
 **Important Notes:**
 
-- Domain must be verified in Resend dashboard
-- Use `noreply@` for transactional emails
-- Display name is optional but recommended for better UX
-- Must match verified sending domain in Resend
+- ⚠️ Domain must be verified in Resend before production use
+- ⚠️ Use `noreply@` for automated emails (verification, reset, etc.)
+- ⚠️ Use real mailbox (`support@`, `hello@`) for emails expecting replies
+- ⚠️ Display name is optional but **strongly recommended** for better UX
+- ⚠️ Email address domain must match verified domain in Resend
+- ⚠️ Different email addresses for different purposes improves organization
 
-**Recommended Patterns:**
+**Troubleshooting:**
 
-- Transactional emails: `noreply@yourdomain.com`
-- Support emails: `support@yourdomain.com`
-- Notifications: `notifications@yourdomain.com`
+- **"Domain not verified" error**: Complete DNS verification in Resend dashboard
+- **Emails going to spam**: Check SPF/DKIM/DMARC records, warm up domain, improve content
+- **High bounce rate**: Validate email addresses before sending, clean email list regularly
+- **Display name not showing**: Ensure proper quote escaping for special characters
+- **Emails rejected**: Verify sender address matches verified domain
 
 ---
 
