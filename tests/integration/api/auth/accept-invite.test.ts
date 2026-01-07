@@ -121,6 +121,18 @@ describe('POST /api/auth/accept-invite', () => {
   });
 
   /**
+   * Endpoint Verification
+   *
+   * This test verifies the endpoint file exists at the expected path
+   * and prevents URL mismatches between tests and implementation.
+   */
+  it('should have POST handler at /api/auth/accept-invite', () => {
+    // Verify the POST handler is defined and callable
+    expect(POST).toBeDefined();
+    expect(typeof POST).toBe('function');
+  });
+
+  /**
    * Success Scenarios
    */
   describe('Success scenarios', () => {

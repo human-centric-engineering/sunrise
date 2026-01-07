@@ -81,7 +81,7 @@ export default function AcceptInvitePage() {
       setError(null);
 
       // Submit to accept-invite endpoint
-      await apiClient.post('/api/auth/accept-invitation', {
+      await apiClient.post('/api/auth/accept-invite', {
         body: {
           token: data.token,
           email: data.email,
@@ -92,6 +92,9 @@ export default function AcceptInvitePage() {
 
       // Show success message
       setSuccess(true);
+
+      // Clear sensitive params from URL
+      router.replace('/accept-invite', { scroll: false });
 
       // Redirect to login after short delay
       setTimeout(() => {
@@ -231,7 +234,7 @@ export default function AcceptInvitePage() {
             )}
 
             {/* Submit Button */}
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full" disabled={isLoading || success}>
               {isLoading ? 'Activating account...' : 'Activate Account'}
             </Button>
           </form>
