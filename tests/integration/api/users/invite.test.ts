@@ -22,6 +22,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { mockEmailSuccess, mockEmailFailure } from '@/tests/helpers/email';
 
 /**
  * Mock dependencies
@@ -163,10 +164,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
 
       // Mock email sending
-      vi.mocked(sendEmail).mockResolvedValue({
-        success: true,
-        id: 'email-id-123',
-      });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id-123');
 
       // Act: Call the invite endpoint
       const request = createMockRequest({
@@ -292,10 +290,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-789');
 
       // Mock email sending failure
-      vi.mocked(sendEmail).mockResolvedValue({
-        success: false,
-        error: 'SMTP connection failed',
-      });
+      mockEmailFailure(vi.mocked(sendEmail), 'SMTP connection failed');
 
       // Act: Call the invite endpoint
       const request = createMockRequest({
@@ -501,10 +496,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
 
       // Mock email sending
-      vi.mocked(sendEmail).mockResolvedValue({
-        success: true,
-        id: 'email-id-123',
-      });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id-123');
 
       // Act: Call the invite endpoint
       const request = createMockRequest({

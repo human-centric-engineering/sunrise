@@ -33,6 +33,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { mockEmailSuccess, mockEmailError } from '@/tests/helpers/email';
 
 /**
  * Mock dependencies
@@ -447,7 +448,7 @@ describe('POST /api/v1/users', () => {
         json: async () => mockSignupResponse,
       } as Response);
 
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'email-id' });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
       vi.mocked(prisma.session.delete).mockResolvedValue({} as never);
 
       const request = createMockPostRequest({
@@ -513,7 +514,7 @@ describe('POST /api/v1/users', () => {
         json: async () => mockSignupResponse,
       } as Response);
 
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'email-id' });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
 
       const request = createMockPostRequest({
         name: 'Test User',
@@ -557,7 +558,7 @@ describe('POST /api/v1/users', () => {
       } as Response);
 
       vi.mocked(prisma.user.update).mockResolvedValue({} as never);
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'email-id' });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
 
       const request = createMockPostRequest({
         name: 'Admin User',
@@ -600,7 +601,7 @@ describe('POST /api/v1/users', () => {
         json: async () => mockSignupResponse,
       } as Response);
 
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'email-id' });
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
 
       const request = createMockPostRequest({
         name: 'Test User',
@@ -642,7 +643,7 @@ describe('POST /api/v1/users', () => {
       } as Response);
 
       // Email sending fails
-      vi.mocked(sendEmail).mockRejectedValue(new Error('Email service unavailable'));
+      mockEmailError(vi.mocked(sendEmail), new Error('Email service unavailable'));
 
       const request = createMockPostRequest({
         name: 'Test User',
