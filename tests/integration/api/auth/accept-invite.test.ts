@@ -182,6 +182,12 @@ describe('POST /api/auth/accept-invite', () => {
             token: 'session-token-123',
           },
         }),
+        headers: {
+          getSetCookie: () => [
+            'better-auth.session_token=session-token-123; Path=/; HttpOnly; Secure; SameSite=Lax',
+            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+          ],
+        },
       });
 
       // Mock user updates (emailVerified)
@@ -219,7 +225,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.data).toMatchObject({
-        message: 'Invitation accepted successfully. You can now log in.',
+        message: 'Invitation accepted successfully. Redirecting to dashboard...',
       });
 
       // Assert: Token was validated
@@ -256,21 +262,14 @@ describe('POST /api/auth/accept-invite', () => {
         data: { emailVerified: true },
       });
 
-      // Assert: Session was cleaned up
-      expect(vi.mocked(prisma.session.delete)).toHaveBeenCalledWith({
-        where: { token: 'session-token-123' },
-      });
+      // Assert: Session was NOT cleaned up (kept for auto-login)
+      expect(vi.mocked(prisma.session.delete)).not.toHaveBeenCalled();
 
       // Assert: Invitation token was deleted
       expect(vi.mocked(deleteInvitationToken)).toHaveBeenCalledWith('john@example.com');
 
-      // Assert: Welcome email was sent
-      expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'john@example.com',
-          subject: 'Welcome to Sunrise',
-        })
-      );
+      // Assert: Welcome email was NOT sent by endpoint (handled by database hook)
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
 
       // Assert: Success logged with stable User ID
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
@@ -318,6 +317,12 @@ describe('POST /api/auth/accept-invite', () => {
             token: 'session-token-456',
           },
         }),
+        headers: {
+          getSetCookie: () => [
+            'better-auth.session_token=session-token-456; Path=/; HttpOnly; Secure; SameSite=Lax',
+            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+          ],
+        },
       });
 
       // Mock user updates (role and emailVerified)
@@ -363,86 +368,11 @@ describe('POST /api/auth/accept-invite', () => {
       });
     });
 
-    it('should handle welcome email failure gracefully (non-blocking)', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      // Mock invitation metadata
-      const mockInvitation = {
-        id: 'invitation-id-789',
-        identifier: 'invitation:jane@example.com',
-        value: 'valid-token-789',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'Jane Doe',
-          role: 'USER',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      // Mock better-auth signup response
-      const createdUserId = 'user-id-789';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'Jane Doe',
-            email: 'jane@example.com',
-            emailVerified: false,
-          },
-          session: {
-            token: 'session-token-789',
-          },
-        }),
-      });
-
-      // Mock user updates
-      vi.mocked(prisma.user.update).mockResolvedValue({
-        id: createdUserId,
-        name: 'Jane Doe',
-        email: 'jane@example.com',
-        role: 'USER',
-        emailVerified: true,
-        image: null,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      } as any);
-
-      // Mock session cleanup
-      vi.mocked(prisma.session.delete).mockResolvedValue({} as any);
-
-      // Mock token deletion
-      vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Mock welcome email failure (non-blocking error)
-      vi.mocked(sendEmail).mockResolvedValue({
-        success: false,
-        error: 'Email service unavailable',
-      });
-
-      // Act: Call the accept-invite endpoint
-      const request = createMockRequest({
-        token: 'valid-token-789',
-        email: 'jane@example.com',
-        password: 'SecurePassword789!',
-        confirmPassword: 'SecurePassword789!',
-      });
-      const response = await POST(request);
-      const body = await parseResponse<SuccessResponse>(response);
-
-      // Assert: Invitation acceptance still succeeds despite email failure
-      expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
-
-      // Assert: Warning logged about email failure (non-blocking)
-      // Note: The warning is logged asynchronously in a .catch() block
-      // We can verify the email was attempted
-      expect(vi.mocked(sendEmail)).toHaveBeenCalled();
+    it.skip('REMOVED: Welcome email now sent by database hook, not by accept-invite endpoint', async () => {
+      // This test is no longer relevant because:
+      // - Welcome email is sent automatically by the database hook in lib/auth/config.ts
+      // - The accept-invite endpoint no longer calls sendEmail()
+      // - Email failures are handled by the hook, not this endpoint
     });
   });
 
@@ -794,173 +724,18 @@ describe('POST /api/auth/accept-invite', () => {
       );
     });
 
-    it('should handle session deletion failure gracefully (non-blocking)', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      // Mock invitation metadata
-      const mockInvitation = {
-        id: 'invitation-id-session-delete',
-        identifier: 'invitation:sessiondelete@example.com',
-        value: 'valid-token',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'Session Delete User',
-          role: 'USER',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      // Mock better-auth signup response
-      const createdUserId = 'user-session-delete';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'Session Delete User',
-            email: 'sessiondelete@example.com',
-            emailVerified: false,
-          },
-          session: {
-            token: 'session-token-to-delete',
-          },
-        }),
-      });
-
-      // Mock user updates
-      vi.mocked(prisma.user.update).mockResolvedValue({
-        id: createdUserId,
-        name: 'Session Delete User',
-        email: 'sessiondelete@example.com',
-        role: 'USER',
-        emailVerified: true,
-        image: null,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      } as any);
-
-      // Mock session delete failure (should be ignored)
-      vi.mocked(prisma.session.delete).mockRejectedValue(new Error('Session not found'));
-
-      // Mock token deletion
-      vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Mock welcome email
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'mock-email-id' });
-
-      // Act: Call the accept-invite endpoint
-      const request = createMockRequest({
-        token: 'valid-token',
-        email: 'sessiondelete@example.com',
-        password: 'SecurePassword123!',
-        confirmPassword: 'SecurePassword123!',
-      });
-      const response = await POST(request);
-      const body = await parseResponse<SuccessResponse>(response);
-
-      // Assert: Invitation acceptance still succeeds despite session delete failure
-      expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
-
-      // Assert: Session deletion was attempted
-      expect(vi.mocked(prisma.session.delete)).toHaveBeenCalledWith({
-        where: { token: 'session-token-to-delete' },
-      });
-
-      // Assert: Success logged
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
-        'Invitation accepted successfully',
-        expect.objectContaining({
-          email: 'sessiondelete@example.com',
-          userId: createdUserId,
-        })
-      );
+    it.skip('REMOVED: Session is now kept for auto-login, not deleted', async () => {
+      // This test is no longer relevant because:
+      // - Session is now kept for auto-login (consistent with OAuth invitation flow)
+      // - The accept-invite endpoint no longer deletes the session
+      // - Users are redirected to dashboard, not login
     });
 
-    it('should handle email sending error gracefully (non-blocking)', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      // Mock invitation metadata
-      const mockInvitation = {
-        id: 'invitation-id-email-error',
-        identifier: 'invitation:emailerror@example.com',
-        value: 'valid-token',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'Email Error User',
-          role: 'USER',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      // Mock better-auth signup response
-      const createdUserId = 'user-email-error';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'Email Error User',
-            email: 'emailerror@example.com',
-            emailVerified: false,
-          },
-          session: {
-            token: 'session-token-email',
-          },
-        }),
-      });
-
-      // Mock user updates
-      vi.mocked(prisma.user.update).mockResolvedValue({
-        id: createdUserId,
-        name: 'Email Error User',
-        email: 'emailerror@example.com',
-        role: 'USER',
-        emailVerified: true,
-        image: null,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      } as any);
-
-      // Mock session cleanup
-      vi.mocked(prisma.session.delete).mockResolvedValue({} as any);
-
-      // Mock token deletion
-      vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Mock welcome email throwing an error
-      vi.mocked(sendEmail).mockRejectedValue(new Error('SMTP connection failed'));
-
-      // Act: Call the accept-invite endpoint
-      const request = createMockRequest({
-        token: 'valid-token',
-        email: 'emailerror@example.com',
-        password: 'SecurePassword123!',
-        confirmPassword: 'SecurePassword123!',
-      });
-      const response = await POST(request);
-      const body = await parseResponse<SuccessResponse>(response);
-
-      // Assert: Invitation acceptance still succeeds despite email error
-      expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
-
-      // Assert: Email was attempted
-      expect(vi.mocked(sendEmail)).toHaveBeenCalled();
-
-      // Note: The warning is logged asynchronously in the catch block
-      // We can't easily assert on it without waiting, but the test proves
-      // the catch block is executed by verifying success despite email failure
+    it.skip('REMOVED: Welcome email now sent by database hook, not by accept-invite endpoint', async () => {
+      // This test is no longer relevant because:
+      // - Welcome email is sent automatically by the database hook in lib/auth/config.ts
+      // - The accept-invite endpoint no longer calls sendEmail()
+      // - Email errors are handled by the hook, not this endpoint
     });
 
     it('should handle database errors gracefully', async () => {
@@ -1029,6 +804,12 @@ describe('POST /api/auth/accept-invite', () => {
             token: 'session-token-role',
           },
         }),
+        headers: {
+          getSetCookie: () => [
+            'better-auth.session_token=session-token-role; Path=/; HttpOnly; Secure; SameSite=Lax',
+            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+          ],
+        },
       });
 
       // Mock role update failure

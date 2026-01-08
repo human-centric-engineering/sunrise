@@ -11,17 +11,29 @@
  * 2. Validate invitation token (checks expiration and email match)
  * 3. Fetch invitation metadata (name, role, invitedBy, invitedAt)
  * 4. Create user via better-auth signup endpoint (FIRST TIME - stable User ID)
- * 5. Update role if non-default
- * 6. Mark email as verified
- * 7. Delete invitation token
- * 8. Send welcome email (non-blocking)
- * 9. Return success response
+ * 5. Capture Set-Cookie headers from better-auth response
+ * 6. Update role if non-default
+ * 7. Mark email as verified
+ * 8. Delete invitation token
+ * 9. Return success response with forwarded session cookies for auto-login
  *
  * Security:
  * - Token must be valid and not expired
  * - User is created once (no delete/recreate - stable ID)
  * - Password is hashed via better-auth (scrypt)
  * - Email is verified automatically upon acceptance
+ * - Session is kept for auto-login (consistent with OAuth invitation flow)
+ *
+ * Session Cookie Forwarding:
+ * - better-auth sets session cookies when creating users via /api/auth/sign-up/email
+ * - When called from server-side (this API route), cookies are returned to the server
+ * - We must explicitly forward these cookies to the client browser for auto-login
+ * - Without forwarding, the session exists in DB but browser has no session cookie
+ * - This matches the OAuth invitation flow where session cookies are set automatically
+ *
+ * Note:
+ * - Welcome email is sent automatically by database hook (lib/auth/config.ts)
+ * - Session is preserved for auto-login (user redirected to dashboard, not login)
  */
 
 import { NextRequest } from 'next/server';
@@ -33,8 +45,6 @@ import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invi
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
-import { sendEmail } from '@/lib/email/send';
-import WelcomeEmail from '@/emails/welcome';
 
 /**
  * POST /api/auth/accept-invite
@@ -123,6 +133,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Capture Set-Cookie headers from better-auth response to forward to client
+    // This is critical for auto-login - the session cookies must reach the browser
+    const setCookieHeaders = signupResponse.headers.getSetCookie();
+
     const signupData = (await signupResponse.json()) as {
       user: { id: string };
       session?: { token: string };
@@ -146,39 +160,35 @@ export async function POST(request: NextRequest) {
       data: { emailVerified: true },
     });
 
-    // Clean up the session created by signup (we don't want to auto-login)
-    if (signupData.session) {
-      await prisma.session
-        .delete({
-          where: { token: signupData.session.token },
-        })
-        .catch(() => {
-          // Ignore if session doesn't exist or was already deleted
-        });
-    }
-
     // 7. Delete invitation token
     await deleteInvitationToken(email);
 
-    // 8. Send welcome email (non-blocking)
-    sendEmail({
-      to: email,
-      subject: 'Welcome to Sunrise',
-      react: WelcomeEmail({ userName: metadata.name, userEmail: email }),
-    }).catch((error) => {
-      logger.warn('Failed to send welcome email', { error, userId: newUserId });
-    });
-
     logger.info('Invitation accepted successfully', { email, userId: newUserId });
 
-    // 9. Return success response
-    return successResponse(
+    // 9. Return success response with session cookies from better-auth
+    // Forward Set-Cookie headers to establish browser session for auto-login
+    const response = successResponse(
       {
-        message: 'Invitation accepted successfully. You can now log in.',
+        message: 'Invitation accepted successfully. Redirecting to dashboard...',
       },
       undefined,
       { status: 200 }
     );
+
+    // Forward session cookies from better-auth to client browser
+    // This enables auto-login after invitation acceptance
+    if (setCookieHeaders && setCookieHeaders.length > 0) {
+      setCookieHeaders.forEach((cookie) => {
+        response.headers.append('Set-Cookie', cookie);
+      });
+
+      logger.info('Session cookies forwarded to client', {
+        userId: newUserId,
+        cookieCount: setCookieHeaders.length,
+      });
+    }
+
+    return response;
   } catch (error) {
     logger.error('Failed to accept invitation', error);
     return handleAPIError(error);

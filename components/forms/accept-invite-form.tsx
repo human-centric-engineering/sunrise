@@ -130,13 +130,12 @@ export function AcceptInviteForm() {
       // Show success message
       setSuccess(true);
 
-      // Clear sensitive params from URL
-      router.replace('/accept-invite', { scroll: false });
-
-      // Redirect to login after short delay
+      // Session is created automatically by backend - redirect to dashboard
+      // better-auth client picks up the session cookie automatically
       setTimeout(() => {
-        router.push('/login?invited=true');
-      }, 2000);
+        router.push('/dashboard');
+        router.refresh(); // Force server component re-render to pick up session
+      }, 1500);
     } catch (err) {
       setIsLoading(false);
 
@@ -170,7 +169,7 @@ export function AcceptInviteForm() {
         <div className="space-y-4">
           <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
             <p className="font-medium">Account activated successfully!</p>
-            <p className="mt-1 text-xs">Redirecting to login...</p>
+            <p className="mt-1 text-xs">Redirecting to dashboard...</p>
           </div>
         </div>
       ) : (
