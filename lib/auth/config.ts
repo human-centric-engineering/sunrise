@@ -50,19 +50,39 @@ export const auth = betterAuth({
     // Override with REQUIRE_EMAIL_VERIFICATION environment variable
     // Note: Verification email sending is configured in emailVerification block below
     requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
-    sendResetPasswordEmail: async ({
+    sendResetPassword: async ({
       user,
-      resetLink,
+      url,
     }: {
       user: { id: string; email: string; name: string | null };
-      resetLink: string;
+      url: string;
+      token: string;
     }) => {
+      // Check if user has a password account (not OAuth-only)
+      const passwordAccount = await prisma.account.findFirst({
+        where: {
+          userId: user.id,
+          password: { not: null },
+        },
+      });
+
+      // If user only has OAuth accounts (no password), don't send reset email
+      // This is a security best practice - don't reveal user's auth method
+      if (!passwordAccount) {
+        logger.info('Password reset requested for OAuth-only user', {
+          userId: user.id,
+          email: user.email,
+        });
+        return; // Silently succeed - frontend shows generic success message
+      }
+
+      // User has password account - send reset email
       await sendEmail({
         to: user.email,
         subject: 'Reset your password',
         react: ResetPasswordEmail({
           userName: user.name || 'User',
-          resetUrl: resetLink,
+          resetUrl: url,
           expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
         }),
       });
