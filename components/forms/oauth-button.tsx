@@ -63,17 +63,22 @@ export function OAuthButton({
       const oauthRequest: {
         provider: string;
         callbackURL: string;
-        invitationToken?: string;
-        invitationEmail?: string;
+        additionalData?: {
+          invitationToken: string;
+          invitationEmail: string;
+        };
       } = {
         provider,
         callbackURL: redirect,
       };
 
-      // Add invitation data to OAuth state if provided
+      // Add invitation data to OAuth state if provided (via additionalData)
+      // better-auth preserves additionalData through the OAuth flow
       if (invitationToken && invitationEmail) {
-        oauthRequest.invitationToken = invitationToken;
-        oauthRequest.invitationEmail = invitationEmail;
+        oauthRequest.additionalData = {
+          invitationToken,
+          invitationEmail,
+        };
       }
 
       // Initiate OAuth flow

@@ -179,13 +179,15 @@ describe('components/forms/oauth-buttons', () => {
       const button = screen.getByRole('button', { name: /accept with google/i });
       await user.click(button);
 
-      // Assert: Verify OAuth was initiated with invitation data
+      // Assert: Verify OAuth was initiated with invitation data in additionalData
       await waitFor(() => {
         expect(authClient.signIn.social).toHaveBeenCalledWith({
           provider: 'google',
           callbackURL: '/dashboard',
-          invitationToken: invitationToken,
-          invitationEmail: invitationEmail,
+          additionalData: {
+            invitationToken: invitationToken,
+            invitationEmail: invitationEmail,
+          },
         });
       });
     });

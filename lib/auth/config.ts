@@ -48,24 +48,8 @@ export const auth = betterAuth({
     enabled: true,
     // Email verification: enabled by default in production, disabled in development
     // Override with REQUIRE_EMAIL_VERIFICATION environment variable
+    // Note: Verification email sending is configured in emailVerification block below
     requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
-    sendVerificationEmail: async ({
-      user,
-      verificationLink,
-    }: {
-      user: { id: string; email: string; name: string | null };
-      verificationLink: string;
-    }) => {
-      await sendEmail({
-        to: user.email,
-        subject: 'Verify your email address',
-        react: VerifyEmailEmail({
-          userName: user.name || 'User',
-          verificationUrl: verificationLink,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-        }),
-      });
-    },
     sendResetPasswordEmail: async ({
       user,
       resetLink,
@@ -81,6 +65,75 @@ export const auth = betterAuth({
           resetUrl: resetLink,
           expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
         }),
+      });
+    },
+  },
+
+  // Email verification configuration
+  emailVerification: {
+    // Trigger verification email on signup when required
+    sendOnSignUp: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
+
+    // Automatically sign in user after successful email verification
+    autoSignInAfterVerification: true,
+
+    // Send verification email callback (better-auth calls this)
+    sendVerificationEmail: async ({
+      user,
+      url,
+    }: {
+      user: { id: string; email: string; name: string | null };
+      url: string;
+      token: string;
+    }) => {
+      // Check if this is an invitation acceptance - if so, skip verification email
+      // The invitation acceptance flow marks email as verified immediately
+      const invitation = await prisma.verification.findFirst({
+        where: { identifier: `invitation:${user.email}` },
+      });
+
+      if (invitation) {
+        logger.info('Skipping verification email for invitation acceptance', {
+          userId: user.id,
+          email: user.email,
+        });
+        return; // Don't send verification email for invitation acceptance
+      }
+
+      // Replace the default callbackURL (/) with /dashboard
+      const verificationUrl = url.replace('callbackURL=%2F', 'callbackURL=%2Fdashboard');
+
+      await sendEmail({
+        to: user.email,
+        subject: 'Verify your email address',
+        react: VerifyEmailEmail({
+          userName: user.name || 'User',
+          verificationUrl,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+        }),
+      });
+    },
+
+    // Callback after successful email verification
+    afterEmailVerification: async (user: { id: string; email: string; name: string | null }) => {
+      logger.info('Email verification completed', {
+        userId: user.id,
+        email: user.email,
+      });
+
+      // Send welcome email AFTER verification completes
+      await sendEmail({
+        to: user.email,
+        subject: 'Welcome to Sunrise',
+        react: WelcomeEmail({
+          userName: user.name || 'User',
+          userEmail: user.email,
+        }),
+      }).catch((error) => {
+        logger.warn('Failed to send welcome email after verification', {
+          userId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     },
   },
@@ -165,12 +218,16 @@ export const auth = betterAuth({
           const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
           const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
 
+          // Check if this is an invitation acceptance (for password flow)
+          let isPasswordInvitation = false;
+
           try {
             // Handle OAuth invitation flow
             if (isOAuthSignup) {
+              // Get OAuth state (contains additionalData from client)
               const oauthState = await getOAuthState();
 
-              // Check if invitation data is present in OAuth state
+              // Check if invitation data is present in OAuth state additionalData
               const invitationToken =
                 oauthState && typeof oauthState === 'object'
                   ? (oauthState.invitationToken as string | undefined)
@@ -193,11 +250,12 @@ export const auth = betterAuth({
                 );
 
                 if (isValidToken) {
-                  // Get invitation metadata
+                  // Get invitation metadata FIRST (before deletion)
                   const invitation = await prisma.verification.findFirst({
                     where: { identifier: `invitation:${invitationEmail}` },
                   });
 
+                  // Apply role if non-default and metadata exists
                   if (invitation?.metadata) {
                     const metadata = invitation.metadata as {
                       name: string;
@@ -206,9 +264,7 @@ export const auth = betterAuth({
                       invitedAt: string;
                     };
 
-                    // Apply role if non-default
                     if (metadata.role && metadata.role !== 'USER') {
-                      // Return modified user data to set role
                       await prisma.user.update({
                         where: { id: user.id },
                         data: { role: metadata.role },
@@ -219,48 +275,95 @@ export const auth = betterAuth({
                         role: metadata.role,
                       });
                     }
+                  }
 
-                    // Delete invitation token (single-use)
+                  // Delete invitation token LAST (after using metadata)
+                  // Single-use token - must be deleted regardless of role application
+                  try {
                     await deleteInvitationToken(invitationEmail);
-
-                    logger.info('OAuth invitation accepted successfully', {
+                    logger.info('OAuth invitation token deleted successfully', {
                       userId: user.id,
-                      email: user.email,
+                      email: invitationEmail,
+                    });
+                  } catch (deleteError) {
+                    // Log deletion failure explicitly but don't fail user creation
+                    logger.error('Failed to delete OAuth invitation token', deleteError, {
+                      userId: user.id,
+                      email: invitationEmail,
                     });
                   }
+
+                  logger.info('OAuth invitation accepted successfully', {
+                    userId: user.id,
+                    email: user.email,
+                  });
                 }
+              }
+            } else {
+              // Check for password invitation acceptance
+              const invitation = await prisma.verification.findFirst({
+                where: { identifier: `invitation:${user.email}` },
+              });
+
+              if (invitation) {
+                isPasswordInvitation = true;
+                logger.info('Detected password invitation acceptance', {
+                  userId: user.id,
+                  email: user.email,
+                });
               }
             }
           } catch (error) {
             // Log but don't fail user creation
-            logger.error('Error processing OAuth invitation in database hook', error, {
+            logger.error('Error processing invitation in database hook', error, {
               userId: user.id,
               email: user.email,
             });
           }
 
-          // Send welcome email for all new users (OAuth and email/password)
-          logger.info('Sending welcome email to new user', {
-            userId: user.id,
-            userEmail: user.email,
-            signupMethod,
-          });
+          // Determine if welcome email should be sent immediately
+          const requiresVerification =
+            env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
 
-          await sendEmail({
-            to: user.email,
-            subject: 'Welcome to Sunrise',
-            react: WelcomeEmail({
-              userName: user.name || 'User',
-              userEmail: user.email,
-            }),
-          }).catch((error) => {
-            logger.warn('Failed to send welcome email', {
+          // Send welcome email if:
+          // 1. OAuth signup (email auto-verified by provider), OR
+          // 2. Email/password signup with verification DISABLED, OR
+          // 3. Password invitation acceptance (email will be verified by accept-invite route)
+          // Note: Normal email/password with verification ENABLED will receive welcome email
+          // after verification completes (via emailVerification.afterEmailVerification)
+          const shouldSendWelcomeNow =
+            isOAuthSignup || !requiresVerification || isPasswordInvitation;
+
+          if (shouldSendWelcomeNow) {
+            logger.info('Sending welcome email to new user', {
               userId: user.id,
               userEmail: user.email,
               signupMethod,
-              error: error instanceof Error ? error.message : String(error),
+              isInvitation: isPasswordInvitation,
             });
-          });
+
+            await sendEmail({
+              to: user.email,
+              subject: 'Welcome to Sunrise',
+              react: WelcomeEmail({
+                userName: user.name || 'User',
+                userEmail: user.email,
+              }),
+            }).catch((error) => {
+              logger.warn('Failed to send welcome email', {
+                userId: user.id,
+                userEmail: user.email,
+                signupMethod,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+          } else {
+            logger.info('Skipping welcome email (will send after email verification)', {
+              userId: user.id,
+              userEmail: user.email,
+              signupMethod,
+            });
+          }
         },
       },
     },

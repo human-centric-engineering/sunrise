@@ -27,7 +27,9 @@ import { OAuthButtons } from './oauth-buttons';
  * - Password confirmation matching
  * - Loading states during submission
  * - Error handling and display (including OAuth errors from URL)
- * - Auto-login after successful registration
+ * - Conditional redirect based on email verification requirement:
+ *   - If session created (no verification required) → redirect to dashboard
+ *   - If no session (verification required) → redirect to verify-email page
  */
 export function SignupForm() {
   const router = useRouter();
@@ -77,10 +79,18 @@ export function SignupForm() {
           onRequest: () => {
             // Request started
           },
-          onSuccess: () => {
-            // Redirect to dashboard after successful signup
-            // better-auth automatically logs in the user after registration
-            router.push('/dashboard');
+          onSuccess: async () => {
+            // Check if session was actually created using better-auth client
+            // If verification required, no session will exist yet
+            const { data: session } = await authClient.getSession();
+
+            if (session) {
+              // Session created → verification not required or auto-verified (OAuth)
+              router.push('/dashboard');
+            } else {
+              // No session → verification required, show "check email" page
+              router.push('/verify-email?email=' + encodeURIComponent(data.email));
+            }
             router.refresh();
           },
           onError: (ctx) => {

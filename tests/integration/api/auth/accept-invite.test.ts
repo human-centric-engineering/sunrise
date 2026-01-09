@@ -167,30 +167,47 @@ describe('POST /api/auth/accept-invite', () => {
       };
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
-      // Mock better-auth signup response (creates user for the FIRST TIME)
+      // Mock better-auth signup and sign-in responses
       const createdUserId = 'user-id-123';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'John Doe',
-            email: 'john@example.com',
-            emailVerified: false, // Not verified yet by better-auth
+      mockFetch
+        // First call: signup (creates user for the FIRST TIME)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            user: {
+              id: createdUserId,
+              name: 'John Doe',
+              email: 'john@example.com',
+              emailVerified: false, // Not verified yet by better-auth
+            },
+          }),
+          headers: {
+            getSetCookie: () => [], // No cookies from signup (verification required)
           },
-          session: {
-            token: 'session-token-123',
+        })
+        // Second call: sign-in (after emailVerified is set)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            user: {
+              id: createdUserId,
+              name: 'John Doe',
+              email: 'john@example.com',
+              emailVerified: true,
+            },
+            session: {
+              token: 'session-token-123',
+            },
+          }),
+          headers: {
+            getSetCookie: () => [
+              'better-auth.session_token=session-token-123; Path=/; HttpOnly; Secure; SameSite=Lax',
+              'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+            ],
           },
-        }),
-        headers: {
-          getSetCookie: () => [
-            'better-auth.session_token=session-token-123; Path=/; HttpOnly; Secure; SameSite=Lax',
-            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
-          ],
-        },
-      });
+        });
 
-      // Mock user updates (emailVerified)
+      // Mock user update (emailVerified set immediately after signup)
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
         name: 'John Doe',
@@ -201,9 +218,6 @@ describe('POST /api/auth/accept-invite', () => {
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
       } as any);
-
-      // Mock session cleanup
-      vi.mocked(prisma.session.delete).mockResolvedValue({} as any);
 
       // Mock token deletion
       vi.mocked(deleteInvitationToken).mockResolvedValue();
@@ -257,13 +271,14 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Assert: Email was marked as verified (same User ID used)
+      // For USER role (default), role is undefined in the update
       expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
         where: { id: createdUserId },
-        data: { emailVerified: true },
+        data: {
+          emailVerified: true,
+          role: undefined, // USER is default, so role field is undefined
+        },
       });
-
-      // Assert: Session was NOT cleaned up (kept for auto-login)
-      expect(vi.mocked(prisma.session.delete)).not.toHaveBeenCalled();
 
       // Assert: Invitation token was deleted
       expect(vi.mocked(deleteInvitationToken)).toHaveBeenCalledWith('john@example.com');
@@ -304,28 +319,45 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock better-auth signup response (creates USER by default)
       const createdUserId = 'admin-id-123';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'Admin User',
-            email: 'admin@example.com',
-            emailVerified: false,
+      mockFetch
+        // First call: signup
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            user: {
+              id: createdUserId,
+              name: 'Admin User',
+              email: 'admin@example.com',
+              emailVerified: false,
+            },
+          }),
+          headers: {
+            getSetCookie: () => [], // No cookies from signup (verification required)
           },
-          session: {
-            token: 'session-token-456',
+        })
+        // Second call: sign-in (after emailVerified is set)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            user: {
+              id: createdUserId,
+              name: 'Admin User',
+              email: 'admin@example.com',
+              emailVerified: true,
+            },
+            session: {
+              token: 'session-token-456',
+            },
+          }),
+          headers: {
+            getSetCookie: () => [
+              'better-auth.session_token=session-token-456; Path=/; HttpOnly; Secure; SameSite=Lax',
+              'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+            ],
           },
-        }),
-        headers: {
-          getSetCookie: () => [
-            'better-auth.session_token=session-token-456; Path=/; HttpOnly; Secure; SameSite=Lax',
-            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
-          ],
-        },
-      });
+        });
 
-      // Mock user updates (role and emailVerified)
+      // Mock user update (role and emailVerified set together)
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
         name: 'Admin User',
@@ -337,14 +369,8 @@ describe('POST /api/auth/accept-invite', () => {
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
       } as any);
 
-      // Mock session cleanup
-      vi.mocked(prisma.session.delete).mockResolvedValue({} as any);
-
       // Mock token deletion
       vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Mock welcome email
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'mock-email-id' });
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -355,17 +381,31 @@ describe('POST /api/auth/accept-invite', () => {
       });
       await POST(request);
 
-      // Assert: Role was updated to ADMIN (before emailVerified update)
+      // Assert: Role AND emailVerified were updated together (single update)
       expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
         where: { id: createdUserId },
-        data: { role: 'ADMIN' },
+        data: {
+          emailVerified: true,
+          role: 'ADMIN',
+        },
       });
 
-      // Assert: Email was marked as verified (after role update)
-      expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
-        where: { id: createdUserId },
-        data: { emailVerified: true },
-      });
+      // Assert: Sign-in endpoint was called AFTER user update
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:3000/api/auth/sign-in/email',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'X-Better-Auth': 'true',
+          }),
+          body: JSON.stringify({
+            email: 'admin@example.com',
+            password: 'SecurePassword456!',
+          }),
+        })
+      );
     });
 
     it.skip('REMOVED: Welcome email now sent by database hook, not by accept-invite endpoint', async () => {

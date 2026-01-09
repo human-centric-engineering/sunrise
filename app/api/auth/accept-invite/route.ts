@@ -11,10 +11,10 @@
  * 2. Validate invitation token (checks expiration and email match)
  * 3. Fetch invitation metadata (name, role, invitedBy, invitedAt)
  * 4. Create user via better-auth signup endpoint (FIRST TIME - stable User ID)
- * 5. Capture Set-Cookie headers from better-auth response
- * 6. Update role if non-default
- * 7. Mark email as verified
- * 8. Delete invitation token
+ * 5. IMMEDIATELY set emailVerified=true AND role (BEFORE session check)
+ * 6. Delete invitation token
+ * 7. Create explicit session via sign-in endpoint (better-auth sees emailVerified=true)
+ * 8. Capture Set-Cookie headers from sign-in response
  * 9. Return success response with forwarded session cookies for auto-login
  *
  * Security:
@@ -25,7 +25,9 @@
  * - Session is kept for auto-login (consistent with OAuth invitation flow)
  *
  * Session Cookie Forwarding:
- * - better-auth sets session cookies when creating users via /api/auth/sign-up/email
+ * - Invitation acceptance requires emailVerified=true BEFORE session creation
+ * - We set emailVerified immediately after signup, then call sign-in endpoint
+ * - better-auth sets session cookies via /api/auth/sign-in/email (after seeing verified email)
  * - When called from server-side (this API route), cookies are returned to the server
  * - We must explicitly forward these cookies to the client browser for auto-login
  * - Without forwarding, the session exists in DB but browser has no session cookie
@@ -133,10 +135,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Capture Set-Cookie headers from better-auth response to forward to client
-    // This is critical for auto-login - the session cookies must reach the browser
-    const setCookieHeaders = signupResponse.headers.getSetCookie();
-
     const signupData = (await signupResponse.json()) as {
       user: { id: string };
       session?: { token: string };
@@ -145,27 +143,58 @@ export async function POST(request: NextRequest) {
 
     logger.info('User created via better-auth', { email, userId: newUserId });
 
-    // 5. Update role if non-default
-    if (metadata.role && metadata.role !== 'USER') {
-      await prisma.user.update({
-        where: { id: newUserId },
-        data: { role: metadata.role },
-      });
-      logger.info('User role updated', { userId: newUserId, role: metadata.role });
-    }
-
-    // 6. Mark email as verified (accepting invitation verifies email)
+    // 5. IMMEDIATELY set emailVerified=true AND role (BEFORE session check)
+    // Accepting invitation proves email ownership
     await prisma.user.update({
       where: { id: newUserId },
-      data: { emailVerified: true },
+      data: {
+        emailVerified: true, // Mark as verified
+        role: metadata.role && metadata.role !== 'USER' ? metadata.role : undefined,
+      },
     });
 
-    // 7. Delete invitation token
+    logger.info('Email verified and role applied', {
+      userId: newUserId,
+      role: metadata.role,
+    });
+
+    // 6. Delete invitation token
     await deleteInvitationToken(email);
 
     logger.info('Invitation accepted successfully', { email, userId: newUserId });
 
-    // 9. Return success response with session cookies from better-auth
+    // 7. Create session explicitly (better-auth will now see emailVerified=true)
+    const sessionResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Better-Auth': 'true',
+      },
+      body: JSON.stringify({
+        email,
+        password,
+      }),
+    });
+
+    if (!sessionResponse.ok) {
+      const error = (await sessionResponse.json().catch(() => ({ message: 'Sign-in failed' }))) as {
+        message?: string;
+      };
+      logger.error('better-auth sign-in failed after invitation acceptance', undefined, {
+        email,
+        userId: newUserId,
+        error: error.message ?? 'Unknown error',
+      });
+      return errorResponse('User created but failed to create session', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
+    }
+
+    // Capture Set-Cookie headers from sign-in response
+    const setCookieHeaders = sessionResponse.headers.getSetCookie();
+
+    // 8. Return success response with session cookies from better-auth
     // Forward Set-Cookie headers to establish browser session for auto-login
     const response = successResponse(
       {
