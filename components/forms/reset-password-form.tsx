@@ -41,12 +41,37 @@ export function ResetPasswordForm() {
 }
 
 /**
+ * Map URL error codes to user-friendly messages
+ * These errors come from better-auth when a reset link is invalid/expired
+ */
+function getUrlErrorMessage(errorCode: string | null): string | null {
+  if (!errorCode) return null;
+
+  const errorMessages: Record<string, string> = {
+    INVALID_TOKEN:
+      'Your password reset link has expired or is invalid. Please request a new one below.',
+    EXPIRED: 'Your password reset link has expired. Please request a new one below.',
+    USED: 'This password reset link has already been used. Please request a new one if needed.',
+  };
+
+  return (
+    errorMessages[errorCode] ||
+    'There was an issue with your reset link. Please request a new one below.'
+  );
+}
+
+/**
  * Request Reset Form (State 1 - No Token)
  *
  * Allows user to request a password reset email.
  * Shows generic success message for security (doesn't reveal if email exists).
+ * Displays contextual message when user arrives from an expired/invalid link.
  */
 function RequestResetForm() {
+  const searchParams = useSearchParams();
+  const urlError = searchParams.get('error');
+  const urlErrorMessage = getUrlErrorMessage(urlError);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -134,6 +159,14 @@ function RequestResetForm() {
   // Form state - show email input
   return (
     <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
+      {/* Show contextual message for URL errors (expired/invalid links) */}
+      {urlErrorMessage && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/10 dark:text-amber-400">
+          <p className="font-medium">Reset link expired</p>
+          <p className="mt-1">{urlErrorMessage}</p>
+        </div>
+      )}
+
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
         <Input
