@@ -141,5 +141,6 @@ export const env = parsed.data as Env;
 
 // Log successful validation in development (server-side only)
 if (!isBrowser && env.NODE_ENV === 'development') {
+  // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.log('✅ Environment variables validated successfully');
 }
