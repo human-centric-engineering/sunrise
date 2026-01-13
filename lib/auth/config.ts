@@ -102,6 +102,9 @@ export const auth = betterAuth({
     // Automatically sign in user after successful email verification
     autoSignInAfterVerification: true,
 
+    // Token expiration time in seconds (24 hours to match email messaging)
+    expiresIn: 86400, // 24 hours
+
     // Send verification email callback (better-auth calls this)
     sendVerificationEmail: async ({
       user,
@@ -123,8 +126,12 @@ export const auth = betterAuth({
         return; // Don't send verification email for invitation acceptance
       }
 
-      // Replace the default callbackURL (/) with /dashboard
-      const verificationUrl = url.replace('callbackURL=%2F', 'callbackURL=%2Fdashboard');
+      // Replace the default callbackURL (/) with our verification callback page
+      // This page handles both success (redirect to dashboard) and error states (show resend option)
+      const verificationUrl = url.replace(
+        'callbackURL=%2F',
+        'callbackURL=%2Fverify-email%2Fcallback'
+      );
 
       await sendEmail({
         to: user.email,
