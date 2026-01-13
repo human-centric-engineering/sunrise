@@ -3,6 +3,7 @@ import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 
 let resendClient: Resend | null = null;
+let startupWarningLogged = false;
 
 /**
  * Get Resend client instance (singleton pattern)
@@ -53,4 +54,36 @@ export function getDefaultSender(): string {
   }
 
   return sender;
+}
+
+/**
+ * Validate email configuration at startup
+ *
+ * Checks for configuration mismatches and logs warnings:
+ * - Email verification required but no email provider configured
+ *
+ * This function is idempotent (only logs once) and should be called
+ * during application initialization.
+ */
+export function validateEmailConfig(): void {
+  // Only log once
+  if (startupWarningLogged) {
+    return;
+  }
+
+  startupWarningLogged = true;
+
+  // Determine if email verification is required
+  const requireEmailVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+
+  // Check for mismatch: verification required but email not configured
+  if (requireEmailVerification && !isEmailEnabled()) {
+    logger.warn('Email verification is required but email provider is not configured', {
+      requireEmailVerification,
+      hasResendApiKey: !!env.RESEND_API_KEY,
+      hasEmailFrom: !!env.EMAIL_FROM,
+      nodeEnv: env.NODE_ENV,
+      recommendation: 'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
+    });
+  }
 }

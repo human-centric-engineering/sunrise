@@ -52,6 +52,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: true,
+        status: 'sent',
         id: 'mock-email-id-123',
       });
     });
@@ -70,6 +71,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: true,
+        status: 'sent',
         id: 'custom-email-id',
       });
     });
@@ -131,6 +133,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: false,
+        status: 'failed',
         error: 'Email sending failed',
       });
     });
@@ -149,6 +152,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: false,
+        status: 'failed',
         error: 'SMTP connection failed',
       });
     });
@@ -255,6 +259,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: true,
+        status: 'sent',
         id: 'mock-email-id',
       });
     });
@@ -266,6 +271,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: true,
+        status: 'sent',
         id: 'email_123abc',
       });
     });
@@ -288,6 +294,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: false,
+        status: 'failed',
         error: 'Email sending failed',
       });
     });
@@ -299,6 +306,7 @@ describe('Email Test Helpers', () => {
       // Assert
       expect(result).toEqual({
         success: false,
+        status: 'failed',
         error: 'Invalid recipient',
       });
     });

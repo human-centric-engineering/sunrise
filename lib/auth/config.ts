@@ -4,6 +4,7 @@ import { getOAuthState } from 'better-auth/api';
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
+import { validateEmailConfig } from '@/lib/email/client';
 import VerifyEmailEmail from '@/emails/verify-email';
 import ResetPasswordEmail from '@/emails/reset-password';
 import WelcomeEmail from '@/emails/welcome';
@@ -389,6 +390,9 @@ export const auth = betterAuth({
     },
   },
 });
+
+// Validate email configuration at startup
+validateEmailConfig();
 
 // Export the auth handler type for use in API routes
 export type Auth = typeof auth;

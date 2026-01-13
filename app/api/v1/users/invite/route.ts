@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
 
       return successResponse(
         {
-          message: 'Invitation already sent',
+          message: 'Invitation already sent (existing invitation returned, no email sent)',
           invitation: {
             email: body.email,
             name: metadata.name,
@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
             expiresAt: existingInvitation.expiresAt.toISOString(),
             link: invitationUrl,
           },
+          emailStatus: 'disabled' as const,
         },
         undefined,
         { status: 200 }
@@ -173,18 +174,28 @@ export async function POST(request: NextRequest) {
       logger.warn('Failed to send invitation email', {
         email: body.email,
         error: emailResult.error,
+        emailStatus: emailResult.status,
       });
     } else {
       logger.info('Invitation email sent', {
         email: body.email,
         emailId: emailResult.id,
+        emailStatus: emailResult.status,
       });
     }
 
     // 8. Return invitation details (NOT user object)
+    // Message varies based on email delivery status
+    const message =
+      emailResult.status === 'sent'
+        ? 'Invitation sent successfully'
+        : emailResult.status === 'failed'
+          ? 'Invitation created but email failed to send'
+          : 'Invitation created (email service not configured)';
+
     return successResponse(
       {
-        message: 'Invitation sent successfully',
+        message,
         invitation: {
           email: body.email,
           name: body.name,
@@ -193,6 +204,7 @@ export async function POST(request: NextRequest) {
           expiresAt: expiresAt.toISOString(),
           link: invitationUrl,
         },
+        emailStatus: emailResult.status,
       },
       undefined,
       { status: 201 }

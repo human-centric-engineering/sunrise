@@ -124,6 +124,7 @@ interface SuccessResponse {
       expiresAt: string;
       link: string;
     };
+    emailStatus: 'sent' | 'failed' | 'disabled';
   };
 }
 
@@ -179,6 +180,7 @@ describe('POST /api/v1/users/invite', () => {
       expect(response.status).toBe(201);
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Invitation sent successfully');
+      expect(body.data.emailStatus).toBe('sent');
       expect(body.data.invitation).toMatchObject({
         email: 'john@example.com',
         name: 'John Doe',
@@ -233,6 +235,7 @@ describe('POST /api/v1/users/invite', () => {
       // Mock email sending
       vi.mocked(sendEmail).mockResolvedValue({
         success: true,
+        status: 'sent',
         id: 'email-id-456',
       });
 
@@ -248,6 +251,7 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Response has default USER role
       expect(response.status).toBe(201);
       expect(body.data.invitation.role).toBe('USER');
+      expect(body.data.emailStatus).toBe('sent');
     });
 
     it('should continue even if email sending fails', async () => {
@@ -279,7 +283,8 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Request still succeeds (201) despite email failure
       expect(response.status).toBe(201);
       expect(body.success).toBe(true);
-      expect(body.data.message).toBe('Invitation sent successfully');
+      expect(body.data.message).toBe('Invitation created but email failed to send');
+      expect(body.data.emailStatus).toBe('failed');
       expect(body.data.invitation.email).toBe('bob@example.com');
 
       // Assert: Warning was logged
@@ -287,6 +292,7 @@ describe('POST /api/v1/users/invite', () => {
         'Failed to send invitation email',
         expect.objectContaining({
           error: 'SMTP connection failed',
+          emailStatus: 'failed',
         })
       );
     });
@@ -419,7 +425,10 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Returns existing invitation (200 status)
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.data.message).toBe('Invitation already sent');
+      expect(body.data.message).toBe(
+        'Invitation already sent (existing invitation returned, no email sent)'
+      );
+      expect(body.data.emailStatus).toBe('disabled');
       expect(body.data.invitation).toMatchObject({
         email: 'existing@example.com',
         name: 'Existing User',
@@ -574,12 +583,13 @@ describe('POST /api/v1/users/invite', () => {
       expect(response.status).toBe(201);
       expect(body.success).toBe(true);
 
-      // Assert: Email success was logged with email ID
+      // Assert: Email success was logged with email ID and status
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
         'Invitation email sent',
         expect.objectContaining({
           email: 'test@example.com',
           emailId: 'email-id-success-123',
+          emailStatus: 'sent',
         })
       );
     });

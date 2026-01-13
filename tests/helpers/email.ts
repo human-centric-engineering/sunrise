@@ -79,6 +79,7 @@ export function mockEmailSuccess(
 ) {
   sendEmailMock.mockResolvedValue({
     success: true,
+    status: 'sent',
     id,
   } as SendEmailResult);
 }
@@ -110,6 +111,7 @@ export function mockEmailFailure(
 ) {
   sendEmailMock.mockResolvedValue({
     success: false,
+    status: 'failed',
     error: errorMessage,
   } as SendEmailResult);
 }
@@ -178,6 +180,7 @@ export function resetEmailMock(sendEmailMock: ReturnType<typeof vi.fn>) {
 export function createMockEmailResult(id = 'mock-email-id'): SendEmailResult {
   return {
     success: true,
+    status: 'sent',
     id,
   };
 }
@@ -199,6 +202,7 @@ export function createMockEmailResult(id = 'mock-email-id'): SendEmailResult {
 export function createMockEmailFailure(errorMessage = 'Email sending failed'): SendEmailResult {
   return {
     success: false,
+    status: 'failed',
     error: errorMessage,
   };
 }

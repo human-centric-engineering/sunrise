@@ -66,7 +66,7 @@ vi.mock('@/lib/env', () => ({
 
 // Mock email sending
 vi.mock('@/lib/email/send', () => ({
-  sendEmail: vi.fn().mockResolvedValue({ success: true, id: 'mock-email-id' }),
+  sendEmail: vi.fn().mockResolvedValue({ success: true, status: 'sent', id: 'mock-email-id' }),
 }));
 
 // Import mocked modules
@@ -223,7 +223,11 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(deleteInvitationToken).mockResolvedValue();
 
       // Mock welcome email
-      vi.mocked(sendEmail).mockResolvedValue({ success: true, id: 'mock-email-id' });
+      vi.mocked(sendEmail).mockResolvedValue({
+        success: true,
+        status: 'sent',
+        id: 'mock-email-id',
+      });
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({

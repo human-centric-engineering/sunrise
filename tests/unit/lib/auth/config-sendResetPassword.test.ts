@@ -88,7 +88,7 @@ describe('lib/auth/config - sendResetPassword callback', () => {
     };
 
     // Default mock behavior: email sending succeeds
-    sendEmail.mockResolvedValue({ success: true, id: 'email-123' });
+    sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
   });
 
   afterEach(() => {

@@ -12,8 +12,11 @@ export interface SendEmailOptions {
   replyTo?: string;
 }
 
+export type EmailStatus = 'sent' | 'failed' | 'disabled';
+
 export interface SendEmailResult {
   success: boolean;
+  status: EmailStatus;
   id?: string;
   error?: string;
 }
@@ -55,6 +58,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       });
       return {
         success: true,
+        status: 'disabled',
         id: `mock-${Date.now()}`,
       };
     }
@@ -67,6 +71,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       });
       return {
         success: true,
+        status: 'disabled',
         id: `mock-test-${Date.now()}`,
       };
     }
@@ -104,6 +109,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       });
       return {
         success: false,
+        status: 'failed',
         error: result.error.message || 'Failed to send email',
       };
     }
@@ -119,6 +125,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
     return {
       success: true,
+      status: 'sent',
       id: emailId,
     };
   } catch (error) {
@@ -131,6 +138,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
     return {
       success: false,
+      status: 'failed',
       error: error instanceof Error ? error.message : 'Unknown error sending email',
     };
   }
