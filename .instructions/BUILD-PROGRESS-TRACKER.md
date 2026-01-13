@@ -4,19 +4,19 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2025-12-30
-**Current Phase:** Phase 2 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5)
+**Last Updated:** 2026-01-13
+**Current Phase:** Phase 3.1 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (1/6)
 **Blockers:** None
-**Next Steps:** Phase 3.1 - Email System
+**Next Steps:** Phase 3.2 - User Management
 
 **Recent Completions:**
 
+- ✅ Phase 3.1 - Email System (Resend + React Email, invitation flow, email verification, comprehensive auth tests)
 - ✅ Phase 2.5 - Documentation Structure (CUSTOMIZATION.md - concise fork-and-adapt guide)
 - ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
 - ✅ Phase 2.3 - Error Handling & Logging (Structured logging, global error handler, error boundaries, Sentry integration)
 - ✅ Phase 2.2 - Type Safety & Validation (Type-safe API client, common schemas, Zod 4 updates, comprehensive documentation)
-- ✅ Phase 2.1 - Code Quality Tools (Prettier, Husky, lint-staged, VSCode custom labels)
 
 ---
 
@@ -319,17 +319,55 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Phase 3: Production Features
 
-### 3.1 Email System
+### 3.1 Email System ✅
 
-- [ ] Install Resend and React Email
-- [ ] Configure Resend client
-- [ ] Create email utilities
-- [ ] Build welcome email template
-- [ ] Build verification email template
-- [ ] Build password reset template
-- [ ] Add email to auth flows
-- [ ] Test email delivery
-- [ ] Document email setup
+**Completed:** 2026-01-13
+
+- [x] Install Resend and React Email
+- [x] Configure Resend client
+- [x] Create email utilities
+- [x] Build welcome email template
+- [x] Build verification email template
+- [x] Build password reset template
+- [x] Build invitation email template
+- [x] Add email to auth flows
+- [x] Implement user invitation flow
+- [x] Test email delivery
+- [x] Document email setup
+
+**Key Files:**
+
+- `lib/email/client.ts` - Resend client configuration
+- `lib/email/send.ts` - Email sending utilities with environment-aware behavior
+- `emails/welcome.tsx` - Welcome email template
+- `emails/verify-email.tsx` - Email verification template
+- `emails/reset-password.tsx` - Password reset template
+- `emails/invitation.tsx` - User invitation template
+- `emails/layouts/base.tsx` - Shared email layout
+- `app/api/v1/users/invite/route.ts` - Invitation-based user creation endpoint
+- `app/(auth)/accept-invite/page.tsx` - Invitation acceptance page
+- `lib/auth/invitation-token.ts` - JWT-based invitation token utilities
+- `components/forms/accept-invite-form.tsx` - Invitation acceptance form
+- `.context/email/overview.md` - Comprehensive email system documentation
+
+**Key Features:**
+
+- **Resend Integration**: Production email delivery with React Email templates
+- **Environment-Aware**: Emails logged in development, sent in production
+- **Email Verification**: Configurable via REQUIRE_EMAIL_VERIFICATION env var
+- **Invitation System**: Secure JWT tokens, email-locked invitations, password-less user creation
+- **OAuth Integration**: Accept invitations via OAuth (Google) with email verification
+- **Comprehensive Testing**: 200+ auth/email-related tests added
+- **UX Improvements**: Expired link handling, resend verification from login, clear error messages
+
+**Implementation Highlights:**
+
+- **Two User Creation Patterns**: Self-signup (POST /api/auth/sign-up/email) and invitation-based (POST /api/v1/users/invite)
+- **Email Verification Toggle**: Disabled by default in development, enabled in production
+- **Invitation Flow**: Admin invites → User receives email → Sets password or uses OAuth → Account activated
+- **Security**: Email-locked tokens prevent invitation forwarding, expired tokens handled gracefully
+- **PII Sanitization**: Environment-aware log scrubbing for GDPR compliance
+- **Reusable Components**: PasswordInput with show/hide toggle, PasswordStrength meter
 
 ### 3.2 User Management
 
@@ -1204,3 +1242,91 @@ Removed 13 redundant historical/planning files:
 - **Coverage**: Vitest coverage with c8
 
 **Branch:** `feature/phase-2.4-testing-framework`
+
+### 2026-01-13 - Phase 3.1 Complete
+
+**Email System Implemented:**
+
+- Installed Resend and React Email for production email delivery
+- Created comprehensive email infrastructure with environment-aware behavior
+- Built four React Email templates: welcome, verification, reset-password, invitation
+- Implemented complete user invitation flow with JWT-based tokens
+- Integrated email verification with better-auth flows
+- Added OAuth-based invitation acceptance (Google)
+- Created extensive test coverage for all auth/email components
+
+**User Creation Patterns:**
+
+Two patterns now available for creating users:
+
+1. **Self-Signup** (user-initiated):
+   - Endpoint: `POST /api/auth/sign-up/email`
+   - Email verification: Environment-based (disabled in dev, enabled in prod)
+   - Best for: Public user registration
+
+2. **Invitation-Based** (admin-initiated, recommended):
+   - Endpoint: `POST /api/v1/users/invite`
+   - User sets their own password via secure email link
+   - Email auto-verified on acceptance
+   - Best for: Team invites, admin-created accounts, production environments
+
+**Environment Configuration:**
+
+- `RESEND_API_KEY` - Required for production email sending
+- `EMAIL_FROM` - Sender email address (e.g., noreply@yourdomain.com)
+- `EMAIL_FROM_NAME` - Optional sender name (defaults to "Sunrise")
+- `REQUIRE_EMAIL_VERIFICATION` - Override default behavior (dev=false, prod=true)
+
+**Email Behavior by Environment:**
+
+- **Development**: Emails logged to console, not sent (unless RESEND_API_KEY configured)
+- **Production**: Emails sent via Resend API
+- **Email Verification**: Disabled in dev by default, enabled in prod (configurable)
+
+**Key Implementation Details:**
+
+- **Invitation Tokens**: JWT-based, 7-day expiry, email-locked for security
+- **OAuth Invitation Acceptance**: Validates OAuth email matches invitation email
+- **Expired Link Handling**: Clear UX for expired verification/invitation links
+- **Resend Verification**: Users can request new verification email from login page
+- **PII Sanitization**: Automatic scrubbing of sensitive data from logs (GDPR-ready)
+
+**Testing Coverage Added:**
+
+- 200+ new auth/email-related tests
+- Form component tests: login-form, signup-form, accept-invite-form, reset-password-form
+- Page tests: login, signup, accept-invite, reset-password, verify-email
+- API route tests: accept-invite, invitations/metadata
+- Utility tests: invitation-token, password-strength, error-messages
+- Coverage improvement: login-form function coverage 77.77% → 88.88%
+
+**Files Created:**
+
+- `lib/email/client.ts` - Resend client singleton
+- `lib/email/send.ts` - Environment-aware email sending
+- `emails/welcome.tsx` - Welcome email template
+- `emails/verify-email.tsx` - Verification email template
+- `emails/reset-password.tsx` - Password reset template
+- `emails/invitation.tsx` - User invitation template
+- `emails/layouts/base.tsx` - Shared email layout with branding
+- `app/api/v1/users/invite/route.ts` - Invitation endpoint
+- `app/api/v1/invitations/metadata/route.ts` - Invitation metadata endpoint
+- `app/api/auth/accept-invite/route.ts` - Invitation acceptance handler
+- `app/(auth)/accept-invite/page.tsx` - Invitation acceptance page
+- `app/(auth)/verify-email/callback/page.tsx` - Email verification callback
+- `lib/auth/invitation-token.ts` - JWT token utilities
+- `components/forms/accept-invite-form.tsx` - Invitation form component
+- `components/ui/password-input.tsx` - Reusable password input with toggle
+- `.context/email/overview.md` - Email system documentation
+- `.context/auth/user-creation.md` - User creation patterns documentation
+
+**Git Commits (key commits):**
+
+- `2f221ec` - feat: add environment-aware PII sanitization for GDPR compliance
+- `0e37b3c` - feat: add reusable PasswordInput component with show/hide toggle
+- `629a739` - test: add comprehensive tests for verify-email callback page
+- `03ea5a2` - feat: improve email verification UX for expired links and unverified login
+- `9d365e8` - fix: prevent OAuth invitation acceptance with mismatched email
+- `edc7efe` - test: improve login-form function coverage by invoking onRequest callback
+
+**Branch:** `feature/phase-3.1-email-system`
