@@ -276,6 +276,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onSuccess?.(
           {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
         );
@@ -311,6 +314,9 @@ describe('components/forms/login-form', () => {
       );
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onSuccess?.(
           {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
         );
@@ -341,6 +347,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onError?.({
           error: { message: 'Invalid email or password' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
@@ -427,6 +436,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onError?.({
           error: { message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
@@ -457,6 +469,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onError?.({
           error: { message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
@@ -507,6 +522,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onError?.({
           error: { message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
@@ -549,6 +567,9 @@ describe('components/forms/login-form', () => {
       const { authClient } = await import('@/lib/auth/client');
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
         void callbacks?.onError?.({
           error: { message: 'Email not verified' },
         } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
