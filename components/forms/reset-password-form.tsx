@@ -13,10 +13,11 @@ import {
 } from '@/lib/validations/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { FormError } from './form-error';
 import { PasswordStrength } from './password-strength';
-import { Eye, EyeOff, Mail } from 'lucide-react';
+import { Mail } from 'lucide-react';
 import Link from 'next/link';
 
 /**
@@ -208,8 +209,6 @@ function CompleteResetForm({ token }: { token: string }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const {
     register,
@@ -289,28 +288,16 @@ function CompleteResetForm({ token }: { token: string }) {
     <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4">
       <input type="hidden" {...register('token')} />
 
-      {/* Password Field with Show/Hide Toggle */}
+      {/* Password Field */}
       <div className="space-y-2">
         <Label htmlFor="password">New Password</Label>
-        <div className="relative">
-          <Input
-            id="password"
-            type={showPassword ? 'text' : 'password'}
-            placeholder="••••••••"
-            autoComplete="new-password"
-            disabled={isLoading}
-            {...register('password')}
-            className="pr-10"
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
-          >
-            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
-        </div>
+        <PasswordInput
+          id="password"
+          placeholder="••••••••"
+          autoComplete="new-password"
+          disabled={isLoading}
+          {...register('password')}
+        />
         <FormError message={errors.password?.message} />
         <PasswordStrength password={password} />
         <p className="text-muted-foreground text-xs">
@@ -318,28 +305,16 @@ function CompleteResetForm({ token }: { token: string }) {
         </p>
       </div>
 
-      {/* Confirm Password Field with Show/Hide Toggle */}
+      {/* Confirm Password Field */}
       <div className="space-y-2">
         <Label htmlFor="confirmPassword">Confirm Password</Label>
-        <div className="relative">
-          <Input
-            id="confirmPassword"
-            type={showConfirmPassword ? 'text' : 'password'}
-            placeholder="••••••••"
-            autoComplete="new-password"
-            disabled={isLoading}
-            {...register('confirmPassword')}
-            className="pr-10"
-          />
-          <button
-            type="button"
-            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-            className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-            aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-          >
-            {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
-        </div>
+        <PasswordInput
+          id="confirmPassword"
+          placeholder="••••••••"
+          autoComplete="new-password"
+          disabled={isLoading}
+          {...register('confirmPassword')}
+        />
         <FormError message={errors.confirmPassword?.message} />
       </div>
 
