@@ -17,6 +17,7 @@ vi.mock('@/lib/env', () => ({
   env: {
     RESEND_API_KEY: '',
     EMAIL_FROM: '',
+    EMAIL_FROM_NAME: '',
     NODE_ENV: 'test',
   },
 }));
@@ -152,6 +153,7 @@ describe('lib/email/client', () => {
       const { logger } = await import('@/lib/logging');
 
       env.EMAIL_FROM = '';
+      env.EMAIL_FROM_NAME = '';
 
       const result = getDefaultSender();
 
@@ -169,11 +171,43 @@ describe('lib/email/client', () => {
       const { logger } = await import('@/lib/logging');
 
       env.EMAIL_FROM = 'noreply@sunrise.com';
+      env.EMAIL_FROM_NAME = '';
 
       const result = getDefaultSender();
 
       expect(result).toBe('noreply@sunrise.com');
       expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('should return RFC 5322 format when EMAIL_FROM_NAME is set with EMAIL_FROM', async () => {
+      const { env } = await import('@/lib/env');
+      const { logger } = await import('@/lib/logging');
+
+      env.EMAIL_FROM = 'noreply@sunrise.com';
+      env.EMAIL_FROM_NAME = 'Sunrise Team';
+
+      const result = getDefaultSender();
+
+      expect(result).toBe('Sunrise Team <noreply@sunrise.com>');
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('should return RFC 5322 format with fallback email when EMAIL_FROM_NAME is set but EMAIL_FROM is not', async () => {
+      const { env } = await import('@/lib/env');
+      const { logger } = await import('@/lib/logging');
+
+      env.EMAIL_FROM = '';
+      env.EMAIL_FROM_NAME = 'Sunrise Team';
+
+      const result = getDefaultSender();
+
+      expect(result).toBe('Sunrise Team <noreply@localhost>');
+      expect(logger.warn).toHaveBeenCalledWith(
+        'EMAIL_FROM not configured - using fallback sender',
+        {
+          sender: 'noreply@localhost',
+        }
+      );
     });
   });
 

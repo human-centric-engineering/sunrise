@@ -51,6 +51,7 @@ const serverEnvSchema = z.object({
   // Email (optional for Phase 1, required in Phase 3)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
+  EMAIL_FROM_NAME: z.string().optional(),
   REQUIRE_EMAIL_VERIFICATION: z
     .string()
     .optional()

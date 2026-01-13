@@ -13,6 +13,7 @@ Complete reference for all environment variables used in Sunrise. This document 
 | [`GOOGLE_CLIENT_SECRET`](#google_client_secret) | ❌ No    | String       | -             | 1.4   | Google OAuth secret          |
 | [`RESEND_API_KEY`](#resend_api_key)             | ❌ No    | String       | -             | 3.1   | Resend email API key         |
 | [`EMAIL_FROM`](#email_from)                     | ❌ No    | Email        | -             | 3.1   | Sender email address         |
+| [`EMAIL_FROM_NAME`](#email_from_name)           | ❌ No    | String       | -             | 3.1   | Sender display name          |
 | [`NODE_ENV`](#node_env)                         | ✅ Yes   | Enum         | `development` | 1.1   | Environment name             |
 | [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)   | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
 | [`LOG_LEVEL`](#log_level)                       | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
@@ -465,6 +466,68 @@ Your sender email address and domain directly affect email deliverability and re
 - **Display name not showing**: Ensure proper quote escaping for special characters
 - **Emails rejected**: Verify sender address matches verified domain
 
+#### `EMAIL_FROM_NAME`
+
+- **Purpose:** Display name for the email sender (appears before the email address)
+- **Required:** ❌ No
+- **Type:** String
+- **Format:** Plain text name (e.g., `Sunrise`, `Sunrise App`)
+- **Validation:** None (optional)
+- **Used By:**
+  - `lib/email/client.ts` - Combined with `EMAIL_FROM` to create RFC 5322 sender format
+- **Phase:** 3.1 (Email System)
+
+**How It Works:**
+
+When `EMAIL_FROM_NAME` is set, emails are sent with the RFC 5322 format:
+
+```
+From: Sunrise <noreply@example.com>
+```
+
+Without `EMAIL_FROM_NAME`, only the email address is used:
+
+```
+From: noreply@example.com
+```
+
+**Examples:**
+
+Simple name:
+
+```bash
+EMAIL_FROM_NAME="Sunrise"
+# Result: "Sunrise <noreply@example.com>"
+```
+
+App name with context:
+
+```bash
+EMAIL_FROM_NAME="Sunrise App"
+# Result: "Sunrise App <noreply@example.com>"
+```
+
+Not set (default):
+
+```bash
+# EMAIL_FROM_NAME not set
+# Result: "noreply@example.com" (email only)
+```
+
+**Best Practices:**
+
+- **Keep it short:** 15-30 characters for best mobile display
+- **Use your app/brand name:** Makes emails recognizable
+- **Be consistent:** Use the same name across all emails
+- **Avoid spam triggers:** No ALL CAPS, excessive punctuation, or misleading names
+
+**Important Notes:**
+
+- This is optional - emails work fine without a display name
+- The display name appears in the recipient's inbox before the email address
+- Some email clients show only the display name (not the email address)
+- Setting a recognizable name improves open rates and trust
+
 ---
 
 ### Application Configuration
@@ -874,6 +937,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
+  EMAIL_FROM_NAME: z.string().optional(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   NEXT_PUBLIC_APP_URL: z.string().url({ message: '...' }),
 });

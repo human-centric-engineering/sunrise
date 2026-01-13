@@ -48,6 +48,7 @@ Sunrise uses Resend for production email delivery and React Email for template r
 
 - `RESEND_API_KEY` - API key from resend.com for sending emails
 - `EMAIL_FROM` - Default sender email address (e.g., "noreply@yourdomain.com")
+- `EMAIL_FROM_NAME` - (Optional) Display name for sender (e.g., "Sunrise" produces "Sunrise <noreply@yourdomain.com>")
 
 ### Behavior by Environment
 

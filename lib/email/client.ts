@@ -45,15 +45,21 @@ export function isEmailEnabled(): boolean {
 /**
  * Get default email sender address
  * Returns EMAIL_FROM if configured, otherwise fallback
+ * If EMAIL_FROM_NAME is set, returns "Name <email>" format (RFC 5322)
  */
 export function getDefaultSender(): string {
-  const sender = env.EMAIL_FROM || 'noreply@localhost';
+  const email = env.EMAIL_FROM || 'noreply@localhost';
 
   if (!env.EMAIL_FROM) {
-    logger.warn('EMAIL_FROM not configured - using fallback sender', { sender });
+    logger.warn('EMAIL_FROM not configured - using fallback sender', { sender: email });
   }
 
-  return sender;
+  // If a name is configured, use RFC 5322 format: "Name <email>"
+  if (env.EMAIL_FROM_NAME) {
+    return `${env.EMAIL_FROM_NAME} <${email}>`;
+  }
+
+  return email;
 }
 
 /**
