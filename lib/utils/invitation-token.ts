@@ -127,25 +127,18 @@ export async function validateInvitationToken(email: string, token: string): Pro
   try {
     const hashedToken = hashToken(token);
 
-    // Find the verification record for this email
+    // Find the most recent non-expired verification record for this email
     const verification = await prisma.verification.findFirst({
       where: {
         identifier: `${IDENTIFIER_PREFIX}${email}`,
+        expiresAt: { gt: new Date() },
       },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // Token not found
+    // Token not found or all expired
     if (!verification) {
-      logger.warn('Invitation token not found', { email });
-      return false;
-    }
-
-    // Check if token has expired (inclusive check - token expiring now is invalid)
-    if (verification.expiresAt <= new Date()) {
-      logger.warn('Invitation token expired', {
-        email,
-        expiredAt: verification.expiresAt.toISOString(),
-      });
+      logger.warn('Invitation token not found or expired', { email });
       return false;
     }
 
@@ -197,5 +190,170 @@ export async function deleteInvitationToken(email: string): Promise<void> {
   } catch (error) {
     logger.error('Failed to delete invitation token', error, { email });
     throw new Error('Failed to delete invitation token');
+  }
+}
+
+/**
+ * Invitation record returned by getValidInvitation
+ */
+export type InvitationRecord = {
+  email: string;
+  metadata: InvitationMetadata;
+  expiresAt: Date;
+  createdAt: Date;
+};
+
+/**
+ * Get a valid (non-expired) invitation for an email address
+ *
+ * Returns the most recent non-expired invitation if one exists.
+ * Does NOT validate any token - just checks if an invitation exists.
+ *
+ * @param email - The email address to look up
+ * @returns The invitation record if found and not expired, null otherwise
+ *
+ * @example
+ * ```typescript
+ * const invitation = await getValidInvitation('user@example.com');
+ * if (invitation) {
+ *   console.log(`Invitation expires: ${invitation.expiresAt}`);
+ * }
+ * ```
+ */
+export async function getValidInvitation(email: string): Promise<InvitationRecord | null> {
+  try {
+    const verification = await prisma.verification.findFirst({
+      where: {
+        identifier: `${IDENTIFIER_PREFIX}${email}`,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!verification) {
+      return null;
+    }
+
+    return {
+      email,
+      metadata: verification.metadata as InvitationMetadata,
+      expiresAt: verification.expiresAt,
+      createdAt: verification.createdAt,
+    };
+  } catch (error) {
+    logger.error('Failed to get valid invitation', error, { email });
+    return null;
+  }
+}
+
+/**
+ * Update (regenerate) an invitation token for an email
+ *
+ * Deletes all existing invitation tokens for the email and creates a new one.
+ * Use this for resending invitations - ensures the new token is valid.
+ *
+ * @param email - The email address to update the invitation for
+ * @param metadata - Updated invitation metadata
+ * @returns The new unhashed token string
+ *
+ * @example
+ * ```typescript
+ * // Resend invitation with new token
+ * const newToken = await updateInvitationToken('user@example.com', {
+ *   name: 'John Doe',
+ *   role: 'USER',
+ *   invitedBy: 'admin-id',
+ *   invitedAt: new Date().toISOString(),
+ * });
+ * await sendInvitationEmail(email, newToken);
+ * ```
+ */
+export async function updateInvitationToken(
+  email: string,
+  metadata: InvitationMetadata
+): Promise<string> {
+  // Delete all existing invitations for this email
+  await deleteInvitationToken(email);
+
+  // Generate and store new token
+  const token = await generateInvitationToken(email, metadata);
+
+  logger.info('Invitation token updated (regenerated)', { email });
+
+  return token;
+}
+
+/**
+ * Result of getInvitationMetadata validation
+ */
+export type InvitationMetadataResult =
+  | { valid: true; metadata: InvitationMetadata; expiresAt: Date }
+  | { valid: false; reason: 'not_found' | 'expired' | 'invalid_token' };
+
+/**
+ * Validate a token and retrieve invitation metadata in one operation
+ *
+ * Combines token validation with metadata retrieval. Use this when you need
+ * both validation status and metadata (e.g., for accept-invite page).
+ *
+ * @param email - The email address to validate
+ * @param token - The plain text token to validate
+ * @returns Validation result with metadata if valid, or failure reason
+ *
+ * @example
+ * ```typescript
+ * const result = await getInvitationMetadata('user@example.com', token);
+ * if (result.valid) {
+ *   console.log(`Invited by: ${result.metadata.invitedBy}`);
+ * } else {
+ *   console.log(`Failed: ${result.reason}`);
+ * }
+ * ```
+ */
+export async function getInvitationMetadata(
+  email: string,
+  token: string
+): Promise<InvitationMetadataResult> {
+  try {
+    const hashedToken = hashToken(token);
+
+    // First check if any invitation exists for this email (including expired)
+    const anyInvitation = await prisma.verification.findFirst({
+      where: {
+        identifier: `${IDENTIFIER_PREFIX}${email}`,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!anyInvitation) {
+      logger.warn('Invitation not found for metadata lookup', { email });
+      return { valid: false, reason: 'not_found' };
+    }
+
+    // Check if the invitation has expired
+    if (anyInvitation.expiresAt <= new Date()) {
+      logger.warn('Invitation expired for metadata lookup', {
+        email,
+        expiredAt: anyInvitation.expiresAt.toISOString(),
+      });
+      return { valid: false, reason: 'expired' };
+    }
+
+    // Validate the token
+    if (anyInvitation.value !== hashedToken) {
+      logger.warn('Invitation token mismatch for metadata lookup', { email });
+      return { valid: false, reason: 'invalid_token' };
+    }
+
+    logger.info('Invitation metadata retrieved', { email });
+
+    return {
+      valid: true,
+      metadata: anyInvitation.metadata as InvitationMetadata,
+      expiresAt: anyInvitation.expiresAt,
+    };
+  } catch (error) {
+    logger.error('Failed to get invitation metadata', error, { email });
+    return { valid: false, reason: 'not_found' };
   }
 }

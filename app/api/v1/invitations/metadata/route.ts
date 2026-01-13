@@ -11,22 +11,24 @@
  *
  * Flow:
  * 1. Validate query parameters
- * 2. Validate invitation token (checks expiration and email match)
- * 3. Fetch metadata from Verification table
- * 4. Return metadata (name, role)
+ * 2. Validate token and get metadata in one operation
+ * 3. Return metadata (name, role) or specific error code
+ *
+ * Response Error Codes:
+ *   - VALIDATION_ERROR: Invalid query parameters or invalid token
+ *   - INVITATION_EXPIRED: Token exists but has expired
+ *   - NOT_FOUND: No invitation found for this email
  *
  * Security:
  * - Token must be valid and not expired
- * - Returns 400 for invalid/expired tokens
- * - Returns 404 if invitation not found
+ * - Returns specific error codes to allow UI to show appropriate message
  */
 
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
-import { validateInvitationToken } from '@/lib/utils/invitation-token';
+import { getInvitationMetadata } from '@/lib/utils/invitation-token';
 import { logger } from '@/lib/logging';
 
 /**
@@ -61,37 +63,42 @@ export async function GET(request: NextRequest) {
 
     logger.info('Invitation metadata requested', { email: validated.email });
 
-    // 2. Validate token
-    const isValid = await validateInvitationToken(validated.email, validated.token);
-    if (!isValid) {
-      logger.warn('Invalid invitation token for metadata request', { email: validated.email });
-      return errorResponse('Invalid or expired invitation token', {
-        code: ErrorCodes.VALIDATION_ERROR,
-        status: 400,
-      });
+    // 2. Validate token and get metadata in one operation
+    const result = await getInvitationMetadata(validated.email, validated.token);
+
+    if (!result.valid) {
+      // Return specific error code based on failure reason
+      switch (result.reason) {
+        case 'expired':
+          logger.warn('Expired invitation for metadata request', { email: validated.email });
+          return errorResponse('This invitation has expired', {
+            code: ErrorCodes.INVITATION_EXPIRED,
+            status: 410, // Gone - resource existed but is no longer available
+          });
+
+        case 'invalid_token':
+          logger.warn('Invalid token for metadata request', { email: validated.email });
+          return errorResponse('Invalid invitation token', {
+            code: ErrorCodes.VALIDATION_ERROR,
+            status: 400,
+          });
+
+        case 'not_found':
+        default:
+          logger.warn('Invitation not found for metadata request', { email: validated.email });
+          return errorResponse('Invitation not found', {
+            code: ErrorCodes.NOT_FOUND,
+            status: 404,
+          });
+      }
     }
-
-    // 3. Get metadata
-    const invitation = await prisma.verification.findFirst({
-      where: { identifier: `invitation:${validated.email}` },
-    });
-
-    if (!invitation || !invitation.metadata) {
-      logger.warn('Invitation not found', { email: validated.email });
-      return errorResponse('Invitation not found', {
-        code: ErrorCodes.NOT_FOUND,
-        status: 404,
-      });
-    }
-
-    const metadata = invitation.metadata as { name: string; role: string };
 
     logger.info('Invitation metadata retrieved', { email: validated.email });
 
-    // 4. Return metadata
+    // 3. Return metadata
     return successResponse({
-      name: metadata.name,
-      role: metadata.role,
+      name: result.metadata.name,
+      role: result.metadata.role,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

@@ -9,7 +9,11 @@ import VerifyEmailEmail from '@/emails/verify-email';
 import ResetPasswordEmail from '@/emails/reset-password';
 import WelcomeEmail from '@/emails/welcome';
 import { logger } from '@/lib/logging';
-import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
+import {
+  validateInvitationToken,
+  deleteInvitationToken,
+  getValidInvitation,
+} from '@/lib/utils/invitation-token';
 
 /**
  * Better Auth Configuration
@@ -109,9 +113,7 @@ export const auth = betterAuth({
     }) => {
       // Check if this is an invitation acceptance - if so, skip verification email
       // The invitation acceptance flow marks email as verified immediately
-      const invitation = await prisma.verification.findFirst({
-        where: { identifier: `invitation:${user.email}` },
-      });
+      const invitation = await getValidInvitation(user.email);
 
       if (invitation) {
         logger.info('Skipping verification email for invitation acceptance', {
@@ -272,18 +274,11 @@ export const auth = betterAuth({
 
                 if (isValidToken) {
                   // Get invitation metadata FIRST (before deletion)
-                  const invitation = await prisma.verification.findFirst({
-                    where: { identifier: `invitation:${invitationEmail}` },
-                  });
+                  const invitation = await getValidInvitation(invitationEmail);
 
                   // Apply role if non-default and metadata exists
                   if (invitation?.metadata) {
-                    const metadata = invitation.metadata as {
-                      name: string;
-                      role: string;
-                      invitedBy: string;
-                      invitedAt: string;
-                    };
+                    const { metadata } = invitation;
 
                     if (metadata.role && metadata.role !== 'USER') {
                       await prisma.user.update({
@@ -321,10 +316,8 @@ export const auth = betterAuth({
                 }
               }
             } else {
-              // Check for password invitation acceptance
-              const invitation = await prisma.verification.findFirst({
-                where: { identifier: `invitation:${user.email}` },
-              });
+              // Check for password invitation acceptance (non-expired invitation)
+              const invitation = await getValidInvitation(user.email);
 
               if (invitation) {
                 isPasswordInvitation = true;

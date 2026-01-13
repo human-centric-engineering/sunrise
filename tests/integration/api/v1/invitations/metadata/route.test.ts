@@ -7,10 +7,10 @@
  * GET /api/v1/invitations/metadata:
  * - Success scenarios (valid token with different roles)
  * - Invalid token scenarios (wrong token, returns 400)
- * - Expired token scenarios (token past expiration, returns 400)
+ * - Expired token scenarios (token past expiration, returns 410)
  * - Missing invitation scenarios (invitation not found, returns 404)
  * - Query parameter validation (missing/invalid token, missing/invalid email)
- * - Edge cases (no metadata in invitation record)
+ * - Edge cases (long tokens, special characters in email)
  *
  * @see app/api/v1/invitations/metadata/route.ts
  */
@@ -18,24 +18,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GET } from '@/app/api/v1/invitations/metadata/route';
 import type { NextRequest } from 'next/server';
-import type { Prisma } from '@prisma/client';
+import type { InvitationMetadataResult } from '@/lib/utils/invitation-token';
 
 /**
  * Mock dependencies
  */
 
-// Mock Prisma client
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    verification: {
-      findFirst: vi.fn(),
-    },
-  },
-}));
-
-// Mock invitation token validation
+// Mock invitation token utilities
 vi.mock('@/lib/utils/invitation-token', () => ({
-  validateInvitationToken: vi.fn(),
+  getInvitationMetadata: vi.fn(),
 }));
 
 // Mock logger
@@ -49,8 +40,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 // Import mocked modules
-import { prisma } from '@/lib/db/client';
-import { validateInvitationToken } from '@/lib/utils/invitation-token';
+import { getInvitationMetadata } from '@/lib/utils/invitation-token';
 import { logger } from '@/lib/logging';
 
 /**
@@ -101,29 +91,29 @@ async function parseResponse<T = APIResponse>(response: Response): Promise<T> {
 }
 
 /**
- * Helper function to create mock verification record
+ * Helper function to create a valid metadata result
  */
-function createMockVerification(
-  email: string,
-  metadata: { name: string; role: string }
-): {
-  id: string;
-  identifier: string;
-  value: string;
-  expiresAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  metadata: Prisma.JsonValue;
-} {
-  const now = new Date();
+function createValidResult(metadata: { name: string; role: string }): InvitationMetadataResult {
   return {
-    id: 'verification_123',
-    identifier: `invitation:${email}`,
-    value: 'hashed_token_value',
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-    createdAt: now,
-    updatedAt: now,
-    metadata: metadata as Prisma.JsonValue,
+    valid: true,
+    metadata: {
+      ...metadata,
+      invitedBy: 'admin-user-id',
+      invitedAt: new Date().toISOString(),
+    },
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  };
+}
+
+/**
+ * Helper function to create an invalid metadata result
+ */
+function createInvalidResult(
+  reason: 'expired' | 'invalid_token' | 'not_found'
+): InvitationMetadataResult {
+  return {
+    valid: false,
+    reason,
   };
 }
 
@@ -139,10 +129,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const token = 'valid_token_123';
       const metadata = { name: 'John Doe', role: 'USER' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -160,10 +147,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       });
 
       // Verify mocks were called correctly
-      expect(validateInvitationToken).toHaveBeenCalledWith(email, token);
-      expect(prisma.verification.findFirst).toHaveBeenCalledWith({
-        where: { identifier: `invitation:${email}` },
-      });
+      expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
       expect(logger.info).toHaveBeenCalledWith('Invitation metadata requested', { email });
       expect(logger.info).toHaveBeenCalledWith('Invitation metadata retrieved', { email });
     });
@@ -174,10 +158,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const token = 'valid_admin_token';
       const metadata = { name: 'Admin User', role: 'ADMIN' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -201,10 +182,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const token = 'valid_mod_token';
       const metadata = { name: 'Moderator User', role: 'MODERATOR' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -229,7 +207,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const email = 'user@example.com';
       const token = 'invalid_token';
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(false);
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('invalid_token'));
 
       const request = createMockRequest({ token, email });
 
@@ -242,12 +220,11 @@ describe('GET /api/v1/invitations/metadata', () => {
 
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(data.error.message).toBe('Invalid or expired invitation token');
+      expect(data.error.message).toBe('Invalid invitation token');
 
-      // Verify validateInvitationToken was called but findFirst was not
-      expect(validateInvitationToken).toHaveBeenCalledWith(email, token);
-      expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith('Invalid invitation token for metadata request', {
+      // Verify getInvitationMetadata was called
+      expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
+      expect(logger.warn).toHaveBeenCalledWith('Invalid token for metadata request', {
         email,
       });
     });
@@ -257,7 +234,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const email = 'user@example.com';
       const token = 'wrong_token_123';
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(false);
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('invalid_token'));
 
       const request = createMockRequest({ token, email });
 
@@ -270,18 +247,18 @@ describe('GET /api/v1/invitations/metadata', () => {
 
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(data.error.message).toBe('Invalid or expired invitation token');
+      expect(data.error.message).toBe('Invalid invitation token');
     });
   });
 
   describe('Expired Token Scenarios', () => {
-    it('should return 400 for expired token (validation fails due to expiration)', async () => {
+    it('should return 410 for expired token', async () => {
       // Arrange
       const email = 'expired@example.com';
       const token = 'expired_token';
 
-      // validateInvitationToken checks expiration and returns false
-      vi.mocked(validateInvitationToken).mockResolvedValue(false);
+      // getInvitationMetadata returns expired reason
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('expired'));
 
       const request = createMockRequest({ token, email });
 
@@ -289,15 +266,15 @@ describe('GET /api/v1/invitations/metadata', () => {
       const response = await GET(request);
 
       // Assert
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(410); // Gone - resource existed but is no longer available
       const data = await parseResponse<ErrorResponse>(response);
 
       expect(data.success).toBe(false);
-      expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(data.error.message).toBe('Invalid or expired invitation token');
+      expect(data.error.code).toBe('INVITATION_EXPIRED');
+      expect(data.error.message).toBe('This invitation has expired');
 
-      expect(validateInvitationToken).toHaveBeenCalledWith(email, token);
-      expect(logger.warn).toHaveBeenCalledWith('Invalid invitation token for metadata request', {
+      expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
+      expect(logger.warn).toHaveBeenCalledWith('Expired invitation for metadata request', {
         email,
       });
     });
@@ -309,8 +286,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const email = 'notfound@example.com';
       const token = 'valid_token';
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('not_found'));
 
       const request = createMockRequest({ token, email });
 
@@ -325,28 +301,19 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.code).toBe('NOT_FOUND');
       expect(data.error.message).toBe('Invitation not found');
 
-      expect(validateInvitationToken).toHaveBeenCalledWith(email, token);
-      expect(prisma.verification.findFirst).toHaveBeenCalledWith({
-        where: { identifier: `invitation:${email}` },
+      expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
+      expect(logger.warn).toHaveBeenCalledWith('Invitation not found for metadata request', {
+        email,
       });
-      expect(logger.warn).toHaveBeenCalledWith('Invitation not found', { email });
     });
 
     it('should return 404 when invitation has no metadata', async () => {
-      // Arrange
+      // Arrange - getInvitationMetadata handles the case when metadata is missing
+      // by returning not_found
       const email = 'nometadata@example.com';
       const token = 'valid_token';
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
-        id: 'verification_no_meta',
-        identifier: `invitation:${email}`,
-        value: 'hashed_token',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        metadata: null, // No metadata stored
-      });
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createInvalidResult('not_found'));
 
       const request = createMockRequest({ token, email });
 
@@ -361,7 +328,9 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.code).toBe('NOT_FOUND');
       expect(data.error.message).toBe('Invitation not found');
 
-      expect(logger.warn).toHaveBeenCalledWith('Invitation not found', { email });
+      expect(logger.warn).toHaveBeenCalledWith('Invitation not found for metadata request', {
+        email,
+      });
     });
   });
 
@@ -381,8 +350,8 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
 
-      // Validation should fail before calling validateInvitationToken
-      expect(validateInvitationToken).not.toHaveBeenCalled();
+      // Validation should fail before calling getInvitationMetadata
+      expect(getInvitationMetadata).not.toHaveBeenCalled();
     });
 
     it('should return 400 when token is empty string', async () => {
@@ -416,7 +385,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
 
-      expect(validateInvitationToken).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled();
     });
 
     it('should return 400 when email is empty string', async () => {
@@ -450,7 +419,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
 
-      expect(validateInvitationToken).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled();
     });
 
     it('should return 400 when email is missing @ symbol', async () => {
@@ -486,22 +455,14 @@ describe('GET /api/v1/invitations/metadata', () => {
   });
 
   describe('Edge Cases', () => {
-    it('should handle metadata with additional fields (ignores extra fields)', async () => {
+    it('should handle metadata with additional fields (only returns name and role)', async () => {
       // Arrange
       const email = 'extra@example.com';
       const token = 'valid_token';
-      const metadata = {
-        name: 'User with Extra Fields',
-        role: 'USER',
-        invitedBy: 'admin-id',
-        invitedAt: '2025-01-01T00:00:00.000Z',
-        extraField: 'should be ignored',
-      };
+      // getInvitationMetadata returns the full metadata, but the endpoint only returns name/role
+      const metadata = { name: 'User with Extra Fields', role: 'USER' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -512,14 +473,12 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<SuccessResponse>(response);
 
-      // Should only return name and role (ignores extra fields)
+      // Should only return name and role
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'User with Extra Fields',
         role: 'USER',
       });
-      expect(data.data).not.toHaveProperty('invitedBy');
-      expect(data.data).not.toHaveProperty('extraField');
     });
 
     it('should handle emails with special characters', async () => {
@@ -528,10 +487,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const token = 'valid_token';
       const metadata = { name: 'User Plus', role: 'USER' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -555,10 +511,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const token = 'a'.repeat(128); // Very long token (64 hex chars is normal)
       const metadata = { name: 'Long Token User', role: 'USER' };
 
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(
-        createMockVerification(email, metadata)
-      );
+      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
       const request = createMockRequest({ token, email });
 
@@ -570,7 +523,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const data = await parseResponse<SuccessResponse>(response);
 
       expect(data.success).toBe(true);
-      expect(validateInvitationToken).toHaveBeenCalledWith(email, token);
+      expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
     });
   });
 });

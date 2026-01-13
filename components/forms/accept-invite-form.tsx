@@ -15,6 +15,11 @@ import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { Eye, EyeOff } from 'lucide-react';
 
 /**
+ * Invitation validation status
+ */
+type InvitationStatus = 'loading' | 'valid' | 'expired' | 'invalid';
+
+/**
  * Accept Invitation Form Component
  *
  * Allows invited users to set their password and activate their account.
@@ -32,6 +37,7 @@ import { Eye, EyeOff } from 'lucide-react';
  * - Success message before redirect
  * - Redirect to dashboard on success (OAuth auto-logs in)
  * - Redirect to login with invited flag on success (password flow)
+ * - Expired/invalid invitation handling with clear user messaging
  */
 export function AcceptInviteForm() {
   const router = useRouter();
@@ -41,8 +47,8 @@ export function AcceptInviteForm() {
   const token = searchParams.get('token') || '';
   const emailFromUrl = searchParams.get('email') || '';
 
+  const [invitationStatus, setInvitationStatus] = useState<InvitationStatus>('loading');
   const [isLoading, setIsLoading] = useState(false);
-  const [isFetchingMetadata, setIsFetchingMetadata] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -73,29 +79,41 @@ export function AcceptInviteForm() {
   useEffect(() => {
     async function fetchInvitation() {
       if (!token || !emailFromUrl) {
+        setInvitationStatus('invalid');
         setError('Invalid invitation link');
-        setIsFetchingMetadata(false);
         return;
       }
 
       try {
-        setIsFetchingMetadata(true);
+        setInvitationStatus('loading');
         // Fetch invitation metadata
         const response = await apiClient.get<{ name: string; role: string }>(
           `/api/v1/invitations/metadata?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
         );
 
-        // Store invitation name
+        // Store invitation name and mark as valid
         setInvitationName(response.name);
+        setInvitationStatus('valid');
         setError(null);
       } catch (err) {
         if (err instanceof APIClientError) {
-          setError(err.message || 'Failed to load invitation details');
+          // Check error code for specific handling
+          if (err.code === 'INVITATION_EXPIRED') {
+            setInvitationStatus('expired');
+            setError(
+              'This invitation has expired. Please contact your administrator for a new invitation.'
+            );
+          } else if (err.code === 'NOT_FOUND') {
+            setInvitationStatus('invalid');
+            setError('Invitation not found. Please check your email for the correct link.');
+          } else {
+            setInvitationStatus('invalid');
+            setError(err.message || 'Failed to load invitation details');
+          }
         } else {
+          setInvitationStatus('invalid');
           setError('Failed to load invitation details');
         }
-      } finally {
-        setIsFetchingMetadata(false);
       }
     }
 
@@ -147,22 +165,60 @@ export function AcceptInviteForm() {
     }
   };
 
-  // Show error if no token in URL
-  if (!token) {
+  // Loading state - show skeleton
+  if (invitationStatus === 'loading') {
     return (
-      <>
-        <div className="bg-destructive/10 text-destructive rounded-md p-3 text-sm">
-          No invitation token found. Please check your email for the correct invitation link.
+      <div className="space-y-4">
+        <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
+        <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
+        <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
+        <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
+        <p className="text-muted-foreground text-center text-sm">Loading invitation...</p>
+      </div>
+    );
+  }
+
+  // Expired invitation - show amber message, hide form
+  if (invitationStatus === 'expired') {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-900/10 dark:text-amber-400">
+          <p className="font-medium">Invitation Expired</p>
+          <p className="mt-2">
+            This invitation link has expired. Please contact your administrator to request a new
+            invitation.
+          </p>
         </div>
-        <div className="mt-4 text-center text-sm">
+        <div className="text-center text-sm">
           <a href="/login" className="text-primary font-medium hover:underline">
             Back to login
           </a>
         </div>
-      </>
+      </div>
     );
   }
 
+  // Invalid invitation - show error message, hide form
+  if (invitationStatus === 'invalid') {
+    return (
+      <div className="space-y-4">
+        <div className="bg-destructive/10 text-destructive rounded-md p-4 text-sm">
+          <p className="font-medium">Invalid Invitation</p>
+          <p className="mt-2">
+            {error ||
+              'This invitation link is invalid. Please check your email for the correct invitation link.'}
+          </p>
+        </div>
+        <div className="text-center text-sm">
+          <a href="/login" className="text-primary font-medium hover:underline">
+            Back to login
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // Valid invitation - show the form
   return (
     <>
       {success ? (
@@ -283,16 +339,8 @@ export function AcceptInviteForm() {
             )}
 
             {/* Submit Button */}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading || success || isFetchingMetadata}
-            >
-              {isFetchingMetadata
-                ? 'Loading...'
-                : isLoading
-                  ? 'Activating account...'
-                  : 'Activate Account'}
+            <Button type="submit" className="w-full" disabled={isLoading || success}>
+              {isLoading ? 'Activating account...' : 'Activate Account'}
             </Button>
           </form>
         </>

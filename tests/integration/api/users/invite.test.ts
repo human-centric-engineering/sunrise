@@ -56,6 +56,8 @@ vi.mock('@/lib/db/client', () => ({
 // Mock invitation token utilities
 vi.mock('@/lib/utils/invitation-token', () => ({
   generateInvitationToken: vi.fn(),
+  getValidInvitation: vi.fn(),
+  updateInvitationToken: vi.fn(),
 }));
 
 // Mock email sending
@@ -84,19 +86,31 @@ vi.mock('@/lib/env', () => ({
 // Import mocked modules
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { generateInvitationToken } from '@/lib/utils/invitation-token';
+import {
+  generateInvitationToken,
+  getValidInvitation,
+  updateInvitationToken,
+} from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import { logger } from '@/lib/logging';
 
 /**
  * Helper function to create a mock NextRequest
  */
-function createMockRequest(body: unknown): NextRequest {
+function createMockRequest(body: unknown, queryParams?: Record<string, string>): NextRequest {
+  const url = new URL('http://localhost:3000/api/v1/users/invite');
+  if (queryParams) {
+    Object.entries(queryParams).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+  }
+
   return {
     json: async () => body,
     headers: new Headers(),
+    url: url.toString(),
     nextUrl: {
-      searchParams: new URLSearchParams(),
+      searchParams: url.searchParams,
     },
   } as unknown as NextRequest;
 }
@@ -122,9 +136,9 @@ interface SuccessResponse {
       role: string;
       invitedAt: string;
       expiresAt: string;
-      link: string;
+      link?: string; // Optional - not present when emailStatus is 'pending'
     };
-    emailStatus: 'sent' | 'failed' | 'disabled';
+    emailStatus: 'sent' | 'failed' | 'disabled' | 'pending';
   };
 }
 
@@ -158,8 +172,8 @@ describe('POST /api/v1/users/invite', () => {
       // Mock no existing user
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-      // Mock no existing invitation
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      // Mock no existing invitation (using new getValidInvitation)
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
@@ -227,7 +241,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-456');
@@ -263,7 +277,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-789');
@@ -389,7 +403,68 @@ describe('POST /api/v1/users/invite', () => {
       expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
     });
 
-    it('should return 200 with existing invitation details when invitation already exists', async () => {
+    it('should return 200 with pending status and NO link when invitation already exists (without resend)', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock existing invitation using getValidInvitation
+      const existingInvitation = {
+        email: 'existing@example.com',
+        metadata: {
+          name: 'Existing User',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      };
+      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+
+      // Act: Call the invite endpoint without resend param
+      const request = createMockRequest({
+        name: 'Existing User',
+        email: 'existing@example.com',
+        role: 'USER',
+      });
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponse>(response);
+
+      // Assert: Returns 200 with 'pending' status
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.data.message).toBe(
+        'Invitation already pending. Use ?resend=true to send a new invitation email.'
+      );
+      expect(body.data.emailStatus).toBe('pending');
+      expect(body.data.invitation).toMatchObject({
+        email: 'existing@example.com',
+        name: 'Existing User',
+        role: 'USER',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Assert: NO link is returned (this is the bug fix)
+      expect(body.data.invitation.link).toBeUndefined();
+
+      // Assert: Logged existing invitation found
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Existing invitation found, not resending',
+        expect.objectContaining({
+          email: 'existing@example.com',
+        })
+      );
+
+      // Assert: No new invitation was created
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(updateInvitationToken)).not.toHaveBeenCalled();
+    });
+
+    it('should resend invitation with new token when ?resend=true', async () => {
       // Arrange: Mock admin session
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
@@ -399,54 +474,65 @@ describe('POST /api/v1/users/invite', () => {
 
       // Mock existing invitation
       const existingInvitation = {
-        id: 'verification-id',
-        identifier: 'invitation:existing@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        email: 'resend@example.com',
         metadata: {
-          name: 'Existing User',
+          name: 'Resend User',
           role: 'USER',
           invitedBy: 'admin-id',
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
 
-      // Act: Call the invite endpoint with existing invitation
-      const request = createMockRequest({
-        name: 'Existing User',
-        email: 'existing@example.com',
-        role: 'USER',
-      });
+      // Mock updateInvitationToken (used for resend)
+      vi.mocked(updateInvitationToken).mockResolvedValue('new-resend-token-123');
+
+      // Mock email sending
+      mockEmailSuccess(vi.mocked(sendEmail), 'resend-email-id');
+
+      // Act: Call the invite endpoint WITH ?resend=true
+      const request = createMockRequest(
+        {
+          name: 'Resend User',
+          email: 'resend@example.com',
+          role: 'USER',
+        },
+        { resend: 'true' }
+      );
       const response = await POST(request);
       const body = await parseResponse<SuccessResponse>(response);
 
-      // Assert: Returns existing invitation (200 status)
-      expect(response.status).toBe(200);
+      // Assert: Returns 201 with new token
+      expect(response.status).toBe(201);
       expect(body.success).toBe(true);
-      expect(body.data.message).toBe(
-        'Invitation already sent (existing invitation returned, no email sent)'
-      );
-      expect(body.data.emailStatus).toBe('disabled');
-      expect(body.data.invitation).toMatchObject({
-        email: 'existing@example.com',
-        name: 'Existing User',
-        role: 'USER',
-        invitedAt: '2024-01-01T00:00:00.000Z',
-      });
-      expect(body.data.invitation.link).toContain('accept-invite');
+      expect(body.data.message).toBe('Invitation resent successfully');
+      expect(body.data.emailStatus).toBe('sent');
+      expect(body.data.invitation.link).toContain('new-resend-token-123');
 
-      // Assert: Logged return of existing invitation
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
-        'Returning existing invitation',
+      // Assert: updateInvitationToken was called (not generateInvitationToken)
+      expect(vi.mocked(updateInvitationToken)).toHaveBeenCalledWith(
+        'resend@example.com',
         expect.objectContaining({
-          email: 'existing@example.com',
+          name: 'Resend User',
+          role: 'USER',
+          invitedBy: adminSession.user.id,
         })
       );
-
-      // Assert: No new invitation was created
       expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
+
+      // Assert: Email was sent
+      expect(vi.mocked(sendEmail)).toHaveBeenCalled();
+
+      // Assert: Logged as resent
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Invitation resent',
+        expect.objectContaining({
+          email: 'resend@example.com',
+          isResend: true,
+        })
+      );
     });
 
     it('should return 400 when name is missing', async () => {
@@ -524,7 +610,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-123');
@@ -562,7 +648,7 @@ describe('POST /api/v1/users/invite', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
       // Mock no existing invitation
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
 
       // Mock invitation token generation
       vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-999');
@@ -615,7 +701,7 @@ describe('POST /api/v1/users/invite', () => {
         vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
         // Mock no existing invitation
-        vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+        vi.mocked(getValidInvitation).mockResolvedValue(null);
 
         // Mock invitation token generation
         vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-fallback');
@@ -665,7 +751,7 @@ describe('POST /api/v1/users/invite', () => {
         vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
         // Mock no existing invitation
-        vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
+        vi.mocked(getValidInvitation).mockResolvedValue(null);
 
         // Mock invitation token generation
         vi.mocked(generateInvitationToken).mockResolvedValue('invitation-token-localhost');
@@ -696,7 +782,7 @@ describe('POST /api/v1/users/invite', () => {
       }
     });
 
-    it('should generate new token for existing invitation link (security)', async () => {
+    it('should not return link for existing invitation (security - prevents link reuse)', async () => {
       // Arrange: Mock admin session
       const adminSession = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
@@ -706,50 +792,84 @@ describe('POST /api/v1/users/invite', () => {
 
       // Mock existing invitation
       const existingInvitation = {
-        id: 'verification-id-token',
-        identifier: 'invitation:security@example.com',
-        value: 'hashed-stored-token-should-not-be-reused',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        email: 'security@example.com',
         metadata: {
           name: 'Security User',
           role: 'USER',
           invitedBy: 'admin-id',
           invitedAt: '2024-01-01T00:00:00.000Z',
         },
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
       };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
 
-      // Act: Call the invite endpoint twice
-      const request1 = createMockRequest({
+      // Act: Call the invite endpoint WITHOUT resend
+      const request = createMockRequest({
         name: 'Security User',
         email: 'security@example.com',
         role: 'USER',
       });
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponse>(response);
+
+      // Assert: No link returned (security - can't generate valid link without new token)
+      expect(response.status).toBe(200);
+      expect(body.data.emailStatus).toBe('pending');
+      expect(body.data.invitation.link).toBeUndefined();
+    });
+
+    it('should generate different tokens on each resend (security)', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock existing invitation
+      const existingInvitation = {
+        email: 'security@example.com',
+        metadata: {
+          name: 'Security User',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      };
+      vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
+
+      // Mock different tokens for each resend
+      vi.mocked(updateInvitationToken)
+        .mockResolvedValueOnce('token-resend-1')
+        .mockResolvedValueOnce('token-resend-2');
+
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
+
+      // Act: Resend twice
+      const request1 = createMockRequest(
+        { name: 'Security User', email: 'security@example.com', role: 'USER' },
+        { resend: 'true' }
+      );
       const response1 = await POST(request1);
       const body1 = await parseResponse<SuccessResponse>(response1);
 
-      const request2 = createMockRequest({
-        name: 'Security User',
-        email: 'security@example.com',
-        role: 'USER',
-      });
+      const request2 = createMockRequest(
+        { name: 'Security User', email: 'security@example.com', role: 'USER' },
+        { resend: 'true' }
+      );
       const response2 = await POST(request2);
       const body2 = await parseResponse<SuccessResponse>(response2);
 
-      // Assert: Each response has a different token (security measure)
-      expect(body1.data.invitation.link).toBeDefined();
-      expect(body2.data.invitation.link).toBeDefined();
-      // Extract tokens from URLs
-      const token1 = new URL(body1.data.invitation.link).searchParams.get('token');
-      const token2 = new URL(body2.data.invitation.link).searchParams.get('token');
-      expect(token1).not.toBe(token2);
-      expect(token1).not.toBe('hashed-stored-token-should-not-be-reused');
-      expect(token2).not.toBe('hashed-stored-token-should-not-be-reused');
+      // Assert: Each response has a different token
+      expect(body1.data.invitation.link).toContain('token-resend-1');
+      expect(body2.data.invitation.link).toContain('token-resend-2');
     });
 
-    it('should use BETTER_AUTH_URL fallback in existing invitation path', async () => {
-      // Arrange: Temporarily override env mock to test fallback in existing invitation branch
+    it('should use BETTER_AUTH_URL fallback when resending invitation', async () => {
+      // Arrange: Temporarily override env mock to test fallback
       const envModule = await import('@/lib/env');
       const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
 
@@ -757,7 +877,7 @@ describe('POST /api/v1/users/invite', () => {
       (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
 
       const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
-      process.env.BETTER_AUTH_URL = 'http://existing-invite-auth.example.com';
+      process.env.BETTER_AUTH_URL = 'http://auth.example.com';
 
       try {
         // Arrange: Mock admin session
@@ -767,98 +887,47 @@ describe('POST /api/v1/users/invite', () => {
         // Mock no existing user
         vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
 
-        // Mock existing invitation (to trigger existing invitation branch)
+        // Mock existing invitation
         const existingInvitation = {
-          id: 'verification-id-existing-url',
-          identifier: 'invitation:existing-url@example.com',
-          value: 'hashed-token',
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          email: 'resend-url@example.com',
           metadata: {
-            name: 'Existing URL User',
+            name: 'Resend URL User',
             role: 'USER',
             invitedBy: 'admin-id',
             invitedAt: '2024-01-01T00:00:00.000Z',
           },
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
         };
-        vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
+        vi.mocked(getValidInvitation).mockResolvedValue(existingInvitation);
 
-        // Act: Call the invite endpoint
-        const request = createMockRequest({
-          name: 'Existing URL User',
-          email: 'existing-url@example.com',
-          role: 'USER',
-        });
+        // Mock updateInvitationToken
+        vi.mocked(updateInvitationToken).mockResolvedValue('resend-token-url');
+
+        // Mock email sending
+        mockEmailSuccess(vi.mocked(sendEmail), 'email-id-resend-url');
+
+        // Act: Call the invite endpoint with resend
+        const request = createMockRequest(
+          {
+            name: 'Resend URL User',
+            email: 'resend-url@example.com',
+            role: 'USER',
+          },
+          { resend: 'true' }
+        );
         const response = await POST(request);
         const body = await parseResponse<SuccessResponse>(response);
 
         // Assert: Response uses BETTER_AUTH_URL
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(201);
         expect(body.success).toBe(true);
-        expect(body.data.invitation.link).toContain('http://existing-invite-auth.example.com');
+        expect(body.data.invitation.link).toContain('http://auth.example.com');
         expect(body.data.invitation.link).toContain('accept-invite');
       } finally {
         // Restore original values
         (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
         process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
-      }
-    });
-
-    it('should use localhost fallback in existing invitation path', async () => {
-      // Arrange: Temporarily override env mock to test final fallback in existing invitation branch
-      const envModule = await import('@/lib/env');
-      const originalUrl = envModule.env.NEXT_PUBLIC_APP_URL;
-
-      // Intentionally override for test (env is readonly in types)
-      (envModule.env as any).NEXT_PUBLIC_APP_URL = undefined;
-
-      const originalBetterAuthUrl = process.env.BETTER_AUTH_URL;
-      delete process.env.BETTER_AUTH_URL;
-
-      try {
-        // Arrange: Mock admin session
-        const adminSession = mockAdminUser();
-        vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
-
-        // Mock no existing user
-        vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
-
-        // Mock existing invitation (to trigger existing invitation branch)
-        const existingInvitation = {
-          id: 'verification-id-existing-localhost',
-          identifier: 'invitation:existing-localhost@example.com',
-          value: 'hashed-token',
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          metadata: {
-            name: 'Existing Localhost User',
-            role: 'USER',
-            invitedBy: 'admin-id',
-            invitedAt: '2024-01-01T00:00:00.000Z',
-          },
-        };
-        vi.mocked(prisma.verification.findFirst).mockResolvedValue(existingInvitation as never);
-
-        // Act: Call the invite endpoint
-        const request = createMockRequest({
-          name: 'Existing Localhost User',
-          email: 'existing-localhost@example.com',
-          role: 'USER',
-        });
-        const response = await POST(request);
-        const body = await parseResponse<SuccessResponse>(response);
-
-        // Assert: Response uses localhost
-        expect(response.status).toBe(200);
-        expect(body.success).toBe(true);
-        expect(body.data.invitation.link).toContain('http://localhost:3000');
-        expect(body.data.invitation.link).toContain('accept-invite');
-      } finally {
-        // Restore original values
-        (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
-        if (originalBetterAuthUrl !== undefined) {
-          process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
-        }
       }
     });
   });
