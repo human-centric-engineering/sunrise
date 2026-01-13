@@ -61,7 +61,6 @@ export function createMockRequest(options: {
     requestInit.body = JSON.stringify(body);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
   return new NextRequest(urlObj.toString(), requestInit as any);
 }
 

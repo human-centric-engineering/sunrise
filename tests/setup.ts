@@ -23,6 +23,10 @@ process.env.BETTER_AUTH_SECRET = 'test-secret-key-for-testing-only';
 process.env.BETTER_AUTH_URL = 'http://localhost:3000';
 process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
 
+// Email disabled by default in tests (prevents accidental email sending)
+process.env.RESEND_API_KEY = '';
+process.env.EMAIL_FROM = 'test@example.com';
+
 import '@testing-library/jest-dom';
 import { expect, vi, afterEach } from 'vitest';
 

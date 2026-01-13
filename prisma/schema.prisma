@@ -83,6 +83,7 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  metadata   Json?    // Stores invitation details (name, role, invitedBy, invitedAt)
 
   @@index([identifier])
   @@map("verification")

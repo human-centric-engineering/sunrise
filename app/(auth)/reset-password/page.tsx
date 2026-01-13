@@ -1,12 +1,35 @@
-import Link from 'next/link';
+import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { ResetPasswordForm } from '@/components/forms/reset-password-form';
+
+export const metadata: Metadata = {
+  title: 'Reset Password',
+  description: 'Reset your Sunrise account password',
+};
 
 /**
- * Password Reset Page (Placeholder)
+ * Password Reset Page
  *
- * This page will handle password reset requests once the email system is implemented in Phase 3.
- * For now, it shows a placeholder message.
+ * Handles two flows based on URL query parameters:
+ * 1. Request password reset (no token) - user enters email
+ * 2. Complete password reset (token in URL) - user sets new password
+ *
+ * The form detects which state to show based on URL query parameters.
+ *
+ * Features:
+ * - Email/password authentication recovery
+ * - Token-based password reset
+ * - OAuth-only user handling (backend check - no email sent if no password account)
+ * - Password strength meter
+ * - Show/hide password toggles
+ * - Form validation with Zod schemas
+ * - Loading states and error handling
+ *
+ * Security:
+ * - Generic success messages (doesn't reveal if email exists)
+ * - Token expiration (1 hour)
+ * - Invalid token handling
  */
 export default function ResetPasswordPage() {
   return (
@@ -14,30 +37,13 @@ export default function ResetPasswordPage() {
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold">Reset your password</CardTitle>
         <CardDescription>
-          Password reset will be available once the email system is configured
+          Enter your email address and we&apos;ll send you a password reset link
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="bg-muted text-muted-foreground rounded-md p-4 text-sm">
-          <p className="mb-2 font-medium">Coming in Phase 3</p>
-          <p>
-            Password reset requires the Resend email service integration, which will be implemented
-            in Phase 3.1 of the build plan. This will enable sending password reset links via email.
-          </p>
-        </div>
-
-        <div className="pt-4">
-          <Link href="/login">
-            <Button className="w-full">Back to Login</Button>
-          </Link>
-        </div>
-
-        <div className="text-center text-sm">
-          <span className="text-muted-foreground">Need help? </span>
-          <Link href="/signup" className="text-primary font-medium hover:underline">
-            Create a new account
-          </Link>
-        </div>
+      <CardContent>
+        <Suspense fallback={<div>Loading...</div>}>
+          <ResetPasswordForm />
+        </Suspense>
       </CardContent>
     </Card>
   );

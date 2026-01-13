@@ -41,6 +41,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCodes.VALIDATION_ERROR]: 'Please check your input and try again.',
   [ErrorCodes.EMAIL_TAKEN]: 'This email address is already registered.',
   [ErrorCodes.RATE_LIMIT_EXCEEDED]: 'Too many requests. Please try again later.',
+  [ErrorCodes.INVITATION_EXPIRED]: 'This invitation has expired. Please request a new one.',
   [ErrorCodes.INTERNAL_ERROR]: 'Something went wrong. Please try again.',
 };
 

@@ -204,6 +204,10 @@ No code changes needed. The error tracking abstraction automatically detects Sen
 
 **Note:** This project uses Prisma 7 with PostgreSQL. The database schema includes User, Account, Session, and Verification models ready for better-auth authentication.
 
+## Email Setup
+
+Email is **optional** and works without configuration in development/test environments. For production, you'll need a Resend account and API key. Use `npm run email:dev` to preview email templates locally. See [`.context/email/`](./.context/email/) for detailed setup, template development, and sending patterns.
+
 ## Testing
 
 **Tech Stack:** Vitest, React Testing Library, Testcontainers (future)
@@ -274,6 +278,10 @@ npm run validate          # Type-check + lint + format check + tests
    # OAuth (Optional)
    GOOGLE_CLIENT_ID="your-google-client-id"
    GOOGLE_CLIENT_SECRET="your-google-client-secret"
+
+   # Email (Optional - required for production)
+   RESEND_API_KEY=""         # For email sending (production)
+   EMAIL_FROM=""             # Sender address (production)
    ```
 
    **📖 For detailed configuration:** See [Environment Configuration](./.context/environment/overview.md) for:

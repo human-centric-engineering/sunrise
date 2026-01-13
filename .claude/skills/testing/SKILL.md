@@ -176,10 +176,17 @@ Use the Next.js DevTools MCP server to fetch testing patterns for App Router, Se
 
 ```
 Source file                          → Test file
-lib/validations/auth.ts             → __tests__/lib/validations/auth.test.ts
-app/api/v1/users/route.ts           → __tests__/app/api/v1/users/route.test.ts
-components/forms/login-form.tsx     → __tests__/components/forms/login-form.test.tsx
+lib/validations/auth.ts             → tests/unit/lib/validations/auth.test.ts
+app/api/v1/users/route.ts           → tests/integration/app/api/v1/users/route.test.ts
+components/forms/login-form.tsx     → tests/unit/components/forms/login-form.test.tsx
 ```
+
+**Test Directory Structure**:
+
+- `tests/unit/` - Unit tests (utilities, helpers, pure functions)
+- `tests/integration/` - Integration tests (API routes, database operations)
+- `tests/helpers/` - Shared test utilities
+- `tests/types/` - Shared mock types and factories
 
 **Test Structure (Arrange-Act-Assert)**:
 

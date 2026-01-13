@@ -1,7 +1,13 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { SignupForm } from '@/components/forms/signup-form';
+
+export const metadata: Metadata = {
+  title: 'Create Account',
+  description: 'Create a new Sunrise account',
+};
 
 /**
  * Signup Page

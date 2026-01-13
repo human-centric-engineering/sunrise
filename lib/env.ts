@@ -51,6 +51,17 @@ const serverEnvSchema = z.object({
   // Email (optional for Phase 1, required in Phase 3)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
+  EMAIL_FROM_NAME: z.string().optional(),
+  REQUIRE_EMAIL_VERIFICATION: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (val === undefined) return undefined;
+      if (val === 'true') return true;
+      if (val === 'false') return false;
+      return undefined;
+    })
+    .describe('Require email verification (defaults to true in production, false in development)'),
 
   // App Configuration
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -131,5 +142,6 @@ export const env = parsed.data as Env;
 
 // Log successful validation in development (server-side only)
 if (!isBrowser && env.NODE_ENV === 'development') {
+  // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.log('✅ Environment variables validated successfully');
 }

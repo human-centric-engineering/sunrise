@@ -567,6 +567,80 @@ npx shadcn-ui@latest add [component-name]
 
 Components are installed to `components/ui/` and can be customized.
 
+### Email System
+
+**Quick Start:**
+
+```typescript
+import { sendEmail } from '@/lib/email/send';
+import WelcomeEmail from '@/emails/welcome';
+
+await sendEmail({
+  to: 'user@example.com',
+  subject: 'Welcome to Sunrise',
+  react: WelcomeEmail({ userName: 'John', userEmail: 'user@example.com' }),
+});
+```
+
+**User Creation Methods:**
+
+1. **Self-Signup (Primary - User-Initiated)**:
+   - User: `POST /api/auth/sign-up/email`
+   - Email verification: Environment-based (dev=disabled, prod=enabled)
+   - Best for: Public user registration
+   - Mobile apps: Use better-auth API directly
+
+2. **Invitation-based (Admin-Initiated - Recommended)**:
+   - Admin: `POST /api/v1/users/invite`
+   - User: Accept via email link (`POST /api/auth/accept-invite`)
+   - Security: Token-based, user sets own password
+   - Email auto-verified on acceptance
+   - Best for: Team invites, admin-created accounts
+
+**Configuration:**
+
+```bash
+# Production (required)
+RESEND_API_KEY=re_...
+EMAIL_FROM=noreply@yourdomain.com
+
+# Development (optional, emails logged only)
+# Leave blank to disable
+
+# Email verification override (optional)
+REQUIRE_EMAIL_VERIFICATION=true  # Force enable in dev
+REQUIRE_EMAIL_VERIFICATION=false # Force disable in prod
+```
+
+**Email Templates:**
+
+- `emails/welcome.tsx` - After invitation acceptance
+- `emails/invitation.tsx` - User invitations from admin
+- `emails/verify-email.tsx` - Self-signup verification (production)
+- `emails/reset-password.tsx` - Password reset
+
+**Preview Templates:**
+
+```bash
+npm run email:dev  # Opens preview at http://localhost:3001
+```
+
+**Testing:**
+
+```typescript
+import { mockEmailSuccess } from '@/tests/helpers/email';
+
+beforeEach(() => {
+  mockEmailSuccess(vi.mocked(sendEmail), 'email-id');
+});
+```
+
+**Documentation:**
+
+- System overview: `.context/email/overview.md`
+- User creation patterns: `.context/auth/user-creation.md`
+- Mobile integration: `.context/api/mobile-integration.md`
+
 ## Docker Configuration
 
 **Production Build:** The project uses multi-stage Docker builds with Next.js standalone output for minimal image size.

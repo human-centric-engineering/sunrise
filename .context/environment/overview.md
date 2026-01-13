@@ -72,6 +72,19 @@ EMAIL_FROM="noreply@yourdomain.com"
 
 Email configuration is optional during Phase 1 development. It will be required in Phase 3 when implementing the email system.
 
+#### Logging (Optional)
+
+```bash
+LOG_LEVEL="info"
+LOG_SANITIZE_PII=true
+```
+
+- `LOG_LEVEL` controls minimum log verbosity (`debug`, `info`, `warn`, `error`)
+- `LOG_SANITIZE_PII` controls whether PII (emails, names, IPs) is redacted in logs
+  - Default: `false` in development (visible for debugging)
+  - Default: `true` in production (GDPR/CCPA compliant)
+  - Secrets (passwords, tokens) are ALWAYS redacted regardless of this setting
+
 ### 3. Generate Secrets
 
 #### BETTER_AUTH_SECRET

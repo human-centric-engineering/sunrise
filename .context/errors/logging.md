@@ -263,32 +263,75 @@ logger.info('API request', {
 });
 ```
 
-### 🔒 Automatic PII Sanitization
+### 🔒 Automatic Sanitization (GDPR Compliant)
 
-The logger automatically sanitizes sensitive fields:
+The logger has two-tier sanitization for security and privacy compliance:
+
+**Tier 1: Secrets (ALWAYS redacted)**
+Security-critical data that should never appear in logs:
 
 ```typescript
-logger.info('User data', {
-  email: 'user@example.com',
-  password: 'secret123',  // ← Automatically redacted
-  token: 'abc123',        // ← Automatically redacted
-  apiKey: 'key_xyz'       // ← Automatically redacted
+logger.info('Auth attempt', {
+  password: 'secret123', // ← Always '[REDACTED]'
+  token: 'abc123', // ← Always '[REDACTED]'
+  apiKey: 'key_xyz', // ← Always '[REDACTED]'
 });
-
-// Logged as:
-{
-  "email": "user@example.com",
-  "password": "[REDACTED]",
-  "token": "[REDACTED]",
-  "apiKey": "[REDACTED]"
-}
 ```
 
-**Sensitive fields** (automatically redacted):
+**Secret fields** (always redacted in all environments):
 
-- `password`, `token`, `apiKey`, `secret`
-- `creditCard`, `ssn`, `authorization`
-- `sessionToken`, `refreshToken`, `accessToken`
+- `password`, `token`, `apiKey`, `api_key`, `secret`
+- `creditCard`, `credit_card`, `ssn`, `authorization`
+- `bearer`, `credential`, `privateKey`, `private_key`
+
+**Tier 2: PII (environment-aware)**
+Personally Identifiable Information for GDPR/CCPA compliance:
+
+```typescript
+logger.info('User created', {
+  email: 'user@example.com',  // ← '[PII REDACTED]' in production
+  fullName: 'John Doe',       // ← '[PII REDACTED]' in production
+  ipAddress: '192.168.1.1',   // ← '[PII REDACTED]' in production
+});
+
+// Development output:
+{ "email": "user@example.com", "fullName": "John Doe", "ipAddress": "192.168.1.1" }
+
+// Production output:
+{ "email": "[PII REDACTED]", "fullName": "[PII REDACTED]", "ipAddress": "[PII REDACTED]" }
+```
+
+**PII fields** (redacted in production by default):
+
+- `email`, `phone`, `mobile`
+- `firstName`, `first_name`, `lastName`, `last_name`, `fullName`, `full_name`
+- `address`, `street`, `postcode`, `zipcode`, `zip_code`
+- `ip`, `ipAddress`, `ip_address`, `userAgent`, `user_agent`
+
+**Configuration via `LOG_SANITIZE_PII`:**
+
+| Value   | Behavior                                          |
+| ------- | ------------------------------------------------- |
+| Not set | Auto: sanitize in production, show in development |
+| `true`  | Always sanitize PII (strictest GDPR compliance)   |
+| `false` | Never sanitize PII (use with caution)             |
+
+```bash
+# .env.local
+LOG_SANITIZE_PII=true  # Recommended for GDPR/CCPA compliance
+```
+
+**Best Practice for Traceability:**
+
+Use `userId` instead of `email` for log correlation:
+
+```typescript
+// ✅ GOOD - Uses userId for tracing
+logger.info('User action', { userId: user.id, action: 'purchase' });
+
+// ⚠️ OK - Email included for context (will be redacted in production)
+logger.info('User created', { userId: user.id, email: user.email });
+```
 
 ## Log Levels
 
