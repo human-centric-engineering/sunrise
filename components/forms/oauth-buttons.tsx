@@ -4,6 +4,7 @@ import { OAuthButton } from './oauth-button';
 
 interface OAuthButtonsProps {
   callbackUrl?: string;
+  errorCallbackUrl?: string;
   invitationToken?: string;
   invitationEmail?: string;
   mode?: 'signin' | 'invitation';
@@ -39,6 +40,7 @@ interface OAuthButtonsProps {
  */
 export function OAuthButtons({
   callbackUrl,
+  errorCallbackUrl,
   invitationToken,
   invitationEmail,
   mode = 'signin',
@@ -63,6 +65,7 @@ export function OAuthButtons({
         <OAuthButton
           provider="google"
           callbackUrl={callbackUrl}
+          errorCallbackUrl={errorCallbackUrl}
           invitationToken={invitationToken}
           invitationEmail={invitationEmail}
         >

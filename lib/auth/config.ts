@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { getOAuthState } from 'better-auth/api';
+import { getOAuthState, APIError } from 'better-auth/api';
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
@@ -211,6 +211,51 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        /**
+         * Validate OAuth invitation email match BEFORE user creation
+         *
+         * For OAuth invitation flow, the user's OAuth email MUST match the
+         * invitation email. This prevents users from accepting an invitation
+         * sent to one email address using a different OAuth account.
+         *
+         * Security: If invitation data is present but emails don't match,
+         * user creation is rejected with a clear error message.
+         */
+        before: async (user, ctx) => {
+          const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+
+          if (isOAuthSignup) {
+            try {
+              const oauthState = await getOAuthState();
+              const invitationEmail =
+                oauthState && typeof oauthState === 'object'
+                  ? (oauthState.invitationEmail as string | undefined)
+                  : null;
+
+              // If invitation data is present, email MUST match
+              if (invitationEmail && user.email !== invitationEmail) {
+                logger.warn('OAuth invitation email mismatch - rejecting signup', {
+                  invitationEmail,
+                  oauthEmail: user.email,
+                });
+
+                throw new APIError('BAD_REQUEST', {
+                  message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
+                });
+              }
+            } catch (error) {
+              // Re-throw APIError (our validation error)
+              if (error instanceof APIError) {
+                throw error;
+              }
+              // Log but don't block for other errors (e.g., getOAuthState fails)
+              logger.error('Error checking OAuth invitation in before hook', error);
+            }
+          }
+
+          return { data: user };
+        },
+
         /**
          * Handle OAuth invitation acceptance and send welcome email
          *

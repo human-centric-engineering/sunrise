@@ -20,6 +20,28 @@ import { Eye, EyeOff } from 'lucide-react';
 type InvitationStatus = 'loading' | 'valid' | 'expired' | 'invalid';
 
 /**
+ * Parse OAuth error from URL parameter into user-friendly message
+ *
+ * OAuth errors come URL-encoded with underscores replacing spaces.
+ * We detect specific error patterns and return friendly messages.
+ */
+function parseOAuthError(error: string): string {
+  // Decode and normalize the error message
+  const decoded = decodeURIComponent(error).replace(/_/g, ' ');
+
+  // Check for email mismatch error (our custom error from before hook)
+  if (decoded.includes('invitation was sent to')) {
+    // Extract the email from the message
+    const emailMatch = decoded.match(/sent to ([^\s.]+)/);
+    const invitedEmail = emailMatch ? emailMatch[1] : 'a different email';
+    return `This invitation was sent to ${invitedEmail}. Please use an account with that email address, or set a password instead.`;
+  }
+
+  // Generic OAuth error fallback
+  return 'Unable to sign in. Please try again or set a password instead.';
+}
+
+/**
  * Accept Invitation Form Component
  *
  * Allows invited users to set their password and activate their account.
@@ -43,13 +65,20 @@ export function AcceptInviteForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Read token and email from URL
+  // Read token, email, and error from URL
   const token = searchParams.get('token') || '';
   const emailFromUrl = searchParams.get('email') || '';
+  const oauthError = searchParams.get('error');
 
   const [invitationStatus, setInvitationStatus] = useState<InvitationStatus>('loading');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    // Parse OAuth error from URL if present
+    oauthError ? parseOAuthError(oauthError) : null
+  );
+
+  // Build error callback URL to return here with token/email preserved
+  const errorCallbackUrl = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`;
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -94,7 +123,10 @@ export function AcceptInviteForm() {
         // Store invitation name and mark as valid
         setInvitationName(response.name);
         setInvitationStatus('valid');
-        setError(null);
+        // Don't clear error if it came from OAuth redirect (preserve URL error)
+        if (!oauthError) {
+          setError(null);
+        }
       } catch (err) {
         if (err instanceof APIClientError) {
           // Check error code for specific handling
@@ -234,6 +266,7 @@ export function AcceptInviteForm() {
           <OAuthButtons
             mode="invitation"
             callbackUrl="/dashboard"
+            errorCallbackUrl={errorCallbackUrl}
             invitationToken={token}
             invitationEmail={emailFromUrl}
           />

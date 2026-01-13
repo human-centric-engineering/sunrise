@@ -10,6 +10,7 @@ interface OAuthButtonProps {
   provider: 'google'; // Can add more providers later: 'github' | 'facebook' etc.
   children: React.ReactNode;
   callbackUrl?: string;
+  errorCallbackUrl?: string;
   invitationToken?: string;
   invitationEmail?: string;
 }
@@ -48,6 +49,7 @@ export function OAuthButton({
   provider,
   children,
   callbackUrl,
+  errorCallbackUrl,
   invitationToken,
   invitationEmail,
 }: OAuthButtonProps) {
@@ -63,6 +65,7 @@ export function OAuthButton({
       const oauthRequest: {
         provider: string;
         callbackURL: string;
+        errorCallbackURL?: string;
         additionalData?: {
           invitationToken: string;
           invitationEmail: string;
@@ -71,6 +74,11 @@ export function OAuthButton({
         provider,
         callbackURL: redirect,
       };
+
+      // Add error callback URL if provided (redirects errors back to our page)
+      if (errorCallbackUrl) {
+        oauthRequest.errorCallbackURL = errorCallbackUrl;
+      }
 
       // Add invitation data to OAuth state if provided (via additionalData)
       // better-auth preserves additionalData through the OAuth flow
