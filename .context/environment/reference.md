@@ -15,6 +15,8 @@ Complete reference for all environment variables used in Sunrise. This document 
 | [`EMAIL_FROM`](#email_from)                     | ❌ No    | Email        | -             | 3.1   | Sender email address         |
 | [`NODE_ENV`](#node_env)                         | ✅ Yes   | Enum         | `development` | 1.1   | Environment name             |
 | [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)   | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
+| [`LOG_LEVEL`](#log_level)                       | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
+| [`LOG_SANITIZE_PII`](#log_sanitize_pii)         | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs     |
 
 ## Detailed Descriptions
 
@@ -583,6 +585,159 @@ NEXT_PUBLIC_APP_URL="https://app.example.com"
 - Changes not taking effect: Restart dev server or rebuild (`npm run build`)
 - Undefined in browser: Ensure variable starts with `NEXT_PUBLIC_`
 - Wrong URL shown: Verify build-time value matches runtime environment
+
+---
+
+### Logging
+
+#### `LOG_LEVEL`
+
+- **Purpose:** Controls the minimum log level that will be output
+- **Required:** ❌ No
+- **Type:** Enum (`debug` | `info` | `warn` | `error`)
+- **Default:** `debug` in development, `info` in production
+- **Validation:** Must be one of the four allowed values (case-insensitive)
+- **Used By:**
+  - `lib/logging/index.ts` - Logger configuration
+- **Phase:** 2.1 (Developer Experience)
+
+**Examples:**
+
+```bash
+# Show all logs including debug
+LOG_LEVEL="debug"
+
+# Show info, warn, and error (skip debug)
+LOG_LEVEL="info"
+
+# Show only warnings and errors
+LOG_LEVEL="warn"
+
+# Show only errors
+LOG_LEVEL="error"
+```
+
+**Log Level Hierarchy:**
+
+| Level   | Description                         | Includes                 |
+| ------- | ----------------------------------- | ------------------------ |
+| `debug` | Verbose debugging information       | debug, info, warn, error |
+| `info`  | General application flow            | info, warn, error        |
+| `warn`  | Warnings about degraded states      | warn, error              |
+| `error` | Breaking errors requiring attention | error only               |
+
+**Environment Defaults:**
+
+- **Development:** `debug` (verbose output for debugging)
+- **Production:** `info` (balanced output for monitoring)
+- **Test:** `debug` (full visibility during tests)
+
+**Important Notes:**
+
+- Case-insensitive (`DEBUG`, `Debug`, `debug` all work)
+- Invalid values fall back to environment default
+- Can be changed without rebuilding the application
+
+#### `LOG_SANITIZE_PII`
+
+- **Purpose:** Controls whether Personally Identifiable Information (PII) is redacted in logs
+- **Required:** ❌ No
+- **Type:** Boolean (`true` | `false`)
+- **Default:** `true` in production, `false` in development
+- **Validation:** Must be `true` or `false` (case-insensitive)
+- **Used By:**
+  - `lib/logging/index.ts` - PII sanitization in log output
+- **Phase:** 3.1 (Email System / GDPR Compliance)
+
+**Examples:**
+
+```bash
+# Always sanitize PII (recommended for GDPR/CCPA compliance)
+LOG_SANITIZE_PII=true
+
+# Never sanitize PII (use with caution in production)
+LOG_SANITIZE_PII=false
+
+# Not set: Auto-detects based on NODE_ENV
+# LOG_SANITIZE_PII=
+```
+
+**How It Works:**
+
+The logger has two-tier sanitization for security and privacy:
+
+**Tier 1: Secrets (ALWAYS redacted regardless of this setting)**
+
+- `password`, `token`, `apiKey`, `secret`, `credential`, `bearer`, `privateKey`
+- `creditCard`, `ssn`, `authorization`
+- Output: `[REDACTED]`
+
+**Tier 2: PII (controlled by this setting)**
+
+- `email`, `phone`, `mobile`
+- `firstName`, `lastName`, `fullName`
+- `address`, `street`, `postcode`, `zipcode`
+- `ip`, `ipAddress`, `userAgent`
+- Output: `[PII REDACTED]`
+
+**Example Log Output:**
+
+```typescript
+logger.info('User created', {
+  userId: 'usr_123',
+  email: 'user@example.com',
+  password: 'secret123',
+});
+
+// Development (LOG_SANITIZE_PII=false):
+// { userId: 'usr_123', email: 'user@example.com', password: '[REDACTED]' }
+
+// Production (LOG_SANITIZE_PII=true):
+// { userId: 'usr_123', email: '[PII REDACTED]', password: '[REDACTED]' }
+```
+
+**Environment Defaults:**
+
+| Environment | Default Value | Behavior                        |
+| ----------- | ------------- | ------------------------------- |
+| Development | `false`       | PII visible for debugging       |
+| Production  | `true`        | PII redacted (GDPR compliant)   |
+| Test        | `false`       | PII visible for test assertions |
+
+**GDPR/CCPA Compliance:**
+
+For GDPR and CCPA compliance, it's recommended to:
+
+1. **Set `LOG_SANITIZE_PII=true` in production** - This is the default
+2. **Use `userId` instead of `email` for log correlation** - IDs are not PII
+3. **Review logs sent to third-party services** - Ensure PII is sanitized
+4. **Document your logging practices** - Include in privacy policy
+
+**Best Practices:**
+
+```typescript
+// ✅ GOOD - Use userId for tracing
+logger.info('User action', { userId: user.id, action: 'purchase' });
+
+// ⚠️ OK - Email included but will be redacted in production
+logger.info('User created', { userId: user.id, email: user.email });
+
+// ❌ AVOID - Logging PII unnecessarily
+logger.info('Login', { email, password: '***' }); // Use userId instead
+```
+
+**Important Notes:**
+
+- Secrets (passwords, tokens, API keys) are ALWAYS redacted regardless of this setting
+- Case-insensitive (`TRUE`, `True`, `true` all work)
+- Changes take effect immediately (no rebuild needed)
+- Consider using `LOG_SANITIZE_PII=true` even in development for GDPR-strict projects
+
+**Troubleshooting:**
+
+- **PII still visible in production logs:** Verify `LOG_SANITIZE_PII` is not set to `false`
+- **Can't see emails during debugging:** Set `LOG_SANITIZE_PII=false` in `.env.local`
+- **Third-party log aggregation showing PII:** Logs are sanitized before output; check if the aggregation service processes raw logs differently
 
 ---
 

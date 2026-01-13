@@ -319,8 +319,8 @@ describe('Logger', () => {
       const testLogger = new Logger(LogLevel.INFO);
       const meta = {
         user: {
-          name: 'John',
-          credentials: {
+          displayName: 'John',
+          auth: {
             password: 'secret',
             token: 'abc123',
           },
@@ -335,11 +335,11 @@ describe('Logger', () => {
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).user.credentials.password).toBe('[REDACTED]');
+      expect((parsed.meta as any).user.auth.password).toBe('[REDACTED]');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).user.credentials.token).toBe('[REDACTED]');
+      expect((parsed.meta as any).user.auth.token).toBe('[REDACTED]');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).user.name).toBe('John'); // Non-sensitive preserved
+      expect((parsed.meta as any).user.displayName).toBe('John'); // Non-sensitive preserved
     });
 
     it('should use case-insensitive matching for sensitive fields', () => {
@@ -367,29 +367,29 @@ describe('Logger', () => {
       expect((parsed.meta as any).ApiKey).toBe('[REDACTED]');
     });
 
-    it('should preserve non-sensitive data', () => {
+    it('should preserve non-sensitive, non-PII data', () => {
       // Arrange
       vi.stubEnv('NODE_ENV', 'production');
       const testLogger = new Logger(LogLevel.INFO);
       const meta = {
-        name: 'John Doe',
-        email: 'john@example.com',
-        age: 30,
+        userId: 'usr_123',
+        orderId: 'ord_456',
+        amount: 99.99,
       };
 
       // Act
-      testLogger.info('User info', meta);
+      testLogger.info('Order info', meta);
 
       // Assert
       expect(consoleLogSpy).toHaveBeenCalled();
       const output = consoleLogSpy.mock.calls[0]?.[0] as string;
       const parsed = JSON.parse(output) as ParsedLogOutput;
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).name).toBe('John Doe');
+      expect((parsed.meta as any).userId).toBe('usr_123');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).email).toBe('john@example.com');
+      expect((parsed.meta as any).orderId).toBe('ord_456');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).age).toBe(30);
+      expect((parsed.meta as any).amount).toBe(99.99);
     });
 
     it('should sanitize arrays containing sensitive data', () => {
@@ -398,8 +398,8 @@ describe('Logger', () => {
       const testLogger = new Logger(LogLevel.INFO);
       const meta = {
         users: [
-          { name: 'John', password: 'secret1' },
-          { name: 'Jane', password: 'secret2' },
+          { userId: 'usr_1', password: 'secret1' },
+          { userId: 'usr_2', password: 'secret2' },
         ],
       };
 
@@ -415,9 +415,294 @@ describe('Logger', () => {
       assertDefined(parsed.meta);
       expect((parsed.meta as any).users[1].password).toBe('[REDACTED]');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).users[0].name).toBe('John');
+      expect((parsed.meta as any).users[0].userId).toBe('usr_1');
       assertDefined(parsed.meta);
-      expect((parsed.meta as any).users[1].name).toBe('Jane');
+      expect((parsed.meta as any).users[1].userId).toBe('usr_2');
+    });
+  });
+
+  describe('PII Sanitization - GDPR Compliance', () => {
+    describe('Environment-aware PII handling', () => {
+      it('should sanitize email in production by default', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { email: 'user@example.com', userId: 'usr_123' };
+
+        // Act
+        testLogger.info('User action', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).email).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).userId).toBe('usr_123'); // Non-PII preserved
+      });
+
+      it('should show email in development by default', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'development');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { email: 'user@example.com' };
+
+        // Act
+        testLogger.info('User action', meta);
+
+        // Assert: Development format contains the email
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        expect(output).toContain('user@example.com');
+      });
+
+      it('should sanitize phone numbers in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { phone: '+44 7700 900000', mobile: '07700900001' };
+
+        // Act
+        testLogger.info('Contact info', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).phone).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).mobile).toBe('[PII REDACTED]');
+      });
+
+      it('should sanitize name fields in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          firstName: 'John',
+          lastName: 'Doe',
+          fullName: 'John Doe',
+        };
+
+        // Act
+        testLogger.info('User profile', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).firstName).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).lastName).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).fullName).toBe('[PII REDACTED]');
+      });
+
+      it('should sanitize IP addresses in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { ip: '192.168.1.1', ipAddress: '10.0.0.1' };
+
+        // Act
+        testLogger.info('Request received', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).ip).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).ipAddress).toBe('[PII REDACTED]');
+      });
+
+      it('should sanitize address fields in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          address: '123 Main St',
+          street: 'High Street',
+          postcode: 'SW1A 1AA',
+        };
+
+        // Act
+        testLogger.info('Shipping info', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).address).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).street).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).postcode).toBe('[PII REDACTED]');
+      });
+    });
+
+    describe('LOG_SANITIZE_PII environment variable', () => {
+      it('should sanitize PII when LOG_SANITIZE_PII=true even in development', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'development');
+        vi.stubEnv('LOG_SANITIZE_PII', 'true');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { email: 'user@example.com' };
+
+        // Act
+        testLogger.info('User action', meta);
+
+        // Assert: Even in dev, PII should be redacted
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        expect(output).not.toContain('user@example.com');
+        expect(output).toContain('[PII REDACTED]');
+      });
+
+      it('should show PII when LOG_SANITIZE_PII=false even in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'false');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { email: 'user@example.com' };
+
+        // Act
+        testLogger.info('User action', meta);
+
+        // Assert: In production with override, PII should be visible
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).email).toBe('user@example.com');
+      });
+
+      it('should handle case-insensitive LOG_SANITIZE_PII values', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'development');
+        vi.stubEnv('LOG_SANITIZE_PII', 'TRUE');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = { email: 'user@example.com' };
+
+        // Act
+        testLogger.info('User action', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        expect(output).toContain('[PII REDACTED]');
+      });
+    });
+
+    describe('Secrets vs PII distinction', () => {
+      it('should always sanitize secrets regardless of environment', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'development');
+        vi.stubEnv('LOG_SANITIZE_PII', 'false');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          password: 'secret123',
+          token: 'tok_abc',
+          apiKey: 'key_xyz',
+        };
+
+        // Act
+        testLogger.info('Auth data', meta);
+
+        // Assert: Secrets always redacted, even with PII disabled
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        expect(output).toContain('[REDACTED]');
+        expect(output).not.toContain('secret123');
+        expect(output).not.toContain('tok_abc');
+        expect(output).not.toContain('key_xyz');
+      });
+
+      it('should use [REDACTED] for secrets and [PII REDACTED] for PII', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          password: 'secret123',
+          email: 'user@example.com',
+        };
+
+        // Act
+        testLogger.info('User data', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).password).toBe('[REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).email).toBe('[PII REDACTED]');
+      });
+
+      it('should sanitize additional secret fields (bearer, credential, privateKey)', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'development');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          bearer: 'bearer_token',
+          credential: 'cred_value',
+          privateKey: 'pk_secret',
+        };
+
+        // Act
+        testLogger.info('Auth secrets', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        expect(output).not.toContain('bearer_token');
+        expect(output).not.toContain('cred_value');
+        expect(output).not.toContain('pk_secret');
+      });
+    });
+
+    describe('Nested PII sanitization', () => {
+      it('should sanitize nested PII fields in production', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          user: {
+            id: 'usr_123',
+            profile: {
+              email: 'nested@example.com',
+              firstName: 'John',
+            },
+          },
+        };
+
+        // Act
+        testLogger.info('Nested user data', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).user.id).toBe('usr_123');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).user.profile.email).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).user.profile.firstName).toBe('[PII REDACTED]');
+      });
+
+      it('should sanitize PII in arrays', () => {
+        // Arrange
+        vi.stubEnv('NODE_ENV', 'production');
+        const testLogger = new Logger(LogLevel.INFO);
+        const meta = {
+          recipients: [{ email: 'user1@example.com' }, { email: 'user2@example.com' }],
+        };
+
+        // Act
+        testLogger.info('Email batch', meta);
+
+        // Assert
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).recipients[0].email).toBe('[PII REDACTED]');
+        assertDefined(parsed.meta);
+        expect((parsed.meta as any).recipients[1].email).toBe('[PII REDACTED]');
+      });
     });
   });
 

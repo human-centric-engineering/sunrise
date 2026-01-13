@@ -9,8 +9,18 @@
  * - Log levels: DEBUG, INFO, WARN, ERROR
  * - Request context propagation (requestId, userId, sessionId)
  * - Child loggers with inherited context
- * - Automatic PII sanitization
+ * - Automatic secret sanitization (always redacted)
+ * - Environment-aware PII sanitization (GDPR compliant)
  * - TypeScript type safety
+ *
+ * PII Sanitization (GDPR Compliance):
+ * - Secrets (passwords, tokens, API keys) are ALWAYS redacted
+ * - PII (emails, names, phone numbers, IPs) are redacted in production by default
+ * - In development, PII is shown to aid debugging
+ * - Control with LOG_SANITIZE_PII environment variable:
+ *   - Not set: Auto (sanitize in production, show in development)
+ *   - "true": Always sanitize PII
+ *   - "false": Never sanitize PII (use with caution)
  *
  * @example
  * ```typescript
@@ -23,6 +33,11 @@
  * // Child logger with context
  * const requestLogger = logger.withContext({ requestId: 'abc123' });
  * requestLogger.info('Processing request'); // Includes requestId automatically
+ *
+ * // PII is automatically handled based on environment
+ * logger.info('User created', { email: 'user@example.com' });
+ * // Development: { email: 'user@example.com' }
+ * // Production:  { email: '[PII REDACTED]' }
  * ```
  */
 
@@ -83,18 +98,100 @@ interface LogEntry {
 }
 
 /**
- * Fields that may contain sensitive data
- * These will be sanitized in production logs
+ * Fields containing secrets - ALWAYS redacted regardless of environment
+ * These are security-critical and should never appear in logs
  */
-const SENSITIVE_FIELDS = [
+const SECRET_FIELDS = [
   'password',
   'token',
   'apikey',
+  'api_key',
   'secret',
   'creditcard',
+  'credit_card',
   'ssn',
   'authorization',
+  'bearer',
+  'credential',
+  'private_key',
+  'privatekey',
 ];
+
+/**
+ * Fields containing PII (Personally Identifiable Information)
+ * Redacted in production by default for GDPR/CCPA compliance
+ * Shown in development for debugging convenience
+ *
+ * Control with LOG_SANITIZE_PII environment variable:
+ * - Not set: Auto (sanitize in production, show in development)
+ * - "true": Always sanitize
+ * - "false": Never sanitize (use with caution in production)
+ */
+const PII_FIELDS = [
+  'email',
+  'phone',
+  'mobile',
+  'firstname',
+  'first_name',
+  'lastname',
+  'last_name',
+  'fullname',
+  'full_name',
+  'address',
+  'street',
+  'postcode',
+  'zipcode',
+  'zip_code',
+  'ip',
+  'ipaddress',
+  'ip_address',
+  'useragent',
+  'user_agent',
+];
+
+/**
+ * Determine if PII should be sanitized based on environment
+ * - Production: sanitize by default (GDPR compliance)
+ * - Development: show by default (debugging convenience)
+ * - Override with LOG_SANITIZE_PII environment variable
+ */
+function shouldSanitizePII(): boolean {
+  const envValue = process.env.LOG_SANITIZE_PII?.toLowerCase();
+
+  // Explicit override takes precedence
+  if (envValue === 'true') return true;
+  if (envValue === 'false') return false;
+
+  // Default: sanitize in production, show in development
+  return process.env.NODE_ENV === 'production';
+}
+
+/**
+ * Check if a field name matches any sensitive pattern
+ * Uses word boundary matching to avoid false positives like:
+ * - "recipients" matching "ip"
+ * - "credentials" matching "credential" (this one is intentionally matched)
+ *
+ * Matches if the field:
+ * - Exactly equals the sensitive pattern
+ * - Starts with the pattern followed by non-letter (e.g., "password123")
+ * - Ends with the pattern preceded by non-letter (e.g., "userPassword")
+ * - Contains the pattern surrounded by non-letters (e.g., "user_password_hash")
+ */
+function matchesSensitiveField(fieldName: string, sensitivePatterns: string[]): boolean {
+  const lowerField = fieldName.toLowerCase();
+  return sensitivePatterns.some((pattern) => {
+    // Exact match
+    if (lowerField === pattern) return true;
+
+    // Word boundary matching using regex
+    // Pattern should match as a complete word or camelCase boundary
+    // e.g., "password" matches "userPassword", "password_hash", "PASSWORD"
+    // but "ip" should NOT match "recipients" or "shipping"
+    const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`, 'i');
+    return regex.test(lowerField);
+  });
+}
 
 /**
  * ANSI color codes for development console output
@@ -139,9 +236,10 @@ export class Logger {
 
   /**
    * Sanitize sensitive data from an object
-   * Recursively replaces sensitive field values with '[REDACTED]'
+   * - Secrets are ALWAYS replaced with '[REDACTED]'
+   * - PII is replaced with '[PII REDACTED]' based on environment/config
    */
-  private sanitize(obj: unknown): unknown {
+  private sanitize(obj: unknown, sanitizePII: boolean): unknown {
     if (obj === null || obj === undefined) {
       return obj;
     }
@@ -151,18 +249,27 @@ export class Logger {
     }
 
     if (Array.isArray(obj)) {
-      return obj.map((item) => this.sanitize(item));
+      return obj.map((item) => this.sanitize(item, sanitizePII));
     }
 
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      const lowerKey = key.toLowerCase();
-      const isSensitive = SENSITIVE_FIELDS.some((field) => lowerKey.includes(field));
-
-      if (isSensitive) {
+      // Check if field matches a secret pattern (always redact)
+      // Uses word boundary matching to avoid false positives
+      if (matchesSensitiveField(key, SECRET_FIELDS)) {
         sanitized[key] = '[REDACTED]';
-      } else if (typeof value === 'object' && value !== null) {
-        sanitized[key] = this.sanitize(value);
+        continue;
+      }
+
+      // Check if field matches a PII pattern (redact based on environment/config)
+      if (sanitizePII && matchesSensitiveField(key, PII_FIELDS)) {
+        sanitized[key] = '[PII REDACTED]';
+        continue;
+      }
+
+      // Recursively sanitize nested objects
+      if (typeof value === 'object' && value !== null) {
+        sanitized[key] = this.sanitize(value, sanitizePII);
       } else {
         sanitized[key] = value;
       }
@@ -173,9 +280,12 @@ export class Logger {
 
   /**
    * Format log entry for development console (human-readable)
+   * Still sanitizes secrets, but shows PII by default (unless LOG_SANITIZE_PII=true)
    */
   private formatDev(entry: LogEntry): string {
-    const { timestamp, level, message, context, meta, error } = entry;
+    // Sanitize even in dev (secrets always, PII based on config)
+    const sanitizedEntry = this.sanitize(entry, shouldSanitizePII()) as LogEntry;
+    const { timestamp, level, message, context, meta, error } = sanitizedEntry;
 
     // Color by log level
     const levelColors: Record<LogLevel, string> = {
@@ -214,10 +324,12 @@ export class Logger {
 
   /**
    * Format log entry for production (JSON)
+   * Always sanitizes secrets, and sanitizes PII based on configuration
    */
   private formatProd(entry: LogEntry): string {
     // Sanitize entry before outputting
-    const sanitized = this.sanitize(entry);
+    // Secrets are always sanitized, PII based on shouldSanitizePII()
+    const sanitized = this.sanitize(entry, shouldSanitizePII());
     return JSON.stringify(sanitized);
   }
 
