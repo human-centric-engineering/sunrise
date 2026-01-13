@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import { ThemeToggle } from '@/components/theme-toggle';
 
 export const metadata: Metadata = {
-  title: 'Authentication - Sunrise',
+  title: {
+    template: '%s - Sunrise',
+    default: 'Authentication - Sunrise',
+  },
   description: 'Sign in or create an account',
 };
 

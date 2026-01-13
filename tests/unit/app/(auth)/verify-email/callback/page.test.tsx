@@ -1,8 +1,12 @@
 /**
- * Email Verification Callback Page Tests
+ * Email Verification Callback Content Tests
  *
- * Tests the email verification callback page that handles redirects from
- * better-auth's email verification endpoint.
+ * Tests the email verification callback client component that handles redirects
+ * from better-auth's email verification endpoint.
+ *
+ * File Structure (after refactoring):
+ * - page.tsx - Server component with metadata, renders VerifyCallbackClientContent
+ * - verify-callback-content.tsx - Client component with verification logic (tested here)
  *
  * Test Coverage:
  * - Success state (no error param) - redirects to dashboard
@@ -14,13 +18,13 @@
  * - Form validation (empty email)
  * - Suspense boundary fallback
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/verify-email/callback/page.tsx
+ * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/verify-email/callback/verify-callback-content.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import VerifyEmailCallbackPage from '@/app/(auth)/verify-email/callback/page';
+import { VerifyCallbackClientContent } from '@/app/(auth)/verify-email/callback/verify-callback-content';
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
@@ -41,7 +45,7 @@ vi.mock('next/navigation', () => ({
  *
  * Tests both success and error states of the verification callback flow.
  */
-describe('app/(auth)/verify-email/callback/page', () => {
+describe('VerifyCallbackClientContent', () => {
   let mockRouter: {
     push: ReturnType<typeof vi.fn>;
     replace: ReturnType<typeof vi.fn>;
@@ -82,7 +86,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
   describe('Suspense boundary', () => {
     it('should render page without crashing', () => {
       // Arrange & Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Assert: Page renders (either fallback or content)
       // The component either shows success message or error state
@@ -110,7 +114,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
     it('should render success message when no error param', async () => {
       // Arrange & Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Assert: Success message appears
       await waitFor(() => {
@@ -121,7 +125,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
     it('should show success icon when verification succeeds', async () => {
       // Arrange & Act
-      const { container } = render(<VerifyEmailCallbackPage />);
+      const { container } = render(<VerifyCallbackClientContent />);
 
       // Assert: Success icon container is rendered (check for the green success styling)
       await waitFor(() => {
@@ -135,7 +139,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
     it('should redirect to dashboard when no error param', async () => {
       // Arrange & Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Assert: Router replace is called with /dashboard
       await waitFor(() => {
@@ -145,7 +149,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
     it('should not show error message or resend form on success', async () => {
       // Arrange & Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Assert: Success state shown, no error UI
       await waitFor(() => {
@@ -178,7 +182,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
     describe('rendering', () => {
       it('should render error message when error param is present', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Assert: Error message appears
         await waitFor(() => {
@@ -193,7 +197,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should show error icon when verification fails', async () => {
         // Arrange & Act
-        const { container } = render(<VerifyEmailCallbackPage />);
+        const { container } = render(<VerifyCallbackClientContent />);
 
         // Assert: Error icon container is rendered (check for the amber error styling)
         await waitFor(() => {
@@ -207,7 +211,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should render email input field in error state', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Assert: Email input is present
         await waitFor(() => {
@@ -220,7 +224,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should render "Resend Verification Email" button', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Assert: Resend button is present
         await waitFor(() => {
@@ -233,7 +237,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should render "Back to login" link', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Assert: Back to login link is present
         await waitFor(() => {
@@ -245,7 +249,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should disable resend button when email is empty', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Assert: Resend button is disabled when email is empty
         await waitFor(() => {
@@ -258,7 +262,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
       it('should not redirect to dashboard when error param is present', async () => {
         // Arrange & Act
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         // Wait for component to render
         await waitFor(() => {
@@ -274,7 +278,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
       it('should enable resend button when email is entered', async () => {
         // Arrange
         const user = userEvent.setup();
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -296,7 +300,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
       it('should update email state as user types', async () => {
         // Arrange
         const user = userEvent.setup();
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -316,7 +320,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
       it('should show validation error when submitting with empty email', async () => {
         // Arrange
         const user = userEvent.setup();
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -346,7 +350,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ success: true }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -386,7 +390,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
             })
         );
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -426,7 +430,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
             })
         );
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -458,7 +462,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ success: true }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -490,7 +494,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ success: true }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -521,7 +525,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ success: true }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -552,7 +556,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ message: errorMessage }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -580,7 +584,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({}), // No message property
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -610,7 +614,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           },
         } as unknown as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -635,7 +639,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
 
         vi.mocked(global.fetch).mockRejectedValue(new Error('Network error'));
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -671,7 +675,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
             json: async () => ({ success: true }),
           } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -710,7 +714,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
           json: async () => ({ message: 'Error' }),
         } as Response);
 
-        render(<VerifyEmailCallbackPage />);
+        render(<VerifyCallbackClientContent />);
 
         await waitFor(() => {
           expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
@@ -754,7 +758,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
       vi.mocked(useRouter).mockReturnValue(mockRouter as ReturnType<typeof useRouter>);
 
       // Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Assert: Error UI is shown (same as invalid_token)
       await waitFor(() => {
@@ -772,7 +776,7 @@ describe('app/(auth)/verify-email/callback/page', () => {
       vi.mocked(useRouter).mockReturnValue(mockRouter as ReturnType<typeof useRouter>);
 
       // Act
-      render(<VerifyEmailCallbackPage />);
+      render(<VerifyCallbackClientContent />);
 
       // Wait for component to render
       await waitFor(() => {
