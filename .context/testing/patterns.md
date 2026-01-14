@@ -458,6 +458,159 @@ it('should throw error for malformed JSON', async () => {
 
 ---
 
+## Fake Timers with React Testing Library
+
+### The Problem
+
+Vitest's fake timers (`vi.useFakeTimers()`) conflict with React Testing Library's async utilities. This causes tests to timeout because:
+
+1. **`waitFor` uses real timers** - It polls with `setTimeout` internally, which never fires when fake timers are active
+2. **`userEvent` uses real timers** - Its internal delays and async handling break with fake timers
+3. **Test pollution** - If a test with fake timers fails or doesn't clean up, subsequent tests inherit broken timer state
+
+### ❌ Anti-Pattern: Global Fake Timers
+
+```typescript
+// ❌ WRONG - This causes widespread timeouts
+beforeEach(() => {
+  vi.useFakeTimers();  // Breaks ALL async utilities
+});
+
+it('should hide message after timeout', async () => {
+  const user = userEvent.setup();
+  render(<Component />);
+
+  await user.click(button);           // TIMEOUT - userEvent broken
+  await waitFor(() => expect(...));   // TIMEOUT - waitFor broken
+
+  vi.advanceTimersByTime(3000);
+
+  await waitFor(() => expect(...));   // TIMEOUT - still broken
+});
+```
+
+### ✅ Correct Pattern: Localized Fake Timers
+
+```typescript
+// Always clean up fake timers in afterEach
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();  // CRITICAL: Prevents test pollution
+});
+
+it('should hide success message after 3 seconds', async () => {
+  // 1. Enable fake timers at START of test
+  vi.useFakeTimers();
+
+  // 2. Set up mocks
+  vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+  render(<Component />);
+
+  // 3. Use fireEvent (not userEvent) for fake timer compatibility
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button'));
+    await Promise.resolve();  // Flush microtasks
+  });
+
+  // 4. Use synchronous assertions (not waitFor)
+  expect(screen.getByText(/success/)).toBeInTheDocument();
+
+  // 5. Advance time with act()
+  act(() => {
+    vi.advanceTimersByTime(3000);
+  });
+
+  // 6. Assert final state synchronously
+  expect(screen.queryByText(/success/)).not.toBeInTheDocument();
+
+  // 7. Restore real timers (also done in afterEach as safety net)
+  vi.useRealTimers();
+});
+```
+
+### Key Rules
+
+| Rule                                                  | Why                                                             |
+| ----------------------------------------------------- | --------------------------------------------------------------- |
+| Never use `vi.useFakeTimers()` in `beforeEach`        | Breaks userEvent and waitFor for ALL tests                      |
+| Always add `vi.useRealTimers()` to `afterEach`        | Prevents test pollution if a test fails mid-execution           |
+| Use `fireEvent` instead of `userEvent`                | fireEvent is synchronous, userEvent has internal async handling |
+| Wrap clicks in `act()` with `await Promise.resolve()` | Flushes React's microtask queue                                 |
+| Use synchronous assertions, not `waitFor`             | waitFor's polling uses real setTimeout                          |
+| Wrap `vi.advanceTimersByTime()` in `act()`            | Lets React process state updates from timers                    |
+
+### When to Use Fake Timers
+
+Only use fake timers when testing time-dependent behavior:
+
+- Auto-hiding success/error messages (`setTimeout`)
+- Debounced inputs
+- Polling intervals
+- Animation timing
+
+For most tests, **real timers with `waitFor` work better** and are less error-prone.
+
+### Complete Example
+
+```typescript
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+describe('NotificationForm', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Do NOT use vi.useFakeTimers() here
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();  // Safety net for test pollution
+  });
+
+  // Regular test - uses real timers (preferred)
+  it('should show success message on save', async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.mocked(api.save).mockResolvedValue({ success: true });
+
+    render(<NotificationForm />);
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
+    });
+  });
+
+  // Fake timer test - for testing auto-hide behavior
+  it('should auto-hide success message after 3 seconds', async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.save).mockResolvedValue({ success: true });
+
+    render(<NotificationForm />);
+
+    // Use fireEvent + act for fake timer compatibility
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.queryByText(/saved successfully/i)).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+});
+```
+
+---
+
 ## Mock Patterns
 
 ### Mocking Logger
@@ -765,11 +918,12 @@ describe('environment-aware behavior', () => {
 5. **Type Safety**: Define response interfaces for type-safe assertions
 6. **Error Testing**: Use `instanceof` for type narrowing
 7. **Async**: Properly handle promises with `async/await` and `.rejects`
-8. **Mocking**: Mock at boundaries (database, auth, external APIs)
-9. **Parameterized**: Use test case arrays or `describe.each` to reduce duplication
-10. **Edge Cases**: Test boundaries, null/undefined, empty values
-11. **Organization**: Group related tests with nested `describe` blocks
-12. **Descriptive Names**: Test names should explain scenario and expected outcome
+8. **Fake Timers**: Never use in `beforeEach`; use `fireEvent` + `act()` instead of `userEvent` + `waitFor`
+9. **Mocking**: Mock at boundaries (database, auth, external APIs)
+10. **Parameterized**: Use test case arrays or `describe.each` to reduce duplication
+11. **Edge Cases**: Test boundaries, null/undefined, empty values
+12. **Organization**: Group related tests with nested `describe` blocks
+13. **Descriptive Names**: Test names should explain scenario and expected outcome
 
 **Test Quality Metrics**:
 
