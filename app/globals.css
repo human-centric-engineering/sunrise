@@ -20,6 +20,8 @@
   --color-foreground: #0a0a0a;
   --color-card: #ffffff;
   --color-card-foreground: #0a0a0a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0a0a0a;
 }
 
 @layer base {
@@ -42,6 +44,8 @@
     --color-foreground: #f9fafb;
     --color-card: #0a0a0a;
     --color-card-foreground: #f9fafb;
+    --color-popover: #0a0a0a;
+    --color-popover-foreground: #f9fafb;
   }
 }
 
