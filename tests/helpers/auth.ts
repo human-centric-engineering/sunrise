@@ -43,6 +43,12 @@ export function createMockAuthSession(overrides?: Partial<MockSession>): MockSes
       role: 'USER',
       createdAt: new Date(),
       updatedAt: new Date(),
+      // Extended profile fields (Phase 3.2)
+      bio: null,
+      phone: null,
+      timezone: 'UTC',
+      location: null,
+      preferences: {},
     },
     ...overrides,
   };
@@ -80,6 +86,12 @@ export function mockAuthenticatedUser(role: 'USER' | 'ADMIN' | 'MODERATOR' = 'US
       role,
       createdAt: new Date(),
       updatedAt: new Date(),
+      // Extended profile fields (Phase 3.2)
+      bio: null,
+      phone: null,
+      timezone: 'UTC',
+      location: null,
+      preferences: {},
     },
   });
 }

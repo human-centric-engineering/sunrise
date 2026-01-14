@@ -144,6 +144,11 @@ describe('GET /api/v1/users', () => {
           image: null,
           createdAt: new Date('2025-01-01'),
           updatedAt: new Date('2025-01-01'),
+          bio: null,
+          phone: null,
+          timezone: 'UTC',
+          location: null,
+          preferences: {},
         },
         {
           id: 'user-2',
@@ -154,6 +159,11 @@ describe('GET /api/v1/users', () => {
           image: null,
           createdAt: new Date('2025-01-02'),
           updatedAt: new Date('2025-01-02'),
+          bio: null,
+          phone: null,
+          timezone: 'UTC',
+          location: null,
+          preferences: {},
         },
       ];
 
@@ -202,6 +212,11 @@ describe('GET /api/v1/users', () => {
           image: null,
           createdAt: new Date(),
           updatedAt: new Date(),
+          bio: null,
+          phone: null,
+          timezone: 'UTC',
+          location: null,
+          preferences: {},
         },
       ];
 

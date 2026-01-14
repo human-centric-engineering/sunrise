@@ -22,6 +22,11 @@ erDiagram
         datetime createdAt
         datetime updatedAt
         datetime lastLoginAt
+        string bio
+        string phone
+        string timezone
+        string location
+        json preferences
     }
 
     Account {
@@ -88,6 +93,13 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   lastLoginAt   DateTime?
+
+  // Extended Profile Fields (Phase 3.2)
+  bio           String?   @db.Text      // User biography
+  phone         String?   @db.VarChar(20)  // Phone number
+  timezone      String?   @default("UTC")  // User timezone
+  location      String?   @db.VarChar(100) // User location
+  preferences   Json?     @default("{}")   // Email/notification preferences
 
   // Relations
   accounts Account[]

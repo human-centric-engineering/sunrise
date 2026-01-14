@@ -4,14 +4,15 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2026-01-13
-**Current Phase:** Phase 3.1 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (1/6)
+**Last Updated:** 2026-01-14
+**Current Phase:** Phase 3.2 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (2/6)
 **Blockers:** None
-**Next Steps:** Phase 3.2 - User Management
+**Next Steps:** Phase 3.3 - Security Hardening
 
 **Recent Completions:**
 
+- ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion)
 - ✅ Phase 3.1 - Email System (Resend + React Email, invitation flow, email verification, comprehensive auth tests)
 - ✅ Phase 2.5 - Documentation Structure (CUSTOMIZATION.md - concise fork-and-adapt guide)
 - ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
@@ -369,16 +370,50 @@ Use this checklist to track progress through the build. Check off items as they'
 - **PII Sanitization**: Environment-aware log scrubbing for GDPR compliance
 - **Reusable Components**: PasswordInput with show/hide toggle, PasswordStrength meter
 
-### 3.2 User Management
+### 3.2 User Management ✅
 
-- [ ] Create user profile page
-- [ ] Build account settings page
-- [ ] Implement profile editing
-- [ ] Add email preferences
-- [ ] Create account deletion flow
-- [ ] Build change password functionality
-- [ ] Add profile picture placeholder
-- [ ] Create user dashboard
+**Completed:** 2026-01-14
+
+- [x] Create user profile page
+- [x] Build account settings page
+- [x] Implement profile editing
+- [x] Add email preferences
+- [x] Create account deletion flow
+- [x] Build change password functionality
+- [x] Add profile picture placeholder
+- [x] Create user dashboard
+
+**Key Files:**
+
+- `app/(protected)/profile/page.tsx` - Profile view page
+- `app/(protected)/settings/page.tsx` - Settings page with tabs (Profile, Security, Notifications, Account)
+- `app/(protected)/dashboard/page.tsx` - Enhanced dashboard with stats and navigation
+- `app/api/v1/users/me/route.ts` - Extended with DELETE handler and new profile fields
+- `app/api/v1/users/me/preferences/route.ts` - Email preferences endpoint
+- `components/forms/profile-form.tsx` - Profile editing form
+- `components/forms/password-form.tsx` - Password change form
+- `components/forms/preferences-form.tsx` - Email notification toggles
+- `components/forms/delete-account-form.tsx` - Account deletion with confirmation
+- `components/layouts/protected-nav.tsx` - Navigation for protected routes
+- `lib/validations/user.ts` - Extended with profile, preferences, and delete schemas
+
+**Key Features:**
+
+- **Extended Profile Fields**: bio, phone, timezone, location stored on User model
+- **Email Preferences**: JSON field on User with marketing, productUpdates, securityAlerts toggles
+- **Account Deletion**: Requires typing "DELETE" to confirm, cascades to sessions/accounts
+- **Password Change**: Uses better-auth's built-in changePassword() method
+- **Dashboard Stats**: Profile completion percentage, email verification status, account role
+- **Navigation**: Protected route navigation with active page highlighting
+- **Profile Picture**: UI placeholder only (S3 integration documented as Phase 4)
+
+**Test Coverage:**
+
+- 103 unit tests for user validation schemas (including new Phase 3.2 schemas)
+- 18 integration tests for /api/v1/users/me endpoint
+- 15 integration tests for /api/v1/users/me/preferences endpoint
+
+**Branch:** `feature/phase-3.2-user-management`
 
 ### 3.3 Security Hardening
 

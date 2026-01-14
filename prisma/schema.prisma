@@ -26,6 +26,13 @@ model User {
   // Custom fields for RBAC
   role          String?   @default("USER")
 
+  // Extended Profile Fields (Phase 3.2)
+  bio           String?   @db.Text        // User biography (long text)
+  phone         String?   @db.VarChar(20) // Phone number
+  timezone      String?   @default("UTC") // IANA timezone (e.g., "America/New_York")
+  location      String?   @db.VarChar(100) // Free-form location string
+  preferences   Json?     @default("{}")  // Email preferences as JSON
+
   // Relations
   sessions      Session[]
   accounts      Account[]

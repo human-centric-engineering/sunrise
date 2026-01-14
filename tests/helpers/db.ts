@@ -82,6 +82,12 @@ export function createMockUser(overrides?: Partial<User>): User {
     role: 'USER',
     createdAt: new Date(),
     updatedAt: new Date(),
+    // Extended profile fields (Phase 3.2)
+    bio: null,
+    phone: null,
+    timezone: 'UTC',
+    location: null,
+    preferences: {},
     ...overrides,
   };
 }
