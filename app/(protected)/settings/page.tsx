@@ -38,7 +38,7 @@ export default async function SettingsPage() {
     clearInvalidSession('/settings');
   }
 
-  // Fetch full user data with preferences
+  // Fetch full user data with preferences and accounts
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: {
@@ -54,6 +54,12 @@ export default async function SettingsPage() {
       timezone: true,
       location: true,
       preferences: true,
+      accounts: {
+        select: {
+          providerId: true,
+          password: true,
+        },
+      },
     },
   });
 
@@ -63,6 +69,14 @@ export default async function SettingsPage() {
 
   // Parse preferences from JSON
   const preferences = parsePreferences(user.preferences);
+
+  // Check if user has a password account
+  const hasPasswordAccount = user.accounts.some((account) => account.password !== null);
+
+  // Get OAuth provider names (excluding credential provider)
+  const oauthProviders = user.accounts
+    .filter((account) => account.providerId !== 'credential' && account.password === null)
+    .map((account) => formatProviderName(account.providerId));
 
   // Get user initials for avatar fallback
   const initials = user.name
@@ -138,9 +152,24 @@ export default async function SettingsPage() {
               <CardDescription>Manage your password and security settings</CardDescription>
             </CardHeader>
             <CardContent>
-              <Suspense fallback={<div>Loading...</div>}>
-                <PasswordForm />
-              </Suspense>
+              {hasPasswordAccount ? (
+                <Suspense fallback={<div>Loading...</div>}>
+                  <PasswordForm />
+                </Suspense>
+              ) : (
+                <div className="text-muted-foreground space-y-2 py-4 text-center">
+                  <p>
+                    You signed in with{' '}
+                    <span className="text-foreground font-medium">
+                      {oauthProviders.join(', ') || 'an external provider'}
+                    </span>
+                    .
+                  </p>
+                  <p className="text-sm">
+                    Password settings are not available for accounts using external authentication.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -210,6 +239,24 @@ export default async function SettingsPage() {
       </Tabs>
     </div>
   );
+}
+
+/**
+ * Format OAuth provider ID to human-readable name
+ */
+function formatProviderName(providerId: string): string {
+  const providerNames: Record<string, string> = {
+    google: 'Google',
+    github: 'GitHub',
+    facebook: 'Facebook',
+    twitter: 'Twitter',
+    apple: 'Apple',
+    microsoft: 'Microsoft',
+    discord: 'Discord',
+    linkedin: 'LinkedIn',
+  };
+
+  return providerNames[providerId.toLowerCase()] || providerId;
 }
 
 /**
