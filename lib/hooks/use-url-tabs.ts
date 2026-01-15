@@ -11,6 +11,11 @@
  * const { activeTab, setActiveTab } = useUrlTabs({
  *   defaultTab: 'profile',
  *   allowedTabs: ['profile', 'security', 'notifications'],
+ *   titles: {
+ *     profile: 'Settings - Profile - MyApp',
+ *     security: 'Settings - Security - MyApp',
+ *     notifications: 'Settings - Notifications - MyApp',
+ *   },
  * });
  *
  * <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -29,6 +34,8 @@ export interface UseUrlTabsOptions<T extends string = string> {
   defaultTab: T;
   /** Valid tab values for validation */
   allowedTabs: readonly T[];
+  /** Optional map of tab values to page titles (updates document.title) */
+  titles?: Partial<Record<T, string>>;
 }
 
 export interface UseUrlTabsReturn<T extends string = string> {
@@ -54,6 +61,7 @@ export function useUrlTabs<T extends string = string>({
   paramName = 'tab',
   defaultTab,
   allowedTabs,
+  titles,
 }: UseUrlTabsOptions<T>): UseUrlTabsReturn<T> {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -83,6 +91,13 @@ export function useUrlTabs<T extends string = string>({
       router.replace(cleanUrl, { scroll: false });
     }
   }, [searchParams, paramName, allowedTabs, pathname, router]);
+
+  // Update document title when tab changes
+  useEffect(() => {
+    if (titles && titles[activeTab]) {
+      document.title = titles[activeTab];
+    }
+  }, [activeTab, titles]);
 
   // Update URL when tab changes
   const setActiveTab = useCallback(

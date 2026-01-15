@@ -115,6 +115,8 @@ interface UseUrlTabsOptions<T extends string> {
   defaultTab: T;
   /** Valid tab values for validation */
   allowedTabs: readonly T[];
+  /** Optional map of tab values to page titles (updates document.title) */
+  titles?: Partial<Record<T, string>>;
 }
 
 interface UseUrlTabsReturn<T extends string> {
@@ -129,14 +131,36 @@ interface UseUrlTabsReturn<T extends string> {
 
 ### Behavior
 
-| Scenario              | Result                                    |
-| --------------------- | ----------------------------------------- |
-| `/page`               | Shows default tab, clean URL              |
-| `/page?tab=details`   | Shows details tab                         |
-| `/page?tab=invalid`   | Shows default tab, URL cleaned to `/page` |
-| Click non-default tab | URL updates to `/page?tab=details`        |
-| Click default tab     | URL cleans to `/page`                     |
-| Browser back          | Returns to previous tab                   |
+| Scenario              | Result                                            |
+| --------------------- | ------------------------------------------------- |
+| `/page`               | Shows default tab, clean URL                      |
+| `/page?tab=details`   | Shows details tab                                 |
+| `/page?tab=invalid`   | Shows default tab, URL cleaned to `/page`         |
+| Click non-default tab | URL updates to `/page?tab=details`, title updates |
+| Click default tab     | URL cleans to `/page`, title updates              |
+| Browser back          | Returns to previous tab, title updates            |
+
+### Dynamic Page Titles
+
+The hook can automatically update `document.title` when tabs change:
+
+```typescript
+// lib/constants/feature.ts
+export const FEATURE_TAB_TITLES: Record<FeatureTab, string> = {
+  overview: 'Overview - Feature - Sunrise',
+  details: 'Details - Feature - Sunrise',
+  history: 'History - Feature - Sunrise',
+};
+
+// In component
+const { activeTab, setActiveTab } = useUrlTabs({
+  defaultTab: 'overview',
+  allowedTabs: ['overview', 'details', 'history'],
+  titles: FEATURE_TAB_TITLES,
+});
+```
+
+When a user switches to the Details tab, the browser title updates to "Details - Feature - Sunrise".
 
 ### Custom Parameter Name
 

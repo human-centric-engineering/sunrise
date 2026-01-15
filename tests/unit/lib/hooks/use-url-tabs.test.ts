@@ -371,4 +371,67 @@ describe('lib/hooks/use-url-tabs', () => {
       expect(mockRouter.replace).not.toHaveBeenCalled();
     });
   });
+
+  describe('document title', () => {
+    it('should update document.title when titles are provided', () => {
+      // Arrange
+      const titles = {
+        profile: 'Profile - Settings',
+        security: 'Security - Settings',
+      };
+
+      // Act
+      renderHook(() =>
+        useUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+          titles,
+        })
+      );
+
+      // Assert
+      expect(document.title).toBe('Profile - Settings');
+    });
+
+    it('should update document.title when tab changes', async () => {
+      // Arrange
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=security') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      const titles = {
+        profile: 'Profile - Settings',
+        security: 'Security - Settings',
+      };
+
+      // Act
+      renderHook(() =>
+        useUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+          titles,
+        })
+      );
+
+      // Assert
+      expect(document.title).toBe('Security - Settings');
+    });
+
+    it('should not update document.title when titles are not provided', () => {
+      // Arrange
+      const originalTitle = document.title;
+
+      // Act
+      renderHook(() =>
+        useUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+        })
+      );
+
+      // Assert - title unchanged
+      expect(document.title).toBe(originalTitle);
+    });
+  });
 });

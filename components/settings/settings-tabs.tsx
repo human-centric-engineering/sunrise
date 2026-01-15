@@ -31,6 +31,7 @@ import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import {
   SETTINGS_TABS,
   SETTINGS_TAB_VALUES,
+  SETTINGS_TAB_TITLES,
   DEFAULT_SETTINGS_TAB,
   type SettingsTab,
 } from '@/lib/constants/settings';
@@ -87,6 +88,7 @@ export function SettingsTabs({
   const { activeTab, setActiveTab } = useUrlTabs<SettingsTab>({
     defaultTab: DEFAULT_SETTINGS_TAB,
     allowedTabs: SETTINGS_TAB_VALUES,
+    titles: SETTINGS_TAB_TITLES,
   });
 
   // Wrapper to handle Radix's string type for onValueChange
