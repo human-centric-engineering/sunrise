@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
-import { ThemeToggle } from '@/components/theme-toggle';
+import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
 
 export const metadata: Metadata = {
@@ -26,20 +25,7 @@ export default function ProtectedLayout({
 }>) {
   return (
     <div className="bg-background min-h-screen">
-      {/* Header with navigation */}
-      <header className="border-b">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-8">
-            <Link href="/dashboard" className="text-xl font-bold hover:opacity-80">
-              Sunrise
-            </Link>
-            <ProtectedNav />
-          </div>
-          <ThemeToggle />
-        </div>
-      </header>
-
-      {/* Main content */}
+      <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />
       <main className="container mx-auto px-4 py-8">{children}</main>
     </div>
   );

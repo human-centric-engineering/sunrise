@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { LogoutButton } from '@/components/auth/logout-button';
 import { User, Settings, CheckCircle2, AlertCircle, Shield } from 'lucide-react';
 
 /**
@@ -61,10 +60,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <LogoutButton variant="outline" redirectTo="/login" />
-      </div>
+      <h1 className="text-3xl font-bold">Dashboard</h1>
 
       {/* Welcome Card */}
       <Card>
