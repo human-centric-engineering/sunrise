@@ -99,6 +99,18 @@ Comprehensive error handling, structured logging, and error tracking. Includes:
 
 **Key Features**: Structured logging (JSON/colored), request ID tracing, Sentry integration, user-friendly messages, automatic PII sanitization
 
+### 🔒 [Security](./security/overview.md)
+
+Application-wide security utilities and configuration. Includes:
+
+- [Overview](./security/overview.md) - CSP, CORS, rate limiting, input sanitization, security headers
+
+**Use When**: Configuring security headers, setting up CORS, implementing rate limiting, sanitizing user input
+
+**Key Features**: Environment-specific CSP, configurable CORS via env vars, LRU-based rate limiting, XSS prevention utilities
+
+**Note**: For authentication-specific security (passwords, sessions, OAuth), see [Auth Security](./auth/security.md)
+
 ### 🎨 [UI Patterns](./ui/overview.md)
 
 Reusable UI patterns and component conventions. Includes:
@@ -138,11 +150,13 @@ Reference .context/architecture/overview.md for:
 ### For Security Review
 
 ```
-Cross-reference .context/auth/security.md and .context/api/headers.md for:
-- Authentication verification
-- Authorization checks
-- Input validation
-- Rate limiting
+Cross-reference .context/security/overview.md and .context/auth/security.md for:
+- CSP and security headers → security/overview.md
+- CORS configuration → security/overview.md
+- Rate limiting → security/overview.md
+- Input sanitization → security/overview.md
+- Authentication security → auth/security.md
+- Session management → auth/security.md
 ```
 
 ## Navigation Quick Reference
@@ -162,6 +176,11 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 | Set up error tracking | errors/overview.md       | environment/overview.md                         |
 | Add tabbed interface  | ui/overview.md           | architecture/patterns.md                        |
 | URL state management  | ui/overview.md           | architecture/patterns.md                        |
+| Configure CSP/headers | security/overview.md     | api/headers.md                                  |
+| Set up CORS           | security/overview.md     | environment/overview.md                         |
+| Add rate limiting     | security/overview.md     | auth/security.md                                |
+| Sanitize user input   | security/overview.md     | api/endpoints.md                                |
+| Secure auth flows     | auth/security.md         | security/overview.md                            |
 
 ## Technology Stack
 
