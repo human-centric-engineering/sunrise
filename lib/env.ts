@@ -71,6 +71,14 @@ const serverEnvSchema = z.object({
     .enum(['debug', 'info', 'warn', 'error'])
     .optional()
     .describe('Logging verbosity level. Defaults to "debug" in development, "info" in production'),
+
+  // Security Configuration (optional)
+  ALLOWED_ORIGINS: z
+    .string()
+    .optional()
+    .describe(
+      'Comma-separated list of allowed CORS origins (e.g., https://app.example.com,https://mobile.example.com). Leave unset for same-origin only.'
+    ),
 });
 
 // Client-side environment variables (NEXT_PUBLIC_* vars)
