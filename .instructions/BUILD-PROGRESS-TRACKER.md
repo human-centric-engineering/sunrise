@@ -4,7 +4,7 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2026-01-14
+**Last Updated:** 2026-01-15
 **Current Phase:** Phase 3.2 Complete ✅
 **Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (2/6)
 **Blockers:** None
@@ -12,7 +12,7 @@ Use this checklist to track progress through the build. Check off items as they'
 
 **Recent Completions:**
 
-- ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion)
+- ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion, UserButton dropdown, URL-persistent tabs)
 - ✅ Phase 3.1 - Email System (Resend + React Email, invitation flow, email verification, comprehensive auth tests)
 - ✅ Phase 2.5 - Documentation Structure (CUSTOMIZATION.md - concise fork-and-adapt guide)
 - ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
@@ -372,7 +372,7 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ### 3.2 User Management ✅
 
-**Completed:** 2026-01-14
+**Completed:** 2026-01-15
 
 - [x] Create user profile page
 - [x] Build account settings page
@@ -382,19 +382,30 @@ Use this checklist to track progress through the build. Check off items as they'
 - [x] Build change password functionality
 - [x] Add profile picture placeholder
 - [x] Create user dashboard
+- [x] Add UserButton dropdown for consistent auth UX
+- [x] Implement URL-persistent tabs with reusable hook
+- [x] Add dynamic page titles for settings tabs
+- [x] Create shared header components (AppHeader, HeaderActions)
+- [x] Comprehensive UI component test coverage
 
 **Key Files:**
 
 - `app/(protected)/profile/page.tsx` - Profile view page
 - `app/(protected)/settings/page.tsx` - Settings page with tabs (Profile, Security, Notifications, Account)
 - `app/(protected)/dashboard/page.tsx` - Enhanced dashboard with stats and navigation
+- `app/(public)/layout.tsx` - Public layout with AppHeader
 - `app/api/v1/users/me/route.ts` - Extended with DELETE handler and new profile fields
 - `app/api/v1/users/me/preferences/route.ts` - Email preferences endpoint
+- `components/auth/user-button.tsx` - UserButton dropdown (auth state, profile, settings, sign out)
+- `components/layouts/app-header.tsx` - Shared header component
+- `components/layouts/header-actions.tsx` - Container for ThemeToggle + UserButton
+- `components/settings/settings-tabs.tsx` - URL-synced settings tabs
 - `components/forms/profile-form.tsx` - Profile editing form
 - `components/forms/password-form.tsx` - Password change form
 - `components/forms/preferences-form.tsx` - Email notification toggles
 - `components/forms/delete-account-form.tsx` - Account deletion with confirmation
-- `components/layouts/protected-nav.tsx` - Navigation for protected routes
+- `lib/hooks/use-url-tabs.ts` - Reusable URL-persistent tabs hook
+- `lib/constants/settings.ts` - Type-safe tab constants and titles
 - `lib/validations/user.ts` - Extended with profile, preferences, and delete schemas
 
 **Key Features:**
@@ -404,14 +415,26 @@ Use this checklist to track progress through the build. Check off items as they'
 - **Account Deletion**: Requires typing "DELETE" to confirm, cascades to sessions/accounts
 - **Password Change**: Uses better-auth's built-in changePassword() method
 - **Dashboard Stats**: Profile completion percentage, email verification status, account role
-- **Navigation**: Protected route navigation with active page highlighting
+- **UserButton Dropdown**: Consistent auth UX across all pages (login/signup or profile/settings/signout)
+- **URL-Persistent Tabs**: Settings tabs sync with URL (/settings?tab=security)
+- **Dynamic Page Titles**: Browser title updates when switching tabs
+- **Default User Preferences**: Stored in database on account creation
 - **Profile Picture**: UI placeholder only (S3 integration documented as Phase 4)
 
 **Test Coverage:**
 
-- 103 unit tests for user validation schemas (including new Phase 3.2 schemas)
+- 1696 total tests passing across the project
+- 103 unit tests for user validation schemas
+- 102 unit tests for settings forms (profile, password, preferences, delete-account)
+- 49 unit tests for dropdown-menu component (100% branch coverage)
+- 26 unit tests for separator component (100% branch coverage)
+- 18 unit tests for select component (100% branch coverage)
+- 19 unit tests for UserButton component
+- 37 unit tests for useUrlTabs hook and SettingsTabs component
 - 18 integration tests for /api/v1/users/me endpoint
 - 15 integration tests for /api/v1/users/me/preferences endpoint
+
+**Security Review:** ✅ Passed - No high-confidence vulnerabilities identified
 
 **Branch:** `feature/phase-3.2-user-management`
 
@@ -1365,3 +1388,56 @@ Two patterns now available for creating users:
 - `edc7efe` - test: improve login-form function coverage by invoking onRequest callback
 
 **Branch:** `feature/phase-3.1-email-system`
+
+### 2026-01-15 - Phase 3.2 Complete
+
+**User Management System Implemented:**
+
+- Extended user profile with bio, phone, timezone, location fields
+- Email preferences with marketing, productUpdates, securityAlerts toggles
+- Account deletion with "DELETE" confirmation requirement
+- Password change via better-auth's changePassword() method
+- Default user preferences stored on account creation
+- Complete settings page with URL-persistent tabbed interface
+- UserButton dropdown for consistent auth UX across all pages
+
+**Key Architecture Decisions:**
+
+1. **URL-Persistent Tabs**: Settings tabs sync with URL query params (?tab=security) for shareability and browser history support
+2. **Reusable useUrlTabs Hook**: Generic hook for URL-synced tab state, used in settings and available for other tabbed interfaces
+3. **UserButton Component**: Unified auth UI showing login/signup when unauthenticated, profile/settings/signout when authenticated
+4. **Shared Header Components**: AppHeader and HeaderActions provide consistent header structure across layouts
+5. **Default Preferences on Creation**: User preferences stored in database at account creation via databaseHooks.user.create.after
+6. **Security Alerts Always On**: securityAlerts preference cannot be disabled (hardcoded to true)
+
+**UI Component Test Coverage:**
+
+Achieved 100% branch coverage on key shadcn/ui components:
+
+- dropdown-menu.tsx: 49 tests covering all inset prop variants
+- select.tsx: 18 tests for SelectLabel and SelectSeparator
+- separator.tsx: 26 tests for orientations and decorative prop
+
+**Security Review:**
+
+Full security review conducted covering:
+
+- Authentication & session management
+- Authorization & access control
+- Input validation (Zod schemas)
+- Data exposure prevention
+- Account deletion cascade
+- Error handling
+
+Result: No high-confidence vulnerabilities identified. All critical security areas properly addressed.
+
+**Git Commits (key commits):**
+
+- `4253b9c` - feat: implement Phase 3.2 User Management
+- `62ca370` - feat(settings): add URL-persistent tabs with reusable useUrlTabs hook
+- `5c912bc` - feat(settings): add dynamic page titles to URL-persistent tabs
+- `c4b39be` - feat(auth): set default user preferences on account creation
+- `d861fb5` - feat(ui): add UserButton dropdown for consistent auth UX
+- `548f2f7` - test(ui): add comprehensive tests for dropdown-menu, select, separator
+
+**Branch:** `feature/phase-3.2-user-management`
