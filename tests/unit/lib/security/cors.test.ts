@@ -8,7 +8,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
-import { isOriginAllowed, setCORSHeaders, handlePreflight, withCORS } from '@/lib/security/cors';
+import {
+  isOriginAllowed,
+  setCORSHeaders,
+  handlePreflight,
+  withCORS,
+  createCORSHandlers,
+} from '@/lib/security/cors';
 
 // Helper to create mock NextRequest with proper origin header
 function createMockRequest(
@@ -17,15 +23,36 @@ function createMockRequest(
 ): NextRequest {
   const { origin, method = 'GET', headers: customHeaders } = options;
 
-  const headers = new Headers(customHeaders);
-  if (origin) {
-    headers.set('origin', origin);
+  const headers: Record<string, string> = {};
+
+  // Add custom headers
+  if (customHeaders) {
+    if (customHeaders instanceof Headers) {
+      customHeaders.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(customHeaders)) {
+      customHeaders.forEach(([key, value]) => {
+        headers[key] = value;
+      });
+    } else {
+      Object.assign(headers, customHeaders);
+    }
   }
 
-  return new NextRequest(url, {
+  // Add origin header
+  if (origin) {
+    headers['origin'] = origin;
+  }
+
+  // NextRequest expects a proper Request object
+  // We need to use the Request constructor which properly handles headers
+  const request = new Request(url, {
     method,
     headers,
   });
+
+  return new NextRequest(request);
 }
 
 describe('CORS', () => {
@@ -144,6 +171,85 @@ describe('CORS', () => {
       // No origin in request = no CORS header set
       expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
+
+    it('should set Access-Control-Allow-Origin when origin IS allowed', () => {
+      const allowedOrigin = 'https://allowed.com';
+      const request = createMockRequest('https://app.example.com/api/test');
+
+      // Mock the headers.get method to return the origin
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') {
+          return allowedOrigin;
+        }
+        return null;
+      });
+
+      const response = NextResponse.json({ test: true });
+
+      // Pass complete options to avoid merging with environment-dependent defaults
+      setCORSHeaders(response, request, {
+        origin: [allowedOrigin],
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['Content-Type'],
+        exposedHeaders: [],
+        credentials: true,
+        maxAge: 3600,
+      });
+
+      // Origin matches allowed list = CORS header set
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe(allowedOrigin);
+      // Vary header should include Origin to prevent caching issues
+      expect(response.headers.get('Vary')).toContain('Origin');
+    });
+
+    it('should set Access-Control-Allow-Origin with multiple allowed origins', () => {
+      const allowedOrigins = ['https://app.example.com', 'https://mobile.example.com'];
+      const request = createMockRequest('https://app.example.com/api/test');
+
+      // Mock the headers.get method to return the origin
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') {
+          return 'https://mobile.example.com';
+        }
+        return null;
+      });
+
+      const response = NextResponse.json({ test: true });
+
+      // Pass complete options to avoid merging with environment-dependent defaults
+      setCORSHeaders(response, request, {
+        origin: allowedOrigins,
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['Content-Type'],
+        exposedHeaders: [],
+        credentials: true,
+        maxAge: 3600,
+      });
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
+        'https://mobile.example.com'
+      );
+      expect(response.headers.get('Vary')).toContain('Origin');
+    });
+
+    it('should NOT set Access-Control-Allow-Origin when origin is NOT allowed', () => {
+      const request = createMockRequest('https://app.example.com/api/test');
+
+      // Mock the headers.get method to return an evil origin
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') {
+          return 'https://evil.com';
+        }
+        return null;
+      });
+
+      const response = NextResponse.json({ test: true });
+
+      setCORSHeaders(response, request, { origin: ['https://allowed.com'] });
+
+      // Origin not in allowed list = no CORS header set
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    });
   });
 
   describe('handlePreflight', () => {
@@ -231,6 +337,100 @@ describe('CORS', () => {
       for (const origin of devOrigins) {
         expect(isOriginAllowed(origin, devOrigins)).toBe(true);
       }
+    });
+  });
+
+  describe('createCORSHandlers', () => {
+    it('should wrap handlers and add OPTIONS method', () => {
+      const handlers = {
+        GET: async (_request: NextRequest) => Response.json({ method: 'GET' }),
+        POST: async (_request: NextRequest) => Response.json({ method: 'POST' }),
+      };
+
+      const wrapped = createCORSHandlers(handlers, { origin: ['https://allowed.com'] });
+
+      // Should have original methods plus OPTIONS
+      expect(wrapped.GET).toBeDefined();
+      expect(wrapped.POST).toBeDefined();
+      expect(wrapped.OPTIONS).toBeDefined();
+    });
+
+    it('should add CORS headers to wrapped handlers', async () => {
+      const handlers = {
+        GET: async (_request: NextRequest) => Response.json({ data: 'test' }),
+      };
+
+      const wrapped = createCORSHandlers(handlers, {
+        origin: ['https://allowed.com'],
+        credentials: true,
+        methods: ['GET', 'POST'],
+      });
+
+      const request = createMockRequest('https://app.example.com/api/test');
+
+      // Mock the headers.get method to return the origin
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') {
+          return 'https://allowed.com';
+        }
+        return null;
+      });
+
+      const response = await wrapped.GET(request);
+
+      // Should have CORS headers
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://allowed.com');
+      expect(response.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST');
+    });
+
+    it('should create working OPTIONS handler', async () => {
+      const handlers = {
+        GET: async (_request: NextRequest) => Response.json({ data: 'test' }),
+      };
+
+      const wrapped = createCORSHandlers(handlers, {
+        origin: ['https://allowed.com'],
+        methods: ['GET', 'POST', 'DELETE'],
+      });
+
+      const request = createMockRequest('https://app.example.com/api/test', {
+        method: 'OPTIONS',
+      });
+
+      // Mock the headers.get method to return the origin
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') {
+          return 'https://allowed.com';
+        }
+        return null;
+      });
+
+      const response = wrapped.OPTIONS(request);
+
+      // Should return 204 No Content
+      expect(response.status).toBe(204);
+      // Should include CORS headers
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://allowed.com');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('DELETE');
+    });
+
+    it('should preserve response body from wrapped handlers', async () => {
+      const handlers = {
+        POST: async (_request: NextRequest) => Response.json({ created: true, id: 123 }),
+      };
+
+      const wrapped = createCORSHandlers(handlers, { origin: ['https://allowed.com'] });
+
+      const request = createMockRequest('https://app.example.com/api/test', { method: 'POST' });
+
+      const response = await wrapped.POST(request);
+      const body = await response.json();
+
+      expect(body.created).toBe(true);
+      expect(body.id).toBe(123);
     });
   });
 
