@@ -7,24 +7,18 @@
  * - Notifications: Email preferences
  * - Account: Account info and deletion
  *
+ * URL-persistent tabs: Each tab has its own URL (/settings?tab=security)
+ * for shareable links and browser history support.
+ *
  * Phase 3.2: User Management
  */
 
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
 import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { ProfileForm } from '@/components/forms/profile-form';
-import { PasswordForm } from '@/components/forms/password-form';
-import { PreferencesForm } from '@/components/forms/preferences-form';
-import { DeleteAccountForm } from '@/components/forms/delete-account-form';
+import { SettingsTabs } from '@/components/settings/settings-tabs';
 
 export const metadata: Metadata = {
   title: 'Settings - Sunrise',
@@ -94,149 +88,25 @@ export default async function SettingsPage() {
         <p className="text-muted-foreground">Manage your account settings and preferences</p>
       </div>
 
-      {/* Settings Tabs */}
-      <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="account">Account</TabsTrigger>
-        </TabsList>
-
-        {/* Profile Tab */}
-        <TabsContent value="profile">
-          <Card>
-            <CardHeader>
-              <CardTitle>Profile</CardTitle>
-              <CardDescription>Manage your public profile information</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Avatar Placeholder */}
-              <div className="flex items-center gap-4">
-                <Avatar className="h-20 w-20">
-                  <AvatarImage src={user.image || undefined} alt={user.name} />
-                  <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-medium">{user.name}</p>
-                  <Badge variant="secondary" className="mt-1">
-                    Photo upload coming soon
-                  </Badge>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Profile Form */}
-              <Suspense fallback={<div>Loading...</div>}>
-                <ProfileForm
-                  user={{
-                    name: user.name,
-                    email: user.email,
-                    bio: user.bio,
-                    phone: user.phone,
-                    timezone: user.timezone,
-                    location: user.location,
-                  }}
-                />
-              </Suspense>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Security Tab */}
-        <TabsContent value="security">
-          <Card>
-            <CardHeader>
-              <CardTitle>Security</CardTitle>
-              <CardDescription>Manage your password and security settings</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {hasPasswordAccount ? (
-                <Suspense fallback={<div>Loading...</div>}>
-                  <PasswordForm />
-                </Suspense>
-              ) : (
-                <div className="text-muted-foreground space-y-2 py-4 text-center">
-                  <p>
-                    You signed in with{' '}
-                    <span className="text-foreground font-medium">
-                      {oauthProviders.join(', ') || 'an external provider'}
-                    </span>
-                    .
-                  </p>
-                  <p className="text-sm">
-                    Password settings are not available for accounts using external authentication.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Notifications Tab */}
-        <TabsContent value="notifications">
-          <Card>
-            <CardHeader>
-              <CardTitle>Email Notifications</CardTitle>
-              <CardDescription>Choose what emails you want to receive</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Suspense fallback={<div>Loading...</div>}>
-                <PreferencesForm preferences={preferences} />
-              </Suspense>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Account Tab */}
-        <TabsContent value="account">
-          <Card>
-            <CardHeader>
-              <CardTitle>Account</CardTitle>
-              <CardDescription>View account information and manage your account</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Account Info */}
-              <div className="space-y-4">
-                <h3 className="font-medium">Account Information</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-muted-foreground text-sm">Email</p>
-                    <p className="font-medium">{user.email}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-sm">Email Verified</p>
-                    <p className="font-medium">{user.emailVerified ? 'Yes' : 'No'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-sm">Role</p>
-                    <Badge variant="outline">{user.role || 'USER'}</Badge>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-sm">Member Since</p>
-                    <p className="font-medium">
-                      {new Date(user.createdAt).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Danger Zone */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-red-600 dark:text-red-400">Danger Zone</h3>
-                <DeleteAccountForm />
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {/* Settings Tabs with URL persistence */}
+      <SettingsTabs
+        user={{
+          name: user.name,
+          email: user.email,
+          bio: user.bio,
+          phone: user.phone,
+          timezone: user.timezone,
+          location: user.location,
+          image: user.image,
+          emailVerified: user.emailVerified,
+          role: user.role,
+          createdAt: user.createdAt,
+        }}
+        preferences={preferences}
+        hasPasswordAccount={hasPasswordAccount}
+        oauthProviders={oauthProviders}
+        initials={initials}
+      />
     </div>
   );
 }
