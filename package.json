@@ -67,6 +67,7 @@
     "better-auth": "^1.4.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lru-cache": "^11.2.4",
     "lucide-react": "^0.561.0",
     "next": "^16.0.10",
     "pg": "^8.16.3",

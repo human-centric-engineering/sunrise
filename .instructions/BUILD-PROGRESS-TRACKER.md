@@ -5,19 +5,19 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Current Status
 
 **Last Updated:** 2026-01-15
-**Current Phase:** Phase 3.2 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (2/6)
+**Current Phase:** Phase 3.3 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (3/6)
 **Blockers:** None
-**Next Steps:** Phase 3.3 - Security Hardening
+**Next Steps:** Phase 3.4 - Monitoring & Observability
 
 **Recent Completions:**
 
+- ✅ Phase 3.3 - Security Hardening (CORS, CSP, rate limiting, input sanitization, security headers review)
 - ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion, UserButton dropdown, URL-persistent tabs)
 - ✅ Phase 3.1 - Email System (Resend + React Email, invitation flow, email verification, comprehensive auth tests)
 - ✅ Phase 2.5 - Documentation Structure (CUSTOMIZATION.md - concise fork-and-adapt guide)
 - ✅ Phase 2.4 - Testing Framework (Vitest setup, 559 tests, comprehensive documentation, streamlined organization)
 - ✅ Phase 2.3 - Error Handling & Logging (Structured logging, global error handler, error boundaries, Sentry integration)
-- ✅ Phase 2.2 - Type Safety & Validation (Type-safe API client, common schemas, Zod 4 updates, comprehensive documentation)
 
 ---
 
@@ -438,16 +438,55 @@ Use this checklist to track progress through the build. Check off items as they'
 
 **Branch:** `feature/phase-3.2-user-management`
 
-### 3.3 Security Hardening
+### 3.3 Security Hardening ✅
 
-- [ ] Configure CORS
-- [ ] Add security headers
-- [ ] Implement rate limiting
-- [ ] Add input sanitization
-- [ ] Create CSRF protection
-- [ ] Environment validation
-- [ ] SQL injection prevention docs
-- [ ] Document security practices
+**Completed:** 2026-01-15
+
+- [x] Configure CORS (lib/security/cors.ts)
+- [x] Add security headers (lib/security/headers.ts)
+- [x] Implement Content Security Policy (environment-specific)
+- [x] Implement rate limiting (lib/security/rate-limit.ts)
+- [x] Add input sanitization (lib/security/sanitize.ts)
+- [x] Create CSRF protection (origin validation in proxy.ts)
+- [x] Environment validation (ALLOWED_ORIGINS in lib/env.ts)
+- [x] Add CSP violation reporting endpoint (app/api/csp-report/route.ts)
+- [x] Document security practices (.context/auth/security.md)
+
+**Key Files:**
+
+- `lib/security/index.ts` - Module exports
+- `lib/security/constants.ts` - Security constants (rate limits, CORS config)
+- `lib/security/rate-limit.ts` - LRU cache-based sliding window rate limiter
+- `lib/security/headers.ts` - CSP and security headers utilities
+- `lib/security/sanitize.ts` - XSS prevention and input sanitization
+- `lib/security/cors.ts` - CORS configuration and utilities
+- `app/api/csp-report/route.ts` - CSP violation reporting endpoint
+- `proxy.ts` - Integrated security features (rate limiting, headers, origin validation)
+
+**Key Features:**
+
+- **Rate Limiting**: Pre-configured limiters for auth (5/min), API (100/min), password reset (3/15min)
+- **CSP Headers**: Development permissive (HMR support), production strict with violation reporting
+- **CORS**: Configurable via ALLOWED_ORIGINS env var, same-origin by default
+- **Input Sanitization**: HTML escaping, URL sanitization, redirect validation, filename sanitization
+- **Security Headers**: Removed deprecated X-XSS-Protection, added CSP, updated X-Frame-Options
+
+**Test Coverage:**
+
+- 77 tests for security utilities
+- tests/unit/lib/security/rate-limit.test.ts (13 tests)
+- tests/unit/lib/security/headers.test.ts (13 tests)
+- tests/unit/lib/security/sanitize.test.ts (32 tests)
+- tests/unit/lib/security/cors.test.ts (19 tests)
+
+**Security Review:**
+
+- Follows OWASP guidelines
+- Environment-specific CSP policies
+- Fail-secure defaults (deny by default)
+- No breaking changes to development experience
+
+**Branch:** `feature/phase-3.3-security-hardening`
 
 ### 3.4 Monitoring & Observability
 
