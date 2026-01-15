@@ -85,6 +85,18 @@ LOG_SANITIZE_PII=true
   - Default: `true` in production (GDPR/CCPA compliant)
   - Secrets (passwords, tokens) are ALWAYS redacted regardless of this setting
 
+#### Security (Optional)
+
+```bash
+ALLOWED_ORIGINS="https://app.example.com,https://mobile.example.com"
+```
+
+- `ALLOWED_ORIGINS` configures CORS to allow cross-origin requests from specific domains
+  - Default: Same-origin only (most secure)
+  - Development: localhost variants are auto-allowed
+  - Production: Only explicitly listed origins are allowed
+  - Leave unset for same-origin only APIs
+
 ### 3. Generate Secrets
 
 #### BETTER_AUTH_SECRET

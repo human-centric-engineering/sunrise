@@ -484,6 +484,7 @@ git push --no-verify
 - **Set security headers** in `next.config.js` and middleware
 - **Rate limit** sensitive endpoints using utilities in `lib/security/rate-limit.ts`
 - **Sanitize input** for XSS prevention using `lib/security/sanitize.ts`
+- **Run `/security-review` before merging** - Always run the security review skill on feature branches before merging to main to catch potential vulnerabilities
 
 ### Common Tasks
 

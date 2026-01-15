@@ -18,6 +18,7 @@ Complete reference for all environment variables used in Sunrise. This document 
 | [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)   | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
 | [`LOG_LEVEL`](#log_level)                       | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
 | [`LOG_SANITIZE_PII`](#log_sanitize_pii)         | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs     |
+| [`ALLOWED_ORIGINS`](#allowed_origins)           | ❌ No    | String       | -             | 3.3   | CORS allowed origins         |
 
 ## Detailed Descriptions
 
@@ -801,6 +802,82 @@ logger.info('Login', { email, password: '***' }); // Use userId instead
 - **PII still visible in production logs:** Verify `LOG_SANITIZE_PII` is not set to `false`
 - **Can't see emails during debugging:** Set `LOG_SANITIZE_PII=false` in `.env.local`
 - **Third-party log aggregation showing PII:** Logs are sanitized before output; check if the aggregation service processes raw logs differently
+
+---
+
+### Security
+
+#### `ALLOWED_ORIGINS`
+
+- **Purpose:** Comma-separated list of origins allowed to make cross-origin requests (CORS)
+- **Required:** ❌ No
+- **Type:** String (comma-separated URLs)
+- **Format:** `https://app.example.com,https://mobile.example.com`
+- **Default:** Same-origin only (most secure)
+- **Validation:** None (optional)
+- **Used By:**
+  - `lib/security/cors.ts` - CORS origin validation
+- **Phase:** 3.3 (Security Hardening)
+
+**Examples:**
+
+Same-origin only (default, most secure):
+
+```bash
+# Leave unset or empty - no external origins allowed
+# ALLOWED_ORIGINS=
+```
+
+Allow specific external origins:
+
+```bash
+ALLOWED_ORIGINS="https://app.example.com,https://mobile.example.com"
+```
+
+Multiple origins with mobile app:
+
+```bash
+ALLOWED_ORIGINS="https://app.example.com,https://api.example.com,capacitor://localhost"
+```
+
+**Behavior by Environment:**
+
+| Environment | `ALLOWED_ORIGINS` | Behavior                                                    |
+| ----------- | ----------------- | ----------------------------------------------------------- |
+| Development | Not set           | localhost:3000, localhost:3001, 127.0.0.1:3000 auto-allowed |
+| Development | Set               | Configured origins + localhost variants                     |
+| Production  | Not set           | **Same-origin only** (no CORS headers)                      |
+| Production  | Set               | Only explicitly configured origins allowed                  |
+
+**How It Works:**
+
+1. When a cross-origin request arrives, the middleware checks the `Origin` header
+2. If the origin is in the allowed list, CORS headers are added to the response
+3. If not allowed, no CORS headers are added (browser blocks the request)
+4. Development mode automatically includes localhost variants for convenience
+
+**Security Considerations:**
+
+- ⚠️ **Never use `*` (wildcard)** - This allows any origin and defeats CORS protection
+- ⚠️ **Use HTTPS origins in production** - HTTP origins are insecure
+- ⚠️ **Be specific** - Only add origins that genuinely need access
+- ⚠️ **Review periodically** - Remove origins that are no longer needed
+
+**Common Use Cases:**
+
+| Scenario                       | Configuration                 |
+| ------------------------------ | ----------------------------- |
+| Single-page app (same domain)  | Leave unset (same-origin)     |
+| Mobile app (Capacitor/Cordova) | Add `capacitor://localhost`   |
+| Separate frontend domain       | Add frontend URL              |
+| Multiple subdomains            | Add each subdomain explicitly |
+
+**Troubleshooting:**
+
+- **CORS errors in browser:** Add the requesting origin to `ALLOWED_ORIGINS`
+- **Works in dev, fails in prod:** Dev auto-allows localhost; prod requires explicit config
+- **Preflight fails:** Ensure OPTIONS requests reach the server (not blocked by firewall)
+- **Credentials not sent:** CORS must include the specific origin (not wildcard) for credentials
 
 ---
 
