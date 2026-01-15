@@ -21,7 +21,7 @@ import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 
 export const metadata: Metadata = {
-  title: 'Settings - Sunrise',
+  title: 'Settings',
   description: 'Manage your account settings and preferences',
 };
 

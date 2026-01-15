@@ -20,7 +20,7 @@ import { Separator } from '@/components/ui/separator';
 import { Mail, MapPin, Clock, Calendar, Pencil } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'Profile - Sunrise',
+  title: 'Profile',
   description: 'View your profile',
 };
 
