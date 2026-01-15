@@ -382,6 +382,11 @@ describe('POST /api/v1/users/invite', () => {
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
         image: null,
+        bio: null,
+        phone: null,
+        timezone: 'UTC',
+        location: null,
+        preferences: {},
       });
 
       // Act: Call the invite endpoint with existing email

@@ -17,6 +17,53 @@ import type { APIResponse } from './api';
 export type UserRole = 'USER' | 'ADMIN' | 'MODERATOR';
 
 /**
+ * User Email Preferences
+ *
+ * Defines email notification preferences stored as JSON in the User model.
+ * Security alerts cannot be disabled (always true).
+ *
+ * @example
+ * ```typescript
+ * const prefs: UserEmailPreferences = {
+ *   marketing: false,
+ *   productUpdates: true,
+ *   securityAlerts: true, // Always true, cannot be disabled
+ * };
+ * ```
+ */
+export interface UserEmailPreferences {
+  /** Marketing emails (newsletters, promotions) */
+  marketing: boolean;
+  /** Product update notifications */
+  productUpdates: boolean;
+  /** Security alerts (always true, cannot be disabled) */
+  securityAlerts: true;
+}
+
+/**
+ * User Preferences
+ *
+ * Top-level preferences object stored in User.preferences JSON field.
+ * Currently contains email preferences, extensible for future preference types.
+ */
+export interface UserPreferences {
+  email: UserEmailPreferences;
+}
+
+/**
+ * Default User Preferences
+ *
+ * Default values for new users or when preferences are not set.
+ */
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  email: {
+    marketing: false,
+    productUpdates: true,
+    securityAlerts: true,
+  },
+};
+
+/**
  * Public User Type
  *
  * User data safe for public exposure (no sensitive fields).

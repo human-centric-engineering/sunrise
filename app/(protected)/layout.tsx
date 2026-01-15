@@ -1,8 +1,12 @@
 import type { Metadata } from 'next';
-import { ThemeToggle } from '@/components/theme-toggle';
+import { AppHeader } from '@/components/layouts/app-header';
+import { ProtectedNav } from '@/components/layouts/protected-nav';
 
 export const metadata: Metadata = {
-  title: 'Dashboard - Sunrise',
+  title: {
+    template: '%s - Sunrise',
+    default: 'Dashboard - Sunrise',
+  },
   description: 'Your dashboard',
 };
 
@@ -11,6 +15,8 @@ export const metadata: Metadata = {
  *
  * Layout for all protected routes (dashboard, settings, profile, etc.)
  * Protected by proxy - unauthenticated users are redirected to /login
+ *
+ * Phase 3.2: Added navigation links
  */
 export default function ProtectedLayout({
   children,
@@ -19,15 +25,7 @@ export default function ProtectedLayout({
 }>) {
   return (
     <div className="bg-background min-h-screen">
-      {/* Simple header - will be enhanced in future phases */}
-      <header className="border-b">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <h1 className="text-xl font-bold">Sunrise</h1>
-          <ThemeToggle />
-        </div>
-      </header>
-
-      {/* Main content */}
+      <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />
       <main className="container mx-auto px-4 py-8">{children}</main>
     </div>
   );

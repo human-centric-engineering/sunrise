@@ -15,6 +15,8 @@ import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from './common'
  *
  * Validates user profile update requests.
  * All fields are optional - only provided fields will be updated.
+ *
+ * Extended in Phase 3.2 to include bio, phone, timezone, location.
  */
 export const updateUserSchema = z.object({
   name: z
@@ -24,6 +26,65 @@ export const updateUserSchema = z.object({
     .trim()
     .optional(),
   email: emailSchema.optional(),
+
+  // Extended profile fields (Phase 3.2)
+  bio: z.string().max(500, 'Bio must be less than 500 characters').trim().optional().nullable(),
+  phone: z
+    .string()
+    .max(20, 'Phone number must be less than 20 characters')
+    .regex(/^[\d\s\-+()]*$/, 'Invalid phone number format')
+    .optional()
+    .nullable(),
+  timezone: z.string().max(50, 'Timezone must be less than 50 characters').optional(),
+  location: z
+    .string()
+    .max(100, 'Location must be less than 100 characters')
+    .trim()
+    .optional()
+    .nullable(),
+});
+
+/**
+ * Email preferences schema
+ *
+ * Validates email notification preferences.
+ * Note: securityAlerts is always true and cannot be disabled.
+ */
+export const emailPreferencesSchema = z.object({
+  marketing: z.boolean().default(false),
+  productUpdates: z.boolean().default(true),
+  securityAlerts: z.literal(true).default(true),
+});
+
+/**
+ * User preferences schema (GET/PATCH /api/v1/users/me/preferences)
+ *
+ * Validates the full user preferences object.
+ */
+export const userPreferencesSchema = z.object({
+  email: emailPreferencesSchema,
+});
+
+/**
+ * Partial preferences update schema
+ *
+ * For PATCH operations where only some preferences are updated.
+ * Allows partial updates to be merged with existing preferences.
+ */
+export const updatePreferencesSchema = z.object({
+  email: emailPreferencesSchema.partial().optional(),
+});
+
+/**
+ * Delete account confirmation schema
+ *
+ * Validates account deletion requests.
+ * Requires user to type "DELETE" to confirm.
+ */
+export const deleteAccountSchema = z.object({
+  confirmation: z.literal('DELETE', {
+    message: 'Please type DELETE to confirm account deletion',
+  }),
 });
 
 /**
@@ -131,3 +192,9 @@ export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 export type UserIdParam = z.infer<typeof userIdSchema>;
 export type InviteUserInput = z.infer<typeof inviteUserSchema>;
 export type AcceptInvitationInput = z.infer<typeof acceptInvitationSchema>;
+
+// Phase 3.2 additions
+export type EmailPreferencesInput = z.infer<typeof emailPreferencesSchema>;
+export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
+export type UpdatePreferencesInput = z.infer<typeof updatePreferencesSchema>;
+export type DeleteAccountInput = z.infer<typeof deleteAccountSchema>;

@@ -103,6 +103,17 @@ GET /api/v1/users/me
     "role": "USER",
     "emailVerified": "2025-01-15T10:00:00.000Z",
     "image": "https://...",
+    "bio": "Software developer with passion for building great products",
+    "phone": "+1 (555) 123-4567",
+    "timezone": "America/New_York",
+    "location": "New York, NY",
+    "preferences": {
+      "email": {
+        "marketing": false,
+        "productUpdates": true,
+        "securityAlerts": true
+      }
+    },
     "createdAt": "2025-01-01T08:00:00.000Z",
     "updatedAt": "2025-01-10T12:00:00.000Z"
   }
@@ -139,7 +150,11 @@ PATCH /api/v1/users/me
 ```json
 {
   "name": "Jane Doe",
-  "email": "jane@example.com"
+  "email": "jane@example.com",
+  "bio": "Software developer",
+  "phone": "+1 (555) 123-4567",
+  "timezone": "America/New_York",
+  "location": "New York, NY"
 }
 ```
 
@@ -189,6 +204,145 @@ PATCH /api/v1/users/me
     }
   }
   ```
+
+### Delete Current User (Self-Deletion)
+
+✅ **Implemented in:** `app/api/v1/users/me/route.ts` (DELETE handler)
+
+**Purpose**: Allow user to delete their own account (Phase 3.2)
+
+```
+DELETE /api/v1/users/me
+```
+
+**Authentication**: Required (session)
+
+**Request Body**:
+
+```json
+{
+  "confirmation": "DELETE"
+}
+```
+
+**Validation**: Uses `deleteAccountSchema` from `lib/validations/user.ts`
+
+- User must type exactly "DELETE" to confirm
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "deleted": true,
+    "message": "Account deleted successfully"
+  }
+}
+```
+
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+- **400 Validation Error**: Missing or incorrect confirmation
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Invalid request body",
+      "code": "VALIDATION_ERROR",
+      "details": {
+        "errors": [
+          { "path": "confirmation", "message": "Please type DELETE to confirm account deletion" }
+        ]
+      }
+    }
+  }
+  ```
+
+**Note**: Deletion cascades to sessions and accounts. Session cookie is cleared automatically.
+
+### Get User Preferences
+
+✅ **Implemented in:** `app/api/v1/users/me/preferences/route.ts` (GET handler)
+
+**Purpose**: Get current user's email notification preferences (Phase 3.2)
+
+```
+GET /api/v1/users/me/preferences
+```
+
+**Authentication**: Required (session)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": {
+      "marketing": false,
+      "productUpdates": true,
+      "securityAlerts": true
+    }
+  }
+}
+```
+
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+
+### Update User Preferences
+
+✅ **Implemented in:** `app/api/v1/users/me/preferences/route.ts` (PATCH handler)
+
+**Purpose**: Update current user's email notification preferences (Phase 3.2)
+
+```
+PATCH /api/v1/users/me/preferences
+```
+
+**Authentication**: Required (session)
+
+**Request Body** (all fields optional):
+
+```json
+{
+  "email": {
+    "marketing": true,
+    "productUpdates": false
+  }
+}
+```
+
+**Validation**: Uses `updatePreferencesSchema` from `lib/validations/user.ts`
+
+- `marketing`: Boolean (opt-in for marketing emails)
+- `productUpdates`: Boolean (receive product update emails)
+- `securityAlerts`: Always `true` (cannot be disabled)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": {
+      "marketing": true,
+      "productUpdates": false,
+      "securityAlerts": true
+    }
+  }
+}
+```
+
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+- **400 Validation Error**: Invalid preference values
+
+**Note**: `securityAlerts` is always `true` and cannot be disabled for security reasons.
 
 ### List Users (Admin)
 

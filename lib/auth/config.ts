@@ -14,6 +14,7 @@ import {
   deleteInvitationToken,
   getValidInvitation,
 } from '@/lib/utils/invitation-token';
+import { DEFAULT_USER_PREFERENCES } from '@/types';
 
 /**
  * Better Auth Configuration
@@ -292,6 +293,23 @@ export const auth = betterAuth({
           // Detect signup method for logging purposes
           const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
           const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+          // Set default preferences for all new users
+          try {
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { preferences: DEFAULT_USER_PREFERENCES as object },
+            });
+            logger.info('Default preferences set for new user', {
+              userId: user.id,
+              signupMethod,
+            });
+          } catch (prefsError) {
+            // Log but don't fail user creation
+            logger.error('Failed to set default preferences', prefsError, {
+              userId: user.id,
+            });
+          }
 
           // Check if this is an invitation acceptance (for password flow)
           let isPasswordInvitation = false;

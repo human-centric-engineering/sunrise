@@ -99,6 +99,16 @@ Comprehensive error handling, structured logging, and error tracking. Includes:
 
 **Key Features**: Structured logging (JSON/colored), request ID tracing, Sentry integration, user-friendly messages, automatic PII sanitization
 
+### 🎨 [UI Patterns](./ui/overview.md)
+
+Reusable UI patterns and component conventions. Includes:
+
+- [Overview](./ui/overview.md) - URL-persistent tabs, form patterns, state management
+
+**Use When**: Building tabbed interfaces, managing UI state in URLs, creating reusable interactive components
+
+**Key Patterns**: `useUrlTabs` hook for URL-synced tabs with automatic invalid URL cleanup
+
 ### 📋 [Guidelines](./guidelines.md)
 
 Development workflow, testing, deployment, and operational procedures.
@@ -150,6 +160,8 @@ Cross-reference .context/auth/security.md and .context/api/headers.md for:
 | Add error handling    | errors/overview.md       | errors/logging.md                               |
 | Debug production      | errors/logging.md        | errors/overview.md, api/endpoints.md            |
 | Set up error tracking | errors/overview.md       | environment/overview.md                         |
+| Add tabbed interface  | ui/overview.md           | architecture/patterns.md                        |
+| URL state management  | ui/overview.md           | architecture/patterns.md                        |
 
 ## Technology Stack
 

@@ -292,6 +292,29 @@ This project follows a phased build plan documented in `.instructions/SUNRISE-BU
 
 **When implementing features:** Reference the build plan as the source of truth. Complete features fully before moving to the next. Test each feature as you build it.
 
+### Planning with Skills
+
+When formulating implementation plans, always review available skills and recommend their usage for relevant parts of the plan:
+
+| Skill                | Use For                                      |
+| -------------------- | -------------------------------------------- |
+| `/api-builder`       | Creating/modifying REST API endpoints        |
+| `/component-builder` | Creating reusable React components           |
+| `/deployment-guide`  | Deployment documentation                     |
+| `/email-designer`    | Email templates with React Email             |
+| `/form-builder`      | Forms with Zod + react-hook-form + shadcn/ui |
+| `/page-builder`      | New pages with proper layouts/metadata       |
+| `/security-hardener` | Rate limiting, CORS, CSP, sanitization       |
+| `/testing`           | Unit/integration tests                       |
+
+**Example plan for "Add user invitation management page":**
+
+1. Design API endpoints → **use `/api-builder`**
+2. Create invitation list component → **use `/component-builder`**
+3. Build invite form with validation → **use `/form-builder`**
+4. Create the management page → **use `/page-builder`**
+5. Add comprehensive tests → **use `/testing`**
+
 ### Code Style
 
 **TypeScript:**
