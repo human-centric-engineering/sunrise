@@ -2,11 +2,16 @@
  * Auth Config Database Hook Tests
  *
  * Tests the better-auth database hook that handles:
+ * - Default user preferences setting for all new users
  * - OAuth invitation flow (token validation, role application, token deletion)
  * - Welcome email sending for all new users
  * - Non-blocking error handling
  *
  * Test Coverage:
+ * - Default preferences set for OAuth signup
+ * - Default preferences set for email/password signup
+ * - Preferences setting before role application
+ * - Non-blocking error handling (preferences failures don't break signup)
  * - OAuth invitation with valid token
  * - OAuth invitation with invalid token
  * - OAuth invitation with mismatched email
@@ -17,7 +22,7 @@
  * - Role application from invitation metadata
  * - Invitation token deletion after successful acceptance
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 163-262)
+ * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 292-451)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -117,6 +122,9 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
 
     // Default mock behavior: email sending succeeds
     sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
+
+    // Default mock behavior: preferences update succeeds
+    prisma.user.update.mockResolvedValue(createMockUser());
   });
 
   afterEach(() => {
@@ -125,7 +133,7 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
 
   /**
    * Helper function to simulate the database hook
-   * This mimics the logic from lib/auth/config.ts lines 163-262
+   * This mimics the logic from lib/auth/config.ts lines 292-451
    */
   const simulateDatabaseHook = async (
     user: ReturnType<typeof createMockUser>,
@@ -134,6 +142,28 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
     // Detect signup method for logging purposes
     const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
     const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+    // Set default preferences for all new users
+    try {
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        },
+      });
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      logger.info('Default preferences set for new user', {
+        userId: user.id,
+        signupMethod,
+      });
+    } catch (prefsError) {
+      // Log but don't fail user creation
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      logger.error('Failed to set default preferences', prefsError, {
+        userId: user.id,
+      });
+    }
 
     try {
       // Handle OAuth invitation flow
@@ -267,10 +297,16 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
         metadata: invitationMetadata,
       });
 
-      prisma.user.update.mockResolvedValue({
-        ...mockUser,
-        role: 'ADMIN', // Updated role
-      });
+      // Mock two update calls: 1) preferences, 2) role
+      prisma.user.update
+        .mockResolvedValueOnce({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        })
+        .mockResolvedValueOnce({
+          ...mockUser,
+          role: 'ADMIN', // Updated role
+        });
 
       deleteInvitationToken.mockResolvedValue(undefined);
 
@@ -293,11 +329,30 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
         where: { identifier: 'invitation:invited@example.com' },
       });
 
-      // Assert: Verify role was applied
-      expect(prisma.user.update).toHaveBeenCalledWith({
+      // Assert: Verify preferences were set first
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(2);
+
+      // First call: preferences
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
+
+      // Second call: role
+      expect(updateCalls[1][0]).toEqual({
         where: { id: mockUser.id },
         data: { role: 'ADMIN' },
       });
+
       expect(logger.info).toHaveBeenCalledWith('Applied invitation role to OAuth user', {
         userId: mockUser.id,
         role: 'ADMIN',
@@ -343,13 +398,34 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
 
       deleteInvitationToken.mockResolvedValue(undefined);
 
+      // Mock preferences update
+      prisma.user.update.mockResolvedValue({
+        ...mockUser,
+        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+      });
+
       const ctx = { path: '/api/auth/callback/google' };
 
       // Act: Simulate database hook
       await simulateDatabaseHook(mockUser, ctx);
 
-      // Assert: Verify role was NOT updated (USER is default)
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      // Assert: Verify preferences were set but role was NOT updated (USER is default)
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(1); // Only preferences, no role update
+
+      // Only call should be setting preferences
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
       expect(logger.info).not.toHaveBeenCalledWith(
         'Applied invitation role to OAuth user',
         expect.any(Object)
@@ -385,10 +461,25 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
         'invalid-token-789'
       );
 
-      // Assert: Verify no invitation processing occurred
+      // Assert: Verify no invitation processing occurred (beyond preferences)
       expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
       expect(deleteInvitationToken).not.toHaveBeenCalled();
+
+      // Assert: Verify preferences were still set (only one update call)
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(1);
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
 
       // Assert: Verify user creation still succeeded (non-blocking)
       expect(sendEmail).toHaveBeenCalledWith(
@@ -419,7 +510,22 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
       // Assert: Verify no invitation processing occurred (email mismatch)
       expect(validateInvitationToken).not.toHaveBeenCalled();
       expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+
+      // Assert: Verify preferences were still set (only one update call)
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(1);
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
 
       // Assert: Verify user creation still succeeded
       expect(sendEmail).toHaveBeenCalledWith(
@@ -483,8 +589,21 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
       // Act: Simulate database hook
       await simulateDatabaseHook(mockUser, ctx);
 
-      // Assert: Verify no role update occurred (no metadata)
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      // Assert: Verify only preferences were set (no role update, no metadata)
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(1);
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
 
       // Assert: Verify token deletion was NOT attempted (no metadata means incomplete invitation)
       expect(deleteInvitationToken).not.toHaveBeenCalled();
@@ -643,6 +762,195 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
           subject: 'Welcome to Sunrise',
         })
       );
+    });
+  });
+
+  describe('Default preferences setting', () => {
+    it('should set default preferences for OAuth signup', async () => {
+      // Arrange: OAuth user without invitation
+      const mockUser = createMockUser({
+        id: 'oauth-user-prefs',
+        email: 'prefs@example.com',
+      });
+
+      getOAuthState.mockResolvedValue(null); // No invitation
+      prisma.user.update.mockResolvedValue({
+        ...mockUser,
+        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+      });
+
+      const ctx = { path: '/api/auth/callback/google' };
+
+      // Act: Simulate database hook
+      await simulateDatabaseHook(mockUser, ctx);
+
+      // Assert: Verify preferences were set FIRST (before any other operations)
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBeGreaterThan(0);
+
+      // First call should be setting preferences
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
+
+      // Verify logging
+      expect(logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
+        userId: mockUser.id,
+        signupMethod: 'OAuth',
+      });
+    });
+
+    it('should set default preferences for email/password signup', async () => {
+      // Arrange: Email/password user
+      const mockUser = createMockUser({
+        id: 'email-user-prefs',
+        email: 'emailprefs@example.com',
+      });
+
+      prisma.user.update.mockResolvedValue({
+        ...mockUser,
+        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+      });
+
+      const ctx = { path: '/api/auth/signup' };
+
+      // Act: Simulate database hook
+      await simulateDatabaseHook(mockUser, ctx);
+
+      // Assert: Verify preferences were set
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
+
+      // Verify logging with correct signup method
+      expect(logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
+        userId: mockUser.id,
+        signupMethod: 'email/password',
+      });
+    });
+
+    it('should not block user creation if preferences setting fails', async () => {
+      // Arrange: User with preferences update failure
+      const mockUser = createMockUser({
+        id: 'prefs-fail-user',
+        email: 'prefsfail@example.com',
+      });
+
+      // Mock preferences update to fail
+      prisma.user.update
+        .mockRejectedValueOnce(new Error('Database write failed'))
+        .mockResolvedValue(mockUser); // Subsequent calls succeed
+
+      const ctx = { path: '/api/auth/signup' };
+
+      // Act: Simulate database hook (should not throw)
+      await simulateDatabaseHook(mockUser, ctx);
+
+      // Assert: Verify error was logged
+      expect(logger.error).toHaveBeenCalledWith(
+        'Failed to set default preferences',
+        expect.any(Error),
+        {
+          userId: mockUser.id,
+        }
+      );
+
+      // Assert: Verify user creation continued (welcome email sent)
+      expect(sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: mockUser.email,
+        })
+      );
+    });
+
+    it('should set preferences before applying invitation role', async () => {
+      // Arrange: OAuth user with invitation
+      const mockUser = createMockUser({
+        id: 'oauth-user-role-prefs',
+        email: 'roleprefs@example.com',
+        role: 'USER',
+      });
+
+      const invitationMetadata: InvitationMetadata = {
+        name: 'Role User',
+        role: 'ADMIN',
+        invitedBy: 'admin-user-id',
+        invitedAt: new Date().toISOString(),
+      };
+
+      getOAuthState.mockResolvedValue({
+        invitationToken: 'valid-token-role',
+        invitationEmail: 'roleprefs@example.com',
+      });
+
+      validateInvitationToken.mockResolvedValue(true);
+
+      prisma.verification.findFirst.mockResolvedValue({
+        id: 'verification-role',
+        identifier: 'invitation:roleprefs@example.com',
+        value: 'hashed-token',
+        expiresAt: new Date(Date.now() + 86400000),
+        metadata: invitationMetadata,
+      });
+
+      prisma.user.update
+        .mockResolvedValueOnce({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        })
+        .mockResolvedValueOnce({
+          ...mockUser,
+          role: 'ADMIN',
+        });
+
+      deleteInvitationToken.mockResolvedValue(undefined);
+
+      const ctx = { path: '/api/auth/callback/google' };
+
+      // Act: Simulate database hook
+      await simulateDatabaseHook(mockUser, ctx);
+
+      // Assert: Verify call order - preferences FIRST, then role
+      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
+      expect(updateCalls.length).toBe(2);
+
+      // First call: set preferences
+      expect(updateCalls[0][0]).toEqual({
+        where: { id: mockUser.id },
+        data: {
+          preferences: {
+            email: {
+              marketing: false,
+              productUpdates: true,
+              securityAlerts: true,
+            },
+          },
+        },
+      });
+
+      // Second call: set role
+      expect(updateCalls[1][0]).toEqual({
+        where: { id: mockUser.id },
+        data: { role: 'ADMIN' },
+      });
     });
   });
 
