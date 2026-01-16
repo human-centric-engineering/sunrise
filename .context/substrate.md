@@ -4,7 +4,7 @@
 **Version**: 1.0.0
 **Stack**: Next.js 16 (App Router), TypeScript, PostgreSQL, Prisma 7, better-auth
 **Architecture**: Monolithic with API routes, server/client component separation
-**Last Updated**: 2025-12-15
+**Last Updated**: 2026-01-16
 
 ## Overview
 
@@ -111,6 +111,21 @@ Application-wide security utilities and configuration. Includes:
 
 **Note**: For authentication-specific security (passwords, sessions, OAuth), see [Auth Security](./auth/security.md)
 
+### 📊 [Monitoring & Observability](./monitoring/overview.md)
+
+Production-ready monitoring, performance tracking, and observability. Includes:
+
+- [Overview](./monitoring/overview.md) - Monitoring architecture, quick start guide
+- [Performance](./monitoring/performance.md) - Performance measurement utilities
+- [Health Checks](./monitoring/health-checks.md) - Health endpoint configuration
+- [Sentry Setup](./monitoring/sentry-setup.md) - Error tracking integration
+- [Log Aggregation](./monitoring/log-aggregation.md) - DataDog, CloudWatch, Grafana setup
+- [Web Vitals](./monitoring/web-vitals.md) - Frontend performance monitoring
+
+**Use When**: Setting up monitoring, tracking performance, configuring health checks, integrating with external services
+
+**Key Features**: Performance measurement (`measureAsync`, `trackDatabaseQuery`), enhanced health checks with service status, status page components, Sentry integration, log aggregation guides
+
 ### 🎨 [UI Patterns](./ui/overview.md)
 
 Reusable UI patterns and component conventions. Includes:
@@ -161,26 +176,31 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 
 ## Navigation Quick Reference
 
-| Task                  | Primary Context          | Supporting Context                              |
-| --------------------- | ------------------------ | ----------------------------------------------- |
-| Add new page          | architecture/overview.md | architecture/patterns.md                        |
-| Build API endpoint    | api/endpoints.md         | api/headers.md, database/models.md              |
-| Modify database       | database/schema.md       | database/migrations.md                          |
-| Add auth provider     | auth/integration.md      | auth/security.md                                |
-| Configure environment | environment/overview.md  | environment/reference.md                        |
-| Deploy application    | deployment/overview.md   | environment/overview.md, database/migrations.md |
-| Set up Docker         | deployment/overview.md   | environment/overview.md                         |
-| Configure CI/CD       | deployment/overview.md   | guidelines.md                                   |
-| Add error handling    | errors/overview.md       | errors/logging.md                               |
-| Debug production      | errors/logging.md        | errors/overview.md, api/endpoints.md            |
-| Set up error tracking | errors/overview.md       | environment/overview.md                         |
-| Add tabbed interface  | ui/overview.md           | architecture/patterns.md                        |
-| URL state management  | ui/overview.md           | architecture/patterns.md                        |
-| Configure CSP/headers | security/overview.md     | api/headers.md                                  |
-| Set up CORS           | security/overview.md     | environment/overview.md                         |
-| Add rate limiting     | security/overview.md     | auth/security.md                                |
-| Sanitize user input   | security/overview.md     | api/endpoints.md                                |
-| Secure auth flows     | auth/security.md         | security/overview.md                            |
+| Task                       | Primary Context               | Supporting Context                              |
+| -------------------------- | ----------------------------- | ----------------------------------------------- |
+| Add new page               | architecture/overview.md      | architecture/patterns.md                        |
+| Build API endpoint         | api/endpoints.md              | api/headers.md, database/models.md              |
+| Modify database            | database/schema.md            | database/migrations.md                          |
+| Add auth provider          | auth/integration.md           | auth/security.md                                |
+| Configure environment      | environment/overview.md       | environment/reference.md                        |
+| Deploy application         | deployment/overview.md        | environment/overview.md, database/migrations.md |
+| Set up Docker              | deployment/overview.md        | environment/overview.md                         |
+| Configure CI/CD            | deployment/overview.md        | guidelines.md                                   |
+| Add error handling         | errors/overview.md            | errors/logging.md                               |
+| Debug production           | errors/logging.md             | errors/overview.md, api/endpoints.md            |
+| Set up error tracking      | errors/overview.md            | environment/overview.md                         |
+| Add tabbed interface       | ui/overview.md                | architecture/patterns.md                        |
+| URL state management       | ui/overview.md                | architecture/patterns.md                        |
+| Configure CSP/headers      | security/overview.md          | api/headers.md                                  |
+| Set up CORS                | security/overview.md          | environment/overview.md                         |
+| Add rate limiting          | security/overview.md          | auth/security.md                                |
+| Sanitize user input        | security/overview.md          | api/endpoints.md                                |
+| Secure auth flows          | auth/security.md              | security/overview.md                            |
+| Add performance monitoring | monitoring/performance.md     | monitoring/overview.md                          |
+| Configure health checks    | monitoring/health-checks.md   | deployment/overview.md                          |
+| Set up Sentry              | monitoring/sentry-setup.md    | errors/overview.md                              |
+| Configure log aggregation  | monitoring/log-aggregation.md | monitoring/overview.md                          |
+| Add status page            | monitoring/health-checks.md   | monitoring/overview.md                          |
 
 ## Technology Stack
 

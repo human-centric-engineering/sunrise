@@ -4,14 +4,15 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2026-01-15
-**Current Phase:** Phase 3.3 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (3/6)
+**Last Updated:** 2026-01-16
+**Current Phase:** Phase 3.4 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (4/6)
 **Blockers:** None
-**Next Steps:** Phase 3.4 - Monitoring & Observability
+**Next Steps:** Phase 3.5 - Landing Page & Marketing
 
 **Recent Completions:**
 
+- ✅ Phase 3.4 - Monitoring & Observability (performance monitoring, enhanced health checks, status page components, Sentry integration)
 - ✅ Phase 3.3 - Security Hardening (CORS, CSP, rate limiting, input sanitization, security headers review)
 - ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion, UserButton dropdown, URL-persistent tabs)
 - ✅ Phase 3.1 - Email System (Resend + React Email, invitation flow, email verification, comprehensive auth tests)
@@ -488,15 +489,65 @@ Use this checklist to track progress through the build. Check off items as they'
 
 **Branch:** `feature/phase-3.3-security-hardening`
 
-### 3.4 Monitoring & Observability
+### 3.4 Monitoring & Observability ✅
 
-- [ ] Enhanced health check
-- [ ] Add structured logging
-- [ ] Prepare Sentry integration
-- [ ] Create monitoring utilities
-- [ ] Add performance monitoring
-- [ ] Build status page component
-- [ ] Document monitoring setup
+**Completed:** 2026-01-16
+
+- [x] Enhanced health check (version, uptime, memory, services structure)
+- [x] Add structured logging (already complete from Phase 2.3)
+- [x] Prepare Sentry integration (abstraction layer, wizard documentation)
+- [x] Create monitoring utilities (measureAsync, measureSync, trackDatabaseQuery)
+- [x] Add performance monitoring (configurable thresholds, Sentry alerts)
+- [x] Build status page component (StatusIndicator, ServiceStatusCard, StatusPage, useHealthCheck)
+- [x] Document monitoring setup (.context/monitoring/ - 6 documentation files)
+
+**Key Files:**
+
+- `lib/monitoring/types.ts` - TypeScript interfaces (PerformanceMetric, ServiceHealth, HealthCheckResponse)
+- `lib/monitoring/performance.ts` - Performance utilities (measureAsync, trackDatabaseQuery, getMemoryUsage, formatBytes)
+- `lib/monitoring/index.ts` - Public exports
+- `app/api/health/route.ts` - Enhanced health endpoint with version, uptime, memory, services
+- `components/status/status-indicator.tsx` - Status dot/badge component
+- `components/status/service-status-card.tsx` - Service health card
+- `components/status/status-page.tsx` - Full status page with polling
+- `components/status/use-health-check.ts` - React hook for health data polling
+- `lib/errors/sentry.ts` - Error tracking abstraction (works with or without Sentry)
+- `.context/monitoring/overview.md` - Monitoring architecture guide
+- `.context/monitoring/performance.md` - Performance utilities documentation
+- `.context/monitoring/health-checks.md` - Health check configuration
+- `.context/monitoring/sentry-setup.md` - Sentry wizard setup guide
+- `.context/monitoring/log-aggregation.md` - DataDog, CloudWatch, Grafana guides
+- `.context/monitoring/web-vitals.md` - Frontend performance monitoring guide
+
+**Key Features:**
+
+- **Performance Monitoring**: `measureAsync()`, `measureSync()`, `trackDatabaseQuery()` with configurable thresholds
+- **Automatic Alerting**: Critical slowdowns automatically alert to Sentry (when configured)
+- **Enhanced Health Check**: Version from package.json, process uptime, optional memory stats, service status indicators
+- **Status Components**: Reusable components for building status pages (no route created - users decide placement)
+- **Sentry Integration**: Abstraction layer works in no-op mode by default, activates with Sentry wizard
+- **Environment Variables**: `PERF_SLOW_THRESHOLD_MS`, `PERF_CRITICAL_THRESHOLD_MS`, `HEALTH_INCLUDE_MEMORY`
+
+**Test Coverage:**
+
+- 1817 total tests passing
+- Unit tests for performance utilities (measureAsync, measureSync, trackDatabaseQuery, getMemoryUsage, formatBytes)
+- Integration tests for enhanced health check endpoint
+- Tests for environment variable threshold handling
+
+**Sentry Setup:**
+
+- Recommends official Sentry wizard: `npx @sentry/wizard@latest -i nextjs`
+- Abstraction layer automatically detects Sentry when configured
+- Server-side error tracking fixed (removed client-only check)
+- Tunnel route support for ad blocker bypass
+
+**Branch:** `feature/phase-3.4-monitoring-observability`
+
+**Git Commits:**
+
+- `99dfa11` - feat(monitoring): implement Phase 3.4 Monitoring & Observability
+- `b45eb2e` - fix(sentry): enable server-side error tracking and improve setup docs
 
 ### 3.5 Landing Page & Marketing
 

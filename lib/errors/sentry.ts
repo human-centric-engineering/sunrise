@@ -177,9 +177,10 @@ export interface ErrorContext {
 /**
  * Check if Sentry is available
  * Returns true if NEXT_PUBLIC_SENTRY_DSN is set
+ * Works on both client and server
  */
 function isSentryAvailable(): boolean {
-  return typeof window !== 'undefined' && !!process.env.NEXT_PUBLIC_SENTRY_DSN;
+  return !!process.env.NEXT_PUBLIC_SENTRY_DSN;
 }
 
 /**

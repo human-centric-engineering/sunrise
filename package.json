@@ -63,7 +63,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@react-email/components": "^1.0.3",
-    "@sentry/nextjs": "^10.32.1",
+    "@sentry/nextjs": "^10.34.0",
     "better-auth": "^1.4.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
