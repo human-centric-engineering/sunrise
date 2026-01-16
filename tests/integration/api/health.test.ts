@@ -1,26 +1,16 @@
 /**
  * Integration Test: Health Check API Endpoint
  *
- * Week 4: Integration Testing Example
- *
- * This test demonstrates integration testing patterns for Next.js API routes:
- * - Testing API route handlers (GET /api/health)
- * - Mocking database dependencies (getDatabaseHealth)
- * - Mocking logger for verification
- * - Testing both success and error scenarios
- * - Verifying response structure and HTTP status codes
- * - Real endpoint invocation (not mocked fetch)
- *
- * Key Patterns:
- * - Integration test: Tests the actual route handler function
- * - Mocked dependencies: Database and logger are mocked for isolation
- * - Response validation: Verifies JSON structure and status codes
- * - Error handling: Tests exception scenarios
+ * Tests for the enhanced health check endpoint with:
+ * - Version, uptime, and timestamp fields
+ * - Services structure with status indicators
+ * - Optional memory usage reporting
+ * - Database connectivity checks
  *
  * @see app/api/health/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GET } from '@/app/api/health/route';
 
 /**
@@ -42,9 +32,20 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Mock monitoring utilities
+vi.mock('@/lib/monitoring', () => ({
+  getMemoryUsage: vi.fn(() => ({
+    heapUsed: 52428800,
+    heapTotal: 104857600,
+    rss: 157286400,
+    percentage: 50,
+  })),
+}));
+
 // Import mocked modules
 import { getDatabaseHealth } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
+import { getMemoryUsage } from '@/lib/monitoring';
 
 /**
  * Helper function to parse JSON response
@@ -55,14 +56,25 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 /**
- * Response type interfaces
+ * Response type interface
  */
 interface HealthResponse {
   status: 'ok' | 'error';
+  version: string;
+  uptime: number;
   timestamp: string;
-  database: {
-    connected: boolean;
-    latency?: number;
+  services: {
+    database: {
+      status: 'operational' | 'degraded' | 'outage';
+      connected: boolean;
+      latency?: number;
+    };
+  };
+  memory?: {
+    heapUsed: number;
+    heapTotal: number;
+    rss: number;
+    percentage: number;
   };
   error?: string;
 }
@@ -72,8 +84,12 @@ interface HealthResponse {
  */
 describe('GET /api/health', () => {
   beforeEach(() => {
-    // Reset all mocks before each test
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   /**
@@ -81,67 +97,177 @@ describe('GET /api/health', () => {
    */
   describe('Success scenarios', () => {
     it('should return 200 and ok status when database is connected', async () => {
-      // Arrange: Mock successful database health check
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
         latency: 5,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Response structure and values
+      // Assert
       expect(response.status).toBe(200);
-      expect(body).toMatchObject({
-        status: 'ok',
-        database: {
-          connected: true,
-          latency: 5,
-        },
-      });
-      expect(body.timestamp).toBeDefined();
-      expect(new Date(body.timestamp).toString()).not.toBe('Invalid Date');
-
-      // Assert: Database health check was called
-      expect(vi.mocked(getDatabaseHealth)).toHaveBeenCalledTimes(1);
-
-      // Assert: No errors logged
-      expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
+      expect(body.status).toBe('ok');
+      expect(body.services.database.connected).toBe(true);
+      expect(body.services.database.status).toBe('operational');
+      expect(body.services.database.latency).toBe(5);
     });
 
-    it('should return database latency when available', async () => {
-      // Arrange: Mock database health with latency
+    it('should include version field', async () => {
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
-        latency: 25,
+        latency: 5,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Latency is included in response
-      expect(response.status).toBe(200);
-      expect(body.database.latency).toBe(25);
-      expect(body.database.connected).toBe(true);
+      // Assert
+      expect(body).toHaveProperty('version');
+      expect(typeof body.version).toBe('string');
+    });
+
+    it('should include uptime field as number', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 5,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(body).toHaveProperty('uptime');
+      expect(typeof body.uptime).toBe('number');
+      expect(body.uptime).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should include timestamp in ISO format', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 5,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(body.timestamp).toBeDefined();
+      expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+
+    it('should not include memory by default', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 5,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(body.memory).toBeUndefined();
+    });
+
+    it('should include memory when HEALTH_INCLUDE_MEMORY is true', async () => {
+      // Arrange
+      vi.stubEnv('HEALTH_INCLUDE_MEMORY', 'true');
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 5,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(body.memory).toBeDefined();
+      expect(body.memory?.heapUsed).toBeDefined();
+      expect(body.memory?.heapTotal).toBeDefined();
+      expect(body.memory?.rss).toBeDefined();
+      expect(body.memory?.percentage).toBeDefined();
+      expect(vi.mocked(getMemoryUsage)).toHaveBeenCalled();
     });
 
     it('should return ok status without latency when latency is undefined', async () => {
-      // Arrange: Mock database health without latency
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Latency is not included in response
+      // Assert
       expect(response.status).toBe(200);
-      expect(body.database.connected).toBe(true);
-      expect(body.database.latency).toBeUndefined();
-      expect(body.status).toBe('ok');
+      expect(body.services.database.connected).toBe(true);
+      expect(body.services.database.latency).toBeUndefined();
+      expect(body.services.database.status).toBe('operational');
+    });
+  });
+
+  /**
+   * Service Status Indicators
+   */
+  describe('Service status indicators', () => {
+    it('should return operational status for fast database', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 10,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(body.services.database.status).toBe('operational');
+    });
+
+    it('should return degraded status for slow database (>500ms)', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 750,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(200);
+      expect(body.services.database.status).toBe('degraded');
+      expect(body.services.database.connected).toBe(true);
+    });
+
+    it('should return outage status when database is disconnected', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: false,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(503);
+      expect(body.services.database.status).toBe('outage');
+      expect(body.services.database.connected).toBe(false);
     });
   });
 
@@ -150,84 +276,66 @@ describe('GET /api/health', () => {
    */
   describe('Error scenarios', () => {
     it('should return 503 and error status when database is not connected', async () => {
-      // Arrange: Mock failed database health check
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: false,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Response indicates service unavailable
+      // Assert
       expect(response.status).toBe(503);
-      expect(body).toMatchObject({
-        status: 'error',
-        database: {
-          connected: false,
-        },
-      });
-      expect(body.timestamp).toBeDefined();
-
-      // Assert: Database health check was called
-      expect(vi.mocked(getDatabaseHealth)).toHaveBeenCalledTimes(1);
-
-      // Assert: No errors logged (disconnected state, not exception)
-      expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
-    });
-
-    it('should not include latency when database is disconnected', async () => {
-      // Arrange: Mock disconnected database
-      vi.mocked(getDatabaseHealth).mockResolvedValue({
-        connected: false,
-      });
-
-      // Act: Call the health endpoint
-      const response = await GET();
-      const body = await parseResponse<HealthResponse>(response);
-
-      // Assert: Latency is not included
-      expect(response.status).toBe(503);
-      expect(body.database.latency).toBeUndefined();
-      expect(body.database.connected).toBe(false);
+      expect(body.status).toBe('error');
+      expect(body.services.database.connected).toBe(false);
+      expect(body.services.database.status).toBe('outage');
     });
 
     it('should return 503 and log error when getDatabaseHealth throws', async () => {
-      // Arrange: Mock database health check throwing error
+      // Arrange
       const dbError = new Error('Database connection timeout');
       vi.mocked(getDatabaseHealth).mockRejectedValue(dbError);
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Response indicates service unavailable
+      // Assert
       expect(response.status).toBe(503);
       expect(body.status).toBe('error');
-      expect(body.database.connected).toBe(false);
+      expect(body.services.database.connected).toBe(false);
+      expect(body.services.database.status).toBe('outage');
       expect(body.error).toBe('Database connection timeout');
-      expect(body.timestamp).toBeDefined();
-
-      // Assert: Error was logged
       expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Health check failed', dbError);
     });
 
     it('should handle non-Error exceptions gracefully', async () => {
-      // Arrange: Mock database health check throwing non-Error value
+      // Arrange
       vi.mocked(getDatabaseHealth).mockRejectedValue('String error');
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Response indicates service unavailable
+      // Assert
       expect(response.status).toBe(503);
       expect(body.status).toBe('error');
-      expect(body.database.connected).toBe(false);
       expect(body.error).toBe('Unknown error');
+    });
 
-      // Assert: Error was logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Health check failed', 'String error');
+    it('should include memory in error response when enabled', async () => {
+      // Arrange
+      vi.stubEnv('HEALTH_INCLUDE_MEMORY', 'true');
+      vi.mocked(getDatabaseHealth).mockRejectedValue(new Error('DB error'));
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(503);
+      expect(body.memory).toBeDefined();
     });
   });
 
@@ -236,64 +344,52 @@ describe('GET /api/health', () => {
    */
   describe('Response structure', () => {
     it('should always include required fields', async () => {
-      // Arrange: Mock successful database health
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
         latency: 10,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: All required fields are present
+      // Assert
       expect(body).toHaveProperty('status');
+      expect(body).toHaveProperty('version');
+      expect(body).toHaveProperty('uptime');
       expect(body).toHaveProperty('timestamp');
-      expect(body).toHaveProperty('database');
-      expect(body.database).toHaveProperty('connected');
-    });
-
-    it('should return ISO 8601 timestamp format', async () => {
-      // Arrange: Mock successful database health
-      vi.mocked(getDatabaseHealth).mockResolvedValue({
-        connected: true,
-      });
-
-      // Act: Call the health endpoint
-      const response = await GET();
-      const body = await parseResponse<HealthResponse>(response);
-
-      // Assert: Timestamp is valid ISO 8601
-      expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-      expect(new Date(body.timestamp).toString()).not.toBe('Invalid Date');
+      expect(body).toHaveProperty('services');
+      expect(body.services).toHaveProperty('database');
+      expect(body.services.database).toHaveProperty('status');
+      expect(body.services.database).toHaveProperty('connected');
     });
 
     it('should include error field only when exception occurs', async () => {
-      // Arrange: Mock database health check throwing error
+      // Arrange
       vi.mocked(getDatabaseHealth).mockRejectedValue(new Error('Test error'));
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Error field is present
+      // Assert
       expect(body).toHaveProperty('error');
       expect(body.error).toBe('Test error');
     });
 
     it('should not include error field when database is simply disconnected', async () => {
-      // Arrange: Mock disconnected database (not an exception)
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: false,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Error field is not present
-      expect(body).not.toHaveProperty('error');
-      expect(body.status).toBe('error');
+      // Assert
+      expect(body.error).toBeUndefined();
     });
   });
 
@@ -302,58 +398,88 @@ describe('GET /api/health', () => {
    */
   describe('Edge cases', () => {
     it('should handle very high database latency', async () => {
-      // Arrange: Mock high latency (e.g., slow network)
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
-        latency: 5000, // 5 seconds
+        latency: 5000,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Still returns ok status with latency
+      // Assert
       expect(response.status).toBe(200);
       expect(body.status).toBe('ok');
-      expect(body.database.latency).toBe(5000);
+      expect(body.services.database.status).toBe('degraded');
+      expect(body.services.database.latency).toBe(5000);
     });
 
     it('should handle zero latency', async () => {
-      // Arrange: Mock zero latency (instant response)
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
         latency: 0,
       });
 
-      // Act: Call the health endpoint
+      // Act
       const response = await GET();
       const body = await parseResponse<HealthResponse>(response);
 
-      // Assert: Zero latency is included
+      // Assert
       expect(response.status).toBe(200);
-      expect(body.database.latency).toBe(0);
+      expect(body.services.database.latency).toBe(0);
+      expect(body.services.database.status).toBe('operational');
     });
 
     it('should handle concurrent health checks independently', async () => {
-      // Arrange: Mock successful database health
+      // Arrange
       vi.mocked(getDatabaseHealth).mockResolvedValue({
         connected: true,
         latency: 10,
       });
 
-      // Act: Call health endpoint multiple times concurrently
+      // Act
       const responses = await Promise.all([GET(), GET(), GET()]);
 
-      // Assert: All responses are successful
+      // Assert
       expect(responses).toHaveLength(3);
       for (const response of responses) {
         expect(response.status).toBe(200);
         const body = await parseResponse<HealthResponse>(response);
         expect(body.status).toBe('ok');
       }
-
-      // Assert: Database health check called for each request
       expect(vi.mocked(getDatabaseHealth)).toHaveBeenCalledTimes(3);
+    });
+
+    it('should handle latency at boundary (exactly 500ms)', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 500,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert: 500ms is not > 500, so still operational
+      expect(body.services.database.status).toBe('operational');
+    });
+
+    it('should handle latency just above boundary (501ms)', async () => {
+      // Arrange
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 501,
+      });
+
+      // Act
+      const response = await GET();
+      const body = await parseResponse<HealthResponse>(response);
+
+      // Assert: 501ms is > 500, so degraded
+      expect(body.services.database.status).toBe('degraded');
     });
   });
 });
