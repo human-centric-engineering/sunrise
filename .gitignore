@@ -175,3 +175,6 @@ yarn-debug.log*
 # pnpm-lock.yaml
 
 /lib/generated/prisma
+
+# Sentry Config File
+.env.sentry-build-plugin

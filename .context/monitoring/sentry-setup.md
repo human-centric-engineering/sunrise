@@ -4,20 +4,57 @@ Sunrise includes a Sentry abstraction layer that works in no-op mode by default 
 
 ## Current State
 
-- **Package installed**: `@sentry/nextjs@^10.32.1`
+- **Package installed**: `@sentry/nextjs`
 - **Abstraction layer**: `lib/errors/sentry.ts`
 - **Default mode**: No-op (errors logged only)
-- **Activation**: Set `NEXT_PUBLIC_SENTRY_DSN` environment variable
+- **Activation**: Run the Sentry wizard and set `NEXT_PUBLIC_SENTRY_DSN`
 
-## Quick Start
+## Quick Start (Recommended)
 
-### 1. Get Sentry DSN
+The easiest way to set up Sentry is using the official Sentry wizard. It automatically creates all necessary config files, updates your Next.js config, and sets up error boundaries.
+
+### 1. Create a Sentry Project
 
 1. Create account at [sentry.io](https://sentry.io)
-2. Create new project (choose Next.js)
-3. Copy the DSN from project settings
+2. Create a new project and select **Next.js** as the platform
+3. Follow the setup instructions, which will guide you to run the wizard
 
-### 2. Set Environment Variable
+### 2. Run the Sentry Wizard
+
+```bash
+npx @sentry/wizard@latest -i nextjs
+```
+
+The wizard will:
+
+- Create `sentry.client.config.ts`, `sentry.server.config.ts`, `sentry.edge.config.ts`
+- Create `instrumentation.ts` and `instrumentation-client.ts` for Next.js 16+
+- Update `next.config.js` with the Sentry wrapper
+- Create example pages to test the integration
+- Configure the tunnel route to bypass ad blockers
+
+### 3. Verify Installation
+
+After the wizard completes:
+
+1. Start your dev server: `npm run dev`
+2. Visit the example page created by the wizard (usually `/sentry-example-page`)
+3. Click the test buttons to trigger client and server errors
+4. Check your Sentry dashboard - errors should appear within seconds
+
+### 4. Clean Up (Optional)
+
+After verifying Sentry works, you can delete the example pages:
+
+```bash
+rm -rf app/sentry-example-page app/api/sentry-example-api
+```
+
+## Manual Setup (Alternative)
+
+If you prefer manual configuration or the wizard doesn't work for your setup:
+
+### 1. Set Environment Variable
 
 ```bash
 # .env.local
@@ -27,89 +64,11 @@ NEXT_PUBLIC_SENTRY_DSN="https://[key]@[org].ingest.sentry.io/[project]"
 SENTRY_AUTH_TOKEN="your-auth-token"
 ```
 
-### 3. Create Sentry Config Files
+### 2. Create Config Files
 
-**sentry.client.config.ts** (root directory):
+See the [Sentry Next.js documentation](https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/) for manual configuration steps.
 
-```typescript
-import * as Sentry from '@sentry/nextjs';
-
-Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-  tracesSampleRate: 1.0,
-  debug: false,
-  replaysOnErrorSampleRate: 1.0,
-  replaysSessionSampleRate: 0.1,
-  integrations: [
-    Sentry.replayIntegration({
-      maskAllText: true,
-      blockAllMedia: true,
-    }),
-  ],
-});
-```
-
-**sentry.server.config.ts** (root directory):
-
-```typescript
-import * as Sentry from '@sentry/nextjs';
-
-Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-  tracesSampleRate: 1.0,
-  debug: false,
-});
-```
-
-**sentry.edge.config.ts** (optional, for edge runtime):
-
-```typescript
-import * as Sentry from '@sentry/nextjs';
-
-Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-  tracesSampleRate: 1.0,
-});
-```
-
-### 4. Update next.config.js
-
-```javascript
-const { withSentryConfig } = require('@sentry/nextjs');
-
-const nextConfig = {
-  // ... existing config
-};
-
-module.exports = withSentryConfig(
-  nextConfig,
-  {
-    silent: true,
-    org: 'your-org',
-    project: 'your-project',
-  },
-  {
-    widenClientFileUpload: true,
-    transpileClientSDK: true,
-    tunnelRoute: '/monitoring',
-    hideSourceMaps: true,
-    disableLogger: true,
-  }
-);
-```
-
-### 5. Update .gitignore
-
-```
-# Sentry
-.sentryclirc
-sentry.properties
-```
-
-### 6. Restart Development Server
+### 3. Restart Development Server
 
 ```bash
 npm run dev
