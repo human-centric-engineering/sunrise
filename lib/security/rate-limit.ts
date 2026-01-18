@@ -192,6 +192,18 @@ export const passwordResetLimiter = createRateLimiter({
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 
+/**
+ * Rate limiter for contact form submissions
+ * Limit: 5 submissions per hour per IP
+ *
+ * Prevents spam and email bombing via contact form
+ */
+export const contactLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CONTACT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CONTACT,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
 // =============================================================================
 // Response Helpers
 // =============================================================================

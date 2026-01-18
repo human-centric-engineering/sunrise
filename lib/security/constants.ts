@@ -25,6 +25,10 @@ export const SECURITY_CONSTANTS = {
       PASSWORD_RESET: 3,
       /** Password reset window: 15 minutes */
       PASSWORD_RESET_INTERVAL: 15 * 60 * 1000,
+      /** Contact form: 5 submissions per hour */
+      CONTACT: 5,
+      /** Contact form window: 1 hour */
+      CONTACT_INTERVAL: 60 * 60 * 1000,
     },
   },
 
