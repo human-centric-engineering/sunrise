@@ -169,27 +169,38 @@ DB_PASSWORD="<secure-password>"
 DB_NAME="sunrise"
 ```
 
-## Platform-Specific Notes
+## Platform-Specific Guides
 
-### Vercel
+Detailed deployment guides for each platform:
+
+| Platform        | Guide                                                                | Best For                                   |
+| --------------- | -------------------------------------------------------------------- | ------------------------------------------ |
+| **Vercel**      | [platforms/vercel.md](./platforms/vercel.md)                         | Zero-config, automatic preview deployments |
+| **Railway**     | [platforms/railway.md](./platforms/railway.md)                       | Developer-friendly, built-in PostgreSQL    |
+| **Render**      | [platforms/render.md](./platforms/render.md)                         | Good free tier, simple setup               |
+| **Self-Hosted** | [platforms/docker-self-hosted.md](./platforms/docker-self-hosted.md) | Full control, privacy, VPS/cloud VM        |
+
+### Quick Platform Notes
+
+**Vercel**
 
 - No Docker needed (uses Next.js build directly)
 - Auto-detects Next.js and configures everything
 - Add DATABASE_URL in dashboard environment variables
 
-### Railway/Render
+**Railway/Render**
 
 - Auto-detects Dockerfile
 - Built-in database provisioning available
 - Environment variables via dashboard
 
-### Fly.io
+**Fly.io**
 
 - Requires `fly.toml` configuration
 - Use `flyctl launch` for initial setup
 - Secrets via `flyctl secrets set`
 
-### Self-Hosted
+**Self-Hosted**
 
 - Nginx reverse proxy recommended for SSL
 - Let's Encrypt for free SSL certificates

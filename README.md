@@ -404,7 +404,29 @@ docker-compose up     # Start app + database
 docker-compose down   # Stop all services
 ```
 
-For detailed deployment instructions, see [`.instructions/DEPLOYMENT.md`](./.instructions/DEPLOYMENT.md)
+## Deployment
+
+For deployment instructions, see [`.context/deployment/overview.md`](./.context/deployment/overview.md) which covers:
+
+- Platform comparison (Vercel, Railway, Render, Fly.io, self-hosted)
+- Docker production builds
+- Environment configuration
+- Database migrations
+- Health checks and monitoring
+
+**Platform-specific guides:**
+
+- [Vercel](./.context/deployment/platforms/vercel.md) - Zero-config deployment
+- [Railway](./.context/deployment/platforms/railway.md) - Developer-friendly with built-in database
+- [Render](./.context/deployment/platforms/render.md) - Good free tier
+- [Docker Self-Hosted](./.context/deployment/platforms/docker-self-hosted.md) - Full control
+
+**Quick Docker deployment:**
+
+```bash
+docker-compose -f docker-compose.prod.yml up -d --build
+docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+```
 
 ## License
 

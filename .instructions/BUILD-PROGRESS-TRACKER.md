@@ -5,13 +5,14 @@ Use this checklist to track progress through the build. Check off items as they'
 ## Current Status
 
 **Last Updated:** 2026-01-19
-**Current Phase:** Phase 3.5 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (5/6)
+**Current Phase:** Phase 3 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 Complete (6/6)
 **Blockers:** None
-**Next Steps:** Phase 3.6 - Deployment Documentation
+**Next Steps:** Phase 4 - Documentation for Optional Features
 
 **Recent Completions:**
 
+- ✅ Phase 3.6 - Deployment Documentation (platform guides, GitHub Actions CI, README deployment section)
 - ✅ Phase 3.5 - Landing Page & Marketing (marketing components, landing page, contact form, cookie consent, SEO/sitemap, legal pages)
 - ✅ Phase 3.4 - Monitoring & Observability (performance monitoring, enhanced health checks, status page components, Sentry integration)
 - ✅ Phase 3.3 - Security Hardening (CORS, CSP, rate limiting, input sanitization, security headers review)
@@ -616,22 +617,36 @@ Use this checklist to track progress through the build. Check off items as they'
 - `2f16b24` - feat(seo): add robots.txt, sitemap, and consistent Twitter cards
 - `d8897c5` - docs(context): add Phase 3.5 documentation for landing page and marketing features
 
-### 3.6 Deployment Documentation
+### 3.6 Deployment Documentation ✅
 
-- [ ] Write DEPLOYMENT.md
-- [ ] Create DEPLOYMENT-QUICKSTART.md
-- [ ] Document Vercel deployment
-- [ ] Document Render deployment
-- [ ] Document Railway deployment
-- [ ] Document Fly.io deployment
-- [ ] Document DigitalOcean deployment
-- [ ] Document AWS deployment
-- [ ] Document self-hosted deployment
-- [ ] Add CI/CD examples
-- [ ] Create troubleshooting section
-- [ ] Document scaling strategies
+**Completed:** 2026-01-19
 
-**Phase 3 Complete:** [ ]
+- [x] Update README.md with deployment section pointer
+- [x] Document Vercel deployment (.context/deployment/platforms/vercel.md)
+- [x] Document Railway deployment (.context/deployment/platforms/railway.md)
+- [x] Document Render deployment (.context/deployment/platforms/render.md)
+- [x] Document self-hosted Docker deployment (.context/deployment/platforms/docker-self-hosted.md)
+- [x] Add CI/CD examples (.github/workflows/ci.yml)
+- [x] Update deployment overview with platform guide links
+
+**Intentionally Not Created:**
+
+- DEPLOYMENT.md / DEPLOYMENT-QUICKSTART.md - README points to `.context/deployment/` instead (existing docs are comprehensive)
+- Fly.io guide - Platform comparison in overview.md covers basics; detailed guide not needed
+- DigitalOcean/AWS guides - Covered by self-hosted Docker guide (applies to any VPS/cloud VM)
+- Scaling strategies - Deferred to Phase 4 with Redis/caching documentation
+
+**Key Files:**
+
+- `.github/workflows/ci.yml` - GitHub Actions CI workflow (lint, test, build, Docker)
+- `.context/deployment/platforms/vercel.md` - Vercel deployment guide
+- `.context/deployment/platforms/railway.md` - Railway deployment guide
+- `.context/deployment/platforms/render.md` - Render deployment guide
+- `.context/deployment/platforms/docker-self-hosted.md` - Self-hosted Docker guide
+
+**Branch:** `feature/phase-3.6-deployment-docs`
+
+**Phase 3 Complete:** [x]
 
 ---
 

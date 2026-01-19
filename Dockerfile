@@ -18,6 +18,10 @@ COPY package.json package-lock.json* .npmrc ./
 # This is required because the postinstall script runs "prisma generate"
 COPY prisma ./prisma
 
+# Build argument for DATABASE_URL needed by prisma generate during postinstall
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
 # Install dependencies
 # The postinstall script will run "prisma generate" automatically
 RUN npm ci
@@ -32,8 +36,15 @@ COPY --from=deps /app/prisma ./prisma
 COPY . .
 
 # Build arguments for environment variables needed at build time
-# NEXT_PUBLIC_* variables are embedded into the JavaScript bundle during build
+# These are required for Next.js build and environment validation
+ARG DATABASE_URL
+ARG BETTER_AUTH_URL
+ARG BETTER_AUTH_SECRET
 ARG NEXT_PUBLIC_APP_URL
+
+ENV DATABASE_URL=$DATABASE_URL
+ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
+ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 # Set environment variables for build
