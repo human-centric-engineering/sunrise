@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { AppHeader } from '@/components/layouts/app-header';
 import { PublicNav } from '@/components/layouts/public-nav';
+import { PublicFooter } from '@/components/layouts/public-footer';
 
 export const metadata: Metadata = {
   title: {
@@ -25,9 +26,10 @@ export default function PublicLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="bg-background min-h-screen">
+    <div className="bg-background flex min-h-screen flex-col">
       <AppHeader logoHref="/" navigation={<PublicNav />} />
-      <main>{children}</main>
+      <main className="flex-1">{children}</main>
+      <PublicFooter />
     </div>
   );
 }
