@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Privacy Policy - Sunrise',
+  title: 'Privacy Policy',
   description: 'Privacy Policy for Sunrise. Learn how we collect, use, and protect your data.',
   openGraph: {
     title: 'Privacy Policy - Sunrise',

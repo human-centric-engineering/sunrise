@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Terms of Service - Sunrise',
+  title: 'Terms of Service',
   description: 'Terms of Service for Sunrise. Read our terms and conditions for using the service.',
   openGraph: {
     title: 'Terms of Service - Sunrise',

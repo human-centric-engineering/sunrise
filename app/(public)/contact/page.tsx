@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ContactForm } from '@/components/forms/contact-form';
 
 export const metadata: Metadata = {
-  title: 'Contact - Sunrise',
+  title: 'Contact',
   description:
     'Get in touch with the Sunrise team. Questions, feedback, or just want to say hello? We would love to hear from you.',
   openGraph: {

@@ -15,7 +15,7 @@ import { Hero, Section, Features, CTA } from '@/components/marketing';
 import { Card, CardContent } from '@/components/ui/card';
 
 export const metadata: Metadata = {
-  title: 'About - Sunrise',
+  title: 'About',
   description:
     'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
   openGraph: {
