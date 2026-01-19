@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
+import { ProtectedFooter } from '@/components/layouts/protected-footer';
 
 export const metadata: Metadata = {
   title: {
@@ -24,9 +25,10 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="bg-background min-h-screen">
+    <div className="bg-background flex min-h-screen flex-col">
       <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />
-      <main className="container mx-auto px-4 py-8">{children}</main>
+      <main className="container mx-auto flex-1 px-4 py-8">{children}</main>
+      <ProtectedFooter />
     </div>
   );
 }

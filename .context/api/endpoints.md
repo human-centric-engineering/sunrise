@@ -826,6 +826,109 @@ POST /api/auth/accept-invite
 
 **Implementation**: Page route at `app/(auth)/accept-invite/page.tsx`
 
+## Contact Form Endpoints
+
+### Submit Contact Form
+
+✅ **Implemented in:** `app/api/v1/contact/route.ts`
+
+**Purpose**: Submit a contact form message (public endpoint)
+
+```
+POST /api/v1/contact
+```
+
+**Authentication**: None (public endpoint)
+
+**Rate Limit**: 5 requests per hour per IP
+
+**Request Body**:
+
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "subject": "Question about Sunrise",
+  "message": "I'd like to learn more about your product...",
+  "website": ""
+}
+```
+
+**Validation**: Uses `contactWithHoneypotSchema` from `lib/validations/contact.ts`
+
+- `name`: Required, max 100 characters
+- `email`: Required, valid email format
+- `subject`: Required, max 200 characters
+- `message`: Required, min 10 characters, max 5000 characters
+- `website`: Honeypot field - must be empty (hidden from real users)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Thank you for your message. We will get back to you soon."
+  }
+}
+```
+
+**Response Headers**:
+
+```
+X-RateLimit-Limit: 5
+X-RateLimit-Remaining: 4
+X-RateLimit-Reset: 1704067200
+```
+
+**Error Responses**:
+
+- **400 Validation Error**: Invalid request body
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Invalid request body",
+      "code": "VALIDATION_ERROR",
+      "details": {
+        "errors": [{ "path": "email", "message": "Invalid email format" }]
+      }
+    }
+  }
+  ```
+- **429 Rate Limit Exceeded**: Too many requests
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Rate limit exceeded. Please try again later.",
+      "code": "RATE_LIMIT_EXCEEDED"
+    }
+  }
+  ```
+
+**Flow**:
+
+1. Check rate limit (5/hour per IP)
+2. Validate request body (including honeypot check)
+3. Store submission in `ContactSubmission` database table
+4. Send email notification to `CONTACT_EMAIL` or `EMAIL_FROM` (non-blocking)
+5. Return success response
+
+**Spam Prevention**:
+
+- **Honeypot field**: The `website` field is hidden via CSS. Bots that auto-fill all fields will trigger this. When triggered, the API returns a success response (to not tip off the bot) but doesn't process the submission.
+- **Rate limiting**: 5 submissions per hour per IP address prevents abuse.
+
+**Email Notification**:
+
+- Sent to `CONTACT_EMAIL` environment variable (falls back to `EMAIL_FROM`)
+- If neither is configured, no email is sent (submission is still stored)
+- Uses `ContactNotificationEmail` template from `emails/contact-notification.tsx`
+- Includes sender's email in `Reply-To` header for easy response
+
+**Note**: Submissions are always stored in the database regardless of email configuration.
+
 ## Common Patterns
 
 📋 **Guidance** - Common implementation patterns for API routes

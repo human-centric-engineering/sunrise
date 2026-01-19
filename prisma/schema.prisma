@@ -95,3 +95,19 @@ model Verification {
   @@index([identifier])
   @@map("verification")
 }
+
+// Contact Form Submissions (Phase 3.5)
+// Stores contact form submissions from the public website
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+  read      Boolean  @default(false)
+
+  @@index([createdAt])
+  @@index([read])
+  @@map("contact_submission")
+}

@@ -4,21 +4,23 @@ Complete reference for all environment variables used in Sunrise. This document 
 
 ## Quick Reference Table
 
-| Variable                                        | Required | Type         | Default       | Phase | Description                  |
-| ----------------------------------------------- | -------- | ------------ | ------------- | ----- | ---------------------------- |
-| [`DATABASE_URL`](#database_url)                 | ✅ Yes   | URL          | -             | 1.3   | PostgreSQL connection string |
-| [`BETTER_AUTH_URL`](#better_auth_url)           | ✅ Yes   | URL          | -             | 1.4   | Application base URL         |
-| [`BETTER_AUTH_SECRET`](#better_auth_secret)     | ✅ Yes   | String (32+) | -             | 1.4   | JWT signing secret           |
-| [`GOOGLE_CLIENT_ID`](#google_client_id)         | ❌ No    | String       | -             | 1.4   | Google OAuth client ID       |
-| [`GOOGLE_CLIENT_SECRET`](#google_client_secret) | ❌ No    | String       | -             | 1.4   | Google OAuth secret          |
-| [`RESEND_API_KEY`](#resend_api_key)             | ❌ No    | String       | -             | 3.1   | Resend email API key         |
-| [`EMAIL_FROM`](#email_from)                     | ❌ No    | Email        | -             | 3.1   | Sender email address         |
-| [`EMAIL_FROM_NAME`](#email_from_name)           | ❌ No    | String       | -             | 3.1   | Sender display name          |
-| [`NODE_ENV`](#node_env)                         | ✅ Yes   | Enum         | `development` | 1.1   | Environment name             |
-| [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)   | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
-| [`LOG_LEVEL`](#log_level)                       | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
-| [`LOG_SANITIZE_PII`](#log_sanitize_pii)         | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs     |
-| [`ALLOWED_ORIGINS`](#allowed_origins)           | ❌ No    | String       | -             | 3.3   | CORS allowed origins         |
+| Variable                                                                    | Required | Type         | Default       | Phase | Description                  |
+| --------------------------------------------------------------------------- | -------- | ------------ | ------------- | ----- | ---------------------------- |
+| [`DATABASE_URL`](#database_url)                                             | ✅ Yes   | URL          | -             | 1.3   | PostgreSQL connection string |
+| [`BETTER_AUTH_URL`](#better_auth_url)                                       | ✅ Yes   | URL          | -             | 1.4   | Application base URL         |
+| [`BETTER_AUTH_SECRET`](#better_auth_secret)                                 | ✅ Yes   | String (32+) | -             | 1.4   | JWT signing secret           |
+| [`GOOGLE_CLIENT_ID`](#google_client_id)                                     | ❌ No    | String       | -             | 1.4   | Google OAuth client ID       |
+| [`GOOGLE_CLIENT_SECRET`](#google_client_secret)                             | ❌ No    | String       | -             | 1.4   | Google OAuth secret          |
+| [`RESEND_API_KEY`](#resend_api_key)                                         | ❌ No    | String       | -             | 3.1   | Resend email API key         |
+| [`EMAIL_FROM`](#email_from)                                                 | ❌ No    | Email        | -             | 3.1   | Sender email address         |
+| [`EMAIL_FROM_NAME`](#email_from_name)                                       | ❌ No    | String       | -             | 3.1   | Sender display name          |
+| [`CONTACT_EMAIL`](#contact_email)                                           | ❌ No    | Email        | `EMAIL_FROM`  | 3.5   | Contact form notifications   |
+| [`NODE_ENV`](#node_env)                                                     | ✅ Yes   | Enum         | `development` | 1.1   | Environment name             |
+| [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)                               | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
+| [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](#next_public_cookie_consent_enabled) | ❌ No    | Boolean      | `true`        | 3.5   | Enable cookie consent banner |
+| [`LOG_LEVEL`](#log_level)                                                   | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
+| [`LOG_SANITIZE_PII`](#log_sanitize_pii)                                     | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs     |
+| [`ALLOWED_ORIGINS`](#allowed_origins)                                       | ❌ No    | String       | -             | 3.3   | CORS allowed origins         |
 
 ## Detailed Descriptions
 
@@ -528,6 +530,93 @@ Not set (default):
 - The display name appears in the recipient's inbox before the email address
 - Some email clients show only the display name (not the email address)
 - Setting a recognizable name improves open rates and trust
+
+#### `CONTACT_EMAIL`
+
+- **Purpose:** Email address to receive contact form submissions
+- **Required:** ❌ No
+- **Type:** Email address
+- **Format:** `name@domain.com`
+- **Default:** Falls back to `EMAIL_FROM` if not set
+- **Validation:** Must be a valid email address
+- **Used By:**
+  - `app/api/v1/contact/route.ts` - Contact form notification emails
+- **Phase:** 3.5 (Landing Page & Marketing)
+
+**Examples:**
+
+```bash
+# Dedicated support address
+CONTACT_EMAIL="support@example.com"
+
+# Not set - falls back to EMAIL_FROM
+# CONTACT_EMAIL=
+```
+
+**How It Works:**
+
+When a user submits the contact form:
+
+1. Submission is stored in the `ContactSubmission` database table
+2. Email notification is sent to `CONTACT_EMAIL` (or `EMAIL_FROM` if not set)
+3. User receives a success message
+
+**Important Notes:**
+
+- If neither `CONTACT_EMAIL` nor `EMAIL_FROM` is set, no notification email is sent (submission is still stored)
+- The email includes the sender's email as `Reply-To` for easy response
+- Consider using a monitored inbox (not `noreply@`)
+
+---
+
+### Cookie Consent
+
+#### `NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`
+
+- **Purpose:** Enable or disable the cookie consent banner and system
+- **Required:** ❌ No
+- **Type:** Boolean (`true` | `false`)
+- **Default:** `true`
+- **Validation:** None (any value other than `"false"` is treated as enabled)
+- **Used By:**
+  - `lib/consent/config.ts` - Consent system configuration
+  - `lib/consent/consent-provider.tsx` - Provider behavior
+- **Phase:** 3.5 (Landing Page & Marketing)
+
+**Examples:**
+
+```bash
+# Enable cookie consent (default)
+NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=true
+
+# Disable cookie consent entirely
+NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=false
+```
+
+**Behavior:**
+
+| Value            | Banner Shown | Consent Required | Scripts Load  |
+| ---------------- | ------------ | ---------------- | ------------- |
+| `true` (default) | Yes          | Yes              | After consent |
+| `false`          | Never        | No               | Immediately   |
+
+**When to Disable:**
+
+- Internal tools without external tracking
+- Applications not serving EU users (though enabling is still recommended)
+- Development/testing environments where consent flow is not being tested
+
+**Important Notes:**
+
+- ⚠️ **Embedded at build time** - Requires rebuild after changing
+- ⚠️ **GDPR compliance** - Keep enabled for applications serving EU users
+- When disabled, the `ConsentProvider` provides a "consent granted" context automatically
+- Optional scripts wrapped in `ConditionalScript` will load immediately when disabled
+
+**Troubleshooting:**
+
+- Banner still showing after disabling: Rebuild the application (`npm run build`)
+- Value not recognized: Ensure it's exactly `"false"` (lowercase) to disable
 
 ---
 
