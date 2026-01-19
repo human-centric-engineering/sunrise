@@ -66,3 +66,8 @@ jobs:
           tags: sunrise:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sunrise
+            BETTER_AUTH_URL=http://localhost:3000
+            BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
+            NEXT_PUBLIC_APP_URL=http://localhost:3000
