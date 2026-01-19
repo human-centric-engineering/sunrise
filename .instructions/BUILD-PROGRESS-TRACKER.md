@@ -4,14 +4,15 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2026-01-16
-**Current Phase:** Phase 3.4 Complete ✅
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (4/6)
+**Last Updated:** 2026-01-19
+**Current Phase:** Phase 3.5 Complete ✅
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 In Progress (5/6)
 **Blockers:** None
-**Next Steps:** Phase 3.5 - Landing Page & Marketing
+**Next Steps:** Phase 3.6 - Deployment Documentation
 
 **Recent Completions:**
 
+- ✅ Phase 3.5 - Landing Page & Marketing (marketing components, landing page, contact form, cookie consent, SEO/sitemap, legal pages)
 - ✅ Phase 3.4 - Monitoring & Observability (performance monitoring, enhanced health checks, status page components, Sentry integration)
 - ✅ Phase 3.3 - Security Hardening (CORS, CSP, rate limiting, input sanitization, security headers review)
 - ✅ Phase 3.2 - User Management (Profile page, settings page, dashboard enhancements, email preferences, account deletion, UserButton dropdown, URL-persistent tabs)
@@ -549,16 +550,71 @@ Use this checklist to track progress through the build. Check off items as they'
 - `99dfa11` - feat(monitoring): implement Phase 3.4 Monitoring & Observability
 - `b45eb2e` - fix(sentry): enable server-side error tracking and improve setup docs
 
-### 3.5 Landing Page & Marketing
+### 3.5 Landing Page & Marketing ✅
 
-- [ ] Create landing page layout
-- [ ] Build hero section
-- [ ] Add features section
-- [ ] Create pricing table template
-- [ ] Build FAQ section
-- [ ] Add contact form
-- [ ] Create about page
-- [ ] Optimize for SEO
+**Completed:** 2026-01-19
+
+- [x] Create landing page layout
+- [x] Build hero section
+- [x] Add features section
+- [x] Create pricing table template
+- [x] Build FAQ section
+- [x] Add contact form
+- [x] Create about page
+- [x] Optimize for SEO
+- [x] Add cookie consent system (GDPR/PECR compliant)
+- [x] Create privacy policy and terms of service pages
+- [x] Add robots.txt and sitemap configuration
+- [x] Document Phase 3.5 features in .context/ substrate
+
+**Key Files:**
+
+- `app/(public)/page.tsx` - Landing page with marketing components
+- `app/(public)/about/page.tsx` - About page
+- `app/(public)/contact/page.tsx` - Contact page with form
+- `app/(public)/privacy/page.tsx` - Privacy policy (placeholder)
+- `app/(public)/terms/page.tsx` - Terms of service (placeholder)
+- `app/api/v1/contact/route.ts` - Contact form API with rate limiting and honeypot
+- `app/sitemap.ts` - Dynamic sitemap generation
+- `app/robots.ts` - Robots.txt configuration
+- `components/marketing/` - Marketing component library (Hero, Features, Pricing, FAQ, CTA, Section)
+- `components/cookie-consent/` - Cookie banner and preferences modal
+- `lib/consent/` - Consent management system (provider, hooks, conditional scripts)
+- `lib/validations/contact.ts` - Contact form validation with honeypot
+- `emails/contact-notification.tsx` - Contact form notification email template
+- `.context/privacy/overview.md` - Cookie consent documentation
+- `.context/seo/overview.md` - SEO and sitemap documentation
+- `.context/ui/marketing.md` - Marketing components documentation
+
+**Key Features:**
+
+- **Marketing Components**: Reusable Hero, Features, Pricing, FAQ, CTA, Section components with variants
+- **Cookie Consent**: GDPR-compliant banner with essential/optional categories, preferences modal, conditional script loading
+- **Contact Form**: Rate-limited (5/hour/IP), honeypot spam prevention, database storage, email notifications
+- **SEO Configuration**: Dynamic sitemap, robots.txt blocking protected routes, metadata templates
+- **Legal Pages**: Placeholder privacy policy and terms of service pages
+
+**Environment Variables Added:**
+
+- `NEXT_PUBLIC_COOKIE_CONSENT_ENABLED` - Enable/disable cookie consent banner (default: true)
+- `CONTACT_EMAIL` - Email address for contact form notifications (falls back to EMAIL_FROM)
+
+**Test Coverage:**
+
+- Contact form API integration tests
+- Cookie consent component unit tests
+- Cookie banner and preferences modal tests
+
+**Branch:** `feature/phase-3.5-landing-marketing`
+
+**Git Commits:**
+
+- `9c2a199` - feat(consent): add GDPR-compliant cookie consent system
+- `4cfe7e0` - fix(seo): remove duplicate "Sunrise" from public page titles
+- `9a74241` - feat(legal): add placeholder privacy policy and terms of service pages
+- `cdf3f9c` - test(contact): add integration tests for contact API endpoint
+- `2f16b24` - feat(seo): add robots.txt, sitemap, and consistent Twitter cards
+- `d8897c5` - docs(context): add Phase 3.5 documentation for landing page and marketing features
 
 ### 3.6 Deployment Documentation
 
