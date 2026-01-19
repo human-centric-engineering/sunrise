@@ -39,9 +39,19 @@ export const contactSchema = z.object({
 });
 
 /**
- * Contact form with honeypot field
+ * Contact form with honeypot field (client-side)
  *
  * Extends contactSchema with honeypot field for spam prevention.
+ * Client-side allows any value - the check happens server-side.
+ */
+export const contactClientSchema = contactSchema.extend({
+  website: z.string().optional(),
+});
+
+/**
+ * Contact form with honeypot field (server-side)
+ *
+ * Server-side schema that validates honeypot must be empty.
  * The honeypot field should be empty (hidden from real users, filled by bots).
  */
 export const contactWithHoneypotSchema = contactSchema.extend({
@@ -52,4 +62,5 @@ export const contactWithHoneypotSchema = contactSchema.extend({
  * TypeScript types inferred from schemas
  */
 export type ContactInput = z.infer<typeof contactSchema>;
+export type ContactClientInput = z.infer<typeof contactClientSchema>;
 export type ContactWithHoneypotInput = z.infer<typeof contactWithHoneypotSchema>;

@@ -3,7 +3,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
-import { contactSchema, type ContactInput } from '@/lib/validations/contact';
+import { contactClientSchema, type ContactClientInput } from '@/lib/validations/contact';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -40,30 +40,26 @@ export function ContactForm() {
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<ContactInput>({
-    resolver: zodResolver(contactSchema),
+  } = useForm<ContactClientInput>({
+    resolver: zodResolver(contactClientSchema),
     mode: 'onTouched',
     defaultValues: {
       name: '',
       email: '',
       subject: '',
       message: '',
+      website: '',
     },
   });
 
-  const onSubmit = async (data: ContactInput) => {
+  const onSubmit = async (data: ContactClientInput) => {
     try {
       setIsLoading(true);
       setError(null);
 
-      // Include honeypot field in submission
-      const formData = {
-        ...data,
-        website: '', // Honeypot field - should be empty for real users
-      };
-
+      // Send form data including honeypot field
       await apiClient.post<ContactFormResponse>('/api/v1/contact', {
-        body: formData,
+        body: data,
       });
 
       setIsSuccess(true);
@@ -101,7 +97,7 @@ export function ContactForm() {
       {/* Hidden honeypot field - invisible to real users, attracts bots */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
         <label htmlFor="website">Website (leave blank)</label>
-        <input type="text" id="website" name="website" tabIndex={-1} autoComplete="off" />
+        <input type="text" id="website" tabIndex={-1} autoComplete="off" {...register('website')} />
       </div>
 
       {/* Name Field */}
