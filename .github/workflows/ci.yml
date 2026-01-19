@@ -11,6 +11,13 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
 
+    # Environment variables needed for Prisma generate (postinstall) and build
+    env:
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise'
+      BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
+      BETTER_AUTH_URL: 'http://localhost:3000'
+      NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,12 +45,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          # Minimal env vars for build (no real credentials needed for CI build)
-          DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise'
-          BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
-          BETTER_AUTH_URL: 'http://localhost:3000'
-          NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
 
   docker:
     name: Docker Build
