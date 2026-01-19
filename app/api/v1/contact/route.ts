@@ -131,38 +131,44 @@ export async function POST(request: NextRequest) {
     });
 
     // 4. Send email notification to admin (non-blocking)
-    const adminEmail = env.EMAIL_FROM || 'noreply@example.com';
+    const adminEmail = env.CONTACT_EMAIL || env.EMAIL_FROM;
 
-    sendEmail({
-      to: adminEmail,
-      subject: `[Sunrise Contact] ${body.subject}`,
-      react: ContactNotificationEmail({
-        name: body.name,
-        email: body.email,
-        subject: body.subject,
-        message: body.message,
-        submittedAt: submission.createdAt,
-      }),
-      replyTo: body.email,
-    })
-      .then((result) => {
-        if (result.success) {
-          logger.info('Contact notification email sent', {
-            submissionId: submission.id,
-            emailId: result.id,
-          });
-        } else {
-          logger.warn('Failed to send contact notification email', {
-            submissionId: submission.id,
-            error: result.error,
-          });
-        }
-      })
-      .catch((error) => {
-        logger.error('Error sending contact notification email', error, {
-          submissionId: submission.id,
-        });
+    if (!adminEmail) {
+      logger.warn('No CONTACT_EMAIL or EMAIL_FROM configured, skipping notification', {
+        submissionId: submission.id,
       });
+    } else {
+      sendEmail({
+        to: adminEmail,
+        subject: `[Sunrise Contact] ${body.subject}`,
+        react: ContactNotificationEmail({
+          name: body.name,
+          email: body.email,
+          subject: body.subject,
+          message: body.message,
+          submittedAt: submission.createdAt,
+        }),
+        replyTo: body.email,
+      })
+        .then((result) => {
+          if (result.success) {
+            logger.info('Contact notification email sent', {
+              submissionId: submission.id,
+              emailId: result.id,
+            });
+          } else {
+            logger.warn('Failed to send contact notification email', {
+              submissionId: submission.id,
+              error: result.error,
+            });
+          }
+        })
+        .catch((error) => {
+          logger.error('Error sending contact notification email', error, {
+            submissionId: submission.id,
+          });
+        });
+    }
 
     // 5. Return success response
     return successResponse(

@@ -52,6 +52,11 @@ const serverEnvSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
   EMAIL_FROM_NAME: z.string().optional(),
+  CONTACT_EMAIL: z
+    .string()
+    .email()
+    .optional()
+    .describe('Email address for contact form notifications (defaults to EMAIL_FROM)'),
   REQUIRE_EMAIL_VERIFICATION: z
     .string()
     .optional()

@@ -92,9 +92,6 @@ export function ContactForm() {
             Thank you for reaching out. We&apos;ll get back to you as soon as possible.
           </p>
         </div>
-        <Button variant="outline" onClick={() => setIsSuccess(false)}>
-          Send Another Message
-        </Button>
       </div>
     );
   }
