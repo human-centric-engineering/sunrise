@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useConsent } from '@/lib/consent';
 
 /**
  * Public Footer Component
@@ -22,6 +25,7 @@ const legalLinks = [
 
 export function PublicFooter() {
   const currentYear = new Date().getFullYear();
+  const { openPreferences } = useConsent();
 
   return (
     <footer className="border-t">
@@ -51,6 +55,12 @@ export function PublicFooter() {
                 {link.label}
               </Link>
             ))}
+            <button
+              onClick={openPreferences}
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Cookie Preferences
+            </button>
           </nav>
         </div>
 
