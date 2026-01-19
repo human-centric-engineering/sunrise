@@ -23,6 +23,12 @@ export const metadata: Metadata = {
     description:
       'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
   },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'About - Sunrise',
+    description:
+      'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
+  },
 };
 
 const principles = [

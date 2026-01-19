@@ -13,6 +13,12 @@ export const metadata: Metadata = {
     description:
       'Get in touch with the Sunrise team. Questions, feedback, or just want to say hello? We would love to hear from you.',
   },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Contact - Sunrise',
+    description:
+      'Get in touch with the Sunrise team. Questions, feedback, or just want to say hello? We would love to hear from you.',
+  },
 };
 
 /**
