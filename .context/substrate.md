@@ -4,7 +4,7 @@
 **Version**: 1.0.0
 **Stack**: Next.js 16 (App Router), TypeScript, PostgreSQL, Prisma 7, better-auth
 **Architecture**: Monolithic with API routes, server/client component separation
-**Last Updated**: 2026-01-16
+**Last Updated**: 2026-01-19
 
 ## Overview
 
@@ -131,10 +131,31 @@ Production-ready monitoring, performance tracking, and observability. Includes:
 Reusable UI patterns and component conventions. Includes:
 
 - [Overview](./ui/overview.md) - URL-persistent tabs, form patterns, state management
+- [Marketing](./ui/marketing.md) - Landing page components, hero sections, pricing displays
 
-**Use When**: Building tabbed interfaces, managing UI state in URLs, creating reusable interactive components
+**Use When**: Building tabbed interfaces, landing pages, marketing sections, URL state management
 
-**Key Patterns**: `useUrlTabs` hook for URL-synced tabs with automatic invalid URL cleanup
+**Key Patterns**: `useUrlTabs` hook for URL-synced tabs, marketing component library (Hero, Features, Pricing, FAQ, CTA, Section)
+
+### 🔒 [Privacy & Consent](./privacy/overview.md)
+
+Cookie consent system and GDPR compliance. Includes:
+
+- [Overview](./privacy/overview.md) - Consent management, conditional scripts, configuration
+
+**Use When**: Implementing cookie banners, loading analytics conditionally, GDPR compliance
+
+**Key Features**: `ConsentProvider` context, `useConsent` hook, `ConditionalScript` for optional scripts, localStorage persistence
+
+### 🔍 [SEO & Discovery](./seo/overview.md)
+
+Search engine optimization, sitemaps, and social sharing. Includes:
+
+- [Overview](./seo/overview.md) - robots.txt, sitemap, metadata patterns
+
+**Use When**: Adding public pages, configuring social sharing, improving search visibility
+
+**Key Features**: Dynamic sitemap generation, robots.txt configuration, OpenGraph and Twitter Card patterns
 
 ### 📋 [Guidelines](./guidelines.md)
 
@@ -191,6 +212,10 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | Set up error tracking      | errors/overview.md            | environment/overview.md                         |
 | Add tabbed interface       | ui/overview.md                | architecture/patterns.md                        |
 | URL state management       | ui/overview.md                | architecture/patterns.md                        |
+| Build landing pages        | ui/marketing.md               | ui/overview.md                                  |
+| Configure cookie consent   | privacy/overview.md           | security/overview.md                            |
+| Configure SEO/sitemap      | seo/overview.md               | deployment/overview.md                          |
+| Add contact form           | api/endpoints.md              | email/overview.md                               |
 | Configure CSP/headers      | security/overview.md          | api/headers.md                                  |
 | Set up CORS                | security/overview.md          | environment/overview.md                         |
 | Add rate limiting          | security/overview.md          | auth/security.md                                |
