@@ -111,3 +111,19 @@ model ContactSubmission {
   @@index([read])
   @@map("contact_submission")
 }
+
+// Feature Flags (Phase 4.4)
+// Runtime feature toggle system for admin-controlled features
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  name        String   @unique           // e.g., "ENABLE_BETA_FEATURES"
+  enabled     Boolean  @default(false)
+  description String?  @db.Text
+  metadata    Json?    @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  @@index([name])
+  @@map("feature_flag")
+}

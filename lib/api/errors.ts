@@ -137,6 +137,25 @@ export class NotFoundError extends APIError {
 }
 
 /**
+ * Conflict error (HTTP 409)
+ *
+ * Use when a resource already exists or there's a conflict with the current state.
+ *
+ * @example
+ * ```typescript
+ * if (existingFlag) {
+ *   throw new ConflictError('Feature flag already exists')
+ * }
+ * ```
+ */
+export class ConflictError extends APIError {
+  constructor(message: string = 'Resource already exists') {
+    super(message, 'CONFLICT', 409);
+    this.name = 'ConflictError';
+  }
+}
+
+/**
  * Centralized error handler for API routes
  *
  * Handles APIError instances, Zod validation errors, Prisma errors,
