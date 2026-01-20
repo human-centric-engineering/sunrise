@@ -406,8 +406,19 @@ export class Logger {
     // Use require to avoid circular dependency at module load time
     // This is safe because lib/admin/logs.ts doesn't import from logging
     try {
+      // Type for admin log entry (uses string literal instead of enum)
+      type AdminLogEntry = {
+        timestamp: string;
+        level: 'debug' | 'info' | 'warn' | 'error';
+        message: string;
+        context?: Record<string, unknown>;
+        meta?: Record<string, unknown>;
+        error?: { name: string; message: string; stack?: string; code?: string };
+      };
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const logModule = require('@/lib/admin/logs') as { addLogEntry: (entry: LogEntry) => void };
+      const logModule = require('@/lib/admin/logs') as {
+        addLogEntry: (entry: AdminLogEntry) => void;
+      };
       logModule.addLogEntry({
         timestamp: entry.timestamp,
         level: entry.level as 'debug' | 'info' | 'warn' | 'error',

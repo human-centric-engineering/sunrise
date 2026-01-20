@@ -141,6 +141,7 @@ describe('components/auth/user-button', () => {
         name: 'John Doe',
         email: 'john@example.com',
         image: null,
+        role: null,
       },
     };
 
@@ -177,6 +178,7 @@ describe('components/auth/user-button', () => {
             name: 'Alice',
             email: 'alice@example.com',
             image: null,
+            role: null,
           },
         },
         isPending: false,
@@ -196,6 +198,7 @@ describe('components/auth/user-button', () => {
             name: null,
             email: 'user@example.com',
             image: null,
+            role: null,
           },
         },
         isPending: false,
@@ -250,6 +253,7 @@ describe('components/auth/user-button', () => {
             name: 'John Doe',
             email: 'john@example.com',
             image: 'https://example.com/avatar.jpg',
+            role: null,
           },
         },
         isPending: false,
@@ -282,6 +286,7 @@ describe('components/auth/user-button', () => {
         name: 'John Doe',
         email: 'john@example.com',
         image: null,
+        role: null,
       },
     };
 
@@ -414,6 +419,183 @@ describe('components/auth/user-button', () => {
     });
   });
 
+  describe('Admin Dashboard Link', () => {
+    it('should show admin dashboard link for users with ADMIN role', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'admin-123',
+            name: 'Admin User',
+            email: 'admin@example.com',
+            image: null,
+            role: 'ADMIN',
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      // Admin Dashboard link should be visible
+      await waitFor(() => {
+        const adminLink = screen.getByRole('menuitem', { name: /admin dashboard/i });
+        expect(adminLink).toBeInTheDocument();
+        expect(adminLink.closest('a')).toHaveAttribute('href', '/admin');
+      });
+    });
+
+    it('should NOT show admin dashboard link for users without ADMIN role', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'user-123',
+            name: 'Regular User',
+            email: 'user@example.com',
+            image: null,
+            role: 'USER',
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      // Admin Dashboard link should NOT be visible
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('menuitem', { name: /admin dashboard/i })
+        ).not.toBeInTheDocument();
+      });
+
+      // But should still show regular menu items
+      expect(screen.getByRole('menuitem', { name: /view profile/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /settings/i })).toBeInTheDocument();
+    });
+
+    it('should NOT show admin dashboard link when role is null', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'user-456',
+            name: 'User Without Role',
+            email: 'norole@example.com',
+            image: null,
+            role: null,
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      // Admin Dashboard link should NOT be visible
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('menuitem', { name: /admin dashboard/i })
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it('should NOT show admin dashboard link when role is undefined', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'user-789',
+            name: 'User No Role Field',
+            email: 'undefined@example.com',
+            image: null,
+            // role is undefined (not present)
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      // Admin Dashboard link should NOT be visible
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('menuitem', { name: /admin dashboard/i })
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it('should render admin dashboard link with correct icon', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'admin-123',
+            name: 'Admin User',
+            email: 'admin@example.com',
+            image: null,
+            role: 'ADMIN',
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      await waitFor(() => {
+        const adminLink = screen.getByRole('menuitem', { name: /admin dashboard/i });
+        expect(adminLink).toBeInTheDocument();
+
+        // Check that the Shield icon is rendered (lucide-react renders as svg)
+        const svg = adminLink.querySelector('svg');
+        expect(svg).toBeInTheDocument();
+      });
+    });
+
+    it('should show admin dashboard link between settings and sign out', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'admin-123',
+            name: 'Admin User',
+            email: 'admin@example.com',
+            image: null,
+            role: 'ADMIN',
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      await waitFor(() => {
+        const menuItems = screen.getAllByRole('menuitem');
+        const menuItemTexts = menuItems.map((item) => item.textContent);
+
+        // Verify order: View profile, Settings, Admin Dashboard, Sign out
+        expect(menuItemTexts).toEqual(['View profile', 'Settings', 'Admin Dashboard', 'Sign out']);
+      });
+    });
+  });
+
   describe('Accessibility', () => {
     it('should have accessible name for unauthenticated button', () => {
       mockUseSession.mockReturnValue({
@@ -436,6 +618,7 @@ describe('components/auth/user-button', () => {
             name: 'John Doe',
             email: 'john@example.com',
             image: null,
+            role: null,
           },
         },
         isPending: false,
@@ -447,9 +630,36 @@ describe('components/auth/user-button', () => {
       await user.click(screen.getByRole('button'));
 
       await waitFor(() => {
-        // Should have menu items
+        // Should have menu items (profile, settings, sign out = 3 items for non-admin)
         const menuItems = screen.getAllByRole('menuitem');
-        expect(menuItems.length).toBeGreaterThanOrEqual(3);
+        expect(menuItems.length).toBe(3);
+      });
+    });
+
+    it('should have proper menu structure for admin users', async () => {
+      const user = userEvent.setup();
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: 'admin-123',
+            name: 'Admin User',
+            email: 'admin@example.com',
+            image: null,
+            role: 'ADMIN',
+          },
+        },
+        isPending: false,
+      });
+
+      render(<UserButton />);
+
+      // Open dropdown
+      await user.click(screen.getByRole('button'));
+
+      await waitFor(() => {
+        // Should have 4 menu items (profile, settings, admin dashboard, sign out)
+        const menuItems = screen.getAllByRole('menuitem');
+        expect(menuItems.length).toBe(4);
       });
     });
   });
