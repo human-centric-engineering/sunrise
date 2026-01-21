@@ -6,7 +6,7 @@
  * Data table for managing users with search, sorting, pagination, and actions.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -108,19 +108,25 @@ export function UserTable({
   const [isLoading, setIsLoading] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   /**
    * Fetch users with current filters
    */
   const fetchUsers = useCallback(
-    async (page = 1) => {
+    async (
+      page = 1,
+      overrides?: { search?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }
+    ) => {
       setIsLoading(true);
       try {
         interface UserListResponse {
           id: string;
           name: string;
           email: string;
+          image: string | null;
           role: string | null;
+          emailVerified: boolean;
           createdAt: string;
         }
 
@@ -131,13 +137,17 @@ export function UserTable({
         }
 
         // Build URL with params
+        // Use overrides if provided (to avoid stale closure issues), otherwise use state
+        const searchValue = overrides?.search !== undefined ? overrides.search : search;
+        const sortByValue = overrides?.sortBy !== undefined ? overrides.sortBy : sortBy;
+        const sortOrderValue = overrides?.sortOrder !== undefined ? overrides.sortOrder : sortOrder;
         const params = new URLSearchParams({
           page: String(page),
           limit: String(meta.limit),
-          sortBy,
-          sortOrder,
+          sortBy: sortByValue,
+          sortOrder: sortOrderValue,
         });
-        if (search) params.set('search', search);
+        if (searchValue) params.set('search', searchValue);
 
         const res = await fetch(`/api/v1/users?${params.toString()}`, {
           credentials: 'same-origin',
@@ -175,16 +185,22 @@ export function UserTable({
   );
 
   /**
-   * Handle search input
+   * Handle search input with debouncing
    */
   const handleSearch = useCallback(
     (value: string) => {
       setSearch(value);
-      // Debounce search
-      const timeoutId = setTimeout(() => {
-        void fetchUsers(1);
+
+      // Clear previous timeout to debounce
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+
+      // Set new timeout - 300ms balances responsiveness with server load
+      // Pass value directly to avoid stale closure issue
+      searchTimeoutRef.current = setTimeout(() => {
+        void fetchUsers(1, { search: value });
       }, 300);
-      return () => clearTimeout(timeoutId);
     },
     [fetchUsers]
   );
@@ -194,15 +210,18 @@ export function UserTable({
    */
   const handleSort = useCallback(
     (column: string) => {
-      if (sortBy === column) {
-        setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-      } else {
-        setSortBy(column);
-        setSortOrder('desc');
-      }
-      void fetchUsers(1);
+      // Calculate new sort values
+      const newSortBy = column;
+      const newSortOrder = sortBy === column ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'desc';
+
+      // Update state for UI
+      setSortBy(newSortBy);
+      setSortOrder(newSortOrder);
+
+      // Pass values directly to avoid stale closure issue
+      void fetchUsers(1, { sortBy: newSortBy, sortOrder: newSortOrder });
     },
-    [sortBy, fetchUsers]
+    [sortBy, sortOrder, fetchUsers]
   );
 
   /**
@@ -273,11 +292,11 @@ export function UserTable({
 
       {/* Table */}
       <div className="rounded-md border">
-        <Table>
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12">Avatar</TableHead>
-              <TableHead>
+              <TableHead className="w-14 text-center">Avatar</TableHead>
+              <TableHead className="w-[20%]">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
@@ -287,7 +306,7 @@ export function UserTable({
                   {renderSortIcon('name')}
                 </Button>
               </TableHead>
-              <TableHead>
+              <TableHead className="w-[30%]">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
@@ -297,9 +316,9 @@ export function UserTable({
                   {renderSortIcon('email')}
                 </Button>
               </TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Verified</TableHead>
-              <TableHead>
+              <TableHead className="w-24 text-center">Role</TableHead>
+              <TableHead className="w-20 text-center">Verified</TableHead>
+              <TableHead className="w-28">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
@@ -309,7 +328,7 @@ export function UserTable({
                   {renderSortIcon('createdAt')}
                 </Button>
               </TableHead>
-              <TableHead className="w-12">Actions</TableHead>
+              <TableHead className="w-12 text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -328,28 +347,28 @@ export function UserTable({
             ) : (
               users.map((user) => (
                 <TableRow key={user.id}>
-                  <TableCell>
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={undefined} alt={user.name} />
+                  <TableCell className="text-center">
+                    <Avatar className="mx-auto h-8 w-8">
+                      <AvatarImage src={user.image || undefined} alt={user.name} />
                       <AvatarFallback className="text-xs">{getInitials(user.name)}</AvatarFallback>
                     </Avatar>
                   </TableCell>
-                  <TableCell className="font-medium">{user.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                  <TableCell>
+                  <TableCell className="truncate font-medium">{user.name}</TableCell>
+                  <TableCell className="text-muted-foreground truncate">{user.email}</TableCell>
+                  <TableCell className="text-center">
                     <Badge variant={getRoleBadgeVariant(user.role)}>{user.role || 'USER'}</Badge>
                   </TableCell>
-                  <TableCell>
-                    {'emailVerified' in user && user.emailVerified ? (
-                      <CheckCircle className="h-4 w-4 text-green-500" />
+                  <TableCell className="text-center">
+                    {user.emailVerified ? (
+                      <CheckCircle className="mx-auto h-4 w-4 text-green-500" />
                     ) : (
-                      <XCircle className="text-muted-foreground h-4 w-4" />
+                      <XCircle className="text-muted-foreground mx-auto h-4 w-4" />
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     <ClientDate date={user.createdAt} />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-center">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" className="h-8 w-8 p-0">

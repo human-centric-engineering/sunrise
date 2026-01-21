@@ -6,7 +6,7 @@
  * Displays application logs with filtering, search, and pagination.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -161,12 +161,13 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   /**
    * Fetch logs with current filters
    */
   const fetchLogs = useCallback(
-    async (page = 1) => {
+    async (page = 1, searchOverride?: string) => {
       setIsLoading(true);
       try {
         interface ApiResponse {
@@ -176,12 +177,14 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
         }
 
         // Build URL with params
+        // Use searchOverride if provided (from debounced input), otherwise use state
+        const searchValue = searchOverride !== undefined ? searchOverride : search;
         const params = new URLSearchParams({
           page: String(page),
           limit: String(meta.limit),
         });
         if (level !== 'all') params.set('level', level);
-        if (search) params.set('search', search);
+        if (searchValue) params.set('search', searchValue);
 
         const res = await fetch(`/api/v1/admin/logs?${params.toString()}`, {
           credentials: 'same-origin',
@@ -222,16 +225,22 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
   );
 
   /**
-   * Handle search input
+   * Handle search input with debouncing
    */
   const handleSearch = useCallback(
     (value: string) => {
       setSearch(value);
-      // Debounce search
-      const timeoutId = setTimeout(() => {
-        void fetchLogs(1);
+
+      // Clear previous timeout to debounce
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+
+      // Set new timeout - 300ms balances responsiveness with server load
+      // Pass value directly to avoid stale closure issue
+      searchTimeoutRef.current = setTimeout(() => {
+        void fetchLogs(1, value);
       }, 300);
-      return () => clearTimeout(timeoutId);
     },
     [fetchLogs]
   );

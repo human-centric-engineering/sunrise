@@ -98,7 +98,10 @@ export type PublicUser = User;
  * });
  * ```
  */
-export type UserListItem = Pick<User, 'id' | 'name' | 'email' | 'role' | 'createdAt'>;
+export type UserListItem = Pick<
+  User,
+  'id' | 'name' | 'email' | 'image' | 'role' | 'emailVerified' | 'createdAt'
+>;
 
 /**
  * User Profile Type
