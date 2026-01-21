@@ -143,13 +143,21 @@ describe('components/admin/logs-viewer', () => {
       expect(screen.getByText('Database connection failed')).toBeInTheDocument();
     });
 
-    it('should show expandable details indicator for logs with context/meta/error', () => {
+    it('should show expandable accordion trigger for logs with context/meta/error', () => {
       // Arrange & Act
       render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
 
-      // Assert: Should show "Click to expand" for logs with details
-      const expandIndicators = screen.getAllByText('Click to expand');
-      expect(expandIndicators.length).toBe(4); // All test logs have details
+      // Assert: All 4 test logs have details, so their messages should be inside accordion triggers
+      const errorLog = screen.getByText('Database connection failed');
+      const warnLog = screen.getByText('High memory usage detected');
+      const infoLog = screen.getByText('User logged in successfully');
+      const debugLog = screen.getByText('Cache hit for user profile');
+
+      // Each log message should be inside a button (accordion trigger)
+      expect(errorLog.closest('button')).not.toBeNull();
+      expect(warnLog.closest('button')).not.toBeNull();
+      expect(infoLog.closest('button')).not.toBeNull();
+      expect(debugLog.closest('button')).not.toBeNull();
     });
 
     it('should display context in expandable accordion', async () => {
@@ -929,9 +937,11 @@ describe('components/admin/logs-viewer', () => {
       // Act
       render(<LogsViewer initialLogs={[minimalLog]} initialMeta={mockMeta} />);
 
-      // Assert: Should render without "Click to expand" since no details
+      // Assert: Should render without accordion trigger since no details
       expect(screen.getByText('Simple log message')).toBeInTheDocument();
-      expect(screen.queryByText('Click to expand')).not.toBeInTheDocument();
+      // The log message should NOT be inside a button (accordion trigger)
+      const messageElement = screen.getByText('Simple log message');
+      expect(messageElement.closest('button')).toBeNull();
     });
 
     it('should handle logs with empty context/meta objects', () => {
@@ -948,10 +958,11 @@ describe('components/admin/logs-viewer', () => {
       // Act
       render(<LogsViewer initialLogs={[logWithEmptyDetails]} initialMeta={mockMeta} />);
 
-      // Assert: Component determines hasDetails as: entry.context || entry.meta || entry.error
-      // Empty objects {} are truthy, so hasDetails is true even with empty objects
-      // This shows "Click to expand" but the accordion content checks Object.keys().length
-      expect(screen.getByText('Click to expand')).toBeInTheDocument();
+      // Assert: Empty objects {} should NOT trigger accordion (we check Object.keys().length)
+      expect(screen.getByText('Log with empty objects')).toBeInTheDocument();
+      // The log message should NOT be inside a button since empty objects have no content
+      const messageElement = screen.getByText('Log with empty objects');
+      expect(messageElement.closest('button')).toBeNull();
     });
 
     it('should combine search and level filters', async () => {

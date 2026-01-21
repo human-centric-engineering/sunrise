@@ -86,70 +86,77 @@ function getLevelConfig(level: string): {
  */
 function LogEntryItem({ entry }: { entry: LogEntry }) {
   const levelConfig = getLevelConfig(entry.level);
-  const hasDetails = entry.context || entry.meta || entry.error;
+  // Check for actual content, not just property existence
+  const hasContext = entry.context && Object.keys(entry.context).length > 0;
+  const hasMeta = entry.meta && Object.keys(entry.meta).length > 0;
+  const hasError = !!entry.error;
+  const hasDetails = hasContext || hasMeta || hasError;
+
+  // Shared content for the log entry row
+  const entryContent = (
+    <div className="flex w-full items-start gap-3 text-left">
+      <Badge
+        variant={levelConfig.variant}
+        className={cn('flex shrink-0 items-center gap-1', levelConfig.className)}
+      >
+        {levelConfig.icon}
+        {entry.level.toUpperCase()}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{entry.message}</p>
+        <p className="text-muted-foreground mt-0.5 text-xs">
+          <ClientDate date={entry.timestamp} showTime />
+        </p>
+      </div>
+    </div>
+  );
+
+  // If no details, render without accordion trigger (no chevron)
+  if (!hasDetails) {
+    return <div className="border-b px-4 py-3 last:border-b-0">{entryContent}</div>;
+  }
 
   return (
     <AccordionItem value={entry.id} className="border-b last:border-b-0">
-      <AccordionTrigger className="px-4 py-3 hover:no-underline">
-        <div className="flex w-full items-start gap-3 text-left">
-          <Badge
-            variant={levelConfig.variant}
-            className={cn('flex shrink-0 items-center gap-1', levelConfig.className)}
-          >
-            {levelConfig.icon}
-            {entry.level.toUpperCase()}
-          </Badge>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{entry.message}</p>
-            <p className="text-muted-foreground mt-0.5 text-xs">
-              <ClientDate date={entry.timestamp} showTime />
-            </p>
-          </div>
-          {hasDetails && (
-            <span className="text-muted-foreground shrink-0 text-xs">Click to expand</span>
+      <AccordionTrigger className="px-4 py-3 hover:no-underline">{entryContent}</AccordionTrigger>
+      <AccordionContent className="px-4 pb-4">
+        <div className="space-y-3 text-sm">
+          {hasContext && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs font-medium">Context:</p>
+              <pre className="bg-muted overflow-x-auto rounded-md p-2 text-xs">
+                {JSON.stringify(entry.context, null, 2)}
+              </pre>
+            </div>
+          )}
+          {hasMeta && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs font-medium">Metadata:</p>
+              <pre className="bg-muted overflow-x-auto rounded-md p-2 text-xs">
+                {JSON.stringify(entry.meta, null, 2)}
+              </pre>
+            </div>
+          )}
+          {hasError && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-red-600 dark:text-red-400">Error:</p>
+              <div className="rounded-md bg-red-50 p-2 text-xs dark:bg-red-950/20">
+                <p className="font-medium">
+                  {entry.error!.name}: {entry.error!.message}
+                </p>
+                {entry.error!.code && (
+                  <p className="text-muted-foreground">Code: {entry.error!.code}</p>
+                )}
+                {entry.error!.stack && (
+                  <pre className="mt-2 overflow-x-auto text-red-600/80 dark:text-red-400/80">
+                    {entry.error!.stack}
+                  </pre>
+                )}
+              </div>
+            </div>
           )}
         </div>
-      </AccordionTrigger>
-      {hasDetails && (
-        <AccordionContent className="px-4 pb-4">
-          <div className="space-y-3 text-sm">
-            {entry.context && Object.keys(entry.context).length > 0 && (
-              <div>
-                <p className="text-muted-foreground mb-1 text-xs font-medium">Context:</p>
-                <pre className="bg-muted overflow-x-auto rounded-md p-2 text-xs">
-                  {JSON.stringify(entry.context, null, 2)}
-                </pre>
-              </div>
-            )}
-            {entry.meta && Object.keys(entry.meta).length > 0 && (
-              <div>
-                <p className="text-muted-foreground mb-1 text-xs font-medium">Metadata:</p>
-                <pre className="bg-muted overflow-x-auto rounded-md p-2 text-xs">
-                  {JSON.stringify(entry.meta, null, 2)}
-                </pre>
-              </div>
-            )}
-            {entry.error && (
-              <div>
-                <p className="mb-1 text-xs font-medium text-red-600 dark:text-red-400">Error:</p>
-                <div className="rounded-md bg-red-50 p-2 text-xs dark:bg-red-950/20">
-                  <p className="font-medium">
-                    {entry.error.name}: {entry.error.message}
-                  </p>
-                  {entry.error.code && (
-                    <p className="text-muted-foreground">Code: {entry.error.code}</p>
-                  )}
-                  {entry.error.stack && (
-                    <pre className="mt-2 overflow-x-auto text-red-600/80 dark:text-red-400/80">
-                      {entry.error.stack}
-                    </pre>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </AccordionContent>
-      )}
+      </AccordionContent>
     </AccordionItem>
   );
 }
