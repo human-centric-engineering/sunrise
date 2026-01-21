@@ -167,7 +167,7 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
    * Fetch logs with current filters
    */
   const fetchLogs = useCallback(
-    async (page = 1, searchOverride?: string) => {
+    async (page = 1, overrides?: { search?: string; level?: string }) => {
       setIsLoading(true);
       try {
         interface ApiResponse {
@@ -177,13 +177,14 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
         }
 
         // Build URL with params
-        // Use searchOverride if provided (from debounced input), otherwise use state
-        const searchValue = searchOverride !== undefined ? searchOverride : search;
+        // Use overrides if provided (from handlers), otherwise use state
+        const searchValue = overrides?.search !== undefined ? overrides.search : search;
+        const levelValue = overrides?.level !== undefined ? overrides.level : level;
         const params = new URLSearchParams({
           page: String(page),
           limit: String(meta.limit),
         });
-        if (level !== 'all') params.set('level', level);
+        if (levelValue !== 'all') params.set('level', levelValue);
         if (searchValue) params.set('search', searchValue);
 
         const res = await fetch(`/api/v1/admin/logs?${params.toString()}`, {
@@ -219,7 +220,8 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
   const handleLevelChange = useCallback(
     (value: string) => {
       setLevel(value);
-      void fetchLogs(1);
+      // Pass level directly to avoid stale closure issue
+      void fetchLogs(1, { level: value });
     },
     [fetchLogs]
   );
@@ -239,7 +241,7 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
       // Set new timeout - 300ms balances responsiveness with server load
       // Pass value directly to avoid stale closure issue
       searchTimeoutRef.current = setTimeout(() => {
-        void fetchLogs(1, value);
+        void fetchLogs(1, { search: value });
       }, 300);
     },
     [fetchLogs]
