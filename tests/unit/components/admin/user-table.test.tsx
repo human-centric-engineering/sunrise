@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UserTable } from '@/components/admin/user-table';
 import type { UserListItem } from '@/types';
@@ -119,10 +119,14 @@ describe('components/admin/user-table', () => {
     // Mock fetch
     mockFetch = vi.fn<typeof fetch>();
     global.fetch = mockFetch as typeof fetch;
+
+    // Use fake timers with shouldAdvanceTime to prevent hanging with React Testing Library
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   /**
@@ -256,7 +260,7 @@ describe('components/admin/user-table', () => {
   describe('search functionality', () => {
     it('should update search input value', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
       const searchInput = screen.getByPlaceholderText('Search users...');
 
@@ -269,7 +273,7 @@ describe('components/admin/user-table', () => {
 
     it('should debounce search requests (300ms)', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       mockFetch.mockResolvedValue(
         createMockFetchResponse(createMockUsersResponse([mockUsers[0]], mockMeta))
       );
@@ -282,13 +286,15 @@ describe('components/admin/user-table', () => {
       // Assert: Should not fetch immediately
       expect(mockFetch).not.toHaveBeenCalled();
 
-      // Act: Wait for debounce (300ms)
-      await waitFor(
-        () => {
-          expect(mockFetch).toHaveBeenCalled();
-        },
-        { timeout: 500 }
-      );
+      // Act: Advance time past debounce
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // Assert: Should fetch after debounce
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
 
       // Assert: Should include search param
       expect(mockFetch).toHaveBeenCalledWith(
@@ -299,7 +305,7 @@ describe('components/admin/user-table', () => {
 
     it('should pass current search value to API (stale closure fix)', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       mockFetch.mockResolvedValue(
         createMockFetchResponse(createMockUsersResponse([mockUsers[0]], mockMeta))
       );
@@ -308,14 +314,14 @@ describe('components/admin/user-table', () => {
 
       // Act: Type and wait for debounce
       await user.type(searchInput, 'alice');
-      await waitFor(
-        () => {
-          expect(mockFetch).toHaveBeenCalled();
-        },
-        { timeout: 500 }
-      );
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       // Assert: Should use the actual typed value, not stale closure value
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('search=alice'),
         expect.any(Object)
@@ -324,7 +330,7 @@ describe('components/admin/user-table', () => {
 
     it('should cancel previous search when typing again', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       mockFetch.mockResolvedValue(
         createMockFetchResponse(createMockUsersResponse([mockUsers[0]], mockMeta))
       );
@@ -333,19 +339,20 @@ describe('components/admin/user-table', () => {
 
       // Act: Type, wait a bit, type more (should cancel first timeout)
       await user.type(searchInput, 'al');
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Wait less than debounce time
+      await act(async () => {
+        vi.advanceTimersByTime(100); // Wait less than debounce time
+      });
       await user.type(searchInput, 'ice');
 
-      // Wait for debounce
-      await waitFor(
-        () => {
-          expect(mockFetch).toHaveBeenCalled();
-        },
-        { timeout: 500 }
-      );
+      // Advance time past debounce
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       // Assert: Should only fetch once with the final value
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      });
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('search=alice'),
         expect.any(Object)
@@ -354,7 +361,7 @@ describe('components/admin/user-table', () => {
 
     it('should reset to page 1 when searching', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       const page2Meta = { ...mockMeta, page: 2 };
       mockFetch.mockResolvedValue(
         createMockFetchResponse(createMockUsersResponse(mockUsers, mockMeta))
@@ -364,15 +371,17 @@ describe('components/admin/user-table', () => {
 
       // Act: Search
       await user.type(searchInput, 'alice');
-      await waitFor(
-        () => {
-          expect(mockFetch).toHaveBeenCalled();
-        },
-        { timeout: 500 }
-      );
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       // Assert: Should request page 1
-      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('page=1'), expect.any(Object));
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('page=1'),
+          expect.any(Object)
+        );
+      });
     });
   });
 
@@ -748,20 +757,20 @@ describe('components/admin/user-table', () => {
 
     it('should handle API error gracefully', async () => {
       // Arrange
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       mockFetch.mockRejectedValue(new Error('Network error'));
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
       // Act: Trigger search
       await user.type(screen.getByPlaceholderText('Search users...'), 'test');
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       // Assert: Should not crash (error is logged but not displayed)
-      await waitFor(
-        () => {
-          expect(mockFetch).toHaveBeenCalled();
-        },
-        { timeout: 500 }
-      );
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
       expect(screen.getByText('Alice Johnson')).toBeInTheDocument(); // Original data still visible
     });
 
