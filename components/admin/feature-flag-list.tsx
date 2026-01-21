@@ -31,6 +31,7 @@ import {
 import { Plus, Trash2, Info } from 'lucide-react';
 import type { FeatureFlag } from '@/types/prisma';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { ClientDate } from '@/components/ui/client-date';
 
 interface FeatureFlagListProps {
   initialFlags: FeatureFlag[];
@@ -95,13 +96,6 @@ export function FeatureFlagList({ initialFlags, onCreateClick }: FeatureFlagList
       setIsDeleting(false);
     }
   }, [deleteId]);
-
-  /**
-   * Format date for display
-   */
-  const formatDate = (date: Date | string) => {
-    return new Date(date).toLocaleDateString();
-  };
 
   return (
     <div className="space-y-4">
@@ -179,7 +173,7 @@ export function FeatureFlagList({ initialFlags, onCreateClick }: FeatureFlagList
                     />
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden sm:table-cell">
-                    {formatDate(flag.createdAt)}
+                    <ClientDate date={flag.createdAt} />
                   </TableCell>
                   <TableCell>
                     <Button

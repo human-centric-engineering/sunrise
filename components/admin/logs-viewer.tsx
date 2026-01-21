@@ -35,6 +35,7 @@ import {
   Bug,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ClientDate } from '@/components/ui/client-date';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
 
@@ -81,13 +82,6 @@ function getLevelConfig(level: string): {
 }
 
 /**
- * Format timestamp for display
- */
-function formatTimestamp(timestamp: string): string {
-  return new Date(timestamp).toLocaleString();
-}
-
-/**
  * Single log entry component
  */
 function LogEntryItem({ entry }: { entry: LogEntry }) {
@@ -108,7 +102,7 @@ function LogEntryItem({ entry }: { entry: LogEntry }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{entry.message}</p>
             <p className="text-muted-foreground mt-0.5 text-xs">
-              {formatTimestamp(entry.timestamp)}
+              <ClientDate date={entry.timestamp} showTime />
             </p>
           </div>
           {hasDetails && (

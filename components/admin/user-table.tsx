@@ -56,6 +56,7 @@ import {
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { ClientDate } from '@/components/ui/client-date';
 
 interface UserTableProps {
   initialUsers: UserListItem[];
@@ -346,7 +347,7 @@ export function UserTable({
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {user.createdAt.toLocaleDateString()}
+                    <ClientDate date={user.createdAt} />
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

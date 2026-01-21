@@ -33,6 +33,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AlertCircle, Save, ArrowLeft } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
 
 /**
@@ -138,8 +139,12 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
             </div>
             <div className="text-muted-foreground flex flex-col gap-1 text-xs">
               <p>ID: {user.id}</p>
-              <p>Created: {new Date(user.createdAt).toLocaleDateString()}</p>
-              <p>Updated: {new Date(user.updatedAt).toLocaleDateString()}</p>
+              <p>
+                Created: <ClientDate date={user.createdAt} />
+              </p>
+              <p>
+                Updated: <ClientDate date={user.updatedAt} />
+              </p>
             </div>
           </CardContent>
         </Card>
