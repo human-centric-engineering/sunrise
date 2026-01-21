@@ -131,3 +131,32 @@ export type CreateFeatureFlagInput = z.infer<typeof createFeatureFlagSchema>;
 export type UpdateFeatureFlagInput = z.infer<typeof updateFeatureFlagSchema>;
 export type FeatureFlagIdParam = z.infer<typeof featureFlagIdSchema>;
 export type AdminUserUpdateInput = z.infer<typeof adminUserUpdateSchema>;
+
+/**
+ * List invitations query parameters schema (GET /api/v1/admin/invitations)
+ *
+ * Validates query parameters for the invitations list endpoint.
+ */
+export const listInvitationsQuerySchema = z.object({
+  /** Search query for name or email */
+  search: z.string().trim().max(200, 'Search query too long').optional(),
+
+  /** Page number (1-indexed) - from common pagination schema */
+  page: paginationQuerySchema.shape.page,
+
+  /** Items per page (max 100) */
+  limit: z.coerce
+    .number()
+    .int('Limit must be an integer')
+    .positive('Limit must be positive')
+    .max(100, 'Maximum limit is 100')
+    .default(20),
+
+  /** Field to sort by */
+  sortBy: z.enum(['name', 'email', 'invitedAt', 'expiresAt']).default('invitedAt'),
+
+  /** Sort order */
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export type ListInvitationsQuery = z.infer<typeof listInvitationsQuerySchema>;

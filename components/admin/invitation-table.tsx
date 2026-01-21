@@ -1,14 +1,13 @@
 'use client';
 
 /**
- * User Table Component (Phase 4.4)
+ * Invitation Table Component
  *
- * Data table for managing users with search, sorting, pagination, and actions.
+ * Data table for managing pending user invitations with search, sorting,
+ * pagination, and actions (resend, delete).
  */
 
 import { useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   Table,
   TableBody,
@@ -20,7 +19,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,43 +45,27 @@ import {
   ArrowDown,
   ChevronLeft,
   ChevronRight,
-  Edit,
+  RefreshCw,
   Trash2,
-  UserPlus,
-  CheckCircle,
-  XCircle,
+  Clock,
 } from 'lucide-react';
-import type { UserListItem } from '@/types';
+import type { InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { ClientDate } from '@/components/ui/client-date';
 
-interface UserTableProps {
-  initialUsers: UserListItem[];
+interface InvitationTableProps {
+  initialInvitations: InvitationListItem[];
   initialMeta: PaginationMeta;
   initialSearch?: string;
-  initialSortBy?: string;
+  initialSortBy?: 'name' | 'email' | 'invitedAt' | 'expiresAt';
   initialSortOrder?: 'asc' | 'desc';
-  /** Hide the invite button (when shown in tabs with shared header) */
-  hideInviteButton?: boolean;
-}
-
-/**
- * Get initials from a name
- */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
 }
 
 /**
  * Role badge variant
  */
-function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'outline' {
+function getRoleBadgeVariant(role: string): 'default' | 'secondary' | 'outline' {
   switch (role) {
     case 'ADMIN':
       return 'default';
@@ -94,53 +76,65 @@ function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'ou
   }
 }
 
-export function UserTable({
-  initialUsers,
+/**
+ * Check if expiration is within 24 hours
+ */
+function isExpiringSoon(expiresAt: Date): boolean {
+  const now = new Date();
+  const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  return expiresAt <= twentyFourHoursFromNow;
+}
+
+export function InvitationTable({
+  initialInvitations,
   initialMeta,
   initialSearch = '',
-  initialSortBy = 'createdAt',
+  initialSortBy = 'invitedAt',
   initialSortOrder = 'desc',
-  hideInviteButton = false,
-}: UserTableProps) {
-  const router = useRouter();
-  const [users, setUsers] = useState(initialUsers);
+}: InvitationTableProps) {
+  const [invitations, setInvitations] = useState(initialInvitations);
   const [meta, setMeta] = useState(initialMeta);
   const [search, setSearch] = useState(initialSearch);
-  const [sortBy, setSortBy] = useState(initialSortBy);
+  const [sortBy, setSortBy] = useState<'name' | 'email' | 'invitedAt' | 'expiresAt'>(initialSortBy);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder);
   const [isLoading, setIsLoading] = useState(false);
-  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleteEmail, setDeleteEmail] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
+  const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   /**
-   * Fetch users with current filters
+   * Fetch invitations with current filters
    */
-  const fetchUsers = useCallback(
+  const fetchInvitations = useCallback(
     async (
       page = 1,
-      overrides?: { search?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }
+      overrides?: {
+        search?: string;
+        sortBy?: 'name' | 'email' | 'invitedAt' | 'expiresAt';
+        sortOrder?: 'asc' | 'desc';
+      }
     ) => {
       setIsLoading(true);
       try {
-        interface UserListResponse {
-          id: string;
-          name: string;
+        interface InvitationListResponse {
           email: string;
-          image: string | null;
-          role: string | null;
-          emailVerified: boolean;
-          createdAt: string;
+          name: string;
+          role: string;
+          invitedBy: string;
+          invitedByName: string | null;
+          invitedAt: string;
+          expiresAt: string;
         }
 
         interface ApiResponse {
           success: boolean;
-          data: UserListResponse[];
+          data: InvitationListResponse[];
           meta?: PaginationMeta;
         }
 
         // Build URL with params
-        // Use overrides if provided (to avoid stale closure issues), otherwise use state
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
         const sortByValue = overrides?.sortBy !== undefined ? overrides.sortBy : sortBy;
         const sortOrderValue = overrides?.sortOrder !== undefined ? overrides.sortOrder : sortOrder;
@@ -152,33 +146,34 @@ export function UserTable({
         });
         if (searchValue) params.set('search', searchValue);
 
-        const res = await fetch(`/api/v1/users?${params.toString()}`, {
+        const res = await fetch(`/api/v1/admin/invitations?${params.toString()}`, {
           credentials: 'same-origin',
         });
 
         if (!res.ok) {
-          throw new Error('Failed to fetch users');
+          throw new Error('Failed to fetch invitations');
         }
 
         const response = (await res.json()) as ApiResponse;
 
         if (!response.success) {
-          throw new Error('Failed to fetch users');
+          throw new Error('Failed to fetch invitations');
         }
 
-        // Convert string dates to Date objects for UserListItem
-        const usersWithDates: UserListItem[] = response.data.map((user) => ({
-          ...user,
-          createdAt: new Date(user.createdAt),
+        // Convert string dates to Date objects
+        const invitationsWithDates: InvitationListItem[] = response.data.map((inv) => ({
+          ...inv,
+          invitedAt: new Date(inv.invitedAt),
+          expiresAt: new Date(inv.expiresAt),
         }));
 
-        setUsers(usersWithDates);
+        setInvitations(invitationsWithDates);
         if (response.meta) {
           setMeta(response.meta);
         }
       } catch (error) {
         if (error instanceof APIClientError) {
-          console.error('Failed to fetch users:', error.message);
+          console.error('Failed to fetch invitations:', error.message);
         }
       } finally {
         setIsLoading(false);
@@ -199,32 +194,28 @@ export function UserTable({
         clearTimeout(searchTimeoutRef.current);
       }
 
-      // Set new timeout - 300ms balances responsiveness with server load
-      // Pass value directly to avoid stale closure issue
+      // Set new timeout
       searchTimeoutRef.current = setTimeout(() => {
-        void fetchUsers(1, { search: value });
+        void fetchInvitations(1, { search: value });
       }, 300);
     },
-    [fetchUsers]
+    [fetchInvitations]
   );
 
   /**
    * Handle sorting
    */
   const handleSort = useCallback(
-    (column: string) => {
-      // Calculate new sort values
+    (column: 'name' | 'email' | 'invitedAt' | 'expiresAt') => {
       const newSortBy = column;
       const newSortOrder = sortBy === column ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'desc';
 
-      // Update state for UI
       setSortBy(newSortBy);
       setSortOrder(newSortOrder);
 
-      // Pass values directly to avoid stale closure issue
-      void fetchUsers(1, { sortBy: newSortBy, sortOrder: newSortOrder });
+      void fetchInvitations(1, { sortBy: newSortBy, sortOrder: newSortOrder });
     },
-    [sortBy, sortOrder, fetchUsers]
+    [sortBy, sortOrder, fetchInvitations]
   );
 
   /**
@@ -232,23 +223,23 @@ export function UserTable({
    */
   const handlePageChange = useCallback(
     (page: number) => {
-      void fetchUsers(page);
+      void fetchInvitations(page);
     },
-    [fetchUsers]
+    [fetchInvitations]
   );
 
   /**
-   * Handle user deletion
+   * Handle invitation deletion
    */
   const handleDelete = useCallback(async () => {
-    if (!deleteUserId) return;
+    if (!deleteEmail) return;
 
     setIsLoading(true);
     setDeleteError(null);
     try {
-      await apiClient.delete(`/api/v1/users/${deleteUserId}`);
-      setDeleteUserId(null);
-      void fetchUsers(meta.page);
+      await apiClient.delete(`/api/v1/admin/invitations/${encodeURIComponent(deleteEmail)}`);
+      setDeleteEmail(null);
+      void fetchInvitations(meta.page);
     } catch (error) {
       if (error instanceof APIClientError) {
         setDeleteError(error.message);
@@ -256,7 +247,39 @@ export function UserTable({
     } finally {
       setIsLoading(false);
     }
-  }, [deleteUserId, fetchUsers, meta.page]);
+  }, [deleteEmail, fetchInvitations, meta.page]);
+
+  /**
+   * Handle resend invitation
+   */
+  const handleResend = useCallback(
+    async (invitation: InvitationListItem) => {
+      setResendingEmail(invitation.email);
+      setResendSuccess(null);
+      try {
+        // Use the existing invite API with resend=true
+        await apiClient.post('/api/v1/users/invite?resend=true', {
+          body: {
+            name: invitation.name,
+            email: invitation.email,
+            role: invitation.role,
+          },
+        });
+        setResendSuccess(invitation.email);
+        // Clear success message after 3 seconds
+        setTimeout(() => setResendSuccess(null), 3000);
+        // Refresh the list to get updated expiration
+        void fetchInvitations(meta.page);
+      } catch (error) {
+        if (error instanceof APIClientError) {
+          console.error('Failed to resend invitation:', error.message);
+        }
+      } finally {
+        setResendingEmail(null);
+      }
+    },
+    [fetchInvitations, meta.page]
+  );
 
   /**
    * Render sort icon
@@ -279,29 +302,27 @@ export function UserTable({
         <div className="relative max-w-sm flex-1">
           <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
-            placeholder="Search users..."
+            placeholder="Search invitations..."
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
             className="pl-9"
           />
         </div>
-        {!hideInviteButton && (
-          <Button asChild>
-            <Link href="/admin/users/invite">
-              <UserPlus className="mr-2 h-4 w-4" />
-              Invite User
-            </Link>
-          </Button>
-        )}
       </div>
+
+      {/* Success message */}
+      {resendSuccess && (
+        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-600">
+          Invitation resent successfully to {resendSuccess}
+        </div>
+      )}
 
       {/* Table */}
       <div className="rounded-md border">
         <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-14 text-center">Avatar</TableHead>
-              <TableHead className="w-[20%]">
+              <TableHead className="w-[18%]">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
@@ -311,7 +332,7 @@ export function UserTable({
                   {renderSortIcon('name')}
                 </Button>
               </TableHead>
-              <TableHead className="w-[30%]">
+              <TableHead className="w-[22%]">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
@@ -321,57 +342,79 @@ export function UserTable({
                   {renderSortIcon('email')}
                 </Button>
               </TableHead>
-              <TableHead className="w-24 text-center">Role</TableHead>
-              <TableHead className="w-20 text-center">Verified</TableHead>
+              <TableHead className="w-20 text-center">Role</TableHead>
+              <TableHead className="w-[15%]">Invited By</TableHead>
+              <TableHead className="w-24">
+                <Button
+                  variant="ghost"
+                  className="data-[state=open]:bg-accent -ml-4 h-8"
+                  onClick={() => handleSort('invitedAt')}
+                >
+                  Invited
+                  {renderSortIcon('invitedAt')}
+                </Button>
+              </TableHead>
               <TableHead className="w-28">
                 <Button
                   variant="ghost"
                   className="data-[state=open]:bg-accent -ml-4 h-8"
-                  onClick={() => handleSort('createdAt')}
+                  onClick={() => handleSort('expiresAt')}
                 >
-                  Created
-                  {renderSortIcon('createdAt')}
+                  Expires
+                  {renderSortIcon('expiresAt')}
                 </Button>
               </TableHead>
               <TableHead className="w-12 text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && users.length === 0 ? (
+            {isLoading && invitations.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="h-24 text-center">
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : users.length === 0 ? (
+            ) : invitations.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="h-24 text-center">
-                  No users found.
+                  No pending invitations.
                 </TableCell>
               </TableRow>
             ) : (
-              users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="text-center">
-                    <Avatar className="mx-auto h-8 w-8">
-                      <AvatarImage src={user.image || undefined} alt={user.name} />
-                      <AvatarFallback className="text-xs">{getInitials(user.name)}</AvatarFallback>
-                    </Avatar>
-                  </TableCell>
-                  <TableCell className="truncate font-medium">{user.name}</TableCell>
-                  <TableCell className="text-muted-foreground truncate">{user.email}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={getRoleBadgeVariant(user.role)}>{user.role || 'USER'}</Badge>
+              invitations.map((invitation) => (
+                <TableRow key={invitation.email}>
+                  <TableCell className="truncate font-medium">{invitation.name}</TableCell>
+                  <TableCell className="text-muted-foreground truncate">
+                    {invitation.email}
                   </TableCell>
                   <TableCell className="text-center">
-                    {user.emailVerified ? (
-                      <CheckCircle className="mx-auto h-4 w-4 text-green-500" />
-                    ) : (
-                      <XCircle className="text-muted-foreground mx-auto h-4 w-4" />
-                    )}
+                    <Badge variant={getRoleBadgeVariant(invitation.role)}>
+                      {invitation.role || 'USER'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground truncate">
+                    {invitation.invitedByName || 'Unknown'}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    <ClientDate date={user.createdAt} />
+                    <ClientDate date={invitation.invitedAt} />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <ClientDate
+                        date={invitation.expiresAt}
+                        className={
+                          isExpiringSoon(invitation.expiresAt)
+                            ? 'text-orange-500'
+                            : 'text-muted-foreground'
+                        }
+                      />
+                      {isExpiringSoon(invitation.expiresAt) && (
+                        <Badge variant="outline" className="ml-1 border-orange-300 text-orange-500">
+                          <Clock className="mr-1 h-3 w-3" />
+                          Soon
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-center">
                     <DropdownMenu>
@@ -384,13 +427,18 @@ export function UserTable({
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => router.push(`/admin/users/${user.id}`)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
+                        <DropdownMenuItem
+                          onClick={() => void handleResend(invitation)}
+                          disabled={resendingEmail === invitation.email}
+                        >
+                          <RefreshCw
+                            className={`mr-2 h-4 w-4 ${resendingEmail === invitation.email ? 'animate-spin' : ''}`}
+                          />
+                          {resendingEmail === invitation.email ? 'Resending...' : 'Resend'}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
-                          onClick={() => setDeleteUserId(user.id)}
+                          onClick={() => setDeleteEmail(invitation.email)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -408,8 +456,14 @@ export function UserTable({
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">
-          Showing {(meta.page - 1) * meta.limit + 1} to{' '}
-          {Math.min(meta.page * meta.limit, meta.total)} of {meta.total} users
+          {meta.total === 0 ? (
+            'No invitations'
+          ) : (
+            <>
+              Showing {(meta.page - 1) * meta.limit + 1} to{' '}
+              {Math.min(meta.page * meta.limit, meta.total)} of {meta.total} invitations
+            </>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -422,13 +476,13 @@ export function UserTable({
             Previous
           </Button>
           <span className="text-sm">
-            Page {meta.page} of {meta.totalPages}
+            Page {meta.page} of {meta.totalPages || 1}
           </span>
           <Button
             variant="outline"
             size="sm"
             onClick={() => handlePageChange(meta.page + 1)}
-            disabled={meta.page >= meta.totalPages || isLoading}
+            disabled={meta.page >= (meta.totalPages || 1) || isLoading}
           >
             Next
             <ChevronRight className="h-4 w-4" />
@@ -437,13 +491,14 @@ export function UserTable({
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
+      <AlertDialog open={!!deleteEmail} onOpenChange={() => setDeleteEmail(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogTitle>Delete Invitation</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this user? This action cannot be undone. All user
-              data, sessions, and accounts will be permanently deleted.
+              Are you sure you want to delete the invitation for <strong>{deleteEmail}</strong>?
+              This action cannot be undone. The user will no longer be able to accept this
+              invitation.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
