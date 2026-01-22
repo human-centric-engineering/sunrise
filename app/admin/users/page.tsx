@@ -4,6 +4,9 @@ import { UserManagementTabs } from '@/components/admin/user-management-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 
+/** Default pagination limit for users and invitations tables */
+const DEFAULT_PAGE_LIMIT = 20;
+
 export const metadata: Metadata = {
   title: 'Users',
   description: 'Manage user accounts and invitations',
@@ -63,7 +66,7 @@ async function getUsers(): Promise<{
     const cookieHeader = await getCookieHeader();
 
     const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/users?limit=20&sortBy=createdAt&sortOrder=desc`,
+      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/users?limit=${DEFAULT_PAGE_LIMIT}&sortBy=createdAt&sortOrder=desc`,
       {
         headers: {
           Cookie: cookieHeader,
@@ -75,7 +78,7 @@ async function getUsers(): Promise<{
     if (!res.ok) {
       return {
         users: [],
-        meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
@@ -84,7 +87,7 @@ async function getUsers(): Promise<{
     if (!data.success) {
       return {
         users: [],
-        meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
@@ -96,12 +99,12 @@ async function getUsers(): Promise<{
 
     return {
       users,
-      meta: data.meta || { page: 1, limit: 20, total: users.length, totalPages: 1 },
+      meta: data.meta || { page: 1, limit: DEFAULT_PAGE_LIMIT, total: users.length, totalPages: 1 },
     };
   } catch {
     return {
       users: [],
-      meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
     };
   }
 }
@@ -117,7 +120,7 @@ async function getInvitations(): Promise<{
     const cookieHeader = await getCookieHeader();
 
     const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/invitations?limit=20&sortBy=invitedAt&sortOrder=desc`,
+      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/invitations?limit=${DEFAULT_PAGE_LIMIT}&sortBy=invitedAt&sortOrder=desc`,
       {
         headers: {
           Cookie: cookieHeader,
@@ -129,7 +132,7 @@ async function getInvitations(): Promise<{
     if (!res.ok) {
       return {
         invitations: [],
-        meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
@@ -138,7 +141,7 @@ async function getInvitations(): Promise<{
     if (!data.success) {
       return {
         invitations: [],
-        meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
@@ -151,12 +154,17 @@ async function getInvitations(): Promise<{
 
     return {
       invitations,
-      meta: data.meta || { page: 1, limit: 20, total: invitations.length, totalPages: 1 },
+      meta: data.meta || {
+        page: 1,
+        limit: DEFAULT_PAGE_LIMIT,
+        total: invitations.length,
+        totalPages: 1,
+      },
     };
   } catch {
     return {
       invitations: [],
-      meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
     };
   }
 }
