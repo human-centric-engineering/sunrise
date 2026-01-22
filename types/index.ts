@@ -13,8 +13,9 @@ import type { APIResponse } from './api';
  * User Role Types
  *
  * Defines the possible roles a user can have in the system.
+ * Add additional roles as needed (e.g., 'MODERATOR').
  */
-export type UserRole = 'USER' | 'ADMIN' | 'MODERATOR';
+export type UserRole = 'USER' | 'ADMIN';
 
 /**
  * User Email Preferences
@@ -98,7 +99,10 @@ export type PublicUser = User;
  * });
  * ```
  */
-export type UserListItem = Pick<User, 'id' | 'name' | 'email' | 'role' | 'createdAt'>;
+export type UserListItem = Pick<
+  User,
+  'id' | 'name' | 'email' | 'image' | 'role' | 'emailVerified' | 'createdAt'
+>;
 
 /**
  * User Profile Type
@@ -141,3 +145,34 @@ export type UserResponse = APIResponse<PublicUser>;
 
 /** Paginated user list response (meta will contain PaginationMeta) */
 export type UserListResponse = APIResponse<UserListItem[]>;
+
+/**
+ * Invitation List Item Type
+ *
+ * Represents a pending user invitation for display in admin tables.
+ * Used in GET /api/v1/admin/invitations endpoint.
+ *
+ * @example
+ * ```typescript
+ * const invitations: InvitationListItem[] = await getAllPendingInvitations();
+ * ```
+ */
+export type InvitationListItem = {
+  /** Email address of the invited user */
+  email: string;
+  /** Display name of the invited user */
+  name: string;
+  /** Role assigned to the invitation */
+  role: string;
+  /** User ID of the admin who created the invitation */
+  invitedBy: string;
+  /** Name of the admin who created the invitation (null if user deleted) */
+  invitedByName: string | null;
+  /** When the invitation was created */
+  invitedAt: Date;
+  /** When the invitation expires */
+  expiresAt: Date;
+};
+
+/** Paginated invitation list response */
+export type InvitationListResponse = APIResponse<InvitationListItem[]>;

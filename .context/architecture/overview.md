@@ -98,6 +98,22 @@ Route groups organize pages without affecting URL structure. Each group has its 
 - Server-side session checks
 - **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
 
+**`app/admin/`** - Admin dashboard (separate route group)
+
+- Contains: overview, users management, logs viewer, feature flags
+- **Not a route group** - uses `/admin` URL prefix directly
+- Requires ADMIN role (enforced via `requireAdmin()` utility)
+- Custom sidebar layout distinct from protected routes
+- Pages:
+  - `/admin` - Dashboard overview with system statistics
+  - `/admin/users` - User list with search, pagination, role badges
+  - `/admin/users/[id]` - Individual user detail and edit
+  - `/admin/users/invite` - User invitation form
+  - `/admin/logs` - Application log viewer with filtering
+  - `/admin/features` - Feature flag management (create, toggle, edit, delete)
+- Server-side role checks on each page via `requireAdmin()`
+- Separate from `(protected)` to allow distinct layout and stricter access control
+
 **`app/(public)/`** - All public pages
 
 - Landing page (`page.tsx`), about, contact, pricing, etc.

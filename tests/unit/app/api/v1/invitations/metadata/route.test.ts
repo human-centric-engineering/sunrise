@@ -170,7 +170,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       // Arrange
       const email = 'user@example.com';
       const token = 'valid_token';
-      const metadata = { name: 'User', role: 'MODERATOR' };
+      const metadata = { name: 'User', role: 'USER' };
 
       vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
 
@@ -227,25 +227,6 @@ describe('GET /api/v1/invitations/metadata', () => {
       // Assert
       expect(response.status).toBe(200);
       expect(data.data.role).toBe('ADMIN');
-    });
-
-    it('should handle MODERATOR role metadata', async () => {
-      // Arrange
-      const email = 'mod@example.com';
-      const token = 'mod_token';
-      const metadata = { name: 'Moderator User', role: 'MODERATOR' };
-
-      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
-
-      const request = createMockRequest({ token, email });
-
-      // Act
-      const response = await GET(request);
-      const data = await parseResponse<SuccessResponse>(response);
-
-      // Assert
-      expect(response.status).toBe(200);
-      expect(data.data.role).toBe('MODERATOR');
     });
   });
 

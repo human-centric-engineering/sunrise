@@ -461,14 +461,6 @@ describe('inviteUserSchema', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should accept MODERATOR role', () => {
-      const result = inviteUserSchema.safeParse({
-        ...validInviteData,
-        role: 'MODERATOR',
-      });
-      expect(result.success).toBe(true);
-    });
-
     it('should trim name', () => {
       const result = inviteUserSchema.safeParse({
         ...validInviteData,

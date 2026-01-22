@@ -137,6 +137,16 @@ Reusable UI patterns and component conventions. Includes:
 
 **Key Patterns**: `useUrlTabs` hook for URL-synced tabs, marketing component library (Hero, Features, Pricing, FAQ, CTA, Section)
 
+### 🛠️ [Admin](./admin/overview.md)
+
+Admin dashboard for system management and user administration. Includes:
+
+- [Overview](./admin/overview.md) - Admin architecture, role-based access, dashboard features
+
+**Use When**: Building admin features, managing users, viewing system logs, configuring feature flags
+
+**Key Features**: System statistics dashboard, user management (list, view, edit, invite), log viewer with filtering, feature flag management (CRUD operations)
+
 ### 🔒 [Privacy & Consent](./privacy/overview.md)
 
 Cookie consent system and GDPR compliance. Includes:
@@ -226,6 +236,10 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | Set up Sentry              | monitoring/sentry-setup.md    | errors/overview.md                              |
 | Configure log aggregation  | monitoring/log-aggregation.md | monitoring/overview.md                          |
 | Add status page            | monitoring/health-checks.md   | monitoring/overview.md                          |
+| Build admin dashboard      | admin/overview.md             | architecture/overview.md, api/endpoints.md      |
+| Manage users (admin)       | admin/overview.md             | database/schema.md, api/endpoints.md            |
+| Add feature flags          | admin/overview.md             | database/schema.md, api/endpoints.md            |
+| View system logs           | admin/overview.md             | errors/logging.md                               |
 
 ## Technology Stack
 

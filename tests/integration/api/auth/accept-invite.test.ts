@@ -7,7 +7,7 @@
  * - Successful invitation acceptance (first-time user creation)
  * - Session cookie forwarding for auto-login
  * - Empty cookie headers handling
- * - Role assignment (USER, ADMIN, MODERATOR)
+ * - Role assignment (USER, ADMIN)
  * - Invalid/expired token validation
  * - Invitation not found scenarios
  * - Missing invitation metadata
@@ -588,66 +588,6 @@ describe('POST /api/auth/accept-invite', () => {
         expect.anything()
       );
     });
-
-    it('should assign MODERATOR role when specified', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      const mockInvitation = {
-        id: 'invitation-id-mod',
-        identifier: 'invitation:moderator@example.com',
-        value: 'valid-token-mod',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'Moderator User',
-          role: 'MODERATOR',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      const createdUserId = 'mod-id-123';
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: { id: createdUserId } }),
-          headers: { getSetCookie: () => [] },
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: { id: createdUserId }, session: { token: 'token' } }),
-          headers: { getSetCookie: () => [] },
-        });
-
-      vi.mocked(prisma.user.update).mockResolvedValue({
-        id: createdUserId,
-        role: 'MODERATOR',
-        emailVerified: true,
-      } as any);
-
-      vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Act
-      const request = createMockRequest({
-        token: 'valid-token-mod',
-        email: 'moderator@example.com',
-        password: 'SecurePassword123!',
-        confirmPassword: 'SecurePassword123!',
-      });
-      await POST(request);
-
-      // Assert: MODERATOR role applied
-      expect(vi.mocked(prisma.user.update)).toHaveBeenCalledWith({
-        where: { id: createdUserId },
-        data: {
-          emailVerified: true,
-          role: 'MODERATOR',
-        },
-      });
-    });
   });
 
   /**
@@ -1046,7 +986,7 @@ describe('POST /api/auth/accept-invite', () => {
       // Arrange: Mock valid token validation
       vi.mocked(validateInvitationToken).mockResolvedValue(true);
 
-      // Mock invitation metadata with MODERATOR role
+      // Mock invitation metadata with ADMIN role
       const mockInvitation = {
         id: 'invitation-id-role-error',
         identifier: 'invitation:roleerror@example.com',
@@ -1056,7 +996,7 @@ describe('POST /api/auth/accept-invite', () => {
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
         metadata: {
           name: 'Role Error User',
-          role: 'MODERATOR',
+          role: 'ADMIN',
           invitedBy: 'admin@example.com',
           invitedAt: '2024-01-01T00:00:00.000Z',
         },

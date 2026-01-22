@@ -99,7 +99,7 @@ prisma/
 -- prisma/migrations/20250105150000_add_user_role/migration.sql
 
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN', 'MODERATOR');
+CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN');
 
 -- AlterTable
 ALTER TABLE "users" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'USER';
@@ -126,7 +126,6 @@ model User {
 enum Role {  // New enum
   USER
   ADMIN
-  MODERATOR
 }
 ```
 
@@ -159,7 +158,7 @@ Your database is now in sync with your schema.
 -- Always review generated SQL before committing!
 
 -- CreateEnum (check enum values)
-CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN', 'MODERATOR');
+CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN');
 
 -- AlterTable (check DEFAULT and NOT NULL constraints)
 ALTER TABLE "users" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'USER';

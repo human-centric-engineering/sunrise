@@ -76,9 +76,10 @@ export async function GET(request: NextRequest) {
           id: true,
           name: true,
           email: true,
+          image: true,
           role: true,
+          emailVerified: true,
           createdAt: true,
-          // Exclude password, emailVerified, etc. for list view
         },
         orderBy: { [query.sortBy]: query.sortOrder },
       }),

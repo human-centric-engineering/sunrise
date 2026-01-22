@@ -13,7 +13,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { User, LogOut, Settings, UserCircle } from 'lucide-react';
+import { User, LogOut, Settings, UserCircle, Shield } from 'lucide-react';
 import { authClient, useSession } from '@/lib/auth/client';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -82,6 +82,8 @@ export function UserButton() {
 
   // Authenticated - show avatar with profile/settings/signout options
   const { user } = session;
+  // Cast to include role field (configured in better-auth additionalFields)
+  const userRole = (user as { role?: string | null }).role;
   const initials = getInitials(user.name || 'U');
 
   const handleSignOut = async () => {
@@ -133,6 +135,17 @@ export function UserButton() {
             Settings
           </Link>
         </DropdownMenuItem>
+        {userRole === 'ADMIN' && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/admin" className="cursor-pointer">
+                <Shield className="mr-2 h-4 w-4" />
+                Admin Dashboard
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={() => void handleSignOut()}

@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { logger } from '../lib/logging';
+import { DEFAULT_FLAGS } from '../lib/feature-flags/config';
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -20,6 +21,7 @@ async function main() {
     await prisma.session.deleteMany();
     await prisma.account.deleteMany();
     await prisma.user.deleteMany();
+    await prisma.featureFlag.deleteMany();
   }
 
   // Create test users
@@ -45,6 +47,21 @@ async function main() {
 
   logger.info('✅ Created test user', { email: testUser.email });
   logger.info('✅ Created admin user', { email: adminUser.email });
+
+  // Seed default feature flags
+  logger.info('🚩 Seeding feature flags...');
+
+  for (const flag of DEFAULT_FLAGS) {
+    const createdFlag = await prisma.featureFlag.create({
+      data: {
+        name: flag.name,
+        description: flag.description,
+        enabled: flag.enabled,
+        metadata: flag.metadata,
+      },
+    });
+    logger.info('✅ Created feature flag', { name: createdFlag.name });
+  }
 
   logger.info('🎉 Seeding complete!');
 }

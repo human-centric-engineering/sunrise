@@ -357,3 +357,165 @@ export async function getInvitationMetadata(
     return { valid: false, reason: 'not_found' };
   }
 }
+
+/**
+ * Options for getting all pending invitations
+ */
+export interface GetAllPendingInvitationsOptions {
+  /** Search query for name or email */
+  search?: string;
+  /** Page number (1-indexed) */
+  page?: number;
+  /** Items per page */
+  limit?: number;
+  /** Field to sort by */
+  sortBy?: 'name' | 'email' | 'invitedAt' | 'expiresAt';
+  /** Sort order */
+  sortOrder?: 'asc' | 'desc';
+}
+
+/**
+ * Pending invitation item for list display
+ */
+export interface PendingInvitationItem {
+  email: string;
+  name: string;
+  role: string;
+  invitedBy: string;
+  invitedByName: string | null;
+  invitedAt: Date;
+  expiresAt: Date;
+}
+
+/**
+ * Get all pending (non-expired) invitations
+ *
+ * Queries the Verification table for all invitation records that haven't expired.
+ * Supports search by email/name, pagination, and sorting.
+ *
+ * @param options - Query options for filtering, pagination, and sorting
+ * @returns Object containing invitations array and total count
+ *
+ * @example
+ * ```typescript
+ * const { invitations, total } = await getAllPendingInvitations({
+ *   search: 'john',
+ *   page: 1,
+ *   limit: 20,
+ *   sortBy: 'invitedAt',
+ *   sortOrder: 'desc',
+ * });
+ * ```
+ */
+export async function getAllPendingInvitations(
+  options: GetAllPendingInvitationsOptions = {}
+): Promise<{ invitations: PendingInvitationItem[]; total: number }> {
+  const { search, page = 1, limit = 20, sortBy = 'invitedAt', sortOrder = 'desc' } = options;
+
+  try {
+    // Build the base where clause - find all non-expired invitations
+    const baseWhere = {
+      identifier: { startsWith: IDENTIFIER_PREFIX },
+      expiresAt: { gt: new Date() },
+    };
+
+    // Get all pending invitations from database
+    const [verifications, total] = await Promise.all([
+      prisma.verification.findMany({
+        where: baseWhere,
+        orderBy: { createdAt: sortOrder },
+      }),
+      prisma.verification.count({ where: baseWhere }),
+    ]);
+
+    // Transform verification records to invitation items with metadata
+    let invitations: PendingInvitationItem[] = await Promise.all(
+      verifications.map(async (v) => {
+        const metadata = v.metadata as InvitationMetadata;
+        const email = v.identifier.replace(IDENTIFIER_PREFIX, '');
+
+        // Look up the inviter's name
+        let invitedByName: string | null = null;
+        if (metadata.invitedBy) {
+          const inviter = await prisma.user.findUnique({
+            where: { id: metadata.invitedBy },
+            select: { name: true },
+          });
+          invitedByName = inviter?.name ?? null;
+        }
+
+        return {
+          email,
+          name: metadata.name,
+          role: metadata.role,
+          invitedBy: metadata.invitedBy,
+          invitedByName,
+          invitedAt: new Date(metadata.invitedAt),
+          expiresAt: v.expiresAt,
+        };
+      })
+    );
+
+    // Apply search filter if provided
+    if (search) {
+      const searchLower = search.toLowerCase();
+      invitations = invitations.filter(
+        (inv) =>
+          inv.email.toLowerCase().includes(searchLower) ||
+          inv.name.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Sort invitations based on sortBy and sortOrder
+    invitations.sort((a, b) => {
+      let aValue: string | Date;
+      let bValue: string | Date;
+
+      switch (sortBy) {
+        case 'name':
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case 'email':
+          aValue = a.email.toLowerCase();
+          bValue = b.email.toLowerCase();
+          break;
+        case 'expiresAt':
+          aValue = a.expiresAt;
+          bValue = b.expiresAt;
+          break;
+        case 'invitedAt':
+        default:
+          aValue = a.invitedAt;
+          bValue = b.invitedAt;
+          break;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    // Calculate total after search filter
+    const filteredTotal = search ? invitations.length : total;
+
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    const paginatedInvitations = invitations.slice(skip, skip + limit);
+
+    logger.info('Fetched pending invitations', {
+      total: filteredTotal,
+      page,
+      limit,
+      search: search || null,
+    });
+
+    return {
+      invitations: paginatedInvitations,
+      total: filteredTotal,
+    };
+  } catch (error) {
+    logger.error('Failed to fetch pending invitations', error);
+    throw new Error('Failed to fetch pending invitations');
+  }
+}

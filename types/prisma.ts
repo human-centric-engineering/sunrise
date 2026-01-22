@@ -22,7 +22,14 @@
  *
  * Re-exported from @prisma/client for application use
  */
-export type { User, Session, Account, Verification } from '@prisma/client';
+export type {
+  User,
+  Session,
+  Account,
+  Verification,
+  ContactSubmission,
+  FeatureFlag,
+} from '@prisma/client';
 
 /**
  * Prisma Namespace

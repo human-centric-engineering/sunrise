@@ -385,6 +385,9 @@ export class Logger {
       }
     }
 
+    // Push to admin log buffer
+    this.pushToLogBuffer(entry);
+
     // Format based on environment
     const formatted =
       process.env.NODE_ENV === 'production' ? this.formatProd(entry) : this.formatDev(entry);
@@ -393,6 +396,41 @@ export class Logger {
     // eslint-disable-next-line no-console
     const consoleMethod = level === LogLevel.ERROR ? console.error : console.log;
     consoleMethod(formatted);
+  }
+
+  /**
+   * Push entry to admin log buffer
+   * Uses dynamic import to avoid circular dependency issues
+   */
+  private pushToLogBuffer(entry: LogEntry): void {
+    // Use require to avoid circular dependency at module load time
+    // This is safe because lib/admin/logs.ts doesn't import from logging
+    try {
+      // Type for admin log entry (uses string literal instead of enum)
+      type AdminLogEntry = {
+        timestamp: string;
+        level: 'debug' | 'info' | 'warn' | 'error';
+        message: string;
+        context?: Record<string, unknown>;
+        meta?: Record<string, unknown>;
+        error?: { name: string; message: string; stack?: string; code?: string };
+      };
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const logModule = require('@/lib/admin/logs') as {
+        addLogEntry: (entry: AdminLogEntry) => void;
+      };
+      logModule.addLogEntry({
+        timestamp: entry.timestamp,
+        level: entry.level as 'debug' | 'info' | 'warn' | 'error',
+        message: entry.message,
+        context: entry.context as Record<string, unknown> | undefined,
+        meta: entry.meta,
+        error: entry.error,
+      });
+    } catch {
+      // Silently fail if log buffer is not available
+      // This can happen during startup or in certain edge cases
+    }
   }
 
   /**
