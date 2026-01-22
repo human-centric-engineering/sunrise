@@ -13,7 +13,8 @@ import type { FeatureFlag } from '@/types/prisma';
 export default function AdminFeaturesPage() {
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editingFlag, setEditingFlag] = useState<FeatureFlag | null>(null);
 
   /**
    * API response type
@@ -53,10 +54,43 @@ export default function AdminFeaturesPage() {
   }, []);
 
   /**
-   * Handle new flag creation
+   * Handle flag create/update
    */
-  const handleFlagCreated = (newFlag: FeatureFlag) => {
-    setFlags((prev) => [...prev, newFlag]);
+  const handleFlagSaved = (savedFlag: FeatureFlag) => {
+    if (editingFlag) {
+      // Update existing flag
+      setFlags((prev) => prev.map((f) => (f.id === savedFlag.id ? savedFlag : f)));
+    } else {
+      // Add new flag
+      setFlags((prev) => [...prev, savedFlag]);
+    }
+    setEditingFlag(null);
+  };
+
+  /**
+   * Open create form
+   */
+  const handleCreateClick = () => {
+    setEditingFlag(null);
+    setShowForm(true);
+  };
+
+  /**
+   * Open edit form
+   */
+  const handleEditClick = (flag: FeatureFlag) => {
+    setEditingFlag(flag);
+    setShowForm(true);
+  };
+
+  /**
+   * Close form
+   */
+  const handleFormClose = (open: boolean) => {
+    setShowForm(open);
+    if (!open) {
+      setEditingFlag(null);
+    }
   };
 
   if (isLoading) {
@@ -84,12 +118,17 @@ export default function AdminFeaturesPage() {
         </p>
       </div>
 
-      <FeatureFlagList initialFlags={flags} onCreateClick={() => setShowCreateForm(true)} />
+      <FeatureFlagList
+        initialFlags={flags}
+        onCreateClick={handleCreateClick}
+        onEditClick={handleEditClick}
+      />
 
       <FeatureFlagForm
-        open={showCreateForm}
-        onOpenChange={setShowCreateForm}
-        onSuccess={handleFlagCreated}
+        open={showForm}
+        onOpenChange={handleFormClose}
+        onSuccess={handleFlagSaved}
+        flag={editingFlag}
       />
     </div>
   );

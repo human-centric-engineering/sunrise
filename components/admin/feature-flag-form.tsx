@@ -3,10 +3,10 @@
 /**
  * Feature Flag Form Component (Phase 4.4)
  *
- * Dialog form for creating new feature flags.
+ * Dialog form for creating and editing feature flags.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -49,11 +49,15 @@ interface FeatureFlagFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: (flag: FeatureFlag) => void;
+  /** Pass an existing flag to enable edit mode */
+  flag?: FeatureFlag | null;
 }
 
-export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFormProps) {
+export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: FeatureFlagFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isEditMode = !!flag;
 
   const {
     register,
@@ -71,6 +75,19 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
     },
   });
 
+  // Populate form when editing an existing flag
+  useEffect(() => {
+    if (flag && open) {
+      setValue('name', flag.name);
+      setValue('description', flag.description || '');
+      setValue('enabled', flag.enabled);
+    } else if (!open) {
+      // Reset form when dialog closes
+      reset();
+      setError(null);
+    }
+  }, [flag, open, setValue, reset]);
+
   const currentEnabled = watch('enabled');
 
   const onSubmit = async (data: FeatureFlagFormData) => {
@@ -78,12 +95,25 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
     setError(null);
 
     try {
-      const flag = await apiClient.post<FeatureFlag>('/api/v1/admin/feature-flags', {
-        body: data,
-      });
+      let savedFlag: FeatureFlag;
+
+      if (isEditMode && flag) {
+        // Edit existing flag (PATCH)
+        savedFlag = await apiClient.patch<FeatureFlag>(`/api/v1/admin/feature-flags/${flag.id}`, {
+          body: {
+            description: data.description,
+            enabled: data.enabled,
+          },
+        });
+      } else {
+        // Create new flag (POST)
+        savedFlag = await apiClient.post<FeatureFlag>('/api/v1/admin/feature-flags', {
+          body: data,
+        });
+      }
 
       reset();
-      onSuccess(flag);
+      onSuccess(savedFlag);
       onOpenChange(false);
     } catch (err) {
       if (err instanceof APIClientError) {
@@ -114,9 +144,11 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Create Feature Flag</DialogTitle>
+          <DialogTitle>{isEditMode ? 'Edit Feature Flag' : 'Create Feature Flag'}</DialogTitle>
           <DialogDescription>
-            Create a new feature flag to control feature availability.
+            {isEditMode
+              ? 'Update the feature flag settings.'
+              : 'Create a new feature flag to control feature availability.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
@@ -135,12 +167,15 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
               <Input
                 id="name"
                 {...register('name')}
-                onChange={handleNameChange}
+                onChange={isEditMode ? undefined : handleNameChange}
                 placeholder="FEATURE_NAME"
                 className="font-mono"
+                disabled={isEditMode}
               />
               {errors.name ? (
                 <p className="text-sm text-red-500">{errors.name.message}</p>
+              ) : isEditMode ? (
+                <p className="text-muted-foreground text-xs">Flag names cannot be changed</p>
               ) : (
                 <p className="text-muted-foreground text-xs">
                   Use SCREAMING_SNAKE_CASE (e.g., ENABLE_DARK_MODE)
@@ -165,9 +200,11 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
             {/* Enabled field */}
             <div className="flex items-center justify-between rounded-lg border p-4">
               <div className="space-y-0.5">
-                <Label htmlFor="enabled">Enabled by default</Label>
+                <Label htmlFor="enabled">{isEditMode ? 'Enabled' : 'Enabled by default'}</Label>
                 <p className="text-muted-foreground text-sm">
-                  Start this flag as enabled when created
+                  {isEditMode
+                    ? 'Toggle this flag on or off'
+                    : 'Start this flag as enabled when created'}
                 </p>
               </div>
               <Switch
@@ -183,7 +220,13 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess }: FeatureFlagFo
             </Button>
             <Button type="submit" disabled={isSubmitting}>
               <Save className="mr-2 h-4 w-4" />
-              {isSubmitting ? 'Creating...' : 'Create Flag'}
+              {isSubmitting
+                ? isEditMode
+                  ? 'Saving...'
+                  : 'Creating...'
+                : isEditMode
+                  ? 'Save Changes'
+                  : 'Create Flag'}
             </Button>
           </DialogFooter>
         </form>

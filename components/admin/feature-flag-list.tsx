@@ -36,9 +36,14 @@ import { ClientDate } from '@/components/ui/client-date';
 interface FeatureFlagListProps {
   initialFlags: FeatureFlag[];
   onCreateClick: () => void;
+  onEditClick: (flag: FeatureFlag) => void;
 }
 
-export function FeatureFlagList({ initialFlags, onCreateClick }: FeatureFlagListProps) {
+export function FeatureFlagList({
+  initialFlags,
+  onCreateClick,
+  onEditClick,
+}: FeatureFlagListProps) {
   const [flags, setFlags] = useState(initialFlags);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -149,9 +154,18 @@ export function FeatureFlagList({ initialFlags, onCreateClick }: FeatureFlagList
                 <TableRow key={flag.id}>
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      <Badge variant="outline" className="w-fit font-mono text-xs">
-                        {flag.name}
-                      </Badge>
+                      <button
+                        type="button"
+                        onClick={() => onEditClick(flag)}
+                        className="w-fit text-left"
+                      >
+                        <Badge
+                          variant="outline"
+                          className="hover:bg-accent cursor-pointer font-mono text-xs transition-colors"
+                        >
+                          {flag.name}
+                        </Badge>
+                      </button>
                       {flag.description && (
                         <p className="text-muted-foreground line-clamp-1 text-xs md:hidden">
                           {flag.description}
