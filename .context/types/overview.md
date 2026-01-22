@@ -34,7 +34,7 @@ lib/api/
 
 **Exports:**
 
-- `UserRole` - User role enum ('USER' | 'ADMIN' | 'MODERATOR')
+- `UserRole` - User role enum ('USER' | 'ADMIN')
 - `PublicUser` - User data safe for public exposure
 - `UserListItem` - Subset for list displays
 - `UserProfile` - User's own profile data

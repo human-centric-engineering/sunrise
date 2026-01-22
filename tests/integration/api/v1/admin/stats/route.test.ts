@@ -89,7 +89,6 @@ interface StatsResponse {
       byRole: {
         USER: number;
         ADMIN: number;
-        MODERATOR: number;
       };
     };
     system: {
@@ -142,17 +141,6 @@ describe('GET /api/v1/admin/stats', () => {
         },
       });
     });
-
-    it('should return 403 if user is moderator', async () => {
-      // Arrange
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('MODERATOR'));
-
-      // Act
-      const response = await GET();
-
-      // Assert
-      expect(response.status).toBe(403);
-    });
   });
 
   describe('Successful Retrieval', () => {
@@ -168,9 +156,8 @@ describe('GET /api/v1/admin/stats', () => {
 
       // Mock the groupBy call for role counts
       vi.mocked(prisma.user.groupBy).mockResolvedValue([
-        { role: 'USER', _count: { role: 85 } },
+        { role: 'USER', _count: { role: 95 } },
         { role: 'ADMIN', _count: { role: 5 } },
-        { role: 'MODERATOR', _count: { role: 10 } },
       ] as never);
 
       // Act
@@ -186,9 +173,8 @@ describe('GET /api/v1/admin/stats', () => {
         verified: 70,
         recentSignups: 15,
         byRole: {
-          USER: 85,
+          USER: 95,
           ADMIN: 5,
-          MODERATOR: 10,
         },
       });
     });
@@ -235,7 +221,6 @@ describe('GET /api/v1/admin/stats', () => {
         byRole: {
           USER: 0,
           ADMIN: 0,
-          MODERATOR: 0,
         },
       });
     });

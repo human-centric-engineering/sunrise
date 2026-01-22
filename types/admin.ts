@@ -25,7 +25,6 @@ export interface SystemStats {
     byRole: {
       USER: number;
       ADMIN: number;
-      MODERATOR: number;
     };
   };
   system: {
@@ -125,7 +124,7 @@ export interface AdminUserUpdateInput {
   /** User's display name */
   name?: string;
   /** User's role */
-  role?: 'USER' | 'ADMIN' | 'MODERATOR';
+  role?: 'USER' | 'ADMIN';
   /** Whether email is verified */
   emailVerified?: boolean;
 }

@@ -172,9 +172,9 @@ describe('GET /api/v1/admin/stats', () => {
       expect(getDatabaseHealth).not.toHaveBeenCalled();
     });
 
-    it('should return 403 when user is not an admin (MODERATOR role)', async () => {
+    it('should return 403 when user is not an admin (USER role)', async () => {
       // Arrange
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('MODERATOR'));
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
 
       // Act
       const response = await GET();
@@ -199,9 +199,8 @@ describe('GET /api/v1/admin/stats', () => {
 
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
         createMockRoleCounts([
-          { role: 'USER', count: 90 },
+          { role: 'USER', count: 92 },
           { role: 'ADMIN', count: 8 },
-          { role: 'MODERATOR', count: 2 },
         ])
       );
 
@@ -256,9 +255,8 @@ describe('GET /api/v1/admin/stats', () => {
 
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
         createMockRoleCounts([
-          { role: 'USER', count: 90 },
+          { role: 'USER', count: 92 },
           { role: 'ADMIN', count: 8 },
-          { role: 'MODERATOR', count: 2 },
         ])
       );
 
@@ -278,9 +276,8 @@ describe('GET /api/v1/admin/stats', () => {
       expect(data.data.users.total).toBe(100);
       expect(data.data.users.verified).toBe(75);
       expect(data.data.users.recentSignups).toBe(10);
-      expect(data.data.users.byRole.USER).toBe(90);
+      expect(data.data.users.byRole.USER).toBe(92);
       expect(data.data.users.byRole.ADMIN).toBe(8);
-      expect(data.data.users.byRole.MODERATOR).toBe(2);
       expect(data.data.system.databaseStatus).toBe('connected');
     });
 
@@ -405,9 +402,8 @@ describe('GET /api/v1/admin/stats', () => {
       // Arrange
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
         createMockRoleCounts([
-          { role: 'USER', count: 90 },
+          { role: 'USER', count: 92 },
           { role: 'ADMIN', count: 8 },
-          { role: 'MODERATOR', count: 2 },
         ])
       );
 
@@ -417,19 +413,15 @@ describe('GET /api/v1/admin/stats', () => {
 
       // Assert
       expect(data.data.users.byRole).toEqual({
-        USER: 90,
+        USER: 92,
         ADMIN: 8,
-        MODERATOR: 2,
       });
     });
 
     it('should default to 0 for missing USER role', async () => {
       // Arrange
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
-        createMockRoleCounts([
-          { role: 'ADMIN', count: 5 },
-          { role: 'MODERATOR', count: 2 },
-        ])
+        createMockRoleCounts([{ role: 'ADMIN', count: 5 }])
       );
 
       // Act
@@ -439,16 +431,12 @@ describe('GET /api/v1/admin/stats', () => {
       // Assert
       expect(data.data.users.byRole.USER).toBe(0);
       expect(data.data.users.byRole.ADMIN).toBe(5);
-      expect(data.data.users.byRole.MODERATOR).toBe(2);
     });
 
     it('should default to 0 for missing ADMIN role', async () => {
       // Arrange
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
-        createMockRoleCounts([
-          { role: 'USER', count: 50 },
-          { role: 'MODERATOR', count: 2 },
-        ])
+        createMockRoleCounts([{ role: 'USER', count: 50 }])
       );
 
       // Act
@@ -458,26 +446,6 @@ describe('GET /api/v1/admin/stats', () => {
       // Assert
       expect(data.data.users.byRole.USER).toBe(50);
       expect(data.data.users.byRole.ADMIN).toBe(0);
-      expect(data.data.users.byRole.MODERATOR).toBe(2);
-    });
-
-    it('should default to 0 for missing MODERATOR role', async () => {
-      // Arrange
-      vi.mocked(prisma.user.groupBy).mockResolvedValue(
-        createMockRoleCounts([
-          { role: 'USER', count: 45 },
-          { role: 'ADMIN', count: 5 },
-        ])
-      );
-
-      // Act
-      const response = await GET();
-      const data = await parseResponse<SuccessResponse>(response);
-
-      // Assert
-      expect(data.data.users.byRole.USER).toBe(45);
-      expect(data.data.users.byRole.ADMIN).toBe(5);
-      expect(data.data.users.byRole.MODERATOR).toBe(0);
     });
 
     it('should default all roles to 0 when no roles exist', async () => {
@@ -492,7 +460,6 @@ describe('GET /api/v1/admin/stats', () => {
       expect(data.data.users.byRole).toEqual({
         USER: 0,
         ADMIN: 0,
-        MODERATOR: 0,
       });
     });
 
@@ -511,7 +478,6 @@ describe('GET /api/v1/admin/stats', () => {
       // Assert
       expect(data.data.users.byRole.USER).toBe(40);
       expect(data.data.users.byRole.ADMIN).toBe(3);
-      expect(data.data.users.byRole.MODERATOR).toBe(0);
     });
 
     it('should handle partial role data correctly', async () => {
@@ -527,7 +493,6 @@ describe('GET /api/v1/admin/stats', () => {
       // Assert
       expect(data.data.users.byRole.USER).toBe(100);
       expect(data.data.users.byRole.ADMIN).toBe(0);
-      expect(data.data.users.byRole.MODERATOR).toBe(0);
     });
   });
 
@@ -775,9 +740,8 @@ describe('GET /api/v1/admin/stats', () => {
         .mockResolvedValueOnce(10);
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
         createMockRoleCounts([
-          { role: 'USER', count: 90 },
+          { role: 'USER', count: 92 },
           { role: 'ADMIN', count: 8 },
-          { role: 'MODERATOR', count: 2 },
         ])
       );
       vi.mocked(getDatabaseHealth).mockResolvedValue({ connected: true, latency: 5 });
@@ -815,7 +779,6 @@ describe('GET /api/v1/admin/stats', () => {
       // Assert
       expect(data.data.users.byRole).toHaveProperty('USER');
       expect(data.data.users.byRole).toHaveProperty('ADMIN');
-      expect(data.data.users.byRole).toHaveProperty('MODERATOR');
     });
 
     it('should include all required system info fields', async () => {
@@ -842,7 +805,6 @@ describe('GET /api/v1/admin/stats', () => {
       expect(typeof data.data.users.recentSignups).toBe('number');
       expect(typeof data.data.users.byRole.USER).toBe('number');
       expect(typeof data.data.users.byRole.ADMIN).toBe('number');
-      expect(typeof data.data.users.byRole.MODERATOR).toBe('number');
       expect(typeof data.data.system.nodeVersion).toBe('string');
       expect(typeof data.data.system.appVersion).toBe('string');
       expect(typeof data.data.system.environment).toBe('string');
@@ -894,7 +856,6 @@ describe('GET /api/v1/admin/stats', () => {
       expect(data.data.users.recentSignups).toBe(0);
       expect(data.data.users.byRole.USER).toBe(0);
       expect(data.data.users.byRole.ADMIN).toBe(0);
-      expect(data.data.users.byRole.MODERATOR).toBe(0);
     });
 
     it('should handle large user counts', async () => {
@@ -906,9 +867,8 @@ describe('GET /api/v1/admin/stats', () => {
 
       vi.mocked(prisma.user.groupBy).mockResolvedValue(
         createMockRoleCounts([
-          { role: 'USER', count: 999900 },
+          { role: 'USER', count: 999950 },
           { role: 'ADMIN', count: 50 },
-          { role: 'MODERATOR', count: 50 },
         ])
       );
 

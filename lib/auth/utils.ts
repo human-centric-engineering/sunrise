@@ -107,7 +107,7 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
 /**
  * Check if the current user has a specific role
  *
- * @param requiredRole - The role to check for ('USER' | 'ADMIN' | 'MODERATOR')
+ * @param requiredRole - The role to check for ('USER' | 'ADMIN')
  * @returns true if the user has the required role, false otherwise
  *
  * @example

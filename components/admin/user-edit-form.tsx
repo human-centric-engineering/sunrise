@@ -41,7 +41,7 @@ import type { AdminUser } from '@/types/admin';
  */
 const userEditSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name must be less than 100 characters'),
-  role: z.enum(['USER', 'ADMIN', 'MODERATOR']),
+  role: z.enum(['USER', 'ADMIN']),
   emailVerified: z.boolean(),
 });
 
@@ -82,7 +82,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     resolver: zodResolver(userEditSchema),
     defaultValues: {
       name: user.name,
-      role: (user.role as 'USER' | 'ADMIN' | 'MODERATOR') || 'USER',
+      role: (user.role as 'USER' | 'ADMIN') || 'USER',
       emailVerified: user.emailVerified,
     },
   });
@@ -185,7 +185,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                 <Select
                   value={currentRole}
                   onValueChange={(value) =>
-                    setValue('role', value as 'USER' | 'ADMIN' | 'MODERATOR', { shouldDirty: true })
+                    setValue('role', value as 'USER' | 'ADMIN', { shouldDirty: true })
                   }
                   disabled={isCurrentUser}
                 >
@@ -194,7 +194,6 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="USER">User</SelectItem>
-                    <SelectItem value="MODERATOR">Moderator</SelectItem>
                     <SelectItem value="ADMIN">Admin</SelectItem>
                   </SelectContent>
                 </Select>

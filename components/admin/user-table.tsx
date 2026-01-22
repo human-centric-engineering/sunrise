@@ -87,8 +87,6 @@ function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'ou
   switch (role) {
     case 'ADMIN':
       return 'default';
-    case 'MODERATOR':
-      return 'secondary';
     default:
       return 'outline';
   }

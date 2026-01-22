@@ -40,7 +40,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 const inviteFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name must be less than 100 characters'),
   email: z.string().email('Invalid email address'),
-  role: z.enum(['USER', 'ADMIN', 'MODERATOR']),
+  role: z.enum(['USER', 'ADMIN']),
 });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
@@ -262,7 +262,7 @@ export function UserInviteForm() {
               <Select
                 value={currentRole}
                 onValueChange={(value) =>
-                  setValue('role', value as 'USER' | 'ADMIN' | 'MODERATOR', { shouldDirty: true })
+                  setValue('role', value as 'USER' | 'ADMIN', { shouldDirty: true })
                 }
                 disabled={isLoading}
               >
@@ -271,7 +271,6 @@ export function UserInviteForm() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="USER">User</SelectItem>
-                  <SelectItem value="MODERATOR">Moderator</SelectItem>
                   <SelectItem value="ADMIN">Admin</SelectItem>
                 </SelectContent>
               </Select>

@@ -178,7 +178,6 @@ export async function GET(request: NextRequest) {
 enum Role {
   USER
   ADMIN
-  MODERATOR
 }
 
 model User {

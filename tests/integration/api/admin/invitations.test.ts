@@ -172,7 +172,7 @@ describe('GET /api/v1/admin/invitations', () => {
       // Mock invitations data
       const mockInvitations = [
         createMockInvitation('alice@example.com', 'Alice Johnson', 'USER'),
-        createMockInvitation('bob@example.com', 'Bob Smith', 'MODERATOR'),
+        createMockInvitation('bob@example.com', 'Bob Smith', 'USER'),
       ];
 
       vi.mocked(getAllPendingInvitations).mockResolvedValue({

@@ -175,30 +175,6 @@ describe('GET /api/v1/invitations/metadata', () => {
         role: 'ADMIN',
       });
     });
-
-    it('should return invitation metadata for valid token (MODERATOR role)', async () => {
-      // Arrange
-      const email = 'mod@example.com';
-      const token = 'valid_mod_token';
-      const metadata = { name: 'Moderator User', role: 'MODERATOR' };
-
-      vi.mocked(getInvitationMetadata).mockResolvedValue(createValidResult(metadata));
-
-      const request = createMockRequest({ token, email });
-
-      // Act
-      const response = await GET(request);
-
-      // Assert
-      expect(response.status).toBe(200);
-      const data = await parseResponse<SuccessResponse>(response);
-
-      expect(data.success).toBe(true);
-      expect(data.data).toEqual({
-        name: 'Moderator User',
-        role: 'MODERATOR',
-      });
-    });
   });
 
   describe('Invalid Token Scenarios', () => {

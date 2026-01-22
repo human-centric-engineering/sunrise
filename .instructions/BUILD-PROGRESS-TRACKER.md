@@ -919,7 +919,7 @@ Use this section to track important decisions made during development:
 - Implemented route protection middleware with security headers
 - Added Zod validation schemas for auth forms
 - Created clean baseline migration for reproducible database setup
-- Supports role-based access control (USER, ADMIN, MODERATOR)
+- Supports role-based access control (USER, ADMIN)
 
 **Key Architecture Decisions:**
 

@@ -154,7 +154,7 @@ export const inviteUserSchema = z.object({
   email: emailSchema,
 
   /** User's role (defaults to USER) */
-  role: z.enum(['USER', 'ADMIN', 'MODERATOR']).default('USER'),
+  role: z.enum(['USER', 'ADMIN']).default('USER'),
 });
 
 /**

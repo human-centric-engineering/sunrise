@@ -263,47 +263,6 @@ describe('POST /api/auth/accept-invite', () => {
         },
       });
     });
-
-    it('should set MODERATOR role when invitation has MODERATOR role', async () => {
-      // Arrange
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
-        id: 'verification-id',
-        identifier: 'invitation:user@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date('2024-12-31'),
-        createdAt: new Date('2024-01-01'),
-        updatedAt: new Date('2024-01-01'),
-        metadata: {
-          ...mockInvitationMetadata,
-          role: 'MODERATOR',
-        },
-      });
-
-      const mockSignupResponse = createMockFetchResponse({
-        user: { id: mockUserId },
-      });
-
-      const mockSignInResponse = createMockFetchResponse({ user: { id: mockUserId } }, 200, []);
-
-      global.fetch = vi
-        .fn()
-        .mockResolvedValueOnce(mockSignupResponse)
-        .mockResolvedValueOnce(mockSignInResponse);
-
-      const request = createMockRequest(validInvitationData);
-
-      // Act
-      await POST(request);
-
-      // Assert: User updated with MODERATOR role
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: mockUserId },
-        data: {
-          emailVerified: true,
-          role: 'MODERATOR',
-        },
-      });
-    });
   });
 
   describe('validation errors', () => {

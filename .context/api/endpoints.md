@@ -694,7 +694,7 @@ POST /api/v1/users/invite
 
 - `name`: Required, 1-100 characters
 - `email`: Required, valid email format
-- `role`: Optional, one of `USER`, `ADMIN`, `MODERATOR` (default: `USER`)
+- `role`: Optional, one of `USER`, `ADMIN` (default: `USER`)
 
 **Response** (201 Created):
 

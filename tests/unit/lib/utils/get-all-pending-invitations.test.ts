@@ -109,7 +109,7 @@ describe('getAllPendingInvitations()', () => {
       // Arrange
       const mockVerifications = [
         createMockVerification('alice@example.com', 'Alice Johnson', 'USER', 'admin-1', 7),
-        createMockVerification('bob@example.com', 'Bob Smith', 'MODERATOR', 'admin-2', 5),
+        createMockVerification('bob@example.com', 'Bob Smith', 'USER', 'admin-2', 5),
       ];
 
       const mockAdmin1 = createMockUser('admin-1', 'Admin One');
@@ -145,7 +145,7 @@ describe('getAllPendingInvitations()', () => {
       expect(bobInvitation).toMatchObject({
         email: 'bob@example.com',
         name: 'Bob Smith',
-        role: 'MODERATOR',
+        role: 'USER',
         invitedBy: 'admin-2',
         invitedByName: 'Admin Two',
       });

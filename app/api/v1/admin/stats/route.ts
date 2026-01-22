@@ -74,7 +74,6 @@ export async function GET() {
     const roleCountMap: Record<string, number> = {
       USER: 0,
       ADMIN: 0,
-      MODERATOR: 0,
     };
 
     for (const roleGroup of usersByRole) {
@@ -92,7 +91,6 @@ export async function GET() {
         byRole: {
           USER: roleCountMap['USER'] || 0,
           ADMIN: roleCountMap['ADMIN'] || 0,
-          MODERATOR: roleCountMap['MODERATOR'] || 0,
         },
       },
       system: {

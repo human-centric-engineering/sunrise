@@ -86,7 +86,7 @@ describe('components/admin/user-table', () => {
       name: 'Charlie Brown with a Very Long Name That Should Truncate',
       email: 'charlie.brown.with.very.long.email@example-domain.com',
       image: 'https://example.com/avatar3.jpg',
-      role: 'MODERATOR',
+      role: 'USER',
       emailVerified: true,
       createdAt: new Date('2025-03-10T08:15:00Z'),
     },
@@ -189,8 +189,7 @@ describe('components/admin/user-table', () => {
 
       // Assert: Role badges
       expect(screen.getByText('ADMIN')).toBeInTheDocument();
-      expect(screen.getByText('USER')).toBeInTheDocument(); // Null role displays as USER
-      expect(screen.getByText('MODERATOR')).toBeInTheDocument();
+      expect(screen.getAllByText('USER')).toHaveLength(2); // Two USER roles (one explicit, one null that displays as USER)
     });
 
     it('should render email verification status', () => {
@@ -779,7 +778,7 @@ describe('components/admin/user-table', () => {
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
       // Assert: Should display USER for null role
-      expect(screen.getByText('USER')).toBeInTheDocument();
+      expect(screen.getAllByText('USER')).toHaveLength(2); // Multiple USER roles expected
     });
 
     it('should handle users without avatar image', () => {

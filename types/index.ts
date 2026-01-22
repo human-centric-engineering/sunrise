@@ -13,8 +13,9 @@ import type { APIResponse } from './api';
  * User Role Types
  *
  * Defines the possible roles a user can have in the system.
+ * Add additional roles as needed (e.g., 'MODERATOR').
  */
-export type UserRole = 'USER' | 'ADMIN' | 'MODERATOR';
+export type UserRole = 'USER' | 'ADMIN';
 
 /**
  * User Email Preferences

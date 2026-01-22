@@ -75,7 +75,7 @@ export function StatsCards({ stats, isLoading }: StatsCardsProps) {
       <StatCard
         title="Total Users"
         value={stats.users.total}
-        description={`${stats.users.byRole.ADMIN} admins, ${stats.users.byRole.MODERATOR} moderators`}
+        description={`${stats.users.byRole.ADMIN} admins`}
         icon={<Users className="h-4 w-4" />}
       />
       <StatCard

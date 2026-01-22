@@ -266,7 +266,7 @@ describe('getServerUser()', () => {
     it('should return user with all properties', async () => {
       // Arrange
       const mockHeaders = createMockHeaders();
-      const mockSession = createMockSession('MODERATOR');
+      const mockSession = createMockSession('USER');
 
       vi.mocked(headers).mockResolvedValue(mockHeaders);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
@@ -281,7 +281,7 @@ describe('getServerUser()', () => {
         email: 'john@example.com',
         emailVerified: true,
         image: 'https://example.com/avatar.jpg',
-        role: 'MODERATOR',
+        role: 'USER',
       });
       expect(result?.createdAt).toBeInstanceOf(Date);
       expect(result?.updatedAt).toBeInstanceOf(Date);
@@ -378,21 +378,6 @@ describe('hasRole()', () => {
 
       // Assert: Verify false returned (null !== 'USER')
       expect(result).toBe(false);
-    });
-
-    it('should handle MODERATOR role correctly', async () => {
-      // Arrange: Mock user with MODERATOR role
-      const mockHeaders = createMockHeaders();
-      const mockSession = createMockSession('MODERATOR');
-
-      vi.mocked(headers).mockResolvedValue(mockHeaders);
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
-
-      // Act
-      const result = await hasRole('MODERATOR');
-
-      // Assert
-      expect(result).toBe(true);
     });
 
     it('should be case-sensitive for role matching', async () => {
@@ -577,22 +562,6 @@ describe('requireRole()', () => {
       expect(result).toEqual(mockSession);
       expect(result.user.role).toBe('USER');
     });
-
-    it('should return session for MODERATOR role', async () => {
-      // Arrange: Mock MODERATOR
-      const mockHeaders = createMockHeaders();
-      const mockSession = createMockSession('MODERATOR');
-
-      vi.mocked(headers).mockResolvedValue(mockHeaders);
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
-
-      // Act
-      const result = await requireRole('MODERATOR');
-
-      // Assert
-      expect(result).toEqual(mockSession);
-      expect(result.user.role).toBe('MODERATOR');
-    });
   });
 
   describe('with authenticated user but wrong role', () => {
@@ -621,9 +590,9 @@ describe('requireRole()', () => {
     });
 
     it('should throw error with specific role in message', async () => {
-      // Arrange: Mock MODERATOR trying to access ADMIN
+      // Arrange: Mock USER trying to access ADMIN
       const mockHeaders = createMockHeaders();
-      const mockSession = createMockSession('MODERATOR');
+      const mockSession = createMockSession('USER');
 
       vi.mocked(headers).mockResolvedValue(mockHeaders);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);

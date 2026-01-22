@@ -75,7 +75,7 @@ export function mockGetSession(session: MockSession | null) {
  *
  * Returns a complete mock session for an authenticated user
  */
-export function mockAuthenticatedUser(role: 'USER' | 'ADMIN' | 'MODERATOR' = 'USER') {
+export function mockAuthenticatedUser(role: 'USER' | 'ADMIN' = 'USER') {
   return createMockAuthSession({
     user: {
       id: 'cmjbv4i3x00003wsloputgwul',
@@ -112,13 +112,4 @@ export function mockUnauthenticatedUser() {
  */
 export function mockAdminUser() {
   return mockAuthenticatedUser('ADMIN');
-}
-
-/**
- * Mock moderator user
- *
- * Returns a complete mock session for a moderator user
- */
-export function mockModeratorUser() {
-  return mockAuthenticatedUser('MODERATOR');
 }

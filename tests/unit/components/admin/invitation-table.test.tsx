@@ -61,7 +61,7 @@ describe('components/admin/invitation-table', () => {
     {
       email: 'bob@example.com',
       name: 'Bob Smith',
-      role: 'MODERATOR',
+      role: 'USER',
       invitedBy: 'admin-2',
       invitedByName: 'Another Admin',
       invitedAt: new Date('2025-01-18T14:30:00Z'),
@@ -144,8 +144,7 @@ describe('components/admin/invitation-table', () => {
       render(<InvitationTable initialInvitations={mockInvitations} initialMeta={mockMeta} />);
 
       // Assert: Role badges
-      expect(screen.getByText('USER')).toBeInTheDocument();
-      expect(screen.getByText('MODERATOR')).toBeInTheDocument();
+      expect(screen.getAllByText('USER')).toHaveLength(2); // Two USER invitations
       expect(screen.getByText('ADMIN')).toBeInTheDocument();
     });
 

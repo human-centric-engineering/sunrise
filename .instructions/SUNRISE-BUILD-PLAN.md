@@ -255,7 +255,7 @@ model VerificationToken { ... }
 - Template/placeholder for additional OAuth providers
 - Session management (JWT-based)
 - Protected routes with middleware
-- Role-based access control (USER, ADMIN, MODERATOR)
+- Role-based access control (USER, ADMIN)
 
 **Breaking Change from Original Plan:**
 

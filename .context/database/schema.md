@@ -79,7 +79,6 @@ datasource db {
 enum Role {
   USER
   ADMIN
-  MODERATOR
 }
 
 model User {
@@ -348,7 +347,6 @@ expires   DateTime
 enum Role {
   USER
   ADMIN
-  MODERATOR
 }
 
 role Role @default(USER)

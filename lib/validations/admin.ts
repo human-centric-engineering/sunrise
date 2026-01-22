@@ -116,7 +116,7 @@ export const adminUserUpdateSchema = z.object({
     .optional(),
 
   /** User's role */
-  role: z.enum(['USER', 'ADMIN', 'MODERATOR']).optional(),
+  role: z.enum(['USER', 'ADMIN']).optional(),
 
   /** Whether email is verified */
   emailVerified: z.boolean().optional(),
