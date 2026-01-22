@@ -9,6 +9,20 @@
 import type { User } from './prisma';
 import type { APIResponse } from './api';
 
+// Re-export storage types
+export type {
+  StorageProvider,
+  StorageProviderType,
+  StorageConfig,
+  UploadOptions,
+  UploadResult,
+  DeleteResult,
+  AvatarUploadRequest,
+  AvatarUploadResponse,
+  AvatarDeleteResponse,
+  StorageStatus,
+} from './storage';
+
 /**
  * User Role Types
  *

@@ -50,6 +50,8 @@
   },
   "homepage": "https://github.com/human-centric-engineering/sunrise#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.972.0",
+    "@aws-sdk/s3-request-presigner": "^3.972.0",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/adapter-pg": "^7.1.0",
     "@prisma/client": "^7.1.0",
@@ -66,6 +68,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@react-email/components": "^1.0.3",
     "@sentry/nextjs": "^10.34.0",
+    "@vercel/blob": "^2.0.0",
     "better-auth": "^1.4.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -79,6 +82,7 @@
     "react-email": "^5.1.1",
     "react-hook-form": "^7.68.0",
     "resend": "^6.6.0",
+    "sharp": "^0.34.5",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
