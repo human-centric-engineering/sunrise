@@ -8,6 +8,7 @@ Quick reference for the Sunrise type system organization and key files.
 types/
 ├── index.ts          # Domain types (User, Auth, etc.)
 ├── api.ts            # API request/response types
+├── admin.ts          # Admin dashboard types
 └── prisma.ts         # Prisma model exports
 
 lib/validations/
@@ -83,6 +84,33 @@ lib/api/
 - Importing database model types
 - Using Prisma utility types (Select, Include, Where, etc.)
 - Type-safe Prisma queries
+
+### Admin Types (`types/admin.ts`)
+
+**Purpose:** Types for admin dashboard functionality (Phase 4.4)
+
+**Exports:**
+
+- `SystemStats` - Dashboard overview statistics (user counts, system info)
+- `LogEntry` - Log entry structure with level, message, context, error details
+- `LogsQuery` - Query parameters for log filtering
+- `FeatureFlagWithMeta` - Feature flag with parsed metadata
+- `CreateFeatureFlagInput` - Input for creating feature flags
+- `UpdateFeatureFlagInput` - Input for updating feature flags
+- `AdminUserUpdateInput` - Fields an admin can update on a user
+- `AdminUser` - User data as seen by admins (extended view)
+- `SystemStatsResponse` - API response for system stats
+- `LogsResponse` - Paginated API response for logs
+- `FeatureFlagResponse` - API response for single feature flag
+- `FeatureFlagsResponse` - API response for feature flag list
+- `AdminUserResponse` - API response for admin user operations
+
+**When to use:**
+
+- Building admin dashboard components
+- Typing admin API route requests/responses
+- Working with feature flags
+- Implementing user management features
 
 ### Validation Schemas (`lib/validations/`)
 
@@ -175,6 +203,15 @@ import { PublicUser, UserRole, AuthSession } from '@/types';
 
 // API types
 import type { APIResponse, PaginationMeta } from '@/types/api';
+
+// Admin types
+import type {
+  SystemStats,
+  LogEntry,
+  FeatureFlagWithMeta,
+  AdminUser,
+  AdminUserUpdateInput,
+} from '@/types/admin';
 
 // Prisma types
 import { User, Session, Prisma } from '@/types/prisma';

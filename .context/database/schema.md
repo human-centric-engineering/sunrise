@@ -56,6 +56,17 @@ erDiagram
         string token UK
         datetime expires
     }
+
+    FeatureFlag {
+        string id PK
+        string name UK
+        boolean enabled
+        string description
+        json metadata
+        datetime createdAt
+        datetime updatedAt
+        string createdBy
+    }
 ```
 
 ## Prisma Schema
@@ -154,6 +165,24 @@ model VerificationToken {
   @@index([identifier])
   @@index([token])
   @@map("verification_tokens")
+}
+
+// ============================================
+// Feature Flags (Phase 4.4)
+// ============================================
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  name        String   @unique           // e.g., "ENABLE_BETA_FEATURES"
+  enabled     Boolean  @default(false)
+  description String?  @db.Text
+  metadata    Json?    @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  @@index([name])
+  @@map("feature_flag")
 }
 
 // ============================================
@@ -306,6 +335,50 @@ email String @unique              // Single field unique
 - Enforce business rules (one email per user)
 - Prevent duplicate OAuth connections
 - Automatically creates index
+
+## Model: FeatureFlag
+
+The `FeatureFlag` model provides runtime feature toggle functionality for the admin dashboard. Administrators can enable or disable features without code deployments.
+
+### Fields
+
+| Field       | Type     | Constraints    | Description                                                       |
+| ----------- | -------- | -------------- | ----------------------------------------------------------------- |
+| id          | String   | PK, CUID       | Unique identifier                                                 |
+| name        | String   | Unique         | Flag name in SCREAMING_SNAKE_CASE (e.g., `ENABLE_BETA_FEATURES`)  |
+| enabled     | Boolean  | Default: false | Whether the feature is currently enabled                          |
+| description | String?  | Text           | Human-readable description of what the flag controls              |
+| metadata    | Json?    | Default: `{}`  | Additional configuration as JSON (rollout %, user segments, etc.) |
+| createdAt   | DateTime | Default: now() | When the flag was created                                         |
+| updatedAt   | DateTime | Auto-updated   | When the flag was last modified                                   |
+| createdBy   | String?  | -              | User ID of the admin who created the flag                         |
+
+### Indexes
+
+- `@@index([name])` - Fast lookup by flag name for feature checks
+
+### Usage
+
+Feature flags are managed through the admin dashboard at `/admin/features`. The system supports:
+
+- **Boolean toggles**: Simple on/off for features
+- **Metadata storage**: JSON field for complex configurations (rollout percentages, user segments)
+- **Audit trail**: `createdBy` tracks which admin created each flag
+
+### Query Patterns
+
+```typescript
+// Check if a feature is enabled
+const flag = await prisma.featureFlag.findUnique({
+  where: { name: 'ENABLE_BETA_FEATURES' },
+  select: { enabled: true },
+});
+
+// List all flags for admin dashboard
+const flags = await prisma.featureFlag.findMany({
+  orderBy: { name: 'asc' },
+});
+```
 
 ## Table Naming Convention
 
