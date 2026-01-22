@@ -165,7 +165,7 @@ export interface ProcessedImage {
  * Process an image: validate, resize, and optimize
  *
  * - Validates the image using magic bytes
- * - Resizes if larger than max dimensions (preserves aspect ratio)
+ * - Crops to square and resizes to max dimensions (centre crop)
  * - Optimizes quality for smaller file size
  * - Converts GIF to PNG (Sharp has limited GIF support)
  *
@@ -218,17 +218,19 @@ export async function processImage(
     }
   }
 
-  // Resize if needed (only shrink, don't enlarge)
-  const needsResize =
-    (metadata.width && metadata.width > maxWidth) ||
-    (metadata.height && metadata.height > maxHeight);
+  // Resize and crop to square (for avatars)
+  // Always crop to square; only shrink, don't enlarge
+  const targetSize = Math.min(
+    maxWidth,
+    maxHeight,
+    metadata.width || maxWidth,
+    metadata.height || maxHeight
+  );
 
-  if (needsResize) {
-    image = image.resize(maxWidth, maxHeight, {
-      fit: 'inside', // Maintain aspect ratio, fit within bounds
-      withoutEnlargement: true, // Don't upscale small images
-    });
-  }
+  image = image.resize(targetSize, targetSize, {
+    fit: 'cover', // Crop to fill exact dimensions (square for avatars)
+    position: 'centre', // Crop from centre
+  });
 
   // Apply format and quality
   switch (outputFormat) {
@@ -256,7 +258,7 @@ export async function processImage(
     processedSize: processedBuffer.length,
     width: processedMetadata.width,
     height: processedMetadata.height,
-    wasResized: needsResize,
+    targetSize,
   });
 
   return {
