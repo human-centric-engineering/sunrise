@@ -4,6 +4,8 @@ import { LogsViewer } from '@/components/admin/logs-viewer';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
 
+const DEFAULT_PAGE_LIMIT = 50;
+
 export const metadata: Metadata = {
   title: 'Logs',
   description: 'View application logs',
@@ -31,7 +33,7 @@ async function getLogs(): Promise<{
       .join('; ');
 
     const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/logs?limit=50`,
+      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/logs?limit=${DEFAULT_PAGE_LIMIT}`,
       {
         headers: {
           Cookie: cookieHeader,
@@ -43,7 +45,7 @@ async function getLogs(): Promise<{
     if (!res.ok) {
       return {
         logs: [],
-        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
@@ -52,18 +54,23 @@ async function getLogs(): Promise<{
     if (!data.success) {
       return {
         logs: [],
-        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
       };
     }
 
     return {
       logs: data.data,
-      meta: data.meta || { page: 1, limit: 50, total: data.data.length, totalPages: 1 },
+      meta: data.meta || {
+        page: 1,
+        limit: DEFAULT_PAGE_LIMIT,
+        total: data.data.length,
+        totalPages: 1,
+      },
     };
   } catch {
     return {
       logs: [],
-      meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
     };
   }
 }
