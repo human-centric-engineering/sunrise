@@ -155,22 +155,10 @@ export async function DELETE(_request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Delete from storage using fixed key
+    // Delete avatar and its folder from storage
     if (isStorageEnabled()) {
-      const storage = await import('@/lib/storage/client').then((m) => m.getStorageClient());
-      if (storage) {
-        try {
-          const key = `avatars/${userId}/avatar.jpg`;
-          await storage.delete(key);
-          logger.info('Avatar deleted from storage', { userId, key });
-        } catch (deleteError) {
-          // Log but continue with database update
-          logger.warn('Failed to delete avatar from storage', {
-            userId,
-            error: deleteError instanceof Error ? deleteError.message : 'Unknown error',
-          });
-        }
-      }
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+      await deleteByPrefix(`avatars/${userId}/`);
     }
 
     // Clear avatar URL in database

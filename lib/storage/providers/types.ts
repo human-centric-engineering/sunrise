@@ -78,6 +78,17 @@ export interface StorageProvider {
   delete(key: string): Promise<DeleteResult>;
 
   /**
+   * Delete all files under a key prefix
+   *
+   * Removes all objects matching the prefix (e.g., 'avatars/user-123/').
+   * For local storage, also removes the directory itself.
+   *
+   * @param prefix - Key prefix to match (e.g., 'avatars/user-123/')
+   * @returns Delete result indicating success/failure
+   */
+  deletePrefix(prefix: string): Promise<DeleteResult>;
+
+  /**
    * Generate a signed URL for private file access (optional)
    *
    * @param key - Storage key of the file

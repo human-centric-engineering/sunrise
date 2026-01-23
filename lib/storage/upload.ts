@@ -191,6 +191,37 @@ export async function deleteAvatar(avatarUrl: string): Promise<DeleteResult> {
 }
 
 /**
+ * Delete all files under a storage prefix
+ *
+ * Used for cleaning up all files belonging to a user (e.g., on account deletion).
+ *
+ * @param prefix - Storage key prefix (e.g., 'avatars/user-123/')
+ * @returns Delete result
+ *
+ * @example
+ * ```typescript
+ * await deleteByPrefix(`avatars/${userId}/`);
+ * ```
+ */
+export async function deleteByPrefix(prefix: string): Promise<DeleteResult> {
+  const storage = getStorageClient();
+  if (!storage) {
+    logger.warn('Cannot delete by prefix - storage not configured', { prefix });
+    return { success: false, key: prefix };
+  }
+
+  const result = await storage.deletePrefix(prefix);
+
+  if (result.success) {
+    logger.info('Files deleted by prefix', { prefix, provider: storage.name });
+  } else {
+    logger.warn('Failed to delete files by prefix', { prefix, provider: storage.name });
+  }
+
+  return result;
+}
+
+/**
  * Re-export storage status check
  */
 export { isStorageEnabled };

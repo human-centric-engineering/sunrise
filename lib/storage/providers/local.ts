@@ -9,7 +9,7 @@
  * @see .context/storage/overview.md for configuration documentation
  */
 
-import { writeFile, unlink, mkdir } from 'fs/promises';
+import { writeFile, unlink, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
@@ -96,6 +96,24 @@ export class LocalProvider implements StorageProvider {
         success: false,
         key,
       };
+    }
+  }
+
+  async deletePrefix(prefix: string): Promise<DeleteResult> {
+    const dirPath = join(this.baseDir, prefix);
+
+    try {
+      if (existsSync(dirPath)) {
+        await rm(dirPath, { recursive: true });
+        logger.info('Directory deleted from local storage', { prefix, dirPath });
+      } else {
+        logger.debug('Directory not found for deletion', { prefix, dirPath });
+      }
+
+      return { success: true, key: prefix };
+    } catch (error) {
+      logger.error('Failed to delete directory from local storage', error, { prefix, dirPath });
+      return { success: false, key: prefix };
     }
   }
 

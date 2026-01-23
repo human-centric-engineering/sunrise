@@ -11,7 +11,9 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
@@ -135,6 +137,44 @@ export class S3Provider implements StorageProvider {
         success: false,
         key,
       };
+    }
+  }
+
+  async deletePrefix(prefix: string): Promise<DeleteResult> {
+    try {
+      // List all objects with the prefix
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: prefix,
+      });
+
+      const listResult = await this.client.send(listCommand);
+      const objects = listResult.Contents;
+
+      if (!objects || objects.length === 0) {
+        logger.debug('No objects found for prefix', { prefix });
+        return { success: true, key: prefix };
+      }
+
+      // Batch delete all objects
+      const deleteCommand = new DeleteObjectsCommand({
+        Bucket: this.bucket,
+        Delete: {
+          Objects: objects.map((obj) => ({ Key: obj.Key })),
+        },
+      });
+
+      await this.client.send(deleteCommand);
+
+      logger.info('Objects deleted from S3 by prefix', {
+        prefix,
+        count: objects.length,
+      });
+
+      return { success: true, key: prefix };
+    } catch (error) {
+      logger.error('Failed to delete objects from S3 by prefix', error, { prefix });
+      return { success: false, key: prefix };
     }
   }
 

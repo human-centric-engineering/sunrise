@@ -8,7 +8,7 @@
  * @see .context/storage/overview.md for configuration documentation
  */
 
-import { put, del } from '@vercel/blob';
+import { put, del, list } from '@vercel/blob';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
 import { logger } from '@/lib/logging';
 
@@ -78,6 +78,32 @@ export class VercelBlobProvider implements StorageProvider {
         success: false,
         key,
       };
+    }
+  }
+
+  async deletePrefix(prefix: string): Promise<DeleteResult> {
+    try {
+      // List all blobs matching the prefix
+      const { blobs } = await list({ prefix, token: this.token });
+
+      if (blobs.length === 0) {
+        logger.debug('No blobs found for prefix', { prefix });
+        return { success: true, key: prefix };
+      }
+
+      // Delete all matching blobs
+      const urls = blobs.map((blob) => blob.url);
+      await del(urls, { token: this.token });
+
+      logger.info('Blobs deleted from Vercel Blob by prefix', {
+        prefix,
+        count: blobs.length,
+      });
+
+      return { success: true, key: prefix };
+    } catch (error) {
+      logger.error('Failed to delete blobs from Vercel Blob by prefix', error, { prefix });
+      return { success: false, key: prefix };
     }
   }
 

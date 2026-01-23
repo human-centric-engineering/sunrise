@@ -93,6 +93,7 @@ describe('lib/storage/upload', () => {
         name: 'mock',
         upload: vi.fn(),
         delete: vi.fn(),
+        deletePrefix: vi.fn(),
       };
 
       const { getStorageClient } = await import('@/lib/storage/client');
@@ -117,6 +118,7 @@ describe('lib/storage/upload', () => {
           size: 1000,
         }),
         delete: vi.fn(),
+        deletePrefix: vi.fn(),
       };
 
       const { getStorageClient } = await import('@/lib/storage/client');
@@ -177,6 +179,7 @@ describe('lib/storage/upload', () => {
         name: 's3',
         upload: vi.fn(),
         delete: vi.fn().mockResolvedValue({ success: true, key: 'avatars/user-123/abc.jpg' }),
+        deletePrefix: vi.fn(),
       };
 
       const { getStorageClient } = await import('@/lib/storage/client');
@@ -195,6 +198,7 @@ describe('lib/storage/upload', () => {
         name: 'vercel-blob',
         upload: vi.fn(),
         delete: vi.fn().mockResolvedValue({ success: true, key: 'https://vercel.blob/abc.jpg' }),
+        deletePrefix: vi.fn(),
       };
 
       const { getStorageClient } = await import('@/lib/storage/client');

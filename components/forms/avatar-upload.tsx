@@ -12,6 +12,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, Loader2, Camera, Trash2 } from 'lucide-react';
+import { authClient } from '@/lib/auth/client';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -101,6 +102,8 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
           throw new Error(result.error?.message ?? 'Upload failed');
         }
 
+        // Refresh the session cache so useSession() picks up the new image URL
+        await authClient.getSession();
         router.refresh();
       } catch (err) {
         if (err instanceof Error) {
@@ -182,7 +185,9 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
     apiClient
       .delete('/api/v1/users/me/avatar')
-      .then(() => {
+      .then(async () => {
+        // Refresh the session cache so useSession() picks up the removed image
+        await authClient.getSession();
         router.refresh();
       })
       .catch((err: unknown) => {
