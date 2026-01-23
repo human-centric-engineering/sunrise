@@ -7,9 +7,8 @@
  * @see .context/storage/overview.md for architecture documentation
  */
 
-import { randomUUID } from 'crypto';
 import { getStorageClient, isStorageEnabled } from './client';
-import { processImage, getExtensionForMimeType, type ProcessImageOptions } from './image';
+import { processImage, type ProcessImageOptions } from './image';
 import type { UploadResult, DeleteResult } from './providers/types';
 import { logger } from '@/lib/logging';
 
@@ -59,8 +58,8 @@ export interface AvatarUploadResult extends UploadResult {
 /**
  * Upload an avatar image
  *
- * Validates, processes (resize), and uploads an avatar image.
- * Generates a unique key to prevent filename collisions.
+ * Validates, processes (resize/crop to square JPEG), and uploads.
+ * Uses a fixed storage key per user so new uploads overwrite the previous one.
  *
  * @param file - Image file as Buffer
  * @param options - Upload options
@@ -69,7 +68,7 @@ export interface AvatarUploadResult extends UploadResult {
  * @example
  * ```typescript
  * const result = await uploadAvatar(buffer, { userId: 'user-123' });
- * console.log(result.url); // https://storage.example.com/avatars/user-123/abc.jpg
+ * console.log(result.url); // https://storage.example.com/avatars/user-123/avatar.jpg
  * ```
  */
 export async function uploadAvatar(
@@ -91,24 +90,23 @@ export async function uploadAvatar(
     throw new Error(`File size exceeds maximum of ${maxSizeMB} MB`);
   }
 
-  // Process image (validates, resizes, optimizes)
+  // Process image (validates, crops to square, outputs JPEG)
   const processOptions: ProcessImageOptions = {
     maxWidth,
     maxHeight,
     quality,
+    format: 'jpeg',
   };
 
   const processed = await processImage(file, processOptions);
 
-  // Generate unique storage key
-  const extension = getExtensionForMimeType(processed.mimeType);
-  const uniqueId = randomUUID().slice(0, 8);
-  const key = `avatars/${userId}/${uniqueId}.${extension}`;
+  // Fixed key per user - overwrites previous avatar
+  const key = `avatars/${userId}/avatar.jpg`;
 
-  // Upload to storage
+  // Upload to storage (overwrites existing file at same key)
   const result = await storage.upload(processed.buffer, {
     key,
-    contentType: processed.mimeType,
+    contentType: 'image/jpeg',
     metadata: {
       userId,
       uploadedAt: new Date().toISOString(),

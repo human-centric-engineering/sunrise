@@ -15,7 +15,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { UnauthorizedError, APIError, handleAPIError, ErrorCodes } from '@/lib/api/errors';
-import { uploadAvatar, deleteAvatar, isStorageEnabled, getMaxFileSize } from '@/lib/storage/upload';
+import { uploadAvatar, isStorageEnabled, getMaxFileSize } from '@/lib/storage/upload';
 import { validateImageMagicBytes, SUPPORTED_IMAGE_TYPES } from '@/lib/storage/image';
 import { logger } from '@/lib/logging';
 
@@ -94,46 +94,28 @@ export async function POST(request: NextRequest) {
       detectedType: validation.detectedType,
     });
 
-    // Get current user to check for existing avatar
-    const currentUser = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { image: true },
-    });
-
-    // Upload new avatar
+    // Upload avatar (overwrites existing file at same key)
     const result = await uploadAvatar(buffer, { userId });
 
-    // Delete old avatar if exists
-    if (currentUser?.image) {
-      try {
-        await deleteAvatar(currentUser.image);
-        logger.info('Previous avatar deleted', { userId, oldUrl: currentUser.image });
-      } catch (deleteError) {
-        // Log but don't fail the upload if old file deletion fails
-        logger.warn('Failed to delete previous avatar', {
-          userId,
-          oldUrl: currentUser.image,
-          error: deleteError instanceof Error ? deleteError.message : 'Unknown error',
-        });
-      }
-    }
+    // Store URL with cache-busting timestamp so browsers fetch the new image
+    const cacheBustedUrl = `${result.url}?v=${Date.now()}`;
 
-    // Update user with new avatar URL
+    // Update user with cache-busted avatar URL
     await prisma.user.update({
       where: { id: userId },
-      data: { image: result.url },
+      data: { image: cacheBustedUrl },
     });
 
     logger.info('Avatar upload completed', {
       userId,
-      url: result.url,
+      url: cacheBustedUrl,
       size: result.size,
       width: result.width,
       height: result.height,
     });
 
     return successResponse({
-      url: result.url,
+      url: cacheBustedUrl,
       key: result.key,
       size: result.size,
       width: result.width,
@@ -156,7 +138,7 @@ export async function POST(request: NextRequest) {
  * DELETE /api/v1/users/me/avatar
  *
  * Removes the current user's avatar image.
- * Deletes from storage and sets user.image to null.
+ * Deletes from storage using the fixed key and sets user.image to null.
  *
  * @returns { success: true, message: "Avatar removed" }
  * @throws UnauthorizedError if not authenticated
@@ -173,31 +155,21 @@ export async function DELETE(_request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Get current avatar URL
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { image: true },
-    });
-
-    if (!user?.image) {
-      return successResponse({
-        success: true,
-        message: 'No avatar to remove',
-      });
-    }
-
-    // Delete from storage
+    // Delete from storage using fixed key
     if (isStorageEnabled()) {
-      try {
-        await deleteAvatar(user.image);
-        logger.info('Avatar deleted from storage', { userId, url: user.image });
-      } catch (deleteError) {
-        // Log but continue with database update
-        logger.warn('Failed to delete avatar from storage', {
-          userId,
-          url: user.image,
-          error: deleteError instanceof Error ? deleteError.message : 'Unknown error',
-        });
+      const storage = await import('@/lib/storage/client').then((m) => m.getStorageClient());
+      if (storage) {
+        try {
+          const key = `avatars/${userId}/avatar.jpg`;
+          await storage.delete(key);
+          logger.info('Avatar deleted from storage', { userId, key });
+        } catch (deleteError) {
+          // Log but continue with database update
+          logger.warn('Failed to delete avatar from storage', {
+            userId,
+            error: deleteError instanceof Error ? deleteError.message : 'Unknown error',
+          });
+        }
       }
     }
 

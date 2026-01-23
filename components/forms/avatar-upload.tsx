@@ -3,18 +3,19 @@
 /**
  * Avatar Upload Component
  *
- * Allows users to upload, preview, and remove their profile picture.
- * Supports drag-and-drop and click-to-upload.
+ * Allows users to upload, crop, and remove their profile picture.
+ * Supports drag-and-drop and click-to-upload with a crop dialog.
  *
  * @see .context/storage/overview.md for storage documentation
  */
 
 import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, X, Loader2, Camera, Trash2 } from 'lucide-react';
+import { Upload, Loader2, Camera, Trash2 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { AvatarCropDialog } from './avatar-crop-dialog';
 
 /**
  * Supported image MIME types (must match server-side validation)
@@ -22,15 +23,6 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_FILE_SIZE_MB = 5;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
-
-/**
- * API error response shape
- */
-interface APIErrorResponse {
-  error?: {
-    message?: string;
-  };
-}
 
 interface AvatarUploadProps {
   /** Current avatar URL */
@@ -48,19 +40,16 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Clear preview and error state
-  const resetState = useCallback(() => {
-    setPreview(null);
-    setError(null);
-  }, []);
+  // Crop dialog state
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [showCropDialog, setShowCropDialog] = useState(false);
 
-  // Validate file before upload
+  // Validate file before showing cropper
   const validateFile = (file: File): string | null => {
     if (!SUPPORTED_TYPES.includes(file.type)) {
-      return `Invalid file type. Supported: JPEG, PNG, WebP, GIF`;
+      return 'Invalid file type. Supported: JPEG, PNG, WebP, GIF';
     }
     if (file.size > MAX_FILE_SIZE) {
       return `File too large. Maximum size: ${MAX_FILE_SIZE_MB} MB`;
@@ -68,68 +57,79 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
     return null;
   };
 
-  // Handle file selection
-  const handleFileSelect = useCallback(
-    async (file: File) => {
-      resetState();
+  // Handle file selection - show crop dialog
+  const handleFileSelect = useCallback((file: File) => {
+    setError(null);
 
-      // Validate
-      const validationError = validateFile(file);
-      if (validationError) {
-        setError(validationError);
-        return;
+    const validationError = validateFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    // Create object URL for the cropper
+    const imageUrl = URL.createObjectURL(file);
+    setCropImageSrc(imageUrl);
+    setShowCropDialog(true);
+  }, []);
+
+  // Handle crop confirmation - upload the cropped blob
+  const handleCropConfirm = useCallback(
+    async (croppedBlob: Blob) => {
+      setShowCropDialog(false);
+
+      // Clean up the source image URL
+      if (cropImageSrc) {
+        URL.revokeObjectURL(cropImageSrc);
+        setCropImageSrc(null);
       }
 
-      // Show preview
-      const previewUrl = URL.createObjectURL(file);
-      setPreview(previewUrl);
-
-      // Upload
       try {
         setIsUploading(true);
         setError(null);
 
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', croppedBlob, 'avatar.jpg');
 
-        // Use fetch directly for FormData (apiClient doesn't support FormData)
         const response = await fetch('/api/v1/users/me/avatar', {
           method: 'POST',
           body: formData,
         });
 
-        const result = (await response.json()) as APIErrorResponse;
-
         if (!response.ok) {
+          const result = (await response.json()) as { error?: { message?: string } };
           throw new Error(result.error?.message ?? 'Upload failed');
         }
 
-        // Refresh to show new avatar
         router.refresh();
-        setPreview(null);
       } catch (err) {
         if (err instanceof Error) {
           setError(err.message);
         } else {
           setError('Failed to upload avatar');
         }
-        setPreview(null);
       } finally {
         setIsUploading(false);
-        // Clean up preview URL
-        URL.revokeObjectURL(previewUrl);
       }
     },
-    [router, resetState]
+    [router, cropImageSrc]
   );
+
+  // Handle crop cancellation
+  const handleCropCancel = useCallback(() => {
+    setShowCropDialog(false);
+    if (cropImageSrc) {
+      URL.revokeObjectURL(cropImageSrc);
+      setCropImageSrc(null);
+    }
+  }, [cropImageSrc]);
 
   // Handle input change
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      void handleFileSelect(file);
+      handleFileSelect(file);
     }
-    // Reset input value so same file can be selected again
     e.target.value = '';
   };
 
@@ -154,7 +154,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
       const file = e.dataTransfer.files?.[0];
       if (file) {
-        void handleFileSelect(file);
+        handleFileSelect(file);
       }
     },
     [handleFileSelect]
@@ -198,109 +198,115 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
   };
 
   const isLoading = isUploading || isDeleting;
-  const displayImage = preview || currentAvatar;
 
   return (
-    <div className="flex items-center gap-4">
-      {/* Avatar with upload overlay */}
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label="Upload avatar"
-        className={`relative cursor-pointer ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
-        onClick={handleClick}
-        onKeyDown={handleKeyDown}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <Avatar className="h-20 w-20">
-          <AvatarImage src={displayImage || undefined} alt={userName} />
-          <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-        </Avatar>
-
-        {/* Hover/drag overlay */}
+    <>
+      <div className="flex items-center gap-4">
+        {/* Avatar with upload overlay */}
         <div
-          className={`absolute inset-0 flex items-center justify-center rounded-full transition-all ${
-            isDragging
-              ? 'bg-primary/20 border-primary border-2'
-              : 'bg-black/50 opacity-0 hover:opacity-100'
-          }`}
+          role="button"
+          tabIndex={0}
+          aria-label="Upload avatar"
+          className={`relative cursor-pointer ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
+          onClick={handleClick}
+          onKeyDown={handleKeyDown}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
-          {isUploading ? (
-            <Loader2 className="h-6 w-6 animate-spin text-white" />
-          ) : (
-            <Camera className="h-6 w-6 text-white" />
-          )}
-        </div>
+          <Avatar className="h-20 w-20">
+            <AvatarImage src={currentAvatar || undefined} alt={userName} />
+            <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+          </Avatar>
 
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={SUPPORTED_TYPES.join(',')}
-          onChange={handleInputChange}
-          className="hidden"
-          disabled={isLoading}
-        />
-      </div>
-
-      {/* Info and actions */}
-      <div className="space-y-2">
-        <p className="font-medium">{userName}</p>
-
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleClick}
-            disabled={isLoading}
+          {/* Hover/drag overlay */}
+          <div
+            className={`absolute inset-0 flex items-center justify-center rounded-full transition-all ${
+              isDragging
+                ? 'bg-primary/20 border-primary border-2'
+                : 'bg-black/50 opacity-0 hover:opacity-100'
+            }`}
           >
             {isUploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
-              </>
+              <Loader2 className="h-6 w-6 animate-spin text-white" />
             ) : (
-              <>
-                <Upload className="mr-2 h-4 w-4" />
-                Upload
-              </>
+              <Camera className="h-6 w-6 text-white" />
             )}
-          </Button>
+          </div>
 
-          {currentAvatar && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleRemove}
-              disabled={isLoading}
-              className="text-destructive hover:text-destructive"
-            >
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-            </Button>
-          )}
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={SUPPORTED_TYPES.join(',')}
+            onChange={handleInputChange}
+            className="hidden"
+            disabled={isLoading}
+          />
         </div>
 
-        {/* File type hint */}
-        <p className="text-muted-foreground text-xs">
-          JPEG, PNG, WebP or GIF. Max {MAX_FILE_SIZE_MB}MB.
-        </p>
+        {/* Info and actions */}
+        <div className="space-y-2">
+          <p className="font-medium">{userName}</p>
 
-        {/* Error message */}
-        {error && (
-          <div className="text-destructive flex items-center gap-2 text-sm">
-            <X className="h-4 w-4" />
-            {error}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleClick}
+              disabled={isLoading}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload
+                </>
+              )}
+            </Button>
+
+            {currentAvatar && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleRemove}
+                disabled={isLoading}
+                className="text-destructive hover:text-destructive"
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+              </Button>
+            )}
           </div>
-        )}
+
+          {/* File type hint */}
+          <p className="text-muted-foreground text-xs">
+            JPEG, PNG, WebP or GIF. Max {MAX_FILE_SIZE_MB}MB.
+          </p>
+
+          {/* Error message */}
+          {error && <p className="text-destructive text-sm">{error}</p>}
+        </div>
       </div>
-    </div>
+
+      {/* Crop dialog */}
+      {cropImageSrc && (
+        <AvatarCropDialog
+          open={showCropDialog}
+          imageSrc={cropImageSrc}
+          onConfirm={(blob) => void handleCropConfirm(blob)}
+          onCancel={handleCropCancel}
+        />
+      )}
+    </>
   );
 }

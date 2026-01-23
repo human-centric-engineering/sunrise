@@ -141,7 +141,13 @@ describe('lib/storage/upload', () => {
       expect(result.url).toBe('https://storage.example.com/avatars/user-123/abc.jpg');
       expect(result.width).toBe(500);
       expect(result.height).toBe(500);
-      expect(mockProvider.upload).toHaveBeenCalled();
+      expect(mockProvider.upload).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({
+          key: 'avatars/user-123/avatar.jpg',
+          contentType: 'image/jpeg',
+        })
+      );
       expect(logger.info).toHaveBeenCalledWith(
         'Avatar uploaded',
         expect.objectContaining({ userId: 'user-123' })
