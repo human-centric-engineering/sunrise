@@ -4,23 +4,33 @@ Complete reference for all environment variables used in Sunrise. This document 
 
 ## Quick Reference Table
 
-| Variable                                                                    | Required | Type         | Default       | Phase | Description                  |
-| --------------------------------------------------------------------------- | -------- | ------------ | ------------- | ----- | ---------------------------- |
-| [`DATABASE_URL`](#database_url)                                             | ✅ Yes   | URL          | -             | 1.3   | PostgreSQL connection string |
-| [`BETTER_AUTH_URL`](#better_auth_url)                                       | ✅ Yes   | URL          | -             | 1.4   | Application base URL         |
-| [`BETTER_AUTH_SECRET`](#better_auth_secret)                                 | ✅ Yes   | String (32+) | -             | 1.4   | JWT signing secret           |
-| [`GOOGLE_CLIENT_ID`](#google_client_id)                                     | ❌ No    | String       | -             | 1.4   | Google OAuth client ID       |
-| [`GOOGLE_CLIENT_SECRET`](#google_client_secret)                             | ❌ No    | String       | -             | 1.4   | Google OAuth secret          |
-| [`RESEND_API_KEY`](#resend_api_key)                                         | ❌ No    | String       | -             | 3.1   | Resend email API key         |
-| [`EMAIL_FROM`](#email_from)                                                 | ❌ No    | Email        | -             | 3.1   | Sender email address         |
-| [`EMAIL_FROM_NAME`](#email_from_name)                                       | ❌ No    | String       | -             | 3.1   | Sender display name          |
-| [`CONTACT_EMAIL`](#contact_email)                                           | ❌ No    | Email        | `EMAIL_FROM`  | 3.5   | Contact form notifications   |
-| [`NODE_ENV`](#node_env)                                                     | ✅ Yes   | Enum         | `development` | 1.1   | Environment name             |
-| [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)                               | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side) |
-| [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](#next_public_cookie_consent_enabled) | ❌ No    | Boolean      | `true`        | 3.5   | Enable cookie consent banner |
-| [`LOG_LEVEL`](#log_level)                                                   | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level            |
-| [`LOG_SANITIZE_PII`](#log_sanitize_pii)                                     | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs     |
-| [`ALLOWED_ORIGINS`](#allowed_origins)                                       | ❌ No    | String       | -             | 3.3   | CORS allowed origins         |
+| Variable                                                                    | Required | Type         | Default       | Phase | Description                   |
+| --------------------------------------------------------------------------- | -------- | ------------ | ------------- | ----- | ----------------------------- |
+| [`DATABASE_URL`](#database_url)                                             | ✅ Yes   | URL          | -             | 1.3   | PostgreSQL connection string  |
+| [`BETTER_AUTH_URL`](#better_auth_url)                                       | ✅ Yes   | URL          | -             | 1.4   | Application base URL          |
+| [`BETTER_AUTH_SECRET`](#better_auth_secret)                                 | ✅ Yes   | String (32+) | -             | 1.4   | JWT signing secret            |
+| [`GOOGLE_CLIENT_ID`](#google_client_id)                                     | ❌ No    | String       | -             | 1.4   | Google OAuth client ID        |
+| [`GOOGLE_CLIENT_SECRET`](#google_client_secret)                             | ❌ No    | String       | -             | 1.4   | Google OAuth secret           |
+| [`RESEND_API_KEY`](#resend_api_key)                                         | ❌ No    | String       | -             | 3.1   | Resend email API key          |
+| [`EMAIL_FROM`](#email_from)                                                 | ❌ No    | Email        | -             | 3.1   | Sender email address          |
+| [`EMAIL_FROM_NAME`](#email_from_name)                                       | ❌ No    | String       | -             | 3.1   | Sender display name           |
+| [`CONTACT_EMAIL`](#contact_email)                                           | ❌ No    | Email        | `EMAIL_FROM`  | 3.5   | Contact form notifications    |
+| [`NODE_ENV`](#node_env)                                                     | ✅ Yes   | Enum         | `development` | 1.1   | Environment name              |
+| [`NEXT_PUBLIC_APP_URL`](#next_public_app_url)                               | ✅ Yes   | URL          | -             | 1.4   | Public app URL (client-side)  |
+| [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](#next_public_cookie_consent_enabled) | ❌ No    | Boolean      | `true`        | 3.5   | Enable cookie consent banner  |
+| [`LOG_LEVEL`](#log_level)                                                   | ❌ No    | Enum         | Auto          | 2.1   | Minimum log level             |
+| [`LOG_SANITIZE_PII`](#log_sanitize_pii)                                     | ❌ No    | Boolean      | Auto          | 3.1   | PII sanitization in logs      |
+| [`ALLOWED_ORIGINS`](#allowed_origins)                                       | ❌ No    | String       | -             | 3.3   | CORS allowed origins          |
+| [`STORAGE_PROVIDER`](#storage_provider)                                     | ❌ No    | Enum         | Auto-detect   | 4.2   | Storage provider selection    |
+| [`MAX_FILE_SIZE_MB`](#max_file_size_mb)                                     | ❌ No    | Number       | `5`           | 4.2   | Max upload file size (MB)     |
+| [`S3_BUCKET`](#s3_bucket)                                                   | ⚠️ Cond  | String       | -             | 4.2   | S3 bucket name                |
+| [`S3_ACCESS_KEY_ID`](#s3_access_key_id)                                     | ⚠️ Cond  | String       | -             | 4.2   | AWS access key ID             |
+| [`S3_SECRET_ACCESS_KEY`](#s3_secret_access_key)                             | ⚠️ Cond  | String       | -             | 4.2   | AWS secret access key         |
+| [`S3_REGION`](#s3_region)                                                   | ❌ No    | String       | `us-east-1`   | 4.2   | AWS region                    |
+| [`S3_ENDPOINT`](#s3_endpoint)                                               | ❌ No    | URL          | -             | 4.2   | Custom S3-compatible endpoint |
+| [`S3_PUBLIC_URL_BASE`](#s3_public_url_base)                                 | ❌ No    | URL          | -             | 4.2   | CDN/domain for public URLs    |
+| [`S3_USE_ACL`](#s3_use_acl)                                                 | ❌ No    | Boolean      | `false`       | 4.2   | Enable ACL on uploads         |
+| [`BLOB_READ_WRITE_TOKEN`](#blob_read_write_token)                           | ⚠️ Cond  | String       | -             | 4.2   | Vercel Blob storage token     |
 
 ## Detailed Descriptions
 
@@ -970,6 +980,366 @@ ALLOWED_ORIGINS="https://app.example.com,https://api.example.com,capacitor://loc
 
 ---
 
+### Storage
+
+#### Provider Auto-Detection Behavior
+
+The storage system automatically selects a provider based on available credentials when `STORAGE_PROVIDER` is not explicitly set:
+
+1. **S3 credentials present** (`S3_BUCKET` + `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY`) → Uses S3
+2. **Vercel Blob token present** (`BLOB_READ_WRITE_TOKEN`) → Uses Vercel Blob
+3. **No credentials configured** → Falls back to local filesystem (`public/uploads/`)
+
+**Important:** The local filesystem provider is NOT suitable for production. Files stored locally do not persist across deploys on platforms like Vercel, Render, or Railway.
+
+#### `STORAGE_PROVIDER`
+
+- **Purpose:** Explicitly select the file storage provider instead of relying on auto-detection
+- **Required:** ❌ No
+- **Type:** Enum (`s3` | `vercel-blob` | `local`)
+- **Default:** Auto-detect from available credentials
+- **Validation:** Must be one of the allowed values
+- **Used By:**
+  - `lib/storage/provider.ts` - Storage provider initialization
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# Explicitly use S3 (AWS, MinIO, DigitalOcean Spaces, Cloudflare R2)
+STORAGE_PROVIDER="s3"
+
+# Explicitly use Vercel Blob
+STORAGE_PROVIDER="vercel-blob"
+
+# Explicitly use local filesystem (development only)
+STORAGE_PROVIDER="local"
+
+# Not set - auto-detects from available credentials
+# STORAGE_PROVIDER=
+```
+
+**When to Set Explicitly:**
+
+- When you have multiple provider credentials configured and want to force a specific one
+- When you want to use the local provider even though S3 credentials exist
+- When debugging storage issues and need to isolate the provider
+
+#### `MAX_FILE_SIZE_MB`
+
+- **Purpose:** Maximum allowed file upload size in megabytes
+- **Required:** ❌ No
+- **Type:** Number
+- **Default:** `5`
+- **Validation:** Must be a positive number
+- **Used By:**
+  - `lib/storage/config.ts` - Upload validation
+  - API route upload handlers
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# Default: 5MB limit
+MAX_FILE_SIZE_MB=5
+
+# Allow larger uploads (e.g., for document storage)
+MAX_FILE_SIZE_MB=25
+
+# Restrict to small files only (e.g., avatars)
+MAX_FILE_SIZE_MB=2
+```
+
+**Important Notes:**
+
+- This limit applies at the application level; your hosting platform may have additional limits
+- Vercel has a 4.5MB request body limit on the Hobby plan (configurable on Pro)
+- For large file uploads, consider using pre-signed URLs to upload directly to S3
+
+---
+
+#### S3 / S3-Compatible Storage
+
+These variables configure S3-compatible storage providers including AWS S3, MinIO, DigitalOcean Spaces, and Cloudflare R2.
+
+#### `S3_BUCKET`
+
+- **Purpose:** Name of the S3 bucket for file storage
+- **Required:** ⚠️ Conditionally (required when using S3 provider)
+- **Type:** String
+- **Format:** Valid S3 bucket name (lowercase, no spaces, 3-63 characters)
+- **Validation:** Must be a non-empty string when S3 is used
+- **Used By:**
+  - `lib/storage/s3.ts` - S3 client configuration
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# AWS S3
+S3_BUCKET="my-app-uploads"
+
+# DigitalOcean Spaces
+S3_BUCKET="my-space-name"
+
+# MinIO (local development)
+S3_BUCKET="local-uploads"
+```
+
+**Bucket Naming Rules:**
+
+- Must be 3-63 characters long
+- Can only contain lowercase letters, numbers, and hyphens
+- Must start and end with a letter or number
+- Cannot contain consecutive periods or hyphens
+- Cannot be formatted as an IP address
+
+#### `S3_ACCESS_KEY_ID`
+
+- **Purpose:** AWS access key ID (or equivalent for S3-compatible services)
+- **Required:** ⚠️ Conditionally (required when using S3 provider)
+- **Type:** String
+- **Format:** AWS-style access key (typically 20 characters, alphanumeric)
+- **Validation:** Must be a non-empty string when S3 is used
+- **Used By:**
+  - `lib/storage/s3.ts` - S3 client authentication
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# AWS
+S3_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+
+# MinIO
+S3_ACCESS_KEY_ID="minioadmin"
+
+# DigitalOcean Spaces
+S3_ACCESS_KEY_ID="DO00EXAMPLE1234567890"
+```
+
+**Security Notes:**
+
+- ⚠️ **Never commit to version control**
+- ⚠️ **Use IAM roles in production** when possible (avoids static credentials)
+- ⚠️ **Rotate regularly** (quarterly or after suspected compromise)
+- ⚠️ **Use least-privilege IAM policies** (only S3 bucket access needed)
+
+#### `S3_SECRET_ACCESS_KEY`
+
+- **Purpose:** AWS secret access key (or equivalent for S3-compatible services)
+- **Required:** ⚠️ Conditionally (required when using S3 provider)
+- **Type:** String
+- **Format:** AWS-style secret key (typically 40 characters)
+- **Validation:** Must be a non-empty string when S3 is used
+- **Used By:**
+  - `lib/storage/s3.ts` - S3 client authentication
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Example:**
+
+```bash
+S3_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+```
+
+**Security Notes:**
+
+- ⚠️ **Never commit to version control**
+- ⚠️ **Never expose in client-side code**
+- ⚠️ **Store in secret manager for production** (Vercel env vars, AWS Secrets Manager, etc.)
+- ⚠️ **Rotate immediately if compromised**
+
+#### `S3_REGION`
+
+- **Purpose:** AWS region for the S3 bucket (or equivalent region for S3-compatible services)
+- **Required:** ❌ No
+- **Type:** String
+- **Default:** `us-east-1`
+- **Validation:** None
+- **Used By:**
+  - `lib/storage/s3.ts` - S3 client configuration
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# AWS regions
+S3_REGION="us-east-1"
+S3_REGION="eu-west-1"
+S3_REGION="ap-southeast-1"
+
+# DigitalOcean Spaces
+S3_REGION="nyc3"
+S3_REGION="ams3"
+
+# Cloudflare R2 (uses auto)
+S3_REGION="auto"
+
+# MinIO (any value works)
+S3_REGION="us-east-1"
+```
+
+**Common Regions:**
+
+| Provider      | Region Examples                            |
+| ------------- | ------------------------------------------ |
+| AWS           | `us-east-1`, `eu-west-1`, `ap-southeast-1` |
+| DigitalOcean  | `nyc3`, `ams3`, `sgp1`, `sfo3`             |
+| Cloudflare R2 | `auto`                                     |
+| MinIO         | Any valid string (not used for routing)    |
+
+#### `S3_ENDPOINT`
+
+- **Purpose:** Custom endpoint URL for S3-compatible storage services (not needed for AWS S3)
+- **Required:** ❌ No (only needed for non-AWS S3-compatible services)
+- **Type:** URL
+- **Format:** `https://[endpoint-url]`
+- **Default:** AWS S3 default endpoint (based on region)
+- **Validation:** Must be a valid URL if provided
+- **Used By:**
+  - `lib/storage/s3.ts` - S3 client endpoint configuration
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# DigitalOcean Spaces
+S3_ENDPOINT="https://nyc3.digitaloceanspaces.com"
+
+# Cloudflare R2
+S3_ENDPOINT="https://[account-id].r2.cloudflarestorage.com"
+
+# MinIO (local development)
+S3_ENDPOINT="http://localhost:9000"
+
+# AWS S3 (leave unset - uses default)
+# S3_ENDPOINT=
+```
+
+**Provider-Specific Setup:**
+
+| Provider      | Endpoint Format                                 | Region     |
+| ------------- | ----------------------------------------------- | ---------- |
+| AWS S3        | Not needed (auto-resolved from region)          | AWS region |
+| DigitalOcean  | `https://[region].digitaloceanspaces.com`       | DO region  |
+| Cloudflare R2 | `https://[account-id].r2.cloudflarestorage.com` | `auto`     |
+| MinIO         | `http://localhost:9000` (or custom)             | Any        |
+| Backblaze B2  | `https://s3.[region].backblazeb2.com`           | B2 region  |
+
+#### `S3_PUBLIC_URL_BASE`
+
+- **Purpose:** Custom base URL for generating public file URLs (e.g., CDN domain or custom domain)
+- **Required:** ❌ No
+- **Type:** URL
+- **Format:** `https://[domain]` (no trailing slash)
+- **Default:** Standard S3 URL format based on bucket and region
+- **Validation:** Must be a valid URL if provided
+- **Used By:**
+  - `lib/storage/s3.ts` - Public URL generation
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# CloudFront CDN
+S3_PUBLIC_URL_BASE="https://d1234567890.cloudfront.net"
+
+# Custom domain
+S3_PUBLIC_URL_BASE="https://cdn.example.com"
+
+# DigitalOcean Spaces CDN
+S3_PUBLIC_URL_BASE="https://my-space.nyc3.cdn.digitaloceanspaces.com"
+
+# Not set - uses standard S3 URL format
+# S3_PUBLIC_URL_BASE=
+```
+
+**When to Use:**
+
+- CloudFront or other CDN in front of S3
+- Custom domain mapped to storage bucket
+- DigitalOcean Spaces CDN
+- Cloudflare in front of R2
+
+#### `S3_USE_ACL`
+
+- **Purpose:** Enable Access Control List (ACL) headers on S3 uploads
+- **Required:** ❌ No
+- **Type:** Boolean (`true` | `false`)
+- **Default:** `false`
+- **Validation:** Must be `true` or `false`
+- **Used By:**
+  - `lib/storage/s3.ts` - Upload ACL configuration
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Examples:**
+
+```bash
+# Modern buckets (recommended): ACL disabled, use bucket policy
+S3_USE_ACL=false
+
+# Legacy buckets: Enable ACL for public-read access
+S3_USE_ACL=true
+```
+
+**Important Notes:**
+
+- ⚠️ **Most modern S3 buckets have ACLs disabled by default** (AWS default since April 2023)
+- ⚠️ **Use bucket policies instead of ACLs** for access control (recommended)
+- ⚠️ **Only enable for legacy buckets** that require `public-read` ACL on individual objects
+- ⚠️ **Enabling on buckets with "Object Ownership: BucketOwnerEnforced"** will cause upload errors
+
+**When to Enable:**
+
+- Legacy S3 buckets created before April 2023 with ACLs enabled
+- Buckets configured with "Object Ownership: ObjectWriter" or "BucketOwnerPreferred"
+- DigitalOcean Spaces (which uses ACLs for public access)
+
+---
+
+#### Vercel Blob Storage
+
+#### `BLOB_READ_WRITE_TOKEN`
+
+- **Purpose:** Authentication token for Vercel Blob storage
+- **Required:** ⚠️ Conditionally (required when using Vercel Blob provider)
+- **Type:** String
+- **Format:** Vercel-issued token (starts with `vercel_blob_rw_`)
+- **Validation:** Must be a non-empty string when Vercel Blob is used
+- **Used By:**
+  - `lib/storage/vercel-blob.ts` - Vercel Blob client initialization
+- **Phase:** 4.2 (File Upload & Storage)
+
+**Example:**
+
+```bash
+BLOB_READ_WRITE_TOKEN="vercel_blob_rw_abc123def456..."
+```
+
+**How to Obtain:**
+
+1. Go to your Vercel project dashboard
+2. Navigate to **Storage** tab
+3. Click **Create Database** → **Blob**
+4. Name your store and create it
+5. Go to the store settings to find the token
+6. Copy the **Read-Write Token**
+
+**Important Notes:**
+
+- ⚠️ **Automatically available in Vercel deployments** when Blob storage is connected to the project
+- ⚠️ **Must be manually set for local development** (copy from Vercel dashboard)
+- ⚠️ **Never commit to version control**
+- ⚠️ **Read-write token grants full access** - store securely
+
+**Troubleshooting:**
+
+- **"Invalid token" error**: Verify token is copied correctly (starts with `vercel_blob_rw_`)
+- **Works in deployment but not locally**: Copy the token from Vercel dashboard to `.env.local`
+- **Upload fails with 403**: Ensure the token has read-write permissions (not read-only)
+
+---
+
 ## Environment-Specific Values
 
 ### Development (Local)
@@ -985,6 +1355,15 @@ RESEND_API_KEY=""
 EMAIL_FROM=""
 NODE_ENV="development"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Storage (optional - falls back to local filesystem in development)
+# STORAGE_PROVIDER="local"
+# S3_BUCKET=""
+# S3_ACCESS_KEY_ID=""
+# S3_SECRET_ACCESS_KEY=""
+# S3_REGION="us-east-1"
+# S3_ENDPOINT=""
+# MAX_FILE_SIZE_MB=5
 ```
 
 **Notes:**
@@ -992,6 +1371,7 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 - Use simple passwords for local database
 - OAuth and email can be left empty during early development
 - `BETTER_AUTH_SECRET` can be simple but still must be 32+ characters
+- Storage defaults to local filesystem (`public/uploads/`) when no credentials are configured
 
 ### Production
 
@@ -1006,6 +1386,19 @@ RESEND_API_KEY="[production-api-key]"
 EMAIL_FROM="noreply@example.com"
 NODE_ENV="production"
 NEXT_PUBLIC_APP_URL="https://app.example.com"
+
+# Storage (choose one provider)
+# Option A: AWS S3
+S3_BUCKET="my-app-uploads-prod"
+S3_ACCESS_KEY_ID="[from-secret-manager]"
+S3_SECRET_ACCESS_KEY="[from-secret-manager]"
+S3_REGION="us-east-1"
+S3_PUBLIC_URL_BASE="https://cdn.example.com"
+
+# Option B: Vercel Blob (auto-configured in Vercel deployments)
+# BLOB_READ_WRITE_TOKEN="[auto-set-by-vercel]"
+
+MAX_FILE_SIZE_MB=5
 ```
 
 **Important Production Changes:**
@@ -1016,6 +1409,7 @@ NEXT_PUBLIC_APP_URL="https://app.example.com"
 - ✅ Production OAuth credentials with correct redirect URIs
 - ✅ Verified email sending domain
 - ✅ Different `BETTER_AUTH_SECRET` from development
+- ✅ Configure a persistent storage provider (S3 or Vercel Blob) - local filesystem does NOT persist across deploys
 
 ### Docker
 
@@ -1029,6 +1423,13 @@ BETTER_AUTH_URL="http://localhost:3000"  # Still localhost from host perspective
 BETTER_AUTH_SECRET="docker-secret-at-least-32-characters"
 NODE_ENV="development"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Storage with MinIO (S3-compatible, runs in Docker)
+S3_BUCKET="sunrise-uploads"
+S3_ACCESS_KEY_ID="minioadmin"
+S3_SECRET_ACCESS_KEY="minioadmin"
+S3_REGION="us-east-1"
+S3_ENDPOINT="http://minio:9000"
 ```
 
 **Key Differences:**
@@ -1036,6 +1437,7 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 - Database host is `db` (Docker service name) instead of `localhost`
 - App URLs remain `localhost` because they're accessed from host machine
 - Network is isolated within Docker Compose network
+- MinIO endpoint uses the Docker service name (`minio`) instead of `localhost`
 
 ---
 

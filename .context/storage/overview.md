@@ -7,7 +7,7 @@ The storage system provides multi-provider file storage for Sunrise, following t
 ```
 lib/storage/
 ├── client.ts              # getStorageClient(), isStorageEnabled()
-├── upload.ts              # uploadAvatar(), deleteFile()
+├── upload.ts              # uploadAvatar(), deleteFile(), deleteByPrefix()
 ├── image.ts               # validateImageMagicBytes(), processImage()
 └── providers/
     ├── types.ts           # StorageProvider interface
@@ -50,7 +50,10 @@ S3_SECRET_ACCESS_KEY=...
 S3_REGION=us-east-1                          # Default: us-east-1
 S3_ENDPOINT=https://s3.custom.com            # For S3-compatible services
 S3_PUBLIC_URL_BASE=https://cdn.example.com   # Custom CDN/domain
+S3_USE_ACL=true                              # Enable ACL (only for legacy buckets, off by default)
 ```
+
+> **Note:** Modern S3 buckets (since April 2023) have ACLs disabled by default. Only set `S3_USE_ACL=true` for legacy buckets that use ACL-based access control.
 
 ### Vercel Blob Provider
 
@@ -87,14 +90,16 @@ file: <binary>
 {
   "success": true,
   "data": {
-    "url": "https://...",
-    "key": "avatars/user-123/abc.jpg",
+    "url": "https://.../avatars/user-123/avatar.jpg?v=1706012345678",
+    "key": "avatars/user-123/avatar.jpg",
     "size": 12345,
     "width": 500,
     "height": 500
   }
 }
 ```
+
+> **Cache Busting:** The stored URL includes a `?v={timestamp}` query parameter to ensure browsers fetch the new image after avatar replacement. This cache-busted URL is what gets stored in the user's `image` field.
 
 ### Delete Avatar
 
@@ -121,9 +126,18 @@ Images are automatically processed before upload:
 1. **Validation**: Magic bytes check (not just MIME type)
 2. **Resize**: Max 500x500 pixels (configurable)
 3. **Optimize**: Quality compression for web
-4. **Format**: Preserves original format (GIF → PNG)
+4. **Format**: Avatars always output JPEG regardless of input format. When using `processImage` directly without specifying a format, the original format is preserved.
 
 Supported formats: JPEG, PNG, WebP, GIF
+
+### Client-Side Crop
+
+The `AvatarUpload` component includes an integrated crop dialog (react-easy-crop):
+
+- User can pan/zoom to select a square region
+- Client sends the pre-cropped image to the API
+- Server still processes (resize, optimize, convert to JPEG) regardless of client crop
+- API consumers that skip the frontend crop still get a valid square avatar via centre-crop on the server
 
 ### Size Limits
 
@@ -136,7 +150,7 @@ MAX_FILE_SIZE_MB=5  # Default: 5 MB
 ### Server-Side (API Routes)
 
 ```typescript
-import { uploadAvatar, deleteAvatar, isStorageEnabled } from '@/lib/storage/upload';
+import { uploadAvatar, deleteByPrefix, isStorageEnabled } from '@/lib/storage/upload';
 
 // Check if storage is available
 if (!isStorageEnabled()) {
@@ -147,8 +161,8 @@ if (!isStorageEnabled()) {
 const result = await uploadAvatar(buffer, { userId: 'user-123' });
 console.log(result.url); // Public URL
 
-// Delete avatar
-await deleteAvatar(oldAvatarUrl);
+// Delete all files under a user's avatar prefix
+await deleteByPrefix(`avatars/${userId}/`);
 ```
 
 ### Client-Side (React)
@@ -174,6 +188,9 @@ if (storage) {
 
   // Delete file
   await storage.delete('documents/report.pdf');
+
+  // Delete all files with prefix
+  await storage.deletePrefix('avatars/user-123/');
 }
 ```
 
@@ -198,17 +215,21 @@ if (storage) {
 
 - Only authenticated users can upload
 - Users can only modify their own avatar
-- Unique storage keys prevent enumeration
+- Storage keys are scoped per user to prevent enumeration
+
+### Avatar Cleanup on User Deletion
+
+When a user is deleted (self-delete or admin), their `avatars/{userId}/` prefix is deleted from storage using `deleteByPrefix` to remove all files under that path.
 
 ### Storage Keys
 
-Keys use UUIDs to prevent:
+Avatars use a fixed key pattern: `avatars/{userId}/avatar.jpg`
 
-- Filename collisions
-- User enumeration
-- Path traversal
+This means each upload overwrites the previous avatar instead of creating orphan files. Benefits:
 
-Format: `avatars/{userId}/{uuid}.{ext}`
+- No orphan cleanup needed
+- Predictable key for deletion
+- Simpler storage management
 
 ## Testing
 

@@ -344,6 +344,134 @@ PATCH /api/v1/users/me/preferences
 
 **Note**: `securityAlerts` is always `true` and cannot be disabled for security reasons.
 
+### Upload Avatar
+
+✅ **Implemented in:** `app/api/v1/users/me/avatar/route.ts` (POST handler)
+
+**Purpose**: Upload or replace the current user's avatar
+
+```
+POST /api/v1/users/me/avatar
+```
+
+**Authentication**: Required (session)
+
+**Content-Type**: `multipart/form-data`
+
+**Request Body**: `file` field (binary image)
+
+**Validation**:
+
+- Magic bytes verification (not just MIME type)
+- Supported formats: JPEG, PNG, WebP, GIF
+- Max size: Configurable via `MAX_FILE_SIZE_MB` (default 5MB)
+
+**Processing**:
+
+- Resized to 500x500 max dimensions
+- Centre-cropped to square aspect ratio
+- Converted to JPEG format
+
+**Storage Key**: `avatars/{userId}/avatar.jpg` (overwrites previous avatar)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://...?v=1706012345678",
+    "key": "avatars/clx.../avatar.jpg",
+    "size": 12345,
+    "width": 500,
+    "height": 500
+  }
+}
+```
+
+**Error Responses**:
+
+- **400 Validation Error**: Missing or invalid file
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "No file provided",
+      "code": "VALIDATION_ERROR"
+    }
+  }
+  ```
+- **400 File Too Large**: File exceeds max size
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "File too large. Maximum size is 5MB",
+      "code": "FILE_TOO_LARGE"
+    }
+  }
+  ```
+- **400 Invalid File Type**: Unsupported format or magic bytes mismatch
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "Invalid file type. Supported: JPEG, PNG, WebP, GIF",
+      "code": "INVALID_FILE_TYPE"
+    }
+  }
+  ```
+- **401 Unauthorized**: No valid session
+- **503 Storage Not Configured**: S3-compatible storage not available
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "File storage is not configured",
+      "code": "STORAGE_NOT_CONFIGURED"
+    }
+  }
+  ```
+
+### Delete Avatar
+
+✅ **Implemented in:** `app/api/v1/users/me/avatar/route.ts` (DELETE handler)
+
+**Purpose**: Remove the current user's avatar
+
+```
+DELETE /api/v1/users/me/avatar
+```
+
+**Authentication**: Required (session)
+
+**Behavior**: Deletes all files under `avatars/{userId}/` prefix and sets `user.image` to `null`.
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "message": "Avatar removed"
+  }
+}
+```
+
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+  ```json
+  {
+    "success": false,
+    "error": {
+      "message": "No active session found",
+      "code": "UNAUTHORIZED"
+    }
+  }
+  ```
+
 ### List Users (Admin)
 
 ✅ **Implemented in:** `app/api/v1/users/route.ts` (GET handler)
@@ -1543,16 +1671,19 @@ const results = await prisma.user.findMany({ orderBy });
 
 ## Error Codes
 
-| Code                  | HTTP Status | Meaning                             |
-| --------------------- | ----------- | ----------------------------------- |
-| `UNAUTHORIZED`        | 401         | No valid session                    |
-| `FORBIDDEN`           | 403         | Authenticated but lacks permissions |
-| `NOT_FOUND`           | 404         | Resource doesn't exist              |
-| `VALIDATION_ERROR`    | 400         | Input validation failed             |
-| `EMAIL_TAKEN`         | 400         | Email already registered            |
-| `CONFLICT`            | 409         | Resource already exists             |
-| `RATE_LIMIT_EXCEEDED` | 429         | Too many requests                   |
-| `INTERNAL_ERROR`      | 500         | Server error                        |
+| Code                     | HTTP Status | Meaning                             |
+| ------------------------ | ----------- | ----------------------------------- |
+| `UNAUTHORIZED`           | 401         | No valid session                    |
+| `FORBIDDEN`              | 403         | Authenticated but lacks permissions |
+| `NOT_FOUND`              | 404         | Resource doesn't exist              |
+| `VALIDATION_ERROR`       | 400         | Input validation failed             |
+| `EMAIL_TAKEN`            | 400         | Email already registered            |
+| `CONFLICT`               | 409         | Resource already exists             |
+| `FILE_TOO_LARGE`         | 400         | File exceeds max upload size        |
+| `INVALID_FILE_TYPE`      | 400         | Unsupported file format             |
+| `STORAGE_NOT_CONFIGURED` | 503         | File storage backend not available  |
+| `RATE_LIMIT_EXCEEDED`    | 429         | Too many requests                   |
+| `INTERNAL_ERROR`         | 500         | Server error                        |
 
 ## Decision History & Trade-offs
 
