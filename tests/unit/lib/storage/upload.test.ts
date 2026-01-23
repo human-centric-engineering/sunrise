@@ -215,6 +215,128 @@ describe('lib/storage/upload', () => {
     });
   });
 
+  describe('deleteByPrefix', () => {
+    it('should return failure when storage is not configured', async () => {
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(null);
+
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+      const { logger } = await import('@/lib/logging');
+
+      const result = await deleteByPrefix('avatars/user-123/');
+
+      expect(result.success).toBe(false);
+      expect(result.key).toBe('avatars/user-123/');
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Cannot delete by prefix - storage not configured',
+        expect.objectContaining({ prefix: 'avatars/user-123/' })
+      );
+    });
+
+    it('should call storage.deletePrefix with the prefix', async () => {
+      const mockProvider = {
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn().mockResolvedValue({ success: true, key: 'avatars/user-123/' }),
+      };
+
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+
+      const result = await deleteByPrefix('avatars/user-123/');
+
+      expect(mockProvider.deletePrefix).toHaveBeenCalledWith('avatars/user-123/');
+      expect(result.success).toBe(true);
+    });
+
+    it('should log success with prefix and provider name', async () => {
+      const mockProvider = {
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn().mockResolvedValue({ success: true, key: 'avatars/user-123/' }),
+      };
+
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+      const { logger } = await import('@/lib/logging');
+
+      await deleteByPrefix('avatars/user-123/');
+
+      expect(logger.info).toHaveBeenCalledWith(
+        'Files deleted by prefix',
+        expect.objectContaining({ prefix: 'avatars/user-123/', provider: 's3' })
+      );
+    });
+
+    it('should return failure result when provider returns failure', async () => {
+      const mockProvider = {
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn().mockResolvedValue({ success: false, key: 'avatars/user-123/' }),
+      };
+
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+
+      const result = await deleteByPrefix('avatars/user-123/');
+
+      expect(result.success).toBe(false);
+    });
+
+    it('should log warning on failure', async () => {
+      const mockProvider = {
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn().mockResolvedValue({ success: false, key: 'avatars/user-123/' }),
+      };
+
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+
+      const { deleteByPrefix } = await import('@/lib/storage/upload');
+      const { logger } = await import('@/lib/logging');
+
+      await deleteByPrefix('avatars/user-123/');
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to delete files by prefix',
+        expect.objectContaining({ prefix: 'avatars/user-123/', provider: 's3' })
+      );
+    });
+  });
+
+  describe('deleteAvatar', () => {
+    it('should delegate to deleteFile with the URL', async () => {
+      const mockProvider = {
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn().mockResolvedValue({ success: true, key: 'avatars/user-123/avatar.jpg' }),
+        deletePrefix: vi.fn(),
+      };
+
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+
+      const { deleteAvatar } = await import('@/lib/storage/upload');
+
+      const avatarUrl = 'https://storage.example.com/avatars/user-123/avatar.jpg';
+      const result = await deleteAvatar(avatarUrl);
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.delete).toHaveBeenCalledWith('avatars/user-123/avatar.jpg');
+    });
+  });
+
   describe('isStorageEnabled (re-export)', () => {
     it('should re-export isStorageEnabled from client', async () => {
       const { isStorageEnabled: clientIsStorageEnabled } = await import('@/lib/storage/client');

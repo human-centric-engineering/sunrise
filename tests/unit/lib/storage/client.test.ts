@@ -208,4 +208,95 @@ describe('lib/storage/client', () => {
       expect(name).toBeNull();
     });
   });
+
+  describe('auto-detection', () => {
+    it('should auto-detect S3 when createS3ProviderFromEnv returns a provider', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('STORAGE_PROVIDER', ''); // No explicit provider
+
+      const { createS3ProviderFromEnv } = await import('@/lib/storage/providers/s3');
+      const { logger } = await import('@/lib/logging');
+
+      // Mock S3 provider to return a provider
+      vi.mocked(createS3ProviderFromEnv).mockReturnValue({
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as any);
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+
+      resetStorageClient();
+      const client = getStorageClient();
+
+      expect(client).not.toBeNull();
+      expect(client?.name).toBe('s3');
+      expect(logger.debug).toHaveBeenCalledWith('Auto-detected S3 storage configuration');
+      expect(logger.info).toHaveBeenCalledWith('Storage client initialized', { provider: 's3' });
+    });
+
+    it('should auto-detect Vercel Blob when S3 is not available but Vercel Blob is', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('STORAGE_PROVIDER', ''); // No explicit provider
+
+      const { createS3ProviderFromEnv } = await import('@/lib/storage/providers/s3');
+      const { createVercelBlobProviderFromEnv } =
+        await import('@/lib/storage/providers/vercel-blob');
+      const { logger } = await import('@/lib/logging');
+
+      // S3 returns null
+      vi.mocked(createS3ProviderFromEnv).mockReturnValue(null);
+      // Vercel Blob returns a provider
+      vi.mocked(createVercelBlobProviderFromEnv).mockReturnValue({
+        name: 'vercel-blob',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as any);
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+
+      resetStorageClient();
+      const client = getStorageClient();
+
+      expect(client).not.toBeNull();
+      expect(client?.name).toBe('vercel-blob');
+      expect(logger.debug).toHaveBeenCalledWith('Auto-detected Vercel Blob storage configuration');
+      expect(logger.info).toHaveBeenCalledWith('Storage client initialized', {
+        provider: 'vercel-blob',
+      });
+    });
+
+    it('should prefer S3 over Vercel Blob when both are available', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('STORAGE_PROVIDER', ''); // No explicit provider
+
+      const { createS3ProviderFromEnv } = await import('@/lib/storage/providers/s3');
+      const { createVercelBlobProviderFromEnv } =
+        await import('@/lib/storage/providers/vercel-blob');
+
+      // Both return providers
+      vi.mocked(createS3ProviderFromEnv).mockReturnValue({
+        name: 's3',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as any);
+      vi.mocked(createVercelBlobProviderFromEnv).mockReturnValue({
+        name: 'vercel-blob',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as any);
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+
+      resetStorageClient();
+      const client = getStorageClient();
+
+      expect(client).not.toBeNull();
+      expect(client?.name).toBe('s3'); // S3 is preferred
+    });
+  });
 });

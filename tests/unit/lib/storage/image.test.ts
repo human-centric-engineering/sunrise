@@ -1,15 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock sharp
+// Create a shared mock instance that will be reused for all calls
+const mockSharpInstance = {
+  metadata: vi.fn().mockResolvedValue({ width: 1000, height: 1000 }),
+  resize: vi.fn().mockReturnThis(),
+  jpeg: vi.fn().mockReturnThis(),
+  png: vi.fn().mockReturnThis(),
+  webp: vi.fn().mockReturnThis(),
+  toBuffer: vi.fn().mockResolvedValue(Buffer.from('processed')),
+};
+
+// Mock sharp to return the same instance every time
 vi.mock('sharp', () => {
-  const mockSharp = vi.fn(() => ({
-    metadata: vi.fn().mockResolvedValue({ width: 1000, height: 1000 }),
-    resize: vi.fn().mockReturnThis(),
-    jpeg: vi.fn().mockReturnThis(),
-    png: vi.fn().mockReturnThis(),
-    webp: vi.fn().mockReturnThis(),
-    toBuffer: vi.fn().mockResolvedValue(Buffer.from('processed')),
-  }));
+  const mockSharp = vi.fn(() => mockSharpInstance);
   return { default: mockSharp };
 });
 
@@ -124,6 +127,44 @@ describe('lib/storage/image', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toBe('File too small to be a valid image');
     });
+
+    it('should reject truncated WebP (RIFF header but too short for WEBP signature)', async () => {
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+
+      // RIFF header only, buffer too short to check WEBP at offset 8
+      const truncatedWebP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00]);
+
+      const result = validateImageMagicBytes(truncatedWebP);
+
+      expect(result.valid).toBe(false);
+      expect(result.detectedType).toBeNull();
+    });
+
+    it('should reject RIFF file with invalid WEBP signature', async () => {
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+
+      // RIFF header but wrong signature at offset 8 (not 'WEBP')
+      // This hits lines 107-108 where it checks each byte of the WEBP signature and sets matches = false
+      const invalidWebP = Buffer.from([
+        0x52,
+        0x49,
+        0x46,
+        0x46, // RIFF
+        0x00,
+        0x00,
+        0x00,
+        0x00, // size
+        0x58,
+        0x58,
+        0x58,
+        0x58, // XXXX instead of WEBP
+      ]);
+
+      const result = validateImageMagicBytes(invalidWebP);
+
+      expect(result.valid).toBe(false);
+      expect(result.detectedType).toBeNull();
+    });
   });
 
   describe('getExtensionForMimeType', () => {
@@ -165,6 +206,160 @@ describe('lib/storage/image', () => {
       expect(SUPPORTED_IMAGE_TYPES).toContain('image/webp');
       expect(SUPPORTED_IMAGE_TYPES).toContain('image/gif');
       expect(SUPPORTED_IMAGE_TYPES).toHaveLength(4);
+    });
+  });
+
+  describe('processImage', () => {
+    it('should throw error for invalid image', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // PDF magic bytes - not a valid image
+      const pdfBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+
+      await expect(processImage(pdfBuffer)).rejects.toThrow('Invalid or unsupported image format');
+    });
+
+    it('should process JPEG image with default options', async () => {
+      const sharp = (await import('sharp')).default;
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      const result = await processImage(jpegBuffer);
+
+      expect(result.buffer).toEqual(Buffer.from('processed'));
+      expect(result.mimeType).toBe('image/jpeg');
+      expect(sharp).toHaveBeenCalledWith(jpegBuffer);
+    });
+
+    it('should process PNG image and keep PNG format when no format specified', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // PNG magic bytes
+      const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+      const result = await processImage(pngBuffer);
+
+      expect(result.mimeType).toBe('image/png');
+    });
+
+    it('should process WebP image and keep WebP format when no format specified', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // WebP magic bytes: RIFF....WEBP
+      const webpBuffer = Buffer.from([
+        0x52,
+        0x49,
+        0x46,
+        0x46, // RIFF
+        0x00,
+        0x00,
+        0x00,
+        0x00, // size
+        0x57,
+        0x45,
+        0x42,
+        0x50, // WEBP
+      ]);
+
+      const result = await processImage(webpBuffer);
+
+      expect(result.mimeType).toBe('image/webp');
+      expect(mockSharpInstance.webp).toHaveBeenCalled();
+    });
+
+    it('should convert GIF to PNG when no format specified', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // GIF89a magic bytes
+      const gifBuffer = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x00]);
+
+      const result = await processImage(gifBuffer);
+
+      expect(result.mimeType).toBe('image/png');
+    });
+
+    it('should use specified format override', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      const result = await processImage(jpegBuffer, { format: 'webp' });
+
+      expect(result.mimeType).toBe('image/webp');
+    });
+
+    it('should resize to square using cover fit and centre position', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      await processImage(jpegBuffer);
+
+      expect(mockSharpInstance.resize).toHaveBeenCalledWith(500, 500, {
+        fit: 'cover',
+        position: 'centre',
+      });
+    });
+
+    it('should use custom maxWidth/maxHeight options', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      await processImage(jpegBuffer, { maxWidth: 300, maxHeight: 300 });
+
+      expect(mockSharpInstance.resize).toHaveBeenCalledWith(300, 300, {
+        fit: 'cover',
+        position: 'centre',
+      });
+    });
+
+    it('should use custom quality option for JPEG', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      await processImage(jpegBuffer, { quality: 95 });
+
+      expect(mockSharpInstance.jpeg).toHaveBeenCalledWith({ quality: 95, mozjpeg: true });
+    });
+
+    it('should return width and height from processed image metadata', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      const result = await processImage(jpegBuffer);
+
+      // The mock metadata returns { width: 1000, height: 1000 }
+      expect(result.width).toBe(1000);
+      expect(result.height).toBe(1000);
+    });
+
+    it('should use maxWidth/maxHeight as fallback when processed metadata has no dimensions', async () => {
+      const { processImage } = await import('@/lib/storage/image');
+
+      // Mock the metadata to return dimensions for the first call (original image),
+      // but no dimensions for the second call (processed image)
+      mockSharpInstance.metadata
+        .mockResolvedValueOnce({ width: 1000, height: 1000 }) // first call (original image)
+        .mockResolvedValueOnce({}); // second call (processed image, no dimensions)
+
+      // JPEG magic bytes
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+      const result = await processImage(jpegBuffer, { maxWidth: 300, maxHeight: 250 });
+
+      // Should fall back to maxWidth/maxHeight
+      expect(result.width).toBe(300);
+      expect(result.height).toBe(250);
     });
   });
 });
