@@ -102,8 +102,10 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
           throw new Error(result.error?.message ?? 'Upload failed');
         }
 
-        // Refresh the session cache so useSession() picks up the new image URL
-        await authClient.getSession();
+        const result = (await response.json()) as { data?: { url?: string } };
+
+        // Update session via better-auth (invalidates cookie cache + signals useSession())
+        await authClient.updateUser({ image: result.data?.url ?? '' });
         router.refresh();
       } catch (err) {
         if (err instanceof Error) {
@@ -186,8 +188,8 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
     apiClient
       .delete('/api/v1/users/me/avatar')
       .then(async () => {
-        // Refresh the session cache so useSession() picks up the removed image
-        await authClient.getSession();
+        // Update session via better-auth (invalidates cookie cache + signals useSession())
+        await authClient.updateUser({ image: '' });
         router.refresh();
       })
       .catch((err: unknown) => {
