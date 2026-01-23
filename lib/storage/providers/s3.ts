@@ -29,6 +29,8 @@ export interface S3ProviderConfig {
   endpoint?: string;
   /** Optional custom public URL base (for CDN or custom domain) */
   publicUrlBase?: string;
+  /** Set ACL on uploaded objects (default: false, use bucket policy for public access) */
+  useAcl?: boolean;
 }
 
 /**
@@ -41,9 +43,11 @@ export class S3Provider implements StorageProvider {
   private client: S3Client;
   private bucket: string;
   private publicUrlBase: string;
+  private useAcl: boolean;
 
   constructor(config: S3ProviderConfig) {
     this.bucket = config.bucket;
+    this.useAcl = config.useAcl ?? false;
 
     // Configure S3 client
     this.client = new S3Client({
@@ -85,8 +89,11 @@ export class S3Provider implements StorageProvider {
       Body: file,
       ContentType: contentType,
       Metadata: metadata,
-      // Make publicly readable by default
-      ACL: options.public !== false ? 'public-read' : 'private',
+      // Only set ACL if bucket supports it (S3_USE_ACL=true)
+      // Modern S3 buckets use bucket policies for public access instead
+      ...(this.useAcl && {
+        ACL: options.public !== false ? 'public-read' : 'private',
+      }),
     });
 
     await this.client.send(command);
@@ -157,6 +164,7 @@ export function createS3ProviderFromEnv(): S3Provider | null {
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
   const endpoint = process.env.S3_ENDPOINT;
   const publicUrlBase = process.env.S3_PUBLIC_URL_BASE;
+  const useAcl = process.env.S3_USE_ACL === 'true';
 
   if (!bucket || !accessKeyId || !secretAccessKey) {
     logger.debug('S3 provider not configured - missing required env vars', {
@@ -174,5 +182,6 @@ export function createS3ProviderFromEnv(): S3Provider | null {
     secretAccessKey,
     endpoint,
     publicUrlBase,
+    useAcl,
   });
 }
