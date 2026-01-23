@@ -190,6 +190,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
  * Admins cannot delete their own account.
  *
  * Cascade behavior:
+ * - Avatar file is deleted from storage (if one exists)
  * - Related accounts (OAuth) are deleted automatically via Prisma schema
  * - Related sessions are deleted automatically via Prisma schema
  *
@@ -233,6 +234,12 @@ export async function DELETE(
 
     if (!user) {
       throw new NotFoundError('User not found');
+    }
+
+    // Clean up stored avatar files (no-op if nothing exists)
+    const { deleteByPrefix, isStorageEnabled } = await import('@/lib/storage/upload');
+    if (isStorageEnabled()) {
+      await deleteByPrefix(`avatars/${id}/`);
     }
 
     // Delete user (cascade deletes accounts and sessions via Prisma schema)

@@ -43,6 +43,11 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCodes.RATE_LIMIT_EXCEEDED]: 'Too many requests. Please try again later.',
   [ErrorCodes.INVITATION_EXPIRED]: 'This invitation has expired. Please request a new one.',
   [ErrorCodes.INTERNAL_ERROR]: 'Something went wrong. Please try again.',
+  // File upload errors
+  [ErrorCodes.FILE_TOO_LARGE]: 'The file is too large. Please choose a smaller file.',
+  [ErrorCodes.INVALID_FILE_TYPE]: 'This file type is not supported.',
+  [ErrorCodes.UPLOAD_FAILED]: 'Failed to upload file. Please try again.',
+  [ErrorCodes.STORAGE_NOT_CONFIGURED]: 'File uploads are not available at this time.',
 };
 
 /**

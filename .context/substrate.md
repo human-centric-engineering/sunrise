@@ -157,6 +157,16 @@ Cookie consent system and GDPR compliance. Includes:
 
 **Key Features**: `ConsentProvider` context, `useConsent` hook, `ConditionalScript` for optional scripts, localStorage persistence
 
+### 📦 [Storage](./storage/overview.md)
+
+Multi-provider file storage system for uploads. Includes:
+
+- [Overview](./storage/overview.md) - Provider architecture, image processing, API endpoints
+
+**Use When**: Implementing file uploads, managing avatars, configuring storage providers
+
+**Key Features**: S3/Vercel Blob/Local providers, Sharp image processing, magic bytes validation, graceful degradation
+
 ### 🔍 [SEO & Discovery](./seo/overview.md)
 
 Search engine optimization, sitemaps, and social sharing. Includes:
@@ -240,6 +250,8 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | Manage users (admin)       | admin/overview.md             | database/schema.md, api/endpoints.md            |
 | Add feature flags          | admin/overview.md             | database/schema.md, api/endpoints.md            |
 | View system logs           | admin/overview.md             | errors/logging.md                               |
+| Add file uploads           | storage/overview.md           | api/endpoints.md, security/overview.md          |
+| Configure storage          | storage/overview.md           | environment/overview.md                         |
 
 ## Technology Stack
 

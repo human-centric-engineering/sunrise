@@ -21,9 +21,9 @@ import { Suspense } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ProfileForm } from '@/components/forms/profile-form';
+import { AvatarUpload } from '@/components/forms/avatar-upload';
 import { PasswordForm } from '@/components/forms/password-form';
 import { PreferencesForm } from '@/components/forms/preferences-form';
 import { DeleteAccountForm } from '@/components/forms/delete-account-form';
@@ -114,18 +114,7 @@ export function SettingsTabs({
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Avatar Section */}
-            <div className="flex items-center gap-4">
-              <Avatar className="h-20 w-20">
-                <AvatarImage src={user.image || undefined} alt={user.name} />
-                <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-              </Avatar>
-              <div>
-                <p className="font-medium">{user.name}</p>
-                <Badge variant="secondary" className="mt-1">
-                  Photo upload coming soon
-                </Badge>
-              </div>
-            </div>
+            <AvatarUpload currentAvatar={user.image} userName={user.name} initials={initials} />
 
             <Separator />
 

@@ -4,14 +4,15 @@ Use this checklist to track progress through the build. Check off items as they'
 
 ## Current Status
 
-**Last Updated:** 2026-01-22
+**Last Updated:** 2026-01-23
 **Current Phase:** Phase 4 In Progress
-**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 Complete (6/6) | Phase 4 In Progress (1/6)
+**Overall Progress:** Phase 1 Complete (8/8) | Phase 2 Complete (5/5) | Phase 3 Complete (6/6) | Phase 4 In Progress (2/6)
 **Blockers:** None
-**Next Steps:** Phase 4.2 - File Uploads Documentation
+**Next Steps:** Phase 4.5 - Analytics Integration
 
 **Recent Completions:**
 
+- ✅ Phase 4.2 - File Uploads (FULLY IMPLEMENTED - multi-provider storage, avatar upload/crop/delete, image processing)
 - ✅ Phase 4.4 - Admin Dashboard (FULLY IMPLEMENTED - user management, invitations, feature flags, logs viewer, stats dashboard)
 - ✅ Phase 3.6 - Deployment Documentation (platform guides, GitHub Actions CI, README deployment section)
 - ✅ Phase 3.5 - Landing Page & Marketing (marketing components, landing page, contact form, cookie consent, SEO/sitemap, legal pages)
@@ -661,12 +662,53 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Add example implementations
 - [ ] Include Docker Compose config
 
-### 4.2 File Uploads Documentation
+### 4.2 File Uploads ✅
 
-- [ ] Write docs/file-uploads.md
-- [ ] Write docs/s3-setup.md
-- [ ] Document upload component
-- [ ] Document security considerations
+**Completed:** 2026-01-23
+
+**Note:** Originally planned as "Documentation Only" but fully implemented with working code.
+
+- [x] Multi-provider storage system (S3/S3-compatible, Vercel Blob, local filesystem)
+- [x] Avatar upload/crop/delete API endpoints
+- [x] Image validation (magic bytes), processing (Sharp resize/crop), optimization
+- [x] Client-side crop dialog (react-easy-crop) with pan/zoom
+- [x] Fixed-key storage pattern with cache busting
+- [x] Avatar cleanup on user deletion (deletePrefix)
+- [x] Comprehensive documentation (.context/storage/, api/endpoints.md, environment/reference.md)
+- [x] 150+ unit tests covering all storage code
+- [x] Security review passed (no vulnerabilities)
+
+**Key Files:**
+
+- `lib/storage/` - Storage client, providers, image processing, upload orchestration
+- `app/api/v1/users/me/avatar/route.ts` - Avatar upload/delete endpoints
+- `components/forms/avatar-upload.tsx` - Upload component with drag-and-drop
+- `components/forms/avatar-crop-dialog.tsx` - Crop dialog with circle preview
+- `lib/validations/storage.ts` - Zod schemas for storage config
+- `types/storage.ts` - Storage TypeScript types
+- `.context/storage/overview.md` - Storage system documentation
+
+**Key Features:**
+
+- **Provider Auto-Detection**: S3 → Vercel Blob → Local filesystem fallback
+- **Image Processing**: Magic bytes validation, centre-crop to square, resize to 500x500, JPEG output
+- **Fixed Key Pattern**: `avatars/{userId}/avatar.jpg` — overwrites instead of orphans
+- **Cache Busting**: `?v={timestamp}` ensures browsers fetch updated avatars
+- **S3 Compatibility**: Works with AWS, MinIO, DigitalOcean Spaces, Cloudflare R2
+- **Graceful Degradation**: Falls back to local filesystem in development
+
+**Environment Variables Added:**
+
+- `STORAGE_PROVIDER` - Explicit provider selection (s3, vercel-blob, local)
+- `MAX_FILE_SIZE_MB` - Upload size limit (default: 5)
+- `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` - S3 credentials
+- `S3_REGION`, `S3_ENDPOINT`, `S3_PUBLIC_URL_BASE` - S3 configuration
+- `S3_USE_ACL` - Enable ACL for legacy buckets
+- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token
+
+**Security Review:** ✅ Passed - No high-confidence vulnerabilities identified
+
+**Branch:** `feature/phase-4.2-file-upload-storage`
 
 ### 4.3 Background Jobs Documentation
 
@@ -736,7 +778,7 @@ Use this checklist to track progress through the build. Check off items as they'
 - [ ] Document library setup
 - [ ] Document translation structure
 
-**Phase 4 Progress:** 1/6 complete (4.4 Admin Dashboard)
+**Phase 4 Progress:** 2/6 complete (4.2 File Uploads, 4.4 Admin Dashboard)
 
 ---
 

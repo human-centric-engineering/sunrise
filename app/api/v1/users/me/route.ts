@@ -145,7 +145,7 @@ export async function PATCH(request: NextRequest) {
  *
  * Permanently deletes the current user's account.
  * Requires confirmation by sending { confirmation: "DELETE" } in request body.
- * Cascades deletion to sessions and accounts.
+ * Deletes avatar from storage, cascades deletion to sessions and accounts.
  * Clears the session cookie after deletion.
  *
  * @param request - Request with JSON body { confirmation: "DELETE" }
@@ -171,6 +171,12 @@ export async function DELETE(request: NextRequest) {
       userId: session.user.id,
       email: session.user.email,
     });
+
+    // Clean up stored avatar files (no-op if nothing exists)
+    const { deleteByPrefix, isStorageEnabled } = await import('@/lib/storage/upload');
+    if (isStorageEnabled()) {
+      await deleteByPrefix(`avatars/${session.user.id}/`);
+    }
 
     // Delete user (cascades to sessions and accounts via Prisma schema)
     await prisma.user.delete({

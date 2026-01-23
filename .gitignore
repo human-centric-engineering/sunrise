@@ -176,5 +176,8 @@ yarn-debug.log*
 
 /lib/generated/prisma
 
+# Local file uploads (development only)
+public/uploads/
+
 # Sentry Config File
 .env.sentry-build-plugin
