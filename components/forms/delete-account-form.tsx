@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { useSettingsAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,6 +35,7 @@ export function DeleteAccountForm() {
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { trackAccountDeleted } = useSettingsAnalytics();
 
   const isConfirmed = confirmation === 'DELETE';
 
@@ -47,6 +49,9 @@ export function DeleteAccountForm() {
       await apiClient.delete('/api/v1/users/me', {
         body: { confirmation: 'DELETE' },
       });
+
+      // Track account deletion
+      void trackAccountDeleted();
 
       // Redirect to home page after successful deletion
       router.push('/');

@@ -3,6 +3,7 @@ import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
 import { ProtectedFooter } from '@/components/layouts/protected-footer';
 import { MaintenanceWrapperWithAdminNotice } from '@/components/maintenance-wrapper';
+import { PageTracker } from '@/components/analytics';
 
 export const metadata: Metadata = {
   title: {
@@ -28,6 +29,7 @@ export default function ProtectedLayout({
 }>) {
   return (
     <MaintenanceWrapperWithAdminNotice>
+      <PageTracker />
       <div className="bg-background flex min-h-screen flex-col">
         <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />
         <main className="container mx-auto flex-1 px-4 py-8">{children}</main>

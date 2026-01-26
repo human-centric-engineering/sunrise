@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { signInSchema, type SignInInput } from '@/lib/validations/auth';
+import { useAuthAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,7 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const { trackLogin, identifyUser } = useAuthAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +109,16 @@ export function LoginForm() {
           onRequest: () => {
             // Request started
           },
-          onSuccess: () => {
+          onSuccess: async () => {
+            // Identify user and track login
+            const { data: session } = await authClient.getSession();
+            if (session?.user) {
+              await identifyUser(session.user.id, {
+                email: session.user.email,
+                name: session.user.name ?? undefined,
+              });
+              await trackLogin({ method: 'email' });
+            }
             // Redirect to callback URL or dashboard
             router.push(callbackUrl);
             router.refresh();

@@ -13,6 +13,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, Loader2, Camera, Trash2 } from 'lucide-react';
 import { authClient } from '@/lib/auth/client';
+import { useSettingsAnalytics } from '@/lib/analytics/events';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -37,6 +38,7 @@ interface AvatarUploadProps {
 export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUploadProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { trackAvatarUploaded } = useSettingsAnalytics();
 
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -104,6 +106,9 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
         const result = (await response.json()) as { data?: { url?: string } };
 
+        // Track avatar upload
+        void trackAvatarUploaded();
+
         // Update session via better-auth (invalidates cookie cache + signals useSession())
         await authClient.updateUser({ image: result.data?.url ?? '' });
         router.refresh();
@@ -117,7 +122,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         setIsUploading(false);
       }
     },
-    [router, cropImageSrc]
+    [router, cropImageSrc, trackAvatarUploaded]
   );
 
   // Handle crop cancellation

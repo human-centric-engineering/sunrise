@@ -17,7 +17,7 @@
  * ```
  */
 
-import { Suspense } from 'react';
+import { Suspense, useRef } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -28,6 +28,7 @@ import { PasswordForm } from '@/components/forms/password-form';
 import { PreferencesForm } from '@/components/forms/preferences-form';
 import { DeleteAccountForm } from '@/components/forms/delete-account-form';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
+import { useSettingsAnalytics } from '@/lib/analytics/events';
 import {
   SETTINGS_TABS,
   SETTINGS_TAB_VALUES,
@@ -90,10 +91,16 @@ export function SettingsTabs({
     allowedTabs: SETTINGS_TAB_VALUES,
     titles: SETTINGS_TAB_TITLES,
   });
+  const { trackTabChanged } = useSettingsAnalytics();
+  const previousTabRef = useRef<SettingsTab | undefined>(undefined);
 
   // Wrapper to handle Radix's string type for onValueChange
   const handleTabChange = (value: string) => {
-    setActiveTab(value as SettingsTab);
+    const newTab = value as SettingsTab;
+    // Track tab change with previous tab
+    void trackTabChanged({ tab: newTab, previous_tab: previousTabRef.current });
+    previousTabRef.current = newTab;
+    setActiveTab(newTab);
   };
 
   return (

@@ -9,13 +9,14 @@
  * Phase 3.2: User Management
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { updateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
+import { useSettingsAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -60,6 +61,14 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const { trackProfileUpdated } = useSettingsAnalytics();
+  const originalValuesRef = useRef({
+    name: user.name,
+    bio: user.bio || '',
+    phone: user.phone || '',
+    timezone: user.timezone || 'UTC',
+    location: user.location || '',
+  });
 
   const {
     register,
@@ -97,6 +106,27 @@ export function ProfileForm({ user }: ProfileFormProps) {
       };
 
       await apiClient.patch('/api/v1/users/me', { body: cleanData });
+
+      // Determine which fields changed
+      const fieldsChanged: string[] = [];
+      const original = originalValuesRef.current;
+      if (data.name !== original.name) fieldsChanged.push('name');
+      if ((data.bio?.trim() || '') !== original.bio) fieldsChanged.push('bio');
+      if ((data.phone?.trim() || '') !== original.phone) fieldsChanged.push('phone');
+      if (data.timezone !== original.timezone) fieldsChanged.push('timezone');
+      if ((data.location?.trim() || '') !== original.location) fieldsChanged.push('location');
+
+      if (fieldsChanged.length > 0) {
+        void trackProfileUpdated({ fields_changed: fieldsChanged });
+        // Update original values for next comparison
+        originalValuesRef.current = {
+          name: data.name ?? original.name,
+          bio: data.bio?.trim() || '',
+          phone: data.phone?.trim() || '',
+          timezone: data.timezone ?? 'UTC',
+          location: data.location?.trim() || '',
+        };
+      }
 
       setSuccess(true);
       router.refresh();

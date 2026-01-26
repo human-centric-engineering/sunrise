@@ -7,3 +7,4 @@
  */
 
 export { AnalyticsScripts, default as AnalyticsScriptsDefault } from './analytics-scripts';
+export { PageTracker } from './page-tracker';

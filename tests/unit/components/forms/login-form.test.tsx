@@ -22,6 +22,15 @@ vi.mock('@/lib/auth/client', () => ({
       email: vi.fn(),
       social: vi.fn(),
     },
+    getSession: vi.fn().mockResolvedValue({
+      data: {
+        user: {
+          id: 'user-123',
+          email: 'test@example.com',
+          name: 'Test User',
+        },
+      },
+    }),
   },
 }));
 

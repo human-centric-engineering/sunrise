@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { signUpSchema, type SignUpInput } from '@/lib/validations/auth';
+import { useAuthAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -35,6 +36,7 @@ import { OAuthButtons } from './oauth-buttons';
 export function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { trackSignup, identifyUser } = useAuthAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +86,15 @@ export function SignupForm() {
             // Check if session was actually created using better-auth client
             // If verification required, no session will exist yet
             const { data: session } = await authClient.getSession();
+
+            // Track signup regardless of verification state
+            if (session?.user) {
+              await identifyUser(session.user.id, {
+                email: session.user.email,
+                name: session.user.name ?? undefined,
+              });
+            }
+            await trackSignup({ method: 'email' });
 
             if (session) {
               // Session created → verification not required or auto-verified (OAuth)
