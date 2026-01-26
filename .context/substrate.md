@@ -167,6 +167,16 @@ Multi-provider file storage system for uploads. Includes:
 
 **Key Features**: S3/Vercel Blob/Local providers, Sharp image processing, magic bytes validation, graceful degradation
 
+### 📈 [Analytics](./analytics/overview.md)
+
+Pluggable analytics system with multi-provider support. Includes:
+
+- [Overview](./analytics/overview.md) - Provider architecture, consent integration, server-side tracking
+
+**Use When**: Implementing event tracking, user identification, page view tracking, configuring analytics providers
+
+**Key Features**: GA4/PostHog/Plausible/Console providers, consent-aware tracking, server-side tracking (bypasses ad blockers), feature flags (PostHog), auto-detection from credentials
+
 ### 🔍 [SEO & Discovery](./seo/overview.md)
 
 Search engine optimization, sitemaps, and social sharing. Includes:
@@ -252,6 +262,10 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | View system logs           | admin/overview.md             | errors/logging.md                               |
 | Add file uploads           | storage/overview.md           | api/endpoints.md, security/overview.md          |
 | Configure storage          | storage/overview.md           | environment/overview.md                         |
+| Add event tracking         | analytics/overview.md         | privacy/overview.md                             |
+| Configure analytics        | analytics/overview.md         | environment/overview.md                         |
+| Server-side tracking       | analytics/overview.md         | api/endpoints.md                                |
+| Feature flags (PostHog)    | analytics/overview.md         | admin/overview.md                               |
 
 ## Technology Stack
 

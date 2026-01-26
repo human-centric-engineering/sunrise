@@ -4,6 +4,8 @@ import { ThemeProvider } from '@/hooks/use-theme';
 import { ErrorHandlingProvider } from './error-handling-provider';
 import { ConsentProvider } from '@/lib/consent';
 import { CookieBanner } from '@/components/cookie-consent';
+import { AnalyticsProvider } from '@/lib/analytics';
+import { AnalyticsScripts } from '@/components/analytics';
 
 export const metadata: Metadata = {
   title: 'Sunrise - Next.js Starter',
@@ -42,10 +44,13 @@ export default function RootLayout({
       <body>
         <ErrorHandlingProvider>
           <ConsentProvider>
-            <ThemeProvider>
-              {children}
-              <CookieBanner />
-            </ThemeProvider>
+            <AnalyticsProvider>
+              <ThemeProvider>
+                {children}
+                <CookieBanner />
+              </ThemeProvider>
+              <AnalyticsScripts />
+            </AnalyticsProvider>
           </ConsentProvider>
         </ErrorHandlingProvider>
       </body>
