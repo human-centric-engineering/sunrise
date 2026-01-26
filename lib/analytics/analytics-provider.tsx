@@ -11,7 +11,7 @@
  * @see .context/analytics/overview.md for architecture documentation
  */
 
-import { createContext, useCallback, useEffect, useMemo, useRef } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AnalyticsContextValue,
   UserTraits,
@@ -61,27 +61,17 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const initializingRef = useRef(false);
   const previousConsentRef = useRef(hasConsent);
 
-  // Initialize analytics when consent is given
-  useEffect(() => {
-    if (hasConsent && !initializingRef.current) {
-      const client = getAnalyticsClient();
-      if (client && !client.isReady()) {
-        initializingRef.current = true;
-        initAnalytics()
-          .catch((error: unknown) => {
-            console.error('[Analytics] Failed to initialize:', error);
-          })
-          .finally(() => {
-            initializingRef.current = false;
-          });
-      }
-    }
-  }, [hasConsent]);
+  // Version counter to trigger re-renders when analytics state changes
+  // Incrementing this forces a re-render so isReady can be recomputed
+  const [, forceUpdate] = useState(0);
 
-  // Reset when consent is revoked
+  // Handle consent state changes: initialize when granted, reset when revoked
   useEffect(() => {
-    // Check if consent was revoked (previously true, now false)
-    if (previousConsentRef.current && !hasConsent) {
+    const wasConsented = previousConsentRef.current;
+    previousConsentRef.current = hasConsent;
+
+    // Consent was revoked - reset analytics
+    if (wasConsented && !hasConsent) {
       const client = getAnalyticsClient();
       if (client?.isReady()) {
         client.reset().catch(() => {
@@ -90,8 +80,33 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       }
       // Reset the analytics client singleton so it can be re-initialized later
       resetAnalyticsClient();
+      // Trigger re-render to update isReady (legitimate external state sync)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      forceUpdate((v) => v + 1);
+      return;
     }
-    previousConsentRef.current = hasConsent;
+
+    // Consent was granted - initialize analytics
+    if (hasConsent && !initializingRef.current) {
+      const client = getAnalyticsClient();
+      if (client && !client.isReady()) {
+        initializingRef.current = true;
+        initAnalytics()
+          .then(() => {
+            // Trigger re-render now that analytics is ready
+            forceUpdate((v) => v + 1);
+          })
+          .catch((error: unknown) => {
+            console.error('[Analytics] Failed to initialize:', error);
+          })
+          .finally(() => {
+            initializingRef.current = false;
+          });
+      } else if (client?.isReady()) {
+        // Client already initialized - trigger re-render to ensure isReady is true
+        forceUpdate((v) => v + 1);
+      }
+    }
   }, [hasConsent]);
 
   const identify = useCallback(
@@ -172,6 +187,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   }, []);
 
   // Derive isReady from consent and client state
+  // Note: forceUpdate triggers re-render when analytics completes initialization
   const client = getAnalyticsClient();
   const isReady = hasConsent && (client?.isReady() ?? false);
 
