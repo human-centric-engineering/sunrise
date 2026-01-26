@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import './globals.css';
 import { ThemeProvider } from '@/hooks/use-theme';
 import { ErrorHandlingProvider } from './error-handling-provider';
 import { ConsentProvider } from '@/lib/consent';
 import { CookieBanner } from '@/components/cookie-consent';
 import { AnalyticsProvider } from '@/lib/analytics';
-import { AnalyticsScripts } from '@/components/analytics';
+import { AnalyticsScripts, UserIdentifier } from '@/components/analytics';
 
 export const metadata: Metadata = {
   title: 'Sunrise - Next.js Starter',
@@ -49,6 +50,9 @@ export default function RootLayout({
                 {children}
                 <CookieBanner />
               </ThemeProvider>
+              <Suspense fallback={null}>
+                <UserIdentifier />
+              </Suspense>
               <AnalyticsScripts />
             </AnalyticsProvider>
           </ConsentProvider>

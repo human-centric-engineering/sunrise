@@ -59,9 +59,10 @@ export class ConsoleProvider implements AnalyticsProvider {
     this.userId = userId;
     if (traits) {
       this.userTraits = { ...this.userTraits, ...traits };
+      this.log('identify', userId, traits);
+    } else {
+      this.log('identify', userId);
     }
-
-    this.log('identify', userId, traits);
 
     return Promise.resolve({ success: true });
   }

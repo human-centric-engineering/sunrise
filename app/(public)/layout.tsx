@@ -32,7 +32,7 @@ export default function PublicLayout({
   return (
     <MaintenanceWrapper>
       <Suspense fallback={null}>
-        <PageTracker />
+        <PageTracker skipInitial />
       </Suspense>
       <div className="bg-background flex min-h-screen flex-col">
         <AppHeader logoHref="/" navigation={<PublicNav />} />

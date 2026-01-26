@@ -12,7 +12,7 @@
  *
  * @see .context/analytics/overview.md for event catalog and best practices
  *
- * @example Authentication tracking
+ * @example Authentication tracking (GDPR-compliant)
  * ```tsx
  * import { useAuthAnalytics } from '@/lib/analytics/events';
  *
@@ -20,7 +20,8 @@
  *   const { trackLogin, identifyUser } = useAuthAnalytics();
  *
  *   const onSuccess = async (user: User) => {
- *     await identifyUser(user.id, { email: user.email, name: user.name });
+ *     // Only send user ID by default (no PII)
+ *     await identifyUser(user.id);
  *     await trackLogin({ method: 'email' });
  *   };
  * }

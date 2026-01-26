@@ -8,3 +8,4 @@
 
 export { AnalyticsScripts, default as AnalyticsScriptsDefault } from './analytics-scripts';
 export { PageTracker } from './page-tracker';
+export { UserIdentifier } from './user-identifier';

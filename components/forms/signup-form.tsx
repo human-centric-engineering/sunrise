@@ -36,7 +36,7 @@ import { OAuthButtons } from './oauth-buttons';
 export function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { trackSignup, identifyUser } = useAuthAnalytics();
+  const { trackSignup } = useAuthAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,13 +87,7 @@ export function SignupForm() {
             // If verification required, no session will exist yet
             const { data: session } = await authClient.getSession();
 
-            // Track signup regardless of verification state
-            if (session?.user) {
-              await identifyUser(session.user.id, {
-                email: session.user.email,
-                name: session.user.name ?? undefined,
-              });
-            }
+            // Track signup event (UserIdentifier handles identification on page load)
             await trackSignup({ method: 'email' });
 
             if (session) {

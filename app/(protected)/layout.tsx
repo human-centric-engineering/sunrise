@@ -31,7 +31,7 @@ export default function ProtectedLayout({
   return (
     <MaintenanceWrapperWithAdminNotice>
       <Suspense fallback={null}>
-        <PageTracker />
+        <PageTracker skipInitial />
       </Suspense>
       <div className="bg-background flex min-h-screen flex-col">
         <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />

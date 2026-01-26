@@ -33,7 +33,7 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
-  const { trackLogin, identifyUser } = useAuthAnalytics();
+  const { trackLogin } = useAuthAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,15 +110,8 @@ export function LoginForm() {
             // Request started
           },
           onSuccess: async () => {
-            // Identify user and track login
-            const { data: session } = await authClient.getSession();
-            if (session?.user) {
-              await identifyUser(session.user.id, {
-                email: session.user.email,
-                name: session.user.name ?? undefined,
-              });
-              await trackLogin({ method: 'email' });
-            }
+            // Track login event (UserIdentifier handles identification on page load)
+            await trackLogin({ method: 'email' });
             // Redirect to callback URL or dashboard
             router.push(callbackUrl);
             router.refresh();
