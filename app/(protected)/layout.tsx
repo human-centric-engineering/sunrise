@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
 import { ProtectedFooter } from '@/components/layouts/protected-footer';
@@ -29,7 +30,9 @@ export default function ProtectedLayout({
 }>) {
   return (
     <MaintenanceWrapperWithAdminNotice>
-      <PageTracker />
+      <Suspense fallback={null}>
+        <PageTracker />
+      </Suspense>
       <div className="bg-background flex min-h-screen flex-col">
         <AppHeader logoHref="/dashboard" navigation={<ProtectedNav />} />
         <main className="container mx-auto flex-1 px-4 py-8">{children}</main>
