@@ -17,7 +17,7 @@
  * ```
  */
 
-import { Suspense, useRef } from 'react';
+import { Suspense, useRef, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -93,6 +93,13 @@ export function SettingsTabs({
   });
   const { trackTabChanged } = useSettingsAnalytics();
   const previousTabRef = useRef<SettingsTab | undefined>(undefined);
+
+  // Initialize previousTabRef with active tab on mount (for accurate first tab change tracking)
+  useEffect(() => {
+    if (previousTabRef.current === undefined) {
+      previousTabRef.current = activeTab;
+    }
+  }, [activeTab]);
 
   // Wrapper to handle Radix's string type for onValueChange
   const handleTabChange = (value: string) => {
