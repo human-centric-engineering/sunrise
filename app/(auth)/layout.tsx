@@ -1,7 +1,5 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { PageTracker } from '@/components/analytics';
 
 export const metadata: Metadata = {
   title: {
@@ -23,18 +21,13 @@ export default function AuthLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <>
-      <Suspense fallback={null}>
-        <PageTracker skipInitial />
-      </Suspense>
-      <div className="bg-background min-h-screen">
-        <div className="absolute top-4 right-4">
-          <ThemeToggle />
-        </div>
-        <div className="flex min-h-screen items-center justify-center p-4">
-          <div className="w-full max-w-md">{children}</div>
-        </div>
+    <div className="bg-background min-h-screen">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
       </div>
-    </>
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-md">{children}</div>
+      </div>
+    </div>
   );
 }

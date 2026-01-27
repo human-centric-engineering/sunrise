@@ -8,16 +8,18 @@
  * 1. Users are identified on page load (including after OAuth or refresh)
  * 2. The initial page view includes the correct user ID
  *
- * Place this in the root layout alongside AnalyticsProvider.
- * Use PageTracker with skipInitial={true} to avoid duplicate initial page tracks.
+ * Place this in the root layout alongside AnalyticsProvider and PageTracker.
+ * PageTracker handles subsequent navigation (with skipInitial={true}).
  *
  * Phase 4.5: Analytics Integration
  *
  * @example
  * ```tsx
  * <AnalyticsProvider>
- *   <UserIdentifier />
- *   <PageTracker skipInitial />
+ *   <Suspense fallback={null}>
+ *     <UserIdentifier />
+ *     <PageTracker skipInitial />
+ *   </Suspense>
  *   {children}
  * </AnalyticsProvider>
  * ```
@@ -34,22 +36,23 @@ export function UserIdentifier() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const hasInitializedRef = useRef(false);
+  const hasTrackedInitialRef = useRef(false);
   const identifiedUserRef = useRef<string | null>(null);
 
+  // Handle initial page load: identify user (if logged in), then track page
   useEffect(() => {
     // Wait for analytics to be ready and session to finish loading
     if (!isReady || isSessionPending) {
       return;
     }
 
-    // Only run initialization once per page load
-    if (hasInitializedRef.current) {
+    // Only run once per page load
+    if (hasTrackedInitialRef.current) {
       return;
     }
 
     const initialize = async () => {
-      hasInitializedRef.current = true;
+      hasTrackedInitialRef.current = true;
 
       // If user is logged in, identify them first
       if (session?.user?.id && identifiedUserRef.current !== session.user.id) {

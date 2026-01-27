@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
-import { PageTracker } from '@/components/analytics';
 
 export const metadata: Metadata = {
   title: {
@@ -39,17 +37,12 @@ export default async function AdminLayout({
   }
 
   return (
-    <>
-      <Suspense fallback={null}>
-        <PageTracker skipInitial />
-      </Suspense>
-      <div className="bg-background flex h-screen overflow-hidden">
-        <AdminSidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <AdminHeader />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
-        </div>
+    <div className="bg-background flex h-screen overflow-hidden">
+      <AdminSidebar />
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <AdminHeader />
+        <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
-    </>
+    </div>
   );
 }

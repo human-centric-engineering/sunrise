@@ -90,34 +90,31 @@ export function useAnalyticsEnabled(): boolean {
 interface UsePageTrackingOptions {
   /** Additional properties to include with page views */
   properties?: PageProperties;
-  /** Skip initial page track on mount (useful when manually tracking) */
+  /** Skip tracking the initial page load (useful when UserIdentifier handles it) */
   skipInitial?: boolean;
 }
 
 /**
  * Automatic page view tracking on route changes
  *
- * Call this hook in a layout component to automatically track page views
- * whenever the route changes. Only tracks when analytics is ready and
- * consent is given.
+ * Place this hook ONCE in the root layout via PageTracker component.
+ * Use with skipInitial={true} when UserIdentifier handles the initial page view.
+ *
+ * The root layout never remounts during client-side navigation, so this
+ * hook reliably catches all subsequent route changes via usePathname().
  *
  * @param options - Optional configuration
  *
  * @example
  * ```tsx
- * // In a layout component
- * export function DashboardLayout({ children }) {
- *   usePageTracking();
- *   return <>{children}</>;
- * }
- *
- * // With custom properties
- * usePageTracking({
- *   properties: { section: 'dashboard' }
- * });
- *
- * // Skip initial page track
- * usePageTracking({ skipInitial: true });
+ * // In root layout via PageTracker component
+ * <AnalyticsProvider>
+ *   <Suspense fallback={null}>
+ *     <UserIdentifier />
+ *     <PageTracker skipInitial />
+ *   </Suspense>
+ *   {children}
+ * </AnalyticsProvider>
  * ```
  */
 export function usePageTracking(options: UsePageTrackingOptions = {}): void {
@@ -128,30 +125,29 @@ export function usePageTracking(options: UsePageTrackingOptions = {}): void {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Track whether we've done the initial page track
-  const hasTrackedInitial = useRef(false);
-  // Track the last pathname to detect real changes
+  // Track the last pathname to detect real changes and prevent double tracking
   const lastPathname = useRef<string | null>(null);
+  // Track whether we've skipped the initial page (for skipInitial mode)
+  const hasSkippedInitial = useRef(false);
 
   useEffect(() => {
     if (!isReady) {
       return;
     }
 
-    // Skip initial if requested
-    if (skipInitial && !hasTrackedInitial.current) {
-      hasTrackedInitial.current = true;
+    // Skip initial page load if requested (UserIdentifier handles it)
+    if (skipInitial && !hasSkippedInitial.current) {
+      hasSkippedInitial.current = true;
       lastPathname.current = pathname;
       return;
     }
 
-    // Skip if pathname hasn't changed (prevents double tracking)
-    if (pathname === lastPathname.current && hasTrackedInitial.current) {
+    // Skip if pathname hasn't changed (prevents double tracking on re-renders)
+    if (pathname === lastPathname.current) {
       return;
     }
 
     lastPathname.current = pathname;
-    hasTrackedInitial.current = true;
 
     // Build page properties
     const pageProperties: PageProperties = {
