@@ -45,6 +45,32 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Mock analytics
+const mockReset = vi.fn().mockResolvedValue({ success: true });
+const mockTrackAccountDeleted = vi.fn().mockResolvedValue({ success: true });
+
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+    identify: vi.fn(),
+    page: vi.fn(),
+    reset: mockReset,
+    isReady: true,
+    isEnabled: true,
+  })),
+}));
+
+vi.mock('@/lib/analytics/events', () => ({
+  useSettingsAnalytics: vi.fn(() => ({
+    trackTabChanged: vi.fn(),
+    trackProfileUpdated: vi.fn(),
+    trackPasswordChanged: vi.fn(),
+    trackPreferencesUpdated: vi.fn(),
+    trackAvatarUploaded: vi.fn(),
+    trackAccountDeleted: mockTrackAccountDeleted,
+  })),
+}));
+
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
@@ -471,6 +497,37 @@ describe('components/forms/delete-account-form', () => {
       // Note: Button is disabled, so click won't work, but we can verify it doesn't call API
       expect(actionButton).toBeDisabled();
       expect(apiClient.delete).not.toHaveBeenCalled();
+    });
+
+    it('should track account deletion and reset analytics identity after successful deletion', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+
+      render(<DeleteAccountForm />);
+
+      const deleteButton = screen.getByRole('button', { name: /^delete account$/i });
+
+      // Act: Open dialog
+      await user.click(deleteButton);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/type.*delete.*to confirm/i)).toBeInTheDocument();
+      });
+
+      // Act: Confirm and delete
+      const confirmationInput = screen.getByLabelText(/type.*delete.*to confirm/i);
+      await user.type(confirmationInput, 'DELETE');
+
+      const actionButtons = screen.getAllByRole('button', { name: /delete account/i });
+      const actionButton = actionButtons[actionButtons.length - 1];
+      await user.click(actionButton);
+
+      // Assert: Analytics tracking and reset should be called
+      await waitFor(() => {
+        expect(mockTrackAccountDeleted).toHaveBeenCalled();
+        expect(mockReset).toHaveBeenCalled();
+      });
     });
   });
 
