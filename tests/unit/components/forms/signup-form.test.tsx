@@ -65,6 +65,17 @@ vi.mock('@/lib/utils/password-strength', () => ({
   }),
 }));
 
+// Mock analytics events
+const mockIdentifyUser = vi.fn();
+const mockTrackSignup = vi.fn();
+
+vi.mock('@/lib/analytics/events', () => ({
+  useAuthAnalytics: vi.fn(() => ({
+    identifyUser: mockIdentifyUser,
+    trackSignup: mockTrackSignup,
+  })),
+}));
+
 /**
  * Test Suite: SignupForm Component
  */
@@ -73,6 +84,10 @@ describe('components/forms/signup-form', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Clear analytics mocks
+    mockIdentifyUser.mockClear();
+    mockTrackSignup.mockClear();
 
     // Setup mock router
     const { useRouter } = await import('next/navigation');
@@ -572,6 +587,158 @@ describe('components/forms/signup-form', () => {
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('analytics tracking', () => {
+    it('should call identifyUser with user ID when session exists', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.signUp.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+      vi.mocked(authClient.getSession).mockResolvedValue({
+        data: { user: { id: 'user-123' } },
+      } as unknown as Awaited<ReturnType<typeof authClient.getSession>>);
+
+      render(<SignupForm />);
+
+      const nameInput = screen.getByLabelText(/full name/i);
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText(/^password$/i);
+      const confirmInput = screen.getByLabelText(/confirm password/i);
+      const submitButton = screen.getByRole('button', { name: /create account/i });
+
+      // Act
+      await user.type(nameInput, 'John Doe');
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.type(confirmInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockIdentifyUser).toHaveBeenCalledWith('user-123');
+      });
+    });
+
+    it('should call trackSignup with method email', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.signUp.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+      vi.mocked(authClient.getSession).mockResolvedValue({
+        data: { user: { id: 'user-123' } },
+      } as unknown as Awaited<ReturnType<typeof authClient.getSession>>);
+
+      render(<SignupForm />);
+
+      const nameInput = screen.getByLabelText(/full name/i);
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText(/^password$/i);
+      const confirmInput = screen.getByLabelText(/confirm password/i);
+      const submitButton = screen.getByRole('button', { name: /create account/i });
+
+      // Act
+      await user.type(nameInput, 'John Doe');
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.type(confirmInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrackSignup).toHaveBeenCalledWith({ method: 'email' });
+      });
+    });
+
+    it('should call identifyUser BEFORE trackSignup when session exists', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.signUp.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+      vi.mocked(authClient.getSession).mockResolvedValue({
+        data: { user: { id: 'user-123' } },
+      } as unknown as Awaited<ReturnType<typeof authClient.getSession>>);
+
+      render(<SignupForm />);
+
+      const nameInput = screen.getByLabelText(/full name/i);
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText(/^password$/i);
+      const confirmInput = screen.getByLabelText(/confirm password/i);
+      const submitButton = screen.getByRole('button', { name: /create account/i });
+
+      // Act
+      await user.type(nameInput, 'John Doe');
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.type(confirmInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockIdentifyUser).toHaveBeenCalled();
+        expect(mockTrackSignup).toHaveBeenCalled();
+      });
+
+      // Verify call order: identifyUser should be called before trackSignup
+      const identifyUserCallOrder = mockIdentifyUser.mock.invocationCallOrder[0];
+      const trackSignupCallOrder = mockTrackSignup.mock.invocationCallOrder[0];
+
+      expect(identifyUserCallOrder).toBeLessThan(trackSignupCallOrder);
+    });
+
+    it('should NOT call identifyUser when no session exists (verification required)', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.signUp.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+      vi.mocked(authClient.getSession).mockResolvedValue({ data: null } as unknown as Awaited<
+        ReturnType<typeof authClient.getSession>
+      >);
+
+      render(<SignupForm />);
+
+      const nameInput = screen.getByLabelText(/full name/i);
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText(/^password$/i);
+      const confirmInput = screen.getByLabelText(/confirm password/i);
+      const submitButton = screen.getByRole('button', { name: /create account/i });
+
+      // Act
+      await user.type(nameInput, 'John Doe');
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.type(confirmInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrackSignup).toHaveBeenCalledWith({ method: 'email' });
+      });
+
+      // identifyUser should NOT be called when no session exists
+      expect(mockIdentifyUser).not.toHaveBeenCalled();
     });
   });
 });

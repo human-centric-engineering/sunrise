@@ -43,6 +43,13 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+vi.mock('@/lib/analytics/events', () => ({
+  useAuthAnalytics: vi.fn(() => ({
+    identifyUser: vi.fn().mockResolvedValue({ success: true }),
+    trackLogin: vi.fn().mockResolvedValue({ success: true }),
+  })),
+}));
+
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
@@ -636,6 +643,140 @@ describe('components/forms/login-form', () => {
       // Assert: Labels should be connected to inputs
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
       expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    });
+  });
+
+  describe('analytics tracking', () => {
+    it('should call identifyUser with user ID from session on successful login', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+      const { useAuthAnalytics } = await import('@/lib/analytics/events');
+      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
+      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+
+      vi.mocked(useAuthAnalytics).mockReturnValue({
+        identifyUser: mockIdentifyUser,
+        trackLogin: mockTrackLogin,
+        trackSignup: vi.fn(),
+        trackLogout: vi.fn(),
+        resetUser: vi.fn(),
+      });
+
+      vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+
+      render(<LoginForm />);
+
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText('Password');
+      const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+      // Act
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockIdentifyUser).toHaveBeenCalledWith('user-123');
+      });
+    });
+
+    it('should call trackLogin with email method on successful login', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+      const { useAuthAnalytics } = await import('@/lib/analytics/events');
+      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
+      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+
+      vi.mocked(useAuthAnalytics).mockReturnValue({
+        identifyUser: mockIdentifyUser,
+        trackLogin: mockTrackLogin,
+        trackSignup: vi.fn(),
+        trackLogout: vi.fn(),
+        resetUser: vi.fn(),
+      });
+
+      vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+
+      render(<LoginForm />);
+
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText('Password');
+      const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+      // Act
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrackLogin).toHaveBeenCalledWith({ method: 'email' });
+      });
+    });
+
+    it('should call identifyUser before trackLogin on successful login', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+      const { useAuthAnalytics } = await import('@/lib/analytics/events');
+      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
+      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+
+      vi.mocked(useAuthAnalytics).mockReturnValue({
+        identifyUser: mockIdentifyUser,
+        trackLogin: mockTrackLogin,
+        trackSignup: vi.fn(),
+        trackLogout: vi.fn(),
+        resetUser: vi.fn(),
+      });
+
+      vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+
+      render(<LoginForm />);
+
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText('Password');
+      const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+      // Act
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'Password123!');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(mockIdentifyUser).toHaveBeenCalled();
+        expect(mockTrackLogin).toHaveBeenCalled();
+      });
+
+      // Verify identifyUser was called before trackLogin using invocationCallOrder
+      expect(mockIdentifyUser.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTrackLogin.mock.invocationCallOrder[0]
+      );
     });
   });
 });
