@@ -125,6 +125,15 @@ export const verifyEmailSchema = z.object({
 });
 
 /**
+ * Send verification email schema
+ *
+ * Validates request to send a verification email
+ */
+export const sendVerificationEmailSchema = z.object({
+  email: emailSchema,
+});
+
+/**
  * TypeScript types inferred from schemas
  * Use these for type-safe form handling
  */
@@ -134,3 +143,4 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ResetPasswordRequestInput = z.infer<typeof resetPasswordRequestSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
+export type SendVerificationEmailInput = z.infer<typeof sendVerificationEmailSchema>;
