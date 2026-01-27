@@ -89,6 +89,12 @@ export function OAuthButton({
         };
       }
 
+      // Mark OAuth attempt in sessionStorage for tracking after redirect
+      // UserIdentifier will pick this up and track the login event
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('oauth_login_pending', provider);
+      }
+
       // Initiate OAuth flow
       await authClient.signIn.social(oauthRequest);
 

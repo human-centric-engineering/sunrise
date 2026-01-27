@@ -18,10 +18,12 @@ import { UserIdentifier } from '@/components/analytics/user-identifier';
 // Hoist mock functions to avoid reference errors
 const mockIdentify = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockPage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockTrackLogin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockUseSession = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
 const mockUseSearchParams = vi.hoisted(() => vi.fn());
 const mockUseAnalytics = vi.hoisted(() => vi.fn());
+const mockUseAuthAnalytics = vi.hoisted(() => vi.fn());
 
 // Mock @/lib/auth/client
 vi.mock('@/lib/auth/client', () => ({
@@ -31,6 +33,11 @@ vi.mock('@/lib/auth/client', () => ({
 // Mock @/lib/analytics
 vi.mock('@/lib/analytics', () => ({
   useAnalytics: () => mockUseAnalytics(),
+}));
+
+// Mock @/lib/analytics/events
+vi.mock('@/lib/analytics/events', () => ({
+  useAuthAnalytics: () => mockUseAuthAnalytics(),
 }));
 
 // Mock next/navigation
@@ -53,6 +60,9 @@ describe('components/analytics/user-identifier', () => {
     // Setup default mock returns
     mockUsePathname.mockReturnValue('/dashboard');
     mockUseSearchParams.mockReturnValue(new URLSearchParams('utm_source=email'));
+    mockUseAuthAnalytics.mockReturnValue({
+      trackLogin: mockTrackLogin,
+    });
 
     // Mock window.location
     delete (window as unknown as { location: unknown }).location;
@@ -67,6 +77,9 @@ describe('components/analytics/user-identifier', () => {
       writable: true,
       configurable: true,
     });
+
+    // Clear sessionStorage before each test
+    sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -723,6 +736,383 @@ describe('components/analytics/user-identifier', () => {
 
       // Assert: Should render nothing (null)
       expect(container.firstChild).toBeNull();
+    });
+  });
+
+  describe('OAuth login tracking', () => {
+    beforeEach(() => {
+      mockUseAnalytics.mockReturnValue({
+        identify: mockIdentify,
+        page: mockPage,
+        isReady: true,
+      });
+    });
+
+    describe('When OAuth marker exists and user is logged in', () => {
+      it('should check sessionStorage for oauth_login_pending', async () => {
+        // Arrange: User logged in with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: trackLogin should be called (which means sessionStorage was checked)
+        await waitFor(() => {
+          expect(mockTrackLogin).toHaveBeenCalledWith({
+            method: 'oauth',
+            provider: 'google',
+          });
+        });
+      });
+
+      it('should remove oauth_login_pending from sessionStorage', async () => {
+        // Arrange: User logged in with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Wait for tracking to complete
+        await waitFor(() => {
+          expect(mockTrackLogin).toHaveBeenCalledWith({
+            method: 'oauth',
+            provider: 'google',
+          });
+        });
+
+        // Verify it's actually removed
+        expect(sessionStorage.getItem('oauth_login_pending')).toBeNull();
+      });
+
+      it('should call trackLogin with correct OAuth provider (google)', async () => {
+        // Arrange: User logged in with Google OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: trackLogin should be called with google provider
+        await waitFor(() => {
+          expect(mockTrackLogin).toHaveBeenCalledWith({
+            method: 'oauth',
+            provider: 'google',
+          });
+        });
+      });
+
+      it('should call trackLogin with correct OAuth provider (github)', async () => {
+        // Arrange: User logged in with GitHub OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-456' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'github');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: trackLogin should be called with github provider
+        await waitFor(() => {
+          expect(mockTrackLogin).toHaveBeenCalledWith({
+            method: 'oauth',
+            provider: 'github',
+          });
+        });
+      });
+
+      it('should call trackLogin AFTER identify but BEFORE page', async () => {
+        // Arrange: User logged in with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        const callOrder: string[] = [];
+
+        mockIdentify.mockImplementation(async () => {
+          callOrder.push('identify');
+        });
+
+        mockTrackLogin.mockImplementation(async () => {
+          callOrder.push('trackLogin');
+        });
+
+        mockPage.mockImplementation(async () => {
+          callOrder.push('page');
+        });
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Call order should be identify → trackLogin → page
+        await waitFor(() => {
+          expect(callOrder).toEqual(['identify', 'trackLogin', 'page']);
+        });
+      });
+
+      it('should only track OAuth login once per page load', async () => {
+        // Arrange: User logged in with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act: Render multiple times (simulating re-renders)
+        const { rerender } = render(<UserIdentifier />);
+
+        await waitFor(() => {
+          expect(mockTrackLogin).toHaveBeenCalledTimes(1);
+        });
+
+        rerender(<UserIdentifier />);
+        rerender(<UserIdentifier />);
+
+        // Assert: trackLogin should still only be called once
+        expect(mockTrackLogin).toHaveBeenCalledTimes(1);
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+        expect(mockPage).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('When no OAuth marker exists', () => {
+      it('should NOT call trackLogin when no marker present', async () => {
+        // Arrange: User logged in but NO OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        // Ensure no marker in sessionStorage
+        sessionStorage.removeItem('oauth_login_pending');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: trackLogin should NOT be called
+        await waitFor(() => {
+          expect(mockIdentify).toHaveBeenCalledTimes(1);
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+      });
+
+      it('should NOT call trackLogin when marker is empty string', async () => {
+        // Arrange: User logged in with empty OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', '');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: trackLogin should NOT be called (empty string is falsy)
+        await waitFor(() => {
+          expect(mockIdentify).toHaveBeenCalledTimes(1);
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+      });
+
+      it('should only call identify and page in sequence', async () => {
+        // Arrange: User logged in without OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.removeItem('oauth_login_pending');
+
+        const callOrder: string[] = [];
+
+        mockIdentify.mockImplementation(async () => {
+          callOrder.push('identify');
+        });
+
+        mockPage.mockImplementation(async () => {
+          callOrder.push('page');
+        });
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Call order should be identify → page (no trackLogin)
+        await waitFor(() => {
+          expect(callOrder).toEqual(['identify', 'page']);
+        });
+
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('When user is not logged in', () => {
+      it('should NOT check OAuth marker when no session exists', async () => {
+        // Arrange: No user logged in (even with OAuth marker present)
+        mockUseSession.mockReturnValue({
+          data: null,
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Should NOT check sessionStorage (only happens after identify)
+        await waitFor(() => {
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockIdentify).not.toHaveBeenCalled();
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+      });
+
+      it('should only track page view without identify or trackLogin', async () => {
+        // Arrange: No user logged in
+        mockUseSession.mockReturnValue({
+          data: null,
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Only page() should be called
+        await waitFor(() => {
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockIdentify).not.toHaveBeenCalled();
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+      });
+
+      it('should leave OAuth marker in sessionStorage if not logged in', async () => {
+        // Arrange: No user logged in with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: null,
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        await waitFor(() => {
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        // Assert: OAuth marker should still be present (not removed)
+        expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');
+      });
+    });
+
+    describe('Edge cases', () => {
+      it('should handle sessionStorage errors gracefully', async () => {
+        // Arrange: User logged in, mock sessionStorage.getItem to throw
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+          throw new Error('sessionStorage unavailable');
+        });
+
+        // Act & Assert: Should not throw
+        expect(() => render(<UserIdentifier />)).not.toThrow();
+
+        // Wait for async operations
+        await waitFor(() => {
+          expect(mockIdentify).toHaveBeenCalledWith('user-123');
+        });
+
+        getItemSpy.mockRestore();
+      });
+
+      it('should handle trackLogin promise rejection gracefully', async () => {
+        // Arrange: trackLogin rejects but we catch the error
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        const mockTrackLoginReject = vi.fn().mockImplementation(async () => {
+          try {
+            throw new Error('Analytics error');
+          } catch {
+            // Caught - component silently handles errors via void initialize()
+            return undefined;
+          }
+        });
+
+        mockUseAuthAnalytics.mockReturnValue({
+          trackLogin: mockTrackLoginReject,
+        });
+
+        // Act & Assert: Should not throw
+        expect(() => render(<UserIdentifier />)).not.toThrow();
+
+        // Wait for async operations to complete
+        await waitFor(() => {
+          expect(mockTrackLoginReject).toHaveBeenCalledWith({
+            method: 'oauth',
+            provider: 'google',
+          });
+        });
+      });
+
+      it('should handle missing user ID when OAuth marker exists', async () => {
+        // Arrange: Session data exists but no user ID, with OAuth marker
+        mockUseSession.mockReturnValue({
+          data: { user: { id: undefined } },
+          isPending: false,
+        });
+
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        // Act
+        render(<UserIdentifier />);
+
+        // Assert: Should not call identify or trackLogin, only page
+        await waitFor(() => {
+          expect(mockPage).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockIdentify).not.toHaveBeenCalled();
+        expect(mockTrackLogin).not.toHaveBeenCalled();
+
+        // OAuth marker should remain (wasn't processed)
+        expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');
+      });
     });
   });
 });

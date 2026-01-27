@@ -29,10 +29,12 @@ import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useSession } from '@/lib/auth/client';
 import { useAnalytics } from '@/lib/analytics';
+import { useAuthAnalytics } from '@/lib/analytics/events';
 
 export function UserIdentifier() {
   const { data: session, isPending: isSessionPending } = useSession();
   const { identify, page, isReady } = useAnalytics();
+  const { trackLogin } = useAuthAnalytics();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -58,6 +60,15 @@ export function UserIdentifier() {
       if (session?.user?.id && identifiedUserRef.current !== session.user.id) {
         await identify(session.user.id);
         identifiedUserRef.current = session.user.id;
+
+        // Check for pending OAuth login (set by OAuthButton before redirect)
+        if (typeof window !== 'undefined') {
+          const oauthProvider = sessionStorage.getItem('oauth_login_pending');
+          if (oauthProvider) {
+            sessionStorage.removeItem('oauth_login_pending');
+            await trackLogin({ method: 'oauth', provider: oauthProvider });
+          }
+        }
       }
 
       // Then track the initial page view (with correct userId if logged in)
@@ -70,7 +81,16 @@ export function UserIdentifier() {
     };
 
     void initialize();
-  }, [isReady, isSessionPending, session?.user?.id, identify, page, pathname, searchParams]);
+  }, [
+    isReady,
+    isSessionPending,
+    session?.user?.id,
+    identify,
+    page,
+    trackLogin,
+    pathname,
+    searchParams,
+  ]);
 
   // Reset identification tracking when user logs out
   useEffect(() => {

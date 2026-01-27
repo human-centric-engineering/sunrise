@@ -111,6 +111,25 @@ describe('components/forms/oauth-button', () => {
       });
     });
 
+    it('should set sessionStorage with oauth_login_pending when OAuth is initiated', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const setItemSpy = vi.spyOn(window.sessionStorage, 'setItem');
+
+      render(<OAuthButton provider="google">Sign in</OAuthButton>);
+
+      // Act
+      await user.click(screen.getByRole('button'));
+
+      // Assert
+      await waitFor(() => {
+        expect(setItemSpy).toHaveBeenCalledWith('oauth_login_pending', 'google');
+      });
+
+      // Cleanup
+      setItemSpy.mockRestore();
+    });
+
     it('should use callbackUrl prop when provided', async () => {
       // Arrange
       const user = userEvent.setup();
