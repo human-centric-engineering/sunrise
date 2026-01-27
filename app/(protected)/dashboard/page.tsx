@@ -44,8 +44,16 @@ export default async function DashboardPage() {
     clearInvalidSession('/dashboard');
   }
 
-  // Calculate profile completion percentage
-  const profileFields = [user.name, user.email, user.bio, user.phone, user.timezone, user.location];
+  // Calculate profile completion percentage (includes avatar)
+  const profileFields = [
+    user.name,
+    user.email,
+    user.image,
+    user.bio,
+    user.phone,
+    user.timezone,
+    user.location,
+  ];
   const completedFields = profileFields.filter(Boolean).length;
   const profileCompletion = Math.round((completedFields / profileFields.length) * 100);
 
