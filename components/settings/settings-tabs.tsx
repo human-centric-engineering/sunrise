@@ -97,9 +97,11 @@ export function SettingsTabs({
   // Wrapper to handle Radix's string type for onValueChange
   const handleTabChange = (value: string) => {
     const newTab = value as SettingsTab;
-    // Track tab change with previous tab
-    void trackTabChanged({ tab: newTab, previous_tab: previousTabRef.current });
-    previousTabRef.current = newTab;
+    // Only track if tab actually changed (prevents double-fire from URL sync)
+    if (newTab !== previousTabRef.current) {
+      void trackTabChanged({ tab: newTab, previous_tab: previousTabRef.current });
+      previousTabRef.current = newTab;
+    }
     setActiveTab(newTab);
   };
 
