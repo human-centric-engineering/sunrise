@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { acceptInvitationSchema, type AcceptInvitationInput } from '@/lib/validations/user';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { authClient } from '@/lib/auth/client';
+import { useAnalytics } from '@/lib/analytics';
 import { useFormAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +79,7 @@ export function AcceptInviteForm() {
     // Parse OAuth error from URL if present
     oauthError ? parseOAuthError(oauthError) : null
   );
+  const { identify } = useAnalytics();
   const { trackInviteAccepted } = useFormAnalytics();
 
   // Build error callback URL to return here with token/email preserved
@@ -176,6 +179,12 @@ export function AcceptInviteForm() {
           confirmPassword: data.confirmPassword,
         },
       });
+
+      // Get session to identify user before tracking
+      const { data: session } = await authClient.getSession();
+      if (session?.user?.id) {
+        await identify(session.user.id);
+      }
 
       // Track invite acceptance
       void trackInviteAccepted();
