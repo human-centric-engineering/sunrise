@@ -28,13 +28,11 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useSession } from '@/lib/auth/client';
-import { useAnalytics } from '@/lib/analytics';
-import { useAuthAnalytics } from '@/lib/analytics/events';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 
 export function UserIdentifier() {
   const { data: session, isPending: isSessionPending } = useSession();
-  const { identify, page, isReady } = useAnalytics();
-  const { trackLogin } = useAuthAnalytics();
+  const { identify, page, track, isReady } = useAnalytics();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -66,7 +64,7 @@ export function UserIdentifier() {
           const oauthProvider = sessionStorage.getItem('oauth_login_pending');
           if (oauthProvider) {
             sessionStorage.removeItem('oauth_login_pending');
-            await trackLogin({ method: 'oauth', provider: oauthProvider });
+            await track(EVENTS.USER_LOGGED_IN, { method: 'oauth', provider: oauthProvider });
           }
         }
       }
@@ -81,16 +79,7 @@ export function UserIdentifier() {
     };
 
     void initialize();
-  }, [
-    isReady,
-    isSessionPending,
-    session?.user?.id,
-    identify,
-    page,
-    trackLogin,
-    pathname,
-    searchParams,
-  ]);
+  }, [isReady, isSessionPending, session?.user?.id, identify, page, track, pathname, searchParams]);
 
   // Reset identification tracking when user logs out
   useEffect(() => {

@@ -105,3 +105,19 @@ export {
   isPostHogConfigured,
   isPlausibleConfigured,
 } from './config';
+
+// Event constants and types (for direct track() + EVENTS pattern)
+export { EVENTS } from './events/constants';
+export type { EventName } from './events/constants';
+export type {
+  AuthMethod,
+  AuthEventProps,
+  SettingsTab,
+  SettingsTabEventProps,
+  ProfileUpdatedEventProps,
+  PreferencesUpdatedEventProps,
+  FormSubmittedEventProps,
+} from './events/types';
+
+// Form analytics helper (generic form tracking)
+export { useFormAnalytics } from './events/forms';

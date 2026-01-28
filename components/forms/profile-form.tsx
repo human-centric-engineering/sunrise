@@ -16,7 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { updateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
-import { useSettingsAnalytics } from '@/lib/analytics/events';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,7 +61,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const { trackProfileUpdated } = useSettingsAnalytics();
+  const { track } = useAnalytics();
   const originalValuesRef = useRef({
     name: user.name,
     bio: user.bio || '',
@@ -117,7 +117,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       if ((data.location?.trim() || '') !== original.location) fieldsChanged.push('location');
 
       if (fieldsChanged.length > 0) {
-        void trackProfileUpdated({ fields_changed: fieldsChanged });
+        void track(EVENTS.PROFILE_UPDATED, { fields_changed: fieldsChanged });
         // Update original values for next comparison
         originalValuesRef.current = {
           name: data.name ?? original.name,

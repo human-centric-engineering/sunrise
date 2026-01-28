@@ -43,11 +43,21 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
-vi.mock('@/lib/analytics/events', () => ({
-  useAuthAnalytics: vi.fn(() => ({
-    identifyUser: vi.fn().mockResolvedValue({ success: true }),
-    trackLogin: vi.fn().mockResolvedValue({ success: true }),
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn().mockResolvedValue({ success: true }),
+    identify: vi.fn().mockResolvedValue({ success: true }),
+    page: vi.fn().mockResolvedValue({ success: true }),
+    reset: vi.fn().mockResolvedValue({ success: true }),
+    isReady: true,
+    isEnabled: true,
+    providerName: 'Console',
   })),
+  EVENTS: {
+    USER_SIGNED_UP: 'user_signed_up',
+    USER_LOGGED_IN: 'user_logged_in',
+    USER_LOGGED_OUT: 'user_logged_out',
+  },
 }));
 
 // Mock next/navigation
@@ -647,20 +657,22 @@ describe('components/forms/login-form', () => {
   });
 
   describe('analytics tracking', () => {
-    it('should call identifyUser with user ID from session on successful login', async () => {
+    it('should call identify with user ID from session on successful login', async () => {
       // Arrange
       const user = userEvent.setup();
       const { authClient } = await import('@/lib/auth/client');
-      const { useAuthAnalytics } = await import('@/lib/analytics/events');
-      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
-      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+      const { useAnalytics } = await import('@/lib/analytics');
+      const mockIdentify = vi.fn().mockResolvedValue({ success: true });
+      const mockTrack = vi.fn().mockResolvedValue({ success: true });
 
-      vi.mocked(useAuthAnalytics).mockReturnValue({
-        identifyUser: mockIdentifyUser,
-        trackLogin: mockTrackLogin,
-        trackSignup: vi.fn(),
-        trackLogout: vi.fn(),
-        resetUser: vi.fn(),
+      vi.mocked(useAnalytics).mockReturnValue({
+        identify: mockIdentify,
+        track: mockTrack,
+        page: vi.fn().mockResolvedValue({ success: true }),
+        reset: vi.fn().mockResolvedValue({ success: true }),
+        isReady: true,
+        isEnabled: true,
+        providerName: 'Console',
       });
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
@@ -685,24 +697,26 @@ describe('components/forms/login-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentifyUser).toHaveBeenCalledWith('user-123');
+        expect(mockIdentify).toHaveBeenCalledWith('user-123');
       });
     });
 
-    it('should call trackLogin with email method on successful login', async () => {
+    it('should call track with USER_LOGGED_IN event on successful login', async () => {
       // Arrange
       const user = userEvent.setup();
       const { authClient } = await import('@/lib/auth/client');
-      const { useAuthAnalytics } = await import('@/lib/analytics/events');
-      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
-      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+      const { useAnalytics } = await import('@/lib/analytics');
+      const mockIdentify = vi.fn().mockResolvedValue({ success: true });
+      const mockTrack = vi.fn().mockResolvedValue({ success: true });
 
-      vi.mocked(useAuthAnalytics).mockReturnValue({
-        identifyUser: mockIdentifyUser,
-        trackLogin: mockTrackLogin,
-        trackSignup: vi.fn(),
-        trackLogout: vi.fn(),
-        resetUser: vi.fn(),
+      vi.mocked(useAnalytics).mockReturnValue({
+        identify: mockIdentify,
+        track: mockTrack,
+        page: vi.fn().mockResolvedValue({ success: true }),
+        reset: vi.fn().mockResolvedValue({ success: true }),
+        isReady: true,
+        isEnabled: true,
+        providerName: 'Console',
       });
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
@@ -727,24 +741,26 @@ describe('components/forms/login-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockTrackLogin).toHaveBeenCalledWith({ method: 'email' });
+        expect(mockTrack).toHaveBeenCalledWith('user_logged_in', { method: 'email' });
       });
     });
 
-    it('should call identifyUser before trackLogin on successful login', async () => {
+    it('should call identify before track on successful login', async () => {
       // Arrange
       const user = userEvent.setup();
       const { authClient } = await import('@/lib/auth/client');
-      const { useAuthAnalytics } = await import('@/lib/analytics/events');
-      const mockIdentifyUser = vi.fn().mockResolvedValue({ success: true });
-      const mockTrackLogin = vi.fn().mockResolvedValue({ success: true });
+      const { useAnalytics } = await import('@/lib/analytics');
+      const mockIdentify = vi.fn().mockResolvedValue({ success: true });
+      const mockTrack = vi.fn().mockResolvedValue({ success: true });
 
-      vi.mocked(useAuthAnalytics).mockReturnValue({
-        identifyUser: mockIdentifyUser,
-        trackLogin: mockTrackLogin,
-        trackSignup: vi.fn(),
-        trackLogout: vi.fn(),
-        resetUser: vi.fn(),
+      vi.mocked(useAnalytics).mockReturnValue({
+        identify: mockIdentify,
+        track: mockTrack,
+        page: vi.fn().mockResolvedValue({ success: true }),
+        reset: vi.fn().mockResolvedValue({ success: true }),
+        isReady: true,
+        isEnabled: true,
+        providerName: 'Console',
       });
 
       vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
@@ -769,13 +785,13 @@ describe('components/forms/login-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentifyUser).toHaveBeenCalled();
-        expect(mockTrackLogin).toHaveBeenCalled();
+        expect(mockIdentify).toHaveBeenCalled();
+        expect(mockTrack).toHaveBeenCalled();
       });
 
-      // Verify identifyUser was called before trackLogin using invocationCallOrder
-      expect(mockIdentifyUser.mock.invocationCallOrder[0]).toBeLessThan(
-        mockTrackLogin.mock.invocationCallOrder[0]
+      // Verify identify was called before track using invocationCallOrder
+      expect(mockIdentify.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTrack.mock.invocationCallOrder[0]
       );
     });
   });

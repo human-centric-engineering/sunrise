@@ -47,28 +47,21 @@ vi.mock('@/lib/logging', () => ({
 
 // Mock analytics
 const mockReset = vi.fn().mockResolvedValue({ success: true });
-const mockTrackAccountDeleted = vi.fn().mockResolvedValue({ success: true });
+const mockTrack = vi.fn().mockResolvedValue({ success: true });
 
 vi.mock('@/lib/analytics', () => ({
   useAnalytics: vi.fn(() => ({
-    track: vi.fn(),
+    track: mockTrack,
     identify: vi.fn(),
     page: vi.fn(),
     reset: mockReset,
     isReady: true,
     isEnabled: true,
+    providerName: 'Console',
   })),
-}));
-
-vi.mock('@/lib/analytics/events', () => ({
-  useSettingsAnalytics: vi.fn(() => ({
-    trackTabChanged: vi.fn(),
-    trackProfileUpdated: vi.fn(),
-    trackPasswordChanged: vi.fn(),
-    trackPreferencesUpdated: vi.fn(),
-    trackAvatarUploaded: vi.fn(),
-    trackAccountDeleted: mockTrackAccountDeleted,
-  })),
+  EVENTS: {
+    ACCOUNT_DELETED: 'account_deleted',
+  },
 }));
 
 // Mock next/navigation
@@ -93,6 +86,10 @@ describe('components/forms/delete-account-form', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Clear analytics mocks
+    mockReset.mockClear();
+    mockTrack.mockClear();
 
     // Setup mock router
     const { useRouter } = await import('next/navigation');
@@ -525,7 +522,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Assert: Analytics tracking and reset should be called
       await waitFor(() => {
-        expect(mockTrackAccountDeleted).toHaveBeenCalled();
+        expect(mockTrack).toHaveBeenCalledWith('account_deleted');
         expect(mockReset).toHaveBeenCalled();
       });
     });

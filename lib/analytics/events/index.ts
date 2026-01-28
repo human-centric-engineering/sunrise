@@ -1,41 +1,27 @@
 /**
- * Analytics Event Helpers
+ * Analytics Event Constants and Types
  *
- * Centralized event tracking helpers for type-safe analytics.
+ * Centralized event definitions for type-safe analytics tracking.
  *
  * This module provides:
  * - Event name constants (EVENTS)
  * - Type definitions for event properties
- * - Domain-specific hooks (useAuthAnalytics, useSettingsAnalytics, useFormAnalytics)
+ * - Generic form tracking helper (useFormAnalytics)
  *
  * Phase 4.5: Analytics Integration
  *
  * @see .context/analytics/overview.md for event catalog and best practices
  *
- * @example Authentication tracking (GDPR-compliant)
+ * @example Direct event tracking (recommended pattern)
  * ```tsx
- * import { useAuthAnalytics } from '@/lib/analytics/events';
+ * import { useAnalytics, EVENTS } from '@/lib/analytics';
  *
  * function LoginForm() {
- *   const { trackLogin, identifyUser } = useAuthAnalytics();
+ *   const { track, identify } = useAnalytics();
  *
  *   const onSuccess = async (user: User) => {
- *     // Only send user ID by default (no PII)
- *     await identifyUser(user.id);
- *     await trackLogin({ method: 'email' });
- *   };
- * }
- * ```
- *
- * @example Settings tracking
- * ```tsx
- * import { useSettingsAnalytics } from '@/lib/analytics/events';
- *
- * function SettingsTabs() {
- *   const { trackTabChanged } = useSettingsAnalytics();
- *
- *   const handleTabChange = (newTab: SettingsTab) => {
- *     trackTabChanged({ tab: newTab, previous_tab: currentTab });
+ *     await identify(user.id);
+ *     await track(EVENTS.USER_LOGGED_IN, { method: 'email' });
  *   };
  * }
  * ```
@@ -51,16 +37,6 @@
  *     await sendMessage(data);
  *     // Tracks: contact_form_submitted
  *     await trackFormSubmitted('contact');
- *   };
- * }
- *
- * function FeedbackForm() {
- *   const { trackFormSubmitted } = useFormAnalytics();
- *
- *   const onSubmit = async () => {
- *     await submitFeedback(data);
- *     // Tracks: feedback_form_submitted { source: 'footer' }
- *     await trackFormSubmitted('feedback', { source: 'footer' });
  *   };
  * }
  * ```
@@ -81,7 +57,5 @@ export type {
   IdentifyTraits,
 } from './types';
 
-// Hooks
-export { useAuthAnalytics } from './auth';
-export { useSettingsAnalytics } from './settings';
+// Generic form tracking hook
 export { useFormAnalytics } from './forms';

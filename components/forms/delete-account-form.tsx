@@ -13,8 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
-import { useAnalytics } from '@/lib/analytics';
-import { useSettingsAnalytics } from '@/lib/analytics/events';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,8 +35,7 @@ export function DeleteAccountForm() {
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { reset } = useAnalytics();
-  const { trackAccountDeleted } = useSettingsAnalytics();
+  const { track, reset } = useAnalytics();
 
   const isConfirmed = confirmation === 'DELETE';
 
@@ -53,7 +51,7 @@ export function DeleteAccountForm() {
       });
 
       // Track account deletion and reset analytics identity
-      void trackAccountDeleted();
+      void track(EVENTS.ACCOUNT_DELETED);
       void reset();
 
       // Redirect to home page after successful deletion

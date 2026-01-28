@@ -26,6 +26,7 @@ import {
   resetAnalyticsClient,
 } from './client';
 import { useHasOptionalConsent } from '@/lib/consent';
+import { logger } from '@/lib/logging';
 
 /**
  * Default no-op result for when analytics is disabled
@@ -97,7 +98,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
             forceUpdate((v) => v + 1);
           })
           .catch((error: unknown) => {
-            console.error('[Analytics] Failed to initialize:', error);
+            logger.error('Analytics failed to initialize', error);
           })
           .finally(() => {
             initializingRef.current = false;
@@ -123,7 +124,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       try {
         return await client.identify(userId, traits);
       } catch (error) {
-        console.error('[Analytics] identify error:', error);
+        logger.error('Analytics identify error', error);
         return { success: false, error: String(error) };
       }
     },
@@ -144,7 +145,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       try {
         return await client.track(event, properties);
       } catch (error) {
-        console.error('[Analytics] track error:', error);
+        logger.error('Analytics track error', error, { event });
         return { success: false, error: String(error) };
       }
     },
@@ -165,7 +166,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       try {
         return await client.page(name, properties);
       } catch (error) {
-        console.error('[Analytics] page error:', error);
+        logger.error('Analytics page error', error, { pageName: name });
         return { success: false, error: String(error) };
       }
     },
@@ -181,7 +182,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
     try {
       return await client.reset();
     } catch (error) {
-      console.error('[Analytics] reset error:', error);
+      logger.error('Analytics reset error', error);
       return { success: false, error: String(error) };
     }
   }, []);

@@ -65,15 +65,25 @@ vi.mock('@/lib/utils/password-strength', () => ({
   }),
 }));
 
-// Mock analytics events
-const mockIdentifyUser = vi.fn();
-const mockTrackSignup = vi.fn();
+// Mock analytics
+const mockIdentify = vi.fn();
+const mockTrack = vi.fn();
 
-vi.mock('@/lib/analytics/events', () => ({
-  useAuthAnalytics: vi.fn(() => ({
-    identifyUser: mockIdentifyUser,
-    trackSignup: mockTrackSignup,
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    identify: mockIdentify,
+    track: mockTrack,
+    page: vi.fn().mockResolvedValue({ success: true }),
+    reset: vi.fn().mockResolvedValue({ success: true }),
+    isReady: true,
+    isEnabled: true,
+    providerName: 'Console',
   })),
+  EVENTS: {
+    USER_SIGNED_UP: 'user_signed_up',
+    USER_LOGGED_IN: 'user_logged_in',
+    USER_LOGGED_OUT: 'user_logged_out',
+  },
 }));
 
 /**
@@ -86,8 +96,8 @@ describe('components/forms/signup-form', () => {
     vi.clearAllMocks();
 
     // Clear analytics mocks
-    mockIdentifyUser.mockClear();
-    mockTrackSignup.mockClear();
+    mockIdentify.mockClear();
+    mockTrack.mockClear();
 
     // Setup mock router
     const { useRouter } = await import('next/navigation');
@@ -622,7 +632,7 @@ describe('components/forms/signup-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentifyUser).toHaveBeenCalledWith('user-123');
+        expect(mockIdentify).toHaveBeenCalledWith('user-123');
       });
     });
 
@@ -657,7 +667,7 @@ describe('components/forms/signup-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockTrackSignup).toHaveBeenCalledWith({ method: 'email' });
+        expect(mockTrack).toHaveBeenCalledWith('user_signed_up', { method: 'email' });
       });
     });
 
@@ -692,13 +702,13 @@ describe('components/forms/signup-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentifyUser).toHaveBeenCalled();
-        expect(mockTrackSignup).toHaveBeenCalled();
+        expect(mockIdentify).toHaveBeenCalled();
+        expect(mockTrack).toHaveBeenCalled();
       });
 
       // Verify call order: identifyUser should be called before trackSignup
-      const identifyUserCallOrder = mockIdentifyUser.mock.invocationCallOrder[0];
-      const trackSignupCallOrder = mockTrackSignup.mock.invocationCallOrder[0];
+      const identifyUserCallOrder = mockIdentify.mock.invocationCallOrder[0];
+      const trackSignupCallOrder = mockTrack.mock.invocationCallOrder[0];
 
       expect(identifyUserCallOrder).toBeLessThan(trackSignupCallOrder);
     });
@@ -734,11 +744,11 @@ describe('components/forms/signup-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockTrackSignup).toHaveBeenCalledWith({ method: 'email' });
+        expect(mockTrack).toHaveBeenCalledWith('user_signed_up', { method: 'email' });
       });
 
       // identifyUser should NOT be called when no session exists
-      expect(mockIdentifyUser).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled();
     });
   });
 });

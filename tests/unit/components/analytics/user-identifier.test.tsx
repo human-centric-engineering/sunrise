@@ -18,12 +18,11 @@ import { UserIdentifier } from '@/components/analytics/user-identifier';
 // Hoist mock functions to avoid reference errors
 const mockIdentify = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockPage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockTrackLogin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockTrack = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockUseSession = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
 const mockUseSearchParams = vi.hoisted(() => vi.fn());
 const mockUseAnalytics = vi.hoisted(() => vi.fn());
-const mockUseAuthAnalytics = vi.hoisted(() => vi.fn());
 
 // Mock @/lib/auth/client
 vi.mock('@/lib/auth/client', () => ({
@@ -33,11 +32,11 @@ vi.mock('@/lib/auth/client', () => ({
 // Mock @/lib/analytics
 vi.mock('@/lib/analytics', () => ({
   useAnalytics: () => mockUseAnalytics(),
-}));
-
-// Mock @/lib/analytics/events
-vi.mock('@/lib/analytics/events', () => ({
-  useAuthAnalytics: () => mockUseAuthAnalytics(),
+  EVENTS: {
+    USER_LOGGED_IN: 'user_logged_in',
+    USER_SIGNED_UP: 'user_signed_up',
+    USER_LOGGED_OUT: 'user_logged_out',
+  },
 }));
 
 // Mock next/navigation
@@ -60,9 +59,6 @@ describe('components/analytics/user-identifier', () => {
     // Setup default mock returns
     mockUsePathname.mockReturnValue('/dashboard');
     mockUseSearchParams.mockReturnValue(new URLSearchParams('utm_source=email'));
-    mockUseAuthAnalytics.mockReturnValue({
-      trackLogin: mockTrackLogin,
-    });
 
     // Mock window.location
     delete (window as unknown as { location: unknown }).location;
@@ -98,6 +94,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: false, // Analytics NOT ready
       });
 
@@ -119,6 +116,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
@@ -140,6 +138,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: false, // Analytics NOT ready
       });
 
@@ -161,6 +160,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true, // Analytics ready
       });
 
@@ -186,6 +186,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
@@ -264,6 +265,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
     });
@@ -354,6 +356,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
     });
@@ -435,6 +438,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
     });
@@ -571,6 +575,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
     });
@@ -678,6 +683,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
@@ -699,6 +705,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
@@ -744,6 +751,7 @@ describe('components/analytics/user-identifier', () => {
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
     });
@@ -761,9 +769,9 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: trackLogin should be called (which means sessionStorage was checked)
+        // Assert: track should be called (which means sessionStorage was checked)
         await waitFor(() => {
-          expect(mockTrackLogin).toHaveBeenCalledWith({
+          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'google',
           });
@@ -784,7 +792,7 @@ describe('components/analytics/user-identifier', () => {
 
         // Assert: Wait for tracking to complete
         await waitFor(() => {
-          expect(mockTrackLogin).toHaveBeenCalledWith({
+          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'google',
           });
@@ -794,7 +802,7 @@ describe('components/analytics/user-identifier', () => {
         expect(sessionStorage.getItem('oauth_login_pending')).toBeNull();
       });
 
-      it('should call trackLogin with correct OAuth provider (google)', async () => {
+      it('should call track with correct OAuth provider (google)', async () => {
         // Arrange: User logged in with Google OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
@@ -806,16 +814,16 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: trackLogin should be called with google provider
+        // Assert: track should be called with google provider
         await waitFor(() => {
-          expect(mockTrackLogin).toHaveBeenCalledWith({
+          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'google',
           });
         });
       });
 
-      it('should call trackLogin with correct OAuth provider (github)', async () => {
+      it('should call track with correct OAuth provider (github)', async () => {
         // Arrange: User logged in with GitHub OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-456' } },
@@ -827,16 +835,16 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: trackLogin should be called with github provider
+        // Assert: track should be called with github provider
         await waitFor(() => {
-          expect(mockTrackLogin).toHaveBeenCalledWith({
+          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'github',
           });
         });
       });
 
-      it('should call trackLogin AFTER identify but BEFORE page', async () => {
+      it('should call track AFTER identify but BEFORE page', async () => {
         // Arrange: User logged in with OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
@@ -851,8 +859,8 @@ describe('components/analytics/user-identifier', () => {
           callOrder.push('identify');
         });
 
-        mockTrackLogin.mockImplementation(async () => {
-          callOrder.push('trackLogin');
+        mockTrack.mockImplementation(async () => {
+          callOrder.push('track');
         });
 
         mockPage.mockImplementation(async () => {
@@ -862,9 +870,9 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: Call order should be identify → trackLogin → page
+        // Assert: Call order should be identify → track → page
         await waitFor(() => {
-          expect(callOrder).toEqual(['identify', 'trackLogin', 'page']);
+          expect(callOrder).toEqual(['identify', 'track', 'page']);
         });
       });
 
@@ -881,21 +889,21 @@ describe('components/analytics/user-identifier', () => {
         const { rerender } = render(<UserIdentifier />);
 
         await waitFor(() => {
-          expect(mockTrackLogin).toHaveBeenCalledTimes(1);
+          expect(mockTrack).toHaveBeenCalledTimes(1);
         });
 
         rerender(<UserIdentifier />);
         rerender(<UserIdentifier />);
 
-        // Assert: trackLogin should still only be called once
-        expect(mockTrackLogin).toHaveBeenCalledTimes(1);
+        // Assert: track should still only be called once
+        expect(mockTrack).toHaveBeenCalledTimes(1);
         expect(mockIdentify).toHaveBeenCalledTimes(1);
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
     });
 
     describe('When no OAuth marker exists', () => {
-      it('should NOT call trackLogin when no marker present', async () => {
+      it('should NOT call track when no marker present', async () => {
         // Arrange: User logged in but NO OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
@@ -908,16 +916,16 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: trackLogin should NOT be called
+        // Assert: track should NOT be called
         await waitFor(() => {
           expect(mockIdentify).toHaveBeenCalledTimes(1);
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
       });
 
-      it('should NOT call trackLogin when marker is empty string', async () => {
+      it('should NOT call track when marker is empty string', async () => {
         // Arrange: User logged in with empty OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
@@ -929,13 +937,13 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: trackLogin should NOT be called (empty string is falsy)
+        // Assert: track should NOT be called (empty string is falsy)
         await waitFor(() => {
           expect(mockIdentify).toHaveBeenCalledTimes(1);
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
       });
 
       it('should only call identify and page in sequence', async () => {
@@ -960,12 +968,12 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: Call order should be identify → page (no trackLogin)
+        // Assert: Call order should be identify → page (no track)
         await waitFor(() => {
           expect(callOrder).toEqual(['identify', 'page']);
         });
 
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
       });
     });
 
@@ -988,10 +996,10 @@ describe('components/analytics/user-identifier', () => {
         });
 
         expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
       });
 
-      it('should only track page view without identify or trackLogin', async () => {
+      it('should only track page view without identify or track', async () => {
         // Arrange: No user logged in
         mockUseSession.mockReturnValue({
           data: null,
@@ -1009,7 +1017,7 @@ describe('components/analytics/user-identifier', () => {
         });
 
         expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
       });
 
       it('should leave OAuth marker in sessionStorage if not logged in', async () => {
@@ -1056,8 +1064,8 @@ describe('components/analytics/user-identifier', () => {
         getItemSpy.mockRestore();
       });
 
-      it('should handle trackLogin promise rejection gracefully', async () => {
-        // Arrange: trackLogin rejects but we catch the error
+      it('should handle track promise rejection gracefully', async () => {
+        // Arrange: track rejects but we catch the error
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
           isPending: false,
@@ -1065,7 +1073,7 @@ describe('components/analytics/user-identifier', () => {
 
         sessionStorage.setItem('oauth_login_pending', 'google');
 
-        const mockTrackLoginReject = vi.fn().mockImplementation(async () => {
+        const mockTrackReject = vi.fn().mockImplementation(async () => {
           try {
             throw new Error('Analytics error');
           } catch {
@@ -1074,8 +1082,11 @@ describe('components/analytics/user-identifier', () => {
           }
         });
 
-        mockUseAuthAnalytics.mockReturnValue({
-          trackLogin: mockTrackLoginReject,
+        mockUseAnalytics.mockReturnValue({
+          identify: mockIdentify,
+          page: mockPage,
+          track: mockTrackReject,
+          isReady: true,
         });
 
         // Act & Assert: Should not throw
@@ -1083,7 +1094,7 @@ describe('components/analytics/user-identifier', () => {
 
         // Wait for async operations to complete
         await waitFor(() => {
-          expect(mockTrackLoginReject).toHaveBeenCalledWith({
+          expect(mockTrackReject).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'google',
           });
@@ -1102,13 +1113,13 @@ describe('components/analytics/user-identifier', () => {
         // Act
         render(<UserIdentifier />);
 
-        // Assert: Should not call identify or trackLogin, only page
+        // Assert: Should not call identify or track, only page
         await waitFor(() => {
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
         expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrackLogin).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled();
 
         // OAuth marker should remain (wasn't processed)
         expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');

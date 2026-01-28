@@ -15,7 +15,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { User, LogOut, Settings, UserCircle, Shield } from 'lucide-react';
 import { authClient, useSession } from '@/lib/auth/client';
-import { useAuthAnalytics } from '@/lib/analytics/events';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,7 +43,7 @@ export function UserButton() {
   const { data: session, isPending } = useSession();
   const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const { trackLogout, resetUser } = useAuthAnalytics();
+  const { track, reset } = useAnalytics();
 
   // Loading state - show skeleton to prevent hydration mismatch
   if (isPending) {
@@ -95,8 +95,8 @@ export function UserButton() {
         fetchOptions: {
           onSuccess: async () => {
             // Track logout and reset user identity
-            await trackLogout();
-            await resetUser();
+            await track(EVENTS.USER_LOGGED_OUT);
+            await reset();
             router.push('/');
             router.refresh();
           },

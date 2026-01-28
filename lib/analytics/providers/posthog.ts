@@ -89,7 +89,7 @@ export class PostHogProvider implements AnalyticsProvider {
     this.apiKey = config.apiKey;
     this.host = config.host ?? 'https://us.i.posthog.com';
     this.debug = config.debug ?? false;
-    this.enableSessionRecording = config.enableSessionRecording ?? true;
+    this.enableSessionRecording = config.enableSessionRecording ?? false; // Privacy-first: opt-in
     this.disableAutoPageViews = config.disableAutoPageViews ?? true; // We track manually
   }
 

@@ -665,6 +665,66 @@ beforeEach(() => {
 - User creation patterns: `.context/auth/user-creation.md`
 - Mobile integration: `.context/api/mobile-integration.md`
 
+### Analytics System
+
+**Quick Start:**
+
+```typescript
+'use client';
+import { useAnalytics } from '@/lib/analytics';
+import { EVENTS } from '@/lib/analytics/events';
+
+function MyComponent() {
+  const { track, identify } = useAnalytics();
+
+  // Track an event
+  await track(EVENTS.USER_LOGGED_IN, { method: 'email' });
+
+  // Identify a user (after login)
+  await identify(userId, { email, name });
+}
+```
+
+**Configuration:**
+
+```bash
+# Option 1: Explicit provider selection
+NEXT_PUBLIC_ANALYTICS_PROVIDER=posthog  # or ga4, plausible, console
+
+# Option 2: Auto-detect from credentials (PostHog > GA4 > Plausible)
+# PostHog
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+
+# Google Analytics 4
+NEXT_PUBLIC_GA4_MEASUREMENT_ID=G-XXXXXXXXXX
+
+# Plausible
+NEXT_PUBLIC_PLAUSIBLE_DOMAIN=yourdomain.com
+```
+
+**Event Tracking Pattern:**
+
+```typescript
+// Use EVENTS constants for predefined events
+import { EVENTS } from '@/lib/analytics/events';
+track(EVENTS.PROFILE_UPDATED, { fields_changed: ['name'] });
+
+// Use trackFormSubmitted for any form (generates {name}_form_submitted)
+import { useFormAnalytics } from '@/lib/analytics/events';
+const { trackFormSubmitted } = useFormAnalytics();
+trackFormSubmitted('contact'); // → contact_form_submitted
+trackFormSubmitted('feedback', { rating: 5 }); // → feedback_form_submitted
+```
+
+**Privacy Defaults:**
+
+- Session recording is **disabled by default** (opt-in via `enableSessionRecording: true`)
+- Analytics only tracks when user has consented to optional cookies
+- Consent integration is automatic via `AnalyticsProvider`
+
+**Documentation:** `.context/analytics/overview.md`
+
 ## Docker Configuration
 
 **Production Build:** The project uses multi-stage Docker builds with Next.js standalone output for minimal image size.
