@@ -148,16 +148,18 @@ function LoginHandler() {
 
 ## Server-Side Tracking
 
-Server-side tracking bypasses ad blockers and is reliable for critical events:
+Server-side tracking bypasses ad blockers and is reliable for critical business events. Add `serverTrack()` calls to API routes you already control—don't create wrapper endpoints around external libraries.
 
 ```typescript
+// In any API route you control
 import { serverTrack } from '@/lib/analytics/server';
+import { EVENTS } from '@/lib/analytics/events';
 
 export async function POST(request: Request) {
-  const user = await getUser();
+  // ... authentication and business logic ...
 
   await serverTrack({
-    event: 'subscription_created',
+    event: EVENTS.ACCOUNT_DELETED, // or any string: 'subscription_created'
     userId: user.id,
     properties: {
       plan: 'pro',
@@ -169,6 +171,18 @@ export async function POST(request: Request) {
   return Response.json({ success: true });
 }
 ```
+
+**Real example:** See `app/api/v1/users/me/route.ts` DELETE handler for account deletion tracking.
+
+**The pattern:** Add tracking to existing routes after the business logic succeeds. Use `EVENTS` constants for predefined events, or strings for custom events.
+
+**In development** (console provider), you'll see logs in your terminal:
+
+```
+[DEBUG] Server track (console) {"event":"account_deleted","userId":"clxx..."}
+```
+
+**In production** with a real provider configured, it makes the actual API call.
 
 **Requirements:**
 

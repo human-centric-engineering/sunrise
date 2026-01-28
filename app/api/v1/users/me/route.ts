@@ -17,6 +17,8 @@ import { UnauthorizedError, handleAPIError, ErrorCodes } from '@/lib/api/errors'
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { logger } from '@/lib/logging';
+import { serverTrack } from '@/lib/analytics/server';
+import { EVENTS } from '@/lib/analytics/events';
 
 /**
  * GET /api/v1/users/me
@@ -186,6 +188,12 @@ export async function DELETE(request: NextRequest) {
     // Clear the session cookie
     const cookieStore = await cookies();
     cookieStore.delete('better-auth.session_token');
+
+    // Track account deletion server-side (bypasses ad blockers for critical events)
+    await serverTrack({
+      event: EVENTS.ACCOUNT_DELETED,
+      userId: session.user.id,
+    });
 
     logger.info('User account deleted successfully', {
       userId: session.user.id,
