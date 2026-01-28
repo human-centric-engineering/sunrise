@@ -46,12 +46,6 @@ describe('lib/analytics/events', () => {
       expect(EVENTS.ACCOUNT_DELETED).toBe('account_deleted');
     });
 
-    it('should define all form events', () => {
-      expect(EVENTS.CONTACT_FORM_SUBMITTED).toBe('contact_form_submitted');
-      expect(EVENTS.INVITE_ACCEPTED).toBe('invite_accepted');
-      expect(EVENTS.PASSWORD_RESET_REQUESTED).toBe('password_reset_requested');
-    });
-
     it('should use snake_case for all event names', () => {
       const eventNames = Object.values(EVENTS);
       eventNames.forEach((name) => {
@@ -62,6 +56,7 @@ describe('lib/analytics/events', () => {
 
     it('should use past tense or action completed for event names', () => {
       // Verify events indicate completed actions (past tense patterns)
+      // Note: Form events use generic trackFormSubmitted() which generates names dynamically
       const expectedPastTensePatterns = [
         'signed_up',
         'logged_in',
@@ -70,9 +65,6 @@ describe('lib/analytics/events', () => {
         'updated',
         'uploaded',
         'deleted', // Settings
-        'submitted',
-        'accepted',
-        'requested', // Forms
       ];
       const eventNames = Object.values(EVENTS);
 
@@ -224,31 +216,61 @@ describe('lib/analytics/events', () => {
   });
 
   describe('useFormAnalytics', () => {
-    it('should track contact form submission', async () => {
+    it('should track form submission with correct event name format', async () => {
       const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
       const { result } = renderHook(() => useFormAnalytics());
 
-      await result.current.trackContactFormSubmitted();
+      await result.current.trackFormSubmitted('contact');
 
-      expect(mockTrack).toHaveBeenCalledWith(EVENTS.CONTACT_FORM_SUBMITTED);
+      expect(mockTrack).toHaveBeenCalledWith('contact_form_submitted', undefined);
     });
 
-    it('should track invite acceptance', async () => {
+    it('should track form submission with properties', async () => {
       const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
       const { result } = renderHook(() => useFormAnalytics());
 
-      await result.current.trackInviteAccepted();
+      await result.current.trackFormSubmitted('feedback', { source: 'footer', rating: 5 });
 
-      expect(mockTrack).toHaveBeenCalledWith(EVENTS.INVITE_ACCEPTED);
+      expect(mockTrack).toHaveBeenCalledWith('feedback_form_submitted', {
+        source: 'footer',
+        rating: 5,
+      });
     });
 
-    it('should track password reset request', async () => {
+    it('should normalize form name to lowercase', async () => {
       const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
       const { result } = renderHook(() => useFormAnalytics());
 
-      await result.current.trackPasswordResetRequested();
+      await result.current.trackFormSubmitted('Support');
 
-      expect(mockTrack).toHaveBeenCalledWith(EVENTS.PASSWORD_RESET_REQUESTED);
+      expect(mockTrack).toHaveBeenCalledWith('support_form_submitted', undefined);
+    });
+
+    it('should convert spaces to underscores in form name', async () => {
+      const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
+      const { result } = renderHook(() => useFormAnalytics());
+
+      await result.current.trackFormSubmitted('bug report');
+
+      expect(mockTrack).toHaveBeenCalledWith('bug_report_form_submitted', undefined);
+    });
+
+    it('should convert hyphens to underscores in form name', async () => {
+      const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
+      const { result } = renderHook(() => useFormAnalytics());
+
+      await result.current.trackFormSubmitted('password-reset');
+
+      expect(mockTrack).toHaveBeenCalledWith('password_reset_form_submitted', undefined);
+    });
+
+    it('should handle mixed case, spaces, and hyphens', async () => {
+      const { useFormAnalytics } = await import('@/lib/analytics/events/forms');
+      const { result } = renderHook(() => useFormAnalytics());
+
+      await result.current.trackFormSubmitted('User Sign-Up');
+
+      expect(mockTrack).toHaveBeenCalledWith('user_sign_up_form_submitted', undefined);
     });
   });
 

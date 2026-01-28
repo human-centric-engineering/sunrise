@@ -73,7 +73,7 @@ function RequestResetForm() {
   const searchParams = useSearchParams();
   const urlError = searchParams.get('error');
   const urlErrorMessage = getUrlErrorMessage(urlError);
-  const { trackPasswordResetRequested } = useFormAnalytics();
+  const { trackFormSubmitted } = useFormAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +110,7 @@ function RequestResetForm() {
       }
 
       // Track password reset request
-      void trackPasswordResetRequested();
+      void trackFormSubmitted('password-reset');
 
       setSubmittedEmail(data.email);
       setSuccess(true);

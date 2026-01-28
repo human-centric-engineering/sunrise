@@ -3,7 +3,8 @@
 /**
  * Form Analytics Helpers
  *
- * Hooks and functions for tracking form-related events.
+ * Generic form tracking hook for any form submission.
+ * Uses a consistent naming convention: `{formName}_form_submitted`
  *
  * Phase 4.5: Analytics Integration
  *
@@ -12,11 +13,22 @@
  * import { useFormAnalytics } from '@/lib/analytics/events';
  *
  * function ContactForm() {
- *   const { trackContactFormSubmitted } = useFormAnalytics();
+ *   const { trackFormSubmitted } = useFormAnalytics();
  *
  *   const onSubmit = async (data: FormData) => {
  *     await submitForm(data);
- *     await trackContactFormSubmitted();
+ *     // Tracks: contact_form_submitted
+ *     await trackFormSubmitted('contact');
+ *   };
+ * }
+ *
+ * function FeedbackForm() {
+ *   const { trackFormSubmitted } = useFormAnalytics();
+ *
+ *   const onSubmit = async (data: FormData) => {
+ *     await submitForm(data);
+ *     // Tracks: feedback_form_submitted { source: 'footer', rating: 5 }
+ *     await trackFormSubmitted('feedback', { source: 'footer', rating: 5 });
  *   };
  * }
  * ```
@@ -24,62 +36,66 @@
 
 import { useCallback } from 'react';
 import { useAnalytics } from '../hooks';
-import { EVENTS } from './constants';
 import type { TrackResult } from '../types';
+import type { FormSubmittedEventProps } from './types';
 
 /**
  * Hook for form analytics events
  *
- * Provides type-safe helpers for tracking form submissions
- * including contact forms, invitations, and password resets.
+ * Provides a generic `trackFormSubmitted()` helper that works with any form.
+ * No need to modify the analytics library to track new forms.
  *
- * @example Track contact form submission
+ * @example Track contact form
  * ```tsx
- * const { trackContactFormSubmitted } = useFormAnalytics();
- *
- * const handleSubmit = async () => {
- *   await submitContactForm(data);
- *   await trackContactFormSubmitted();
- * };
+ * const { trackFormSubmitted } = useFormAnalytics();
+ * await trackFormSubmitted('contact');
+ * // → tracks: contact_form_submitted
  * ```
  *
- * @example Track invite acceptance
+ * @example Track with properties
  * ```tsx
- * const { trackInviteAccepted } = useFormAnalytics();
- *
- * const handleAccept = async () => {
- *   await acceptInvite(token);
- *   await trackInviteAccepted();
- * };
+ * const { trackFormSubmitted } = useFormAnalytics();
+ * await trackFormSubmitted('feedback', { source: 'footer', rating: 5 });
+ * // → tracks: feedback_form_submitted { source: 'footer', rating: 5 }
  * ```
  */
 export function useFormAnalytics() {
   const { track } = useAnalytics();
 
   /**
-   * Track contact form submission
+   * Track any form submission with consistent naming
+   *
+   * Automatically formats the event name as `{formName}_form_submitted`.
+   *
+   * @param formName - Short identifier for the form (e.g., 'contact', 'feedback', 'support')
+   * @param properties - Optional additional properties to track
+   *
+   * @example
+   * ```tsx
+   * // Basic
+   * await trackFormSubmitted('contact');
+   * // → tracks: contact_form_submitted
+   *
+   * // With properties
+   * await trackFormSubmitted('feedback', { source: 'footer' });
+   * // → tracks: feedback_form_submitted { source: 'footer' }
+   *
+   * // Form names are normalized (lowercase, spaces/hyphens → underscores)
+   * await trackFormSubmitted('Bug Report');
+   * // → tracks: bug_report_form_submitted
+   * ```
    */
-  const trackContactFormSubmitted = useCallback((): Promise<TrackResult> => {
-    return track(EVENTS.CONTACT_FORM_SUBMITTED);
-  }, [track]);
-
-  /**
-   * Track invitation acceptance
-   */
-  const trackInviteAccepted = useCallback((): Promise<TrackResult> => {
-    return track(EVENTS.INVITE_ACCEPTED);
-  }, [track]);
-
-  /**
-   * Track password reset request
-   */
-  const trackPasswordResetRequested = useCallback((): Promise<TrackResult> => {
-    return track(EVENTS.PASSWORD_RESET_REQUESTED);
-  }, [track]);
+  const trackFormSubmitted = useCallback(
+    (formName: string, properties?: FormSubmittedEventProps): Promise<TrackResult> => {
+      // Normalize form name: lowercase, replace spaces/hyphens with underscores
+      const normalizedName = formName.toLowerCase().replace(/[\s-]+/g, '_');
+      const eventName = `${normalizedName}_form_submitted`;
+      return track(eventName, properties);
+    },
+    [track]
+  );
 
   return {
-    trackContactFormSubmitted,
-    trackInviteAccepted,
-    trackPasswordResetRequested,
+    trackFormSubmitted,
   };
 }

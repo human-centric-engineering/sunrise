@@ -71,7 +71,7 @@ vi.mock('@/lib/auth/client', () => ({
 
 // Mock analytics
 const mockIdentify = vi.fn().mockResolvedValue({ success: true });
-const mockTrackInviteAccepted = vi.fn().mockResolvedValue({ success: true });
+const mockTrackFormSubmitted = vi.fn().mockResolvedValue({ success: true });
 
 vi.mock('@/lib/analytics', () => ({
   useAnalytics: vi.fn(() => ({
@@ -86,9 +86,7 @@ vi.mock('@/lib/analytics', () => ({
 
 vi.mock('@/lib/analytics/events', () => ({
   useFormAnalytics: vi.fn(() => ({
-    trackContactFormSubmitted: vi.fn(),
-    trackInviteAccepted: mockTrackInviteAccepted,
-    trackPasswordResetRequested: vi.fn(),
+    trackFormSubmitted: mockTrackFormSubmitted,
   })),
 }));
 
@@ -622,7 +620,7 @@ describe('components/forms/accept-invite-form', () => {
       });
     });
 
-    it('should identify user and track invite acceptance on success', async () => {
+    it('should identify user and track invite form submission on success', async () => {
       // Arrange
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
@@ -641,12 +639,12 @@ describe('components/forms/accept-invite-form', () => {
       // Assert - identify should be called with user ID before tracking
       await waitFor(() => {
         expect(mockIdentify).toHaveBeenCalledWith('user-123');
-        expect(mockTrackInviteAccepted).toHaveBeenCalled();
+        expect(mockTrackFormSubmitted).toHaveBeenCalledWith('invite');
       });
 
-      // Verify identify was called before trackInviteAccepted
+      // Verify identify was called before trackFormSubmitted
       const identifyOrder = mockIdentify.mock.invocationCallOrder[0];
-      const trackOrder = mockTrackInviteAccepted.mock.invocationCallOrder[0];
+      const trackOrder = mockTrackFormSubmitted.mock.invocationCallOrder[0];
       expect(identifyOrder).toBeLessThan(trackOrder);
     });
 

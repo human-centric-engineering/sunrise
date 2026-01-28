@@ -98,6 +98,34 @@ export interface PreferencesUpdatedEventProps {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Form Event Properties
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Properties for generic form submission events
+ *
+ * Use with trackFormSubmitted() for any form not in the predefined list.
+ *
+ * @example Basic usage
+ * ```ts
+ * trackFormSubmitted('support');
+ * // → tracks: support_form_submitted
+ * ```
+ *
+ * @example With properties
+ * ```ts
+ * trackFormSubmitted('feedback', { source: 'footer', rating: 5 });
+ * // → tracks: feedback_form_submitted { source: 'footer', rating: 5 }
+ * ```
+ */
+export interface FormSubmittedEventProps {
+  /** Where the form was submitted from (e.g., 'header', 'footer', 'modal') */
+  source?: string;
+  /** Index signature for additional custom properties */
+  [key: string]: unknown;
+}
+
+// ─────────────────────────────────────────────────────────────
 // User Traits for Identification
 // ─────────────────────────────────────────────────────────────
 

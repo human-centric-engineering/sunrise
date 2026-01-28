@@ -40,16 +40,27 @@
  * }
  * ```
  *
- * @example Form tracking
+ * @example Form tracking (generic - works with any form)
  * ```tsx
  * import { useFormAnalytics } from '@/lib/analytics/events';
  *
  * function ContactForm() {
- *   const { trackContactFormSubmitted } = useFormAnalytics();
+ *   const { trackFormSubmitted } = useFormAnalytics();
  *
  *   const onSubmit = async () => {
  *     await sendMessage(data);
- *     await trackContactFormSubmitted();
+ *     // Tracks: contact_form_submitted
+ *     await trackFormSubmitted('contact');
+ *   };
+ * }
+ *
+ * function FeedbackForm() {
+ *   const { trackFormSubmitted } = useFormAnalytics();
+ *
+ *   const onSubmit = async () => {
+ *     await submitFeedback(data);
+ *     // Tracks: feedback_form_submitted { source: 'footer' }
+ *     await trackFormSubmitted('feedback', { source: 'footer' });
  *   };
  * }
  * ```
@@ -66,6 +77,7 @@ export type {
   SettingsTabEventProps,
   ProfileUpdatedEventProps,
   PreferencesUpdatedEventProps,
+  FormSubmittedEventProps,
   IdentifyTraits,
 } from './types';
 

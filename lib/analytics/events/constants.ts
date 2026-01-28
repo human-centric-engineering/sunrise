@@ -59,15 +59,9 @@ export const EVENTS = {
   // ─────────────────────────────────────────────────────────────
   // Form Events
   // ─────────────────────────────────────────────────────────────
-
-  /** User submitted contact form */
-  CONTACT_FORM_SUBMITTED: 'contact_form_submitted',
-
-  /** User accepted an invitation */
-  INVITE_ACCEPTED: 'invite_accepted',
-
-  /** User requested password reset */
-  PASSWORD_RESET_REQUESTED: 'password_reset_requested',
+  // Form events use the generic trackFormSubmitted() helper which
+  // automatically generates event names: {formName}_form_submitted
+  // See lib/analytics/events/forms.ts for usage
 } as const;
 
 /**

@@ -90,9 +90,7 @@ vi.mock('@/lib/analytics/events', () => ({
     trackAccountDeleted: vi.fn().mockResolvedValue({ success: true }),
   })),
   useFormAnalytics: vi.fn(() => ({
-    trackContactFormSubmitted: vi.fn().mockResolvedValue({ success: true }),
-    trackInviteAccepted: vi.fn().mockResolvedValue({ success: true }),
-    trackPasswordResetRequested: vi.fn().mockResolvedValue({ success: true }),
+    trackFormSubmitted: vi.fn().mockResolvedValue({ success: true }),
   })),
   EVENTS: {
     USER_SIGNED_UP: 'user_signed_up',
@@ -104,9 +102,6 @@ vi.mock('@/lib/analytics/events', () => ({
     PREFERENCES_UPDATED: 'preferences_updated',
     AVATAR_UPLOADED: 'avatar_uploaded',
     ACCOUNT_DELETED: 'account_deleted',
-    CONTACT_FORM_SUBMITTED: 'contact_form_submitted',
-    INVITE_ACCEPTED: 'invite_accepted',
-    PASSWORD_RESET_REQUESTED: 'password_reset_requested',
   },
 }));
 

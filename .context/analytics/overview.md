@@ -218,6 +218,42 @@ function FeatureFlaggedComponent() {
 }
 ```
 
+### Generic Form Tracking
+
+Track any form submission without modifying the analytics library:
+
+```typescript
+import { useFormAnalytics } from '@/lib/analytics/events';
+
+function SupportForm() {
+  const { trackFormSubmitted } = useFormAnalytics();
+
+  const onSubmit = async (data: FormData) => {
+    await submitTicket(data);
+    // Tracks: support_form_submitted
+    await trackFormSubmitted('support');
+  };
+}
+
+// With additional properties
+function FeedbackForm() {
+  const { trackFormSubmitted } = useFormAnalytics();
+
+  const onSubmit = async (data: FormData) => {
+    await submitFeedback(data);
+    // Tracks: feedback_form_submitted { source: 'footer', rating: 5 }
+    await trackFormSubmitted('feedback', { source: 'footer', rating: 5 });
+  };
+}
+```
+
+The `trackFormSubmitted()` helper:
+
+- Automatically uses the naming convention `{formName}_form_submitted`
+- Normalizes form names (lowercase, replaces spaces/hyphens with underscores)
+- Accepts optional properties for additional context
+- No library changes needed for new forms
+
 ### Custom Event Tracking Hook
 
 ```typescript

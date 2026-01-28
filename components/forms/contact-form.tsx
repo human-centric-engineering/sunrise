@@ -35,7 +35,7 @@ export function ContactForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
-  const { trackContactFormSubmitted } = useFormAnalytics();
+  const { trackFormSubmitted } = useFormAnalytics();
 
   const {
     register,
@@ -65,7 +65,7 @@ export function ContactForm() {
       });
 
       // Track contact form submission
-      void trackContactFormSubmitted();
+      void trackFormSubmitted('contact');
 
       setIsSuccess(true);
       reset();

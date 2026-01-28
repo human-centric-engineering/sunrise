@@ -80,7 +80,7 @@ export function AcceptInviteForm() {
     oauthError ? parseOAuthError(oauthError) : null
   );
   const { identify } = useAnalytics();
-  const { trackInviteAccepted } = useFormAnalytics();
+  const { trackFormSubmitted } = useFormAnalytics();
 
   // Build error callback URL to return here with token/email preserved
   const errorCallbackUrl = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`;
@@ -187,7 +187,7 @@ export function AcceptInviteForm() {
       }
 
       // Track invite acceptance
-      void trackInviteAccepted();
+      void trackFormSubmitted('invite');
 
       // Show success message
       setSuccess(true);
