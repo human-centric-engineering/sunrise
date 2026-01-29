@@ -12,6 +12,7 @@ import {
   stripHtml,
   sanitizeUrl,
   sanitizeRedirectUrl,
+  safeCallbackUrl,
   sanitizeObject,
   sanitizeFilename,
 } from '@/lib/security/sanitize';
@@ -150,6 +151,41 @@ describe('Input Sanitization', () => {
       expect(sanitizeRedirectUrl('https://app.example.com/search?q=test#results', baseUrl)).toBe(
         '/search?q=test#results'
       );
+    });
+  });
+
+  describe('safeCallbackUrl', () => {
+    it('should allow relative paths', () => {
+      expect(safeCallbackUrl('/dashboard')).toBe('/dashboard');
+      expect(safeCallbackUrl('/settings?tab=profile')).toBe('/settings?tab=profile');
+      expect(safeCallbackUrl('/admin/users')).toBe('/admin/users');
+    });
+
+    it('should block absolute external URLs', () => {
+      expect(safeCallbackUrl('https://evil.com')).toBe('/');
+      expect(safeCallbackUrl('https://evil.com/steal')).toBe('/');
+      expect(safeCallbackUrl('http://evil.com')).toBe('/');
+    });
+
+    it('should block protocol-relative URLs', () => {
+      expect(safeCallbackUrl('//evil.com')).toBe('/');
+      expect(safeCallbackUrl('//evil.com/path')).toBe('/');
+    });
+
+    it('should block dangerous protocols', () => {
+      expect(safeCallbackUrl('javascript:alert(1)')).toBe('/');
+      expect(safeCallbackUrl('data:text/html,<script>alert(1)</script>')).toBe('/');
+    });
+
+    it('should use custom fallback', () => {
+      expect(safeCallbackUrl('https://evil.com', '/dashboard')).toBe('/dashboard');
+      expect(safeCallbackUrl(null, '/dashboard')).toBe('/dashboard');
+    });
+
+    it('should handle null and empty values', () => {
+      expect(safeCallbackUrl(null)).toBe('/');
+      expect(safeCallbackUrl('')).toBe('/');
+      expect(safeCallbackUrl(undefined as unknown as string)).toBe('/');
     });
   });
 

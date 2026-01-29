@@ -123,12 +123,78 @@ export function buildCSP(config: CSPConfig): string {
 }
 
 /**
+ * Get analytics provider domains for CSP allowlisting
+ *
+ * Reads configured analytics env vars and returns domains that need to be
+ * allowed in script-src and connect-src for the provider to function.
+ */
+function getAnalyticsCSPDomains(): { scriptSrc: string[]; connectSrc: string[] } {
+  const scriptSrc: string[] = [];
+  const connectSrc: string[] = [];
+
+  // PostHog - needs script loading, API calls, and CDN assets
+  // PostHog uses a separate assets CDN (e.g., eu-assets.i.posthog.com for eu.i.posthog.com)
+  if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+    const host = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com';
+    scriptSrc.push(host);
+    connectSrc.push(host);
+
+    // Derive assets CDN domain (eu.i.posthog.com → eu-assets.i.posthog.com)
+    try {
+      const url = new URL(host);
+      const parts = url.hostname.split('.');
+      if (parts.length >= 3) {
+        parts[0] = `${parts[0]}-assets`;
+        const assetsHost = `${url.protocol}//${parts.join('.')}`;
+        scriptSrc.push(assetsHost);
+        connectSrc.push(assetsHost);
+      }
+    } catch {
+      // Invalid URL, skip assets domain
+    }
+  }
+
+  // GA4 - needs gtag script and analytics endpoint
+  if (process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID) {
+    scriptSrc.push('https://www.googletagmanager.com');
+    connectSrc.push(
+      'https://www.google-analytics.com',
+      'https://*.google-analytics.com',
+      'https://www.googletagmanager.com'
+    );
+  }
+
+  // Plausible - needs script loading and API calls
+  if (process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN) {
+    const host = process.env.NEXT_PUBLIC_PLAUSIBLE_HOST || 'https://plausible.io';
+    scriptSrc.push(host);
+    connectSrc.push(host);
+  }
+
+  return { scriptSrc, connectSrc };
+}
+
+/**
  * Get CSP configuration for current environment
+ *
+ * Automatically includes analytics provider domains when configured.
  *
  * @returns CSP configuration object
  */
 export function getCSPConfig(): CSPConfig {
-  return process.env.NODE_ENV === 'production' ? PRODUCTION_CSP : DEVELOPMENT_CSP;
+  const base =
+    process.env.NODE_ENV === 'production' ? { ...PRODUCTION_CSP } : { ...DEVELOPMENT_CSP };
+
+  // Add analytics provider domains
+  const analytics = getAnalyticsCSPDomains();
+  if (analytics.scriptSrc.length > 0) {
+    base['script-src'] = [...base['script-src'], ...analytics.scriptSrc];
+  }
+  if (analytics.connectSrc.length > 0) {
+    base['connect-src'] = [...base['connect-src'], ...analytics.connectSrc];
+  }
+
+  return base;
 }
 
 /**

@@ -45,6 +45,25 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Mock analytics
+const mockReset = vi.fn().mockResolvedValue({ success: true });
+const mockTrack = vi.fn().mockResolvedValue({ success: true });
+
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: mockTrack,
+    identify: vi.fn(),
+    page: vi.fn(),
+    reset: mockReset,
+    isReady: true,
+    isEnabled: true,
+    providerName: 'Console',
+  })),
+  EVENTS: {
+    ACCOUNT_DELETED: 'account_deleted',
+  },
+}));
+
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
@@ -67,6 +86,10 @@ describe('components/forms/delete-account-form', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Clear analytics mocks
+    mockReset.mockClear();
+    mockTrack.mockClear();
 
     // Setup mock router
     const { useRouter } = await import('next/navigation');
@@ -471,6 +494,36 @@ describe('components/forms/delete-account-form', () => {
       // Note: Button is disabled, so click won't work, but we can verify it doesn't call API
       expect(actionButton).toBeDisabled();
       expect(apiClient.delete).not.toHaveBeenCalled();
+    });
+
+    it('should track account deletion and reset analytics identity after successful deletion', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+
+      render(<DeleteAccountForm />);
+
+      const deleteButton = screen.getByRole('button', { name: /^delete account$/i });
+
+      // Act: Open dialog
+      await user.click(deleteButton);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/type.*delete.*to confirm/i)).toBeInTheDocument();
+      });
+
+      // Act: Confirm and delete
+      const confirmationInput = screen.getByLabelText(/type.*delete.*to confirm/i);
+      await user.type(confirmationInput, 'DELETE');
+
+      const actionButtons = screen.getAllByRole('button', { name: /delete account/i });
+      const actionButton = actionButtons[actionButtons.length - 1];
+      await user.click(actionButton);
+
+      // Assert: Analytics reset should be called (event tracked server-side)
+      await waitFor(() => {
+        expect(mockReset).toHaveBeenCalled();
+      });
     });
   });
 

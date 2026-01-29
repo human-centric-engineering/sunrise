@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { authClient } from '@/lib/auth/client';
 import { passwordSchema } from '@/lib/validations/auth';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -40,6 +41,7 @@ export function PasswordForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const { track } = useAnalytics();
 
   const {
     register,
@@ -70,6 +72,9 @@ export function PasswordForm() {
         newPassword: data.newPassword,
         revokeOtherSessions: true,
       });
+
+      // Track password change
+      void track(EVENTS.PASSWORD_CHANGED);
 
       setSuccess(true);
       reset(); // Clear form after success

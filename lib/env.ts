@@ -84,6 +84,12 @@ const serverEnvSchema = z.object({
     .describe(
       'Comma-separated list of allowed CORS origins (e.g., https://app.example.com,https://mobile.example.com). Leave unset for same-origin only.'
     ),
+
+  // Analytics - Server-side API keys (optional)
+  GA4_API_SECRET: z
+    .string()
+    .optional()
+    .describe('GA4 API secret for server-side Measurement Protocol tracking'),
 });
 
 // Client-side environment variables (NEXT_PUBLIC_* vars)
@@ -92,6 +98,34 @@ const clientEnvSchema = z.object({
     message:
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
+
+  // Analytics (optional - auto-detected based on available credentials)
+  NEXT_PUBLIC_ANALYTICS_PROVIDER: z
+    .enum(['ga4', 'posthog', 'plausible', 'console'])
+    .optional()
+    .describe('Explicit analytics provider selection (auto-detects if not set)'),
+
+  // Google Analytics 4
+  NEXT_PUBLIC_GA4_MEASUREMENT_ID: z
+    .string()
+    .optional()
+    .describe('GA4 Measurement ID (G-XXXXXXXXXX)'),
+
+  // PostHog
+  NEXT_PUBLIC_POSTHOG_KEY: z.string().optional().describe('PostHog project API key'),
+  NEXT_PUBLIC_POSTHOG_HOST: z
+    .string()
+    .url()
+    .optional()
+    .describe('PostHog host URL (defaults to https://us.i.posthog.com)'),
+
+  // Plausible
+  NEXT_PUBLIC_PLAUSIBLE_DOMAIN: z.string().optional().describe('Domain registered in Plausible'),
+  NEXT_PUBLIC_PLAUSIBLE_HOST: z
+    .string()
+    .url()
+    .optional()
+    .describe('Plausible host URL (defaults to https://plausible.io)'),
 });
 
 // Combined schema for type inference
@@ -122,6 +156,13 @@ const isBrowser = typeof window !== 'undefined';
 const parsed = isBrowser
   ? clientEnvSchema.safeParse({
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+      // Analytics (optional)
+      NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
+      NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,
+      NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+      NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+      NEXT_PUBLIC_PLAUSIBLE_DOMAIN: process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN,
+      NEXT_PUBLIC_PLAUSIBLE_HOST: process.env.NEXT_PUBLIC_PLAUSIBLE_HOST,
     })
   : envSchema.safeParse(process.env);
 

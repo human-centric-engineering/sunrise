@@ -3,8 +3,8 @@
 /**
  * Settings Tabs Component
  *
- * Client component that renders the settings page tabs with URL persistence.
- * Uses the useUrlTabs hook to sync tab state with URL query parameters.
+ * Client component that renders the settings page tabs with URL persistence
+ * and analytics tracking. Uses useTrackedUrlTabs for automatic tab change tracking.
  *
  * @example
  * ```tsx
@@ -27,7 +27,8 @@ import { AvatarUpload } from '@/components/forms/avatar-upload';
 import { PasswordForm } from '@/components/forms/password-form';
 import { PreferencesForm } from '@/components/forms/preferences-form';
 import { DeleteAccountForm } from '@/components/forms/delete-account-form';
-import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
+import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
+import { EVENTS } from '@/lib/analytics/events/constants';
 import {
   SETTINGS_TABS,
   SETTINGS_TAB_VALUES,
@@ -85,16 +86,17 @@ export function SettingsTabs({
   oauthProviders,
   initials,
 }: SettingsTabsProps) {
-  const { activeTab, setActiveTab } = useUrlTabs<SettingsTab>({
+  const { activeTab, setActiveTab } = useTrackedUrlTabs<SettingsTab>({
     defaultTab: DEFAULT_SETTINGS_TAB,
     allowedTabs: SETTINGS_TAB_VALUES,
     titles: SETTINGS_TAB_TITLES,
+    tracking: {
+      eventName: EVENTS.SETTINGS_TAB_CHANGED,
+    },
   });
 
-  // Wrapper to handle Radix's string type for onValueChange
-  const handleTabChange = (value: string) => {
-    setActiveTab(value as SettingsTab);
-  };
+  // Cast to handle Radix's string type for onValueChange
+  const handleTabChange = (value: string) => setActiveTab(value as SettingsTab);
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">

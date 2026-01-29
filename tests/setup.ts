@@ -68,6 +68,58 @@ vi.mock('next/headers', () => ({
 }));
 
 /**
+ * Mock Analytics
+ *
+ * Analytics hooks require AnalyticsProvider context.
+ * We mock them globally to allow component testing without the provider.
+ */
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn().mockResolvedValue({ success: true }),
+    identify: vi.fn().mockResolvedValue({ success: true }),
+    page: vi.fn().mockResolvedValue({ success: true }),
+    reset: vi.fn().mockResolvedValue({ success: true }),
+    isReady: true,
+    isEnabled: true,
+    providerName: 'Console',
+  })),
+  useFormAnalytics: vi.fn(() => ({
+    trackFormSubmitted: vi.fn().mockResolvedValue({ success: true }),
+  })),
+  EVENTS: {
+    USER_SIGNED_UP: 'user_signed_up',
+    USER_LOGGED_IN: 'user_logged_in',
+    USER_LOGGED_OUT: 'user_logged_out',
+    SETTINGS_TAB_CHANGED: 'settings_tab_changed',
+    PROFILE_UPDATED: 'profile_updated',
+    PASSWORD_CHANGED: 'password_changed',
+    PREFERENCES_UPDATED: 'preferences_updated',
+    AVATAR_UPLOADED: 'avatar_uploaded',
+    ACCOUNT_DELETED: 'account_deleted',
+  },
+}));
+
+/**
+ * Mock Analytics Events (for useFormAnalytics and EVENTS constants)
+ */
+vi.mock('@/lib/analytics/events', () => ({
+  useFormAnalytics: vi.fn(() => ({
+    trackFormSubmitted: vi.fn().mockResolvedValue({ success: true }),
+  })),
+  EVENTS: {
+    USER_SIGNED_UP: 'user_signed_up',
+    USER_LOGGED_IN: 'user_logged_in',
+    USER_LOGGED_OUT: 'user_logged_out',
+    SETTINGS_TAB_CHANGED: 'settings_tab_changed',
+    PROFILE_UPDATED: 'profile_updated',
+    PASSWORD_CHANGED: 'password_changed',
+    PREFERENCES_UPDATED: 'preferences_updated',
+    AVATAR_UPLOADED: 'avatar_uploaded',
+    ACCOUNT_DELETED: 'account_deleted',
+  },
+}));
+
+/**
  * Clean up after each test
  *
  * Restore all mocks to prevent test interference

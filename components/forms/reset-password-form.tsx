@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
+import { useFormAnalytics } from '@/lib/analytics/events';
 import {
   resetPasswordRequestSchema,
   resetPasswordSchema,
@@ -72,6 +73,7 @@ function RequestResetForm() {
   const searchParams = useSearchParams();
   const urlError = searchParams.get('error');
   const urlErrorMessage = getUrlErrorMessage(urlError);
+  const { trackFormSubmitted } = useFormAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +108,9 @@ function RequestResetForm() {
       if (!response.ok) {
         throw new Error('Failed to send reset email');
       }
+
+      // Track password reset request
+      void trackFormSubmitted('password-reset');
 
       setSubmittedEmail(data.email);
       setSuccess(true);

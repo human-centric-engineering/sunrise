@@ -191,4 +191,178 @@ describe('Security Headers', () => {
       expect(extended).toContain("connect-src 'self'");
     });
   });
+
+  describe('analytics CSP domains', () => {
+    afterEach(() => {
+      // Clean up all analytics env vars after each test
+      vi.unstubAllEnvs();
+    });
+
+    it('should add PostHog domains to CSP when configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://eu.i.posthog.com');
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert
+      expect(config['script-src']).toContain('https://eu.i.posthog.com');
+      expect(config['script-src']).toContain('https://eu-assets.i.posthog.com');
+      expect(config['connect-src']).toContain('https://eu.i.posthog.com');
+      expect(config['connect-src']).toContain('https://eu-assets.i.posthog.com');
+    });
+
+    it('should add default PostHog US host when no host configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+      // No NEXT_PUBLIC_POSTHOG_HOST set
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert
+      expect(config['script-src']).toContain('https://us.i.posthog.com');
+      expect(config['script-src']).toContain('https://us-assets.i.posthog.com');
+      expect(config['connect-src']).toContain('https://us.i.posthog.com');
+      expect(config['connect-src']).toContain('https://us-assets.i.posthog.com');
+    });
+
+    it('should add GA4 domains to CSP when configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_GA4_MEASUREMENT_ID', 'G-TEST123');
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert
+      expect(config['script-src']).toContain('https://www.googletagmanager.com');
+      expect(config['connect-src']).toContain('https://www.google-analytics.com');
+      expect(config['connect-src']).toContain('https://*.google-analytics.com');
+      expect(config['connect-src']).toContain('https://www.googletagmanager.com');
+    });
+
+    it('should add Plausible domains to CSP when configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_DOMAIN', 'example.com');
+      vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_HOST', 'https://analytics.example.com');
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert
+      expect(config['script-src']).toContain('https://analytics.example.com');
+      expect(config['connect-src']).toContain('https://analytics.example.com');
+    });
+
+    it('should add default Plausible host when no host configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_DOMAIN', 'example.com');
+      // No NEXT_PUBLIC_PLAUSIBLE_HOST set
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert
+      expect(config['script-src']).toContain('https://plausible.io');
+      expect(config['connect-src']).toContain('https://plausible.io');
+    });
+
+    it('should add multiple provider domains when multiple providers configured', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_GA4_MEASUREMENT_ID', 'G-TEST123');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://eu.i.posthog.com');
+      vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_DOMAIN', 'example.com');
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert - GA4 domains
+      expect(config['script-src']).toContain('https://www.googletagmanager.com');
+      expect(config['connect-src']).toContain('https://www.google-analytics.com');
+
+      // Assert - PostHog domains
+      expect(config['script-src']).toContain('https://eu.i.posthog.com');
+      expect(config['connect-src']).toContain('https://eu.i.posthog.com');
+
+      // Assert - Plausible domains
+      expect(config['script-src']).toContain('https://plausible.io');
+      expect(config['connect-src']).toContain('https://plausible.io');
+    });
+
+    it('should not add analytics domains when no providers configured', () => {
+      // Arrange - no analytics env vars
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert - should only have base CSP directives
+      expect(config['script-src']).not.toContain('posthog');
+      expect(config['script-src']).not.toContain('googletagmanager');
+      expect(config['script-src']).not.toContain('plausible');
+    });
+
+    it('should build valid CSP string with analytics domains', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_GA4_MEASUREMENT_ID', 'G-TEST123');
+
+      // Act
+      const csp = getCSP();
+
+      // Assert
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain('https://www.googletagmanager.com');
+      expect(csp).toContain("connect-src 'self'");
+      expect(csp).toContain('https://www.google-analytics.com');
+    });
+
+    it('should handle invalid PostHog host URL gracefully', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'not-a-valid-url');
+
+      // Act - should not throw
+      const config = getCSPConfig();
+
+      // Assert - should still include the invalid host (but no assets domain)
+      expect(config['script-src']).toContain('not-a-valid-url');
+      // Assets domain should not be added due to URL parse failure
+      expect(config['script-src']).not.toContain('assets');
+    });
+
+    it('should handle PostHog host with single-part hostname', () => {
+      // Arrange
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_test123');
+      vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://localhost');
+
+      // Act
+      const config = getCSPConfig();
+
+      // Assert - should include host but not derive assets domain (not enough parts)
+      expect(config['script-src']).toContain('https://localhost');
+      expect(config['script-src']).not.toContain('localhost-assets');
+    });
+
+    it('should add analytics domains in both development and production', () => {
+      // Arrange - Development
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('NEXT_PUBLIC_GA4_MEASUREMENT_ID', 'G-TEST123');
+
+      // Act
+      const devConfig = getCSPConfig();
+
+      // Assert - Development should have analytics domains
+      expect(devConfig['script-src']).toContain('https://www.googletagmanager.com');
+
+      // Arrange - Production
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act
+      const prodConfig = getCSPConfig();
+
+      // Assert - Production should also have analytics domains
+      expect(prodConfig['script-src']).toContain('https://www.googletagmanager.com');
+    });
+  });
 });

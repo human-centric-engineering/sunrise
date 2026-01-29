@@ -45,11 +45,21 @@ vi.mock('next/navigation', () => ({
   useSearchParams: vi.fn(() => new URLSearchParams()),
 }));
 
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+  })),
+  EVENTS: {
+    PREFERENCES_UPDATED: 'preferences_updated',
+  },
+}));
+
 /**
  * Test Suite: PreferencesForm Component
  */
 describe('components/forms/preferences-form', () => {
   let mockRouter: { push: ReturnType<typeof vi.fn>; refresh: ReturnType<typeof vi.fn> };
+  let mockTrack: ReturnType<typeof vi.fn>;
 
   const mockPreferences: UserPreferences = {
     email: {
@@ -75,6 +85,18 @@ describe('components/forms/preferences-form', () => {
       forward: vi.fn(),
       prefetch: vi.fn(),
     } as unknown as ReturnType<typeof useRouter>);
+
+    // Setup mock analytics
+    const { useAnalytics } = await import('@/lib/analytics');
+    mockTrack = vi.fn().mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>;
+    vi.mocked(useAnalytics).mockReturnValue({
+      track: mockTrack,
+      identify: vi.fn(),
+      page: vi.fn(),
+      reset: vi.fn(),
+      isReady: true,
+      isEnabled: true,
+    } as unknown as ReturnType<typeof useAnalytics>);
   });
 
   afterEach(() => {
@@ -332,6 +354,54 @@ describe('components/forms/preferences-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/preferences saved successfully/i)).toBeInTheDocument();
       });
+    });
+
+    it('should track PREFERENCES_UPDATED event with properties', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient } = await import('@/lib/api/client');
+
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        success: true,
+        data: mockPreferences,
+      });
+
+      render(<PreferencesForm preferences={mockPreferences} />);
+
+      const marketingSwitch = screen.getByRole('switch', { name: /marketing/i });
+      const saveButton = screen.getByRole('button', { name: /save preferences/i });
+
+      // Toggle marketing to true
+      await user.click(marketingSwitch);
+      await user.click(saveButton);
+
+      // Assert - Analytics track should be called with event and properties
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('preferences_updated', {
+          marketing: true,
+          product_updates: true,
+        });
+      });
+    });
+
+    it('should NOT track analytics on preferences update failure', async () => {
+      const user = userEvent.setup({ delay: null });
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Failed to update preferences', 'UPDATE_FAILED')
+      );
+
+      render(<PreferencesForm preferences={mockPreferences} />);
+
+      const saveButton = screen.getByRole('button', { name: /save preferences/i });
+
+      await user.click(saveButton);
+
+      // Assert - Analytics should NOT be called on error
+      await waitFor(() => {
+        expect(screen.getByText(/failed to update preferences/i)).toBeInTheDocument();
+      });
+      expect(mockTrack).not.toHaveBeenCalled();
     });
 
     it('should refresh router on successful update', async () => {

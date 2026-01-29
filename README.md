@@ -208,6 +208,10 @@ No code changes needed. The error tracking abstraction automatically detects Sen
 
 Email is **optional** and works without configuration in development/test environments. For production, you'll need a Resend account and API key. Use `npm run email:dev` to preview email templates locally. See [`.context/email/`](./.context/email/) for detailed setup, template development, and sending patterns.
 
+## Analytics
+
+Analytics is **optional** — in development, it uses a console provider that logs events. For production, configure PostHog (recommended), GA4, or Plausible. The system includes predefined events for auth, settings, and forms with type-safe properties; custom events can be tracked with the generic `track()` function. See [`.context/analytics/`](./.context/analytics/) for provider setup, event catalog, and privacy defaults.
+
 ## File Storage
 
 File storage is **optional** — in development, it falls back to local filesystem automatically. For production, configure S3 (or any S3-compatible service like R2, MinIO) or Vercel Blob. Currently used for user avatar uploads with built-in crop, resize, and optimization; the system is designed to be extended for other file types. See [`.context/storage/`](./.context/storage/) for provider setup, API reference, and extending with new providers.

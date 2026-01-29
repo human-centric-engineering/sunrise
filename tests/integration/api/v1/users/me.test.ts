@@ -34,6 +34,9 @@ import { mockAuthenticatedUser, mockUnauthenticatedUser } from '@/tests/helpers/
  * Mock dependencies
  */
 
+// Create a shared mock for cookie delete
+const mockCookieDelete = vi.fn();
+
 // Mock better-auth config
 vi.mock('@/lib/auth/config', () => ({
   auth: {
@@ -59,7 +62,7 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
   cookies: vi.fn(() =>
     Promise.resolve({
-      delete: vi.fn(),
+      delete: mockCookieDelete,
     })
   ),
 }));
@@ -454,6 +457,49 @@ describe('DELETE /api/v1/users/me', () => {
       expect(prisma.user.delete).toHaveBeenCalledWith({
         where: { id: mockAuthenticatedUser().user.id },
       });
+    });
+  });
+
+  describe('Cookie Deletion', () => {
+    it('should delete HTTP session cookie (better-auth.session_token)', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+      vi.mocked(prisma.user.delete).mockResolvedValue(mockUserData);
+      const request = createMockRequest({ confirmation: 'DELETE' });
+
+      // Act
+      await DELETE(request);
+
+      // Assert
+      expect(mockCookieDelete).toHaveBeenCalledWith('better-auth.session_token');
+    });
+
+    it('should delete HTTPS session cookie (__Secure-better-auth.session_token)', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+      vi.mocked(prisma.user.delete).mockResolvedValue(mockUserData);
+      const request = createMockRequest({ confirmation: 'DELETE' });
+
+      // Act
+      await DELETE(request);
+
+      // Assert
+      expect(mockCookieDelete).toHaveBeenCalledWith('__Secure-better-auth.session_token');
+    });
+
+    it('should delete both HTTP and HTTPS session cookies', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+      vi.mocked(prisma.user.delete).mockResolvedValue(mockUserData);
+      const request = createMockRequest({ confirmation: 'DELETE' });
+
+      // Act
+      await DELETE(request);
+
+      // Assert
+      expect(mockCookieDelete).toHaveBeenCalledWith('better-auth.session_token');
+      expect(mockCookieDelete).toHaveBeenCalledWith('__Secure-better-auth.session_token');
+      expect(mockCookieDelete).toHaveBeenCalledTimes(2);
     });
   });
 

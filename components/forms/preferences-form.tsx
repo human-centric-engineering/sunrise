@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -27,6 +28,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const { track } = useAnalytics();
 
   // Local state for toggles
   const [marketing, setMarketing] = useState(preferences.email.marketing);
@@ -47,6 +49,9 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
           },
         },
       });
+
+      // Track preferences update
+      void track(EVENTS.PREFERENCES_UPDATED, { marketing, product_updates: productUpdates });
 
       setSuccess(true);
       router.refresh();

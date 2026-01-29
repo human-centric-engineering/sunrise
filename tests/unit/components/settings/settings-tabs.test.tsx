@@ -31,6 +31,19 @@ vi.mock('next/navigation', () => ({
   useSearchParams: vi.fn(() => new URLSearchParams()),
 }));
 
+// Mock analytics (used by useTrackedUrlTabs)
+const mockTrack = vi.fn().mockResolvedValue({ success: true });
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: mockTrack,
+    identify: vi.fn(),
+    page: vi.fn(),
+    reset: vi.fn(),
+    isReady: true,
+    isEnabled: true,
+  })),
+}));
+
 // Mock form components to simplify testing
 vi.mock('@/components/forms/profile-form', () => ({
   ProfileForm: vi.fn(() => <div data-testid="profile-form">ProfileForm</div>),
@@ -416,6 +429,27 @@ describe('components/settings/settings-tabs', () => {
       // Assert - shows default tab and cleans up URL
       expect(screen.getByRole('tab', { name: /profile/i })).toHaveAttribute('data-state', 'active');
       expect(mockRouter.replace).toHaveBeenCalledWith('/settings', { scroll: false });
+    });
+  });
+
+  describe('analytics tracking', () => {
+    it('should track tab change with correct previous_tab when switching from default tab', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<SettingsTabs {...defaultProps} />);
+
+      // Clear any calls from initial render
+      mockTrack.mockClear();
+
+      // Act - User lands on profile (default) and clicks security tab
+      await user.click(screen.getByRole('tab', { name: /security/i }));
+
+      // Assert - track should be called with event name and previous_tab='profile', not undefined
+      expect(mockTrack).toHaveBeenCalledWith('settings_tab_changed', {
+        tab: 'security',
+        previous_tab: 'profile',
+      });
+      expect(mockTrack).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
 import { contactClientSchema, type ContactClientInput } from '@/lib/validations/contact';
+import { useFormAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +35,7 @@ export function ContactForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+  const { trackFormSubmitted } = useFormAnalytics();
 
   const {
     register,
@@ -61,6 +63,9 @@ export function ContactForm() {
       await apiClient.post<ContactFormResponse>('/api/v1/contact', {
         body: data,
       });
+
+      // Track contact form submission
+      void trackFormSubmitted('contact');
 
       setIsSuccess(true);
       reset();

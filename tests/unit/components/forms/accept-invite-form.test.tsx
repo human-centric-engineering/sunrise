@@ -61,6 +61,35 @@ vi.mock('@/components/forms/form-error', () => ({
   ),
 }));
 
+// Mock auth client
+const mockGetSession = vi.fn();
+vi.mock('@/lib/auth/client', () => ({
+  authClient: {
+    getSession: () => mockGetSession(),
+  },
+}));
+
+// Mock analytics
+const mockIdentify = vi.fn().mockResolvedValue({ success: true });
+const mockTrackFormSubmitted = vi.fn().mockResolvedValue({ success: true });
+
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+    identify: mockIdentify,
+    page: vi.fn(),
+    reset: vi.fn(),
+    isReady: true,
+    isEnabled: true,
+  })),
+}));
+
+vi.mock('@/lib/analytics/events', () => ({
+  useFormAnalytics: vi.fn(() => ({
+    trackFormSubmitted: mockTrackFormSubmitted,
+  })),
+}));
+
 /**
  * Test Suite: AcceptInviteForm Component
  */
@@ -76,6 +105,9 @@ describe('components/forms/accept-invite-form', () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockResolvedValue({ name: 'Test User', role: 'member' });
     vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+
+    // Default mock: session with user ID (for analytics identify)
+    mockGetSession.mockResolvedValue({ data: { user: { id: 'user-123' } } });
 
     // Default router mock
     const { useRouter } = await import('next/navigation');
@@ -586,6 +618,34 @@ describe('components/forms/accept-invite-form', () => {
         expect(mockPush).toHaveBeenCalledWith('/dashboard');
         expect(mockRefresh).toHaveBeenCalled();
       });
+    });
+
+    it('should identify user and track invite form submission on success', async () => {
+      // Arrange
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      render(<AcceptInviteForm />);
+
+      // Wait for form to load
+      await waitFor(() => {
+        expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+      });
+
+      // Act
+      await user.type(screen.getByLabelText(/^password$/i), 'ValidPass123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'ValidPass123!');
+      await user.click(screen.getByRole('button', { name: /activate account/i }));
+
+      // Assert - identify should be called with user ID before tracking
+      await waitFor(() => {
+        expect(mockIdentify).toHaveBeenCalledWith('user-123');
+        expect(mockTrackFormSubmitted).toHaveBeenCalledWith('invite');
+      });
+
+      // Verify identify was called before trackFormSubmitted
+      const identifyOrder = mockIdentify.mock.invocationCallOrder[0];
+      const trackOrder = mockTrackFormSubmitted.mock.invocationCallOrder[0];
+      expect(identifyOrder).toBeLessThan(trackOrder);
     });
 
     it('should hide sign in link after success', async () => {

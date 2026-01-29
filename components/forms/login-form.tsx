@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { signInSchema, type SignInInput } from '@/lib/validations/auth';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
+import { safeCallbackUrl } from '@/lib/security';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -31,7 +33,8 @@ import { OAuthButtons } from './oauth-buttons';
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'), '/dashboard');
+  const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +110,13 @@ export function LoginForm() {
           onRequest: () => {
             // Request started
           },
-          onSuccess: () => {
+          onSuccess: async () => {
+            // Get session to identify user before tracking
+            const { data: session } = await authClient.getSession();
+            if (session?.user?.id) {
+              await identify(session.user.id);
+            }
+            await track(EVENTS.USER_LOGGED_IN, { method: 'email' });
             // Redirect to callback URL or dashboard
             router.push(callbackUrl);
             router.refresh();

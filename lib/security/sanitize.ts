@@ -183,6 +183,32 @@ export function sanitizeRedirectUrl(
 }
 
 /**
+ * Validate that a callback URL is a safe relative path
+ *
+ * Use this in client components where a base URL is not readily available.
+ * Only allows paths starting with `/` (but not `//` which browsers treat
+ * as protocol-relative URLs).
+ *
+ * @param url - URL to validate
+ * @param fallback - Fallback path if URL is unsafe (default: '/')
+ * @returns Safe relative path or fallback
+ *
+ * @example
+ * ```typescript
+ * safeCallbackUrl('/dashboard');            // '/dashboard'
+ * safeCallbackUrl('https://evil.com');      // '/'
+ * safeCallbackUrl('//evil.com');            // '/'
+ * safeCallbackUrl('javascript:alert(1)');   // '/'
+ * ```
+ */
+export function safeCallbackUrl(url: string | null, fallback: string = '/'): string {
+  if (!url || typeof url !== 'string') return fallback;
+  const trimmed = url.trim();
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  return fallback;
+}
+
+/**
  * Type guard for record objects
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
