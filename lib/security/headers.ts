@@ -157,7 +157,11 @@ function getAnalyticsCSPDomains(): { scriptSrc: string[]; connectSrc: string[] }
   // GA4 - needs gtag script and analytics endpoint
   if (process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID) {
     scriptSrc.push('https://www.googletagmanager.com');
-    connectSrc.push('https://www.google-analytics.com', 'https://www.googletagmanager.com');
+    connectSrc.push(
+      'https://www.google-analytics.com',
+      'https://*.google-analytics.com',
+      'https://www.googletagmanager.com'
+    );
   }
 
   // Plausible - needs script loading and API calls

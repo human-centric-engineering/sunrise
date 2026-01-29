@@ -520,9 +520,8 @@ describe('components/forms/delete-account-form', () => {
       const actionButton = actionButtons[actionButtons.length - 1];
       await user.click(actionButton);
 
-      // Assert: Analytics tracking and reset should be called
+      // Assert: Analytics reset should be called (event tracked server-side)
       await waitFor(() => {
-        expect(mockTrack).toHaveBeenCalledWith('account_deleted');
         expect(mockReset).toHaveBeenCalled();
       });
     });
