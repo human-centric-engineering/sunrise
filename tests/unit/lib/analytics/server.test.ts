@@ -739,4 +739,90 @@ describe('lib/analytics/server - serverTrack', () => {
       expect(body.properties.$user_agent).toBeUndefined();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // serverPageView() function
+  // ---------------------------------------------------------------------------
+
+  describe('serverPageView()', () => {
+    const mockFetch = vi.fn();
+
+    beforeEach(async () => {
+      // Import serverPageView dynamically after setting up mocks
+      vi.mocked(detectProvider).mockReturnValue('posthog');
+      vi.mocked(getPostHogConfig).mockReturnValue({
+        apiKey: 'phc_page_view',
+        host: 'https://us.i.posthog.com',
+      });
+
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      globalThis.fetch = mockFetch as any;
+    });
+
+    it('should call serverTrack with event "pageview" and correct properties', async () => {
+      // Arrange
+      const { serverPageView } = await import('@/lib/analytics/server');
+
+      // Act
+      await serverPageView('Dashboard', 'https://example.com/dashboard');
+
+      // Assert
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.event).toBe('pageview');
+      expect(body.properties.page_name).toBe('Dashboard');
+      expect(body.properties.url).toBe('https://example.com/dashboard');
+    });
+
+    it('should pass userId when provided', async () => {
+      // Arrange
+      const { serverPageView } = await import('@/lib/analytics/server');
+
+      // Act
+      await serverPageView('Settings', 'https://example.com/settings', 'user-123');
+
+      // Assert
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.distinct_id).toBe('user-123');
+      expect(body.properties.page_name).toBe('Settings');
+      expect(body.properties.url).toBe('https://example.com/settings');
+    });
+
+    it('should pass context.page.url in the context', async () => {
+      // Arrange
+      const { serverPageView } = await import('@/lib/analytics/server');
+
+      // Act
+      await serverPageView('Profile', 'https://example.com/profile', 'user-456');
+
+      // Assert
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      // PostHog context mapping: context.page.url → $current_url
+      expect(body.properties.$current_url).toBe('https://example.com/profile');
+    });
+
+    it('should return TrackResult from serverTrack', async () => {
+      // Arrange
+      const { serverPageView } = await import('@/lib/analytics/server');
+
+      // Act
+      const result = await serverPageView('Home', 'https://example.com/');
+
+      // Assert
+      expect(result).toEqual({ success: true });
+    });
+
+    it('should generate anonymous ID when userId is not provided', async () => {
+      // Arrange
+      const { serverPageView } = await import('@/lib/analytics/server');
+
+      // Act
+      await serverPageView('Public Page', 'https://example.com/public');
+
+      // Assert
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.distinct_id).toMatch(/^anon_\d+_[a-z0-9]+$/);
+    });
+  });
 });

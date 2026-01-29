@@ -606,4 +606,216 @@ describe('lib/analytics/hooks', () => {
       expect(mockPage).not.toHaveBeenCalled();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // useAnalytics hook
+  // ---------------------------------------------------------------------------
+
+  describe('useAnalytics()', () => {
+    it('should throw error when used outside AnalyticsProvider', async () => {
+      // Arrange
+      mockUseContext.mockReturnValue(undefined);
+
+      // Dynamically import after mocks are set
+      const { useAnalytics } = await import('@/lib/analytics/hooks');
+
+      // Act & Assert
+      expect(() => {
+        renderHook(() => useAnalytics());
+      }).toThrow('useAnalytics must be used within an AnalyticsProvider');
+    });
+
+    it('should return analytics context when used within provider', async () => {
+      // Arrange
+      mockAnalyticsContext.isReady = true;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+
+      // Dynamically import after mocks are set
+      const { useAnalytics } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useAnalytics());
+
+      // Assert
+      expect(result.current).toBe(mockAnalyticsContext);
+      expect(result.current.isReady).toBe(true);
+      expect(result.current.isEnabled).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // useAnalyticsReady hook
+  // ---------------------------------------------------------------------------
+
+  describe('useAnalyticsReady()', () => {
+    it('should return isReady from context', async () => {
+      // Arrange
+      mockAnalyticsContext.isReady = true;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+
+      // Dynamically import after mocks are set
+      const { useAnalyticsReady } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useAnalyticsReady());
+
+      // Assert
+      expect(result.current).toBe(true);
+    });
+
+    it('should return false when isReady is false', async () => {
+      // Arrange
+      mockAnalyticsContext.isReady = false;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+
+      // Dynamically import after mocks are set
+      const { useAnalyticsReady } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useAnalyticsReady());
+
+      // Assert
+      expect(result.current).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // useAnalyticsEnabled hook
+  // ---------------------------------------------------------------------------
+
+  describe('useAnalyticsEnabled()', () => {
+    it('should return isEnabled from context', async () => {
+      // Arrange
+      mockAnalyticsContext.isEnabled = true;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+
+      // Dynamically import after mocks are set
+      const { useAnalyticsEnabled } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useAnalyticsEnabled());
+
+      // Assert
+      expect(result.current).toBe(true);
+    });
+
+    it('should return false when isEnabled is false', async () => {
+      // Arrange
+      mockAnalyticsContext.isEnabled = false;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+
+      // Dynamically import after mocks are set
+      const { useAnalyticsEnabled } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useAnalyticsEnabled());
+
+      // Assert
+      expect(result.current).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // useTrackEvent hook
+  // ---------------------------------------------------------------------------
+
+  describe('useTrackEvent()', () => {
+    let mockTrack: any;
+
+    beforeEach(() => {
+      mockTrack = vi.fn().mockResolvedValue({ success: true });
+      mockAnalyticsContext.track = mockTrack;
+      mockAnalyticsContext.isReady = true;
+      mockUseContext.mockReturnValue(mockAnalyticsContext);
+    });
+
+    it('should return a stable callback function', async () => {
+      // Arrange
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useTrackEvent('button_clicked'));
+
+      // Assert
+      expect(typeof result.current).toBe('function');
+    });
+
+    it('should call track() with event name and properties when callback is invoked', async () => {
+      // Arrange
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useTrackEvent('button_clicked'));
+      result.current({ buttonId: 'signup', location: 'hero' });
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('button_clicked', {
+          buttonId: 'signup',
+          location: 'hero',
+        });
+      });
+    });
+
+    it('should call track() without properties when callback is invoked without args', async () => {
+      // Arrange
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useTrackEvent('button_clicked'));
+      result.current();
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('button_clicked', undefined);
+      });
+    });
+
+    it('should silently catch errors from track()', async () => {
+      // Arrange
+      mockTrack.mockRejectedValue(new Error('Tracking failed'));
+
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act - should not throw even though track() rejects
+      const { result } = renderHook(() => useTrackEvent('error_event'));
+      result.current({ test: 'data' });
+
+      // Wait for the rejected promise's .catch() to settle
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Assert - track was still called
+      expect(mockTrack).toHaveBeenCalledWith('error_event', { test: 'data' });
+    });
+
+    it('should return a function on each render', async () => {
+      // Arrange
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result, rerender } = renderHook(() => useTrackEvent('stable_event'));
+      const firstFunction = result.current;
+
+      rerender();
+      const secondFunction = result.current;
+
+      // Assert - both are functions
+      expect(typeof firstFunction).toBe('function');
+      expect(typeof secondFunction).toBe('function');
+    });
+
+    it('should work with empty properties object', async () => {
+      // Arrange
+      const { useTrackEvent } = await import('@/lib/analytics/hooks');
+
+      // Act
+      const { result } = renderHook(() => useTrackEvent('empty_props_event'));
+      result.current({});
+
+      // Assert
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('empty_props_event', {});
+      });
+    });
+  });
 });
