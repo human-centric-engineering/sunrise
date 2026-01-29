@@ -120,7 +120,10 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
         });
         return null;
       }
-      return createGA4Provider(config);
+      return createGA4Provider({
+        ...config,
+        debug: isDevelopment(),
+      });
     }
 
     case 'posthog': {
@@ -131,7 +134,10 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
         });
         return null;
       }
-      return createPostHogProvider(config);
+      return createPostHogProvider({
+        ...config,
+        debug: isDevelopment(),
+      });
     }
 
     case 'plausible': {
@@ -142,7 +148,10 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
         });
         return null;
       }
-      return createPlausibleProvider(config);
+      return createPlausibleProvider({
+        ...config,
+        debug: isDevelopment(),
+      });
     }
 
     default: {

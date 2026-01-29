@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
+import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { logger } from '@/lib/logging';
 
@@ -45,14 +46,20 @@ export function LogoutButton({
 }: LogoutButtonProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const { track, reset } = useAnalytics();
 
   const handleLogout = async () => {
     try {
       setIsLoading(true);
 
+      // Track logout before signing out (while session still exists)
+      await track(EVENTS.USER_LOGGED_OUT);
+
       await authClient.signOut({
         fetchOptions: {
-          onSuccess: () => {
+          onSuccess: async () => {
+            // Reset analytics identity so PostHog stops associating events with this user
+            await reset();
             // Redirect to home or login page
             router.push(redirectTo);
             router.refresh();

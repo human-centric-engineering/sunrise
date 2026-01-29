@@ -71,7 +71,8 @@ export function isDevelopment(): boolean {
  * @returns Provider type or undefined if not explicitly set
  */
 export function getExplicitProvider(): AnalyticsProviderType | undefined {
-  const provider = process.env[ANALYTICS_PROVIDER_ENV] as AnalyticsProviderType | undefined;
+  // Must use literal process.env access for Next.js client-side inlining
+  const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER as AnalyticsProviderType | undefined;
 
   if (provider && !['ga4', 'posthog', 'plausible', 'console'].includes(provider)) {
     console.warn(`[analytics] Unknown provider: ${provider}. Using auto-detection.`);
@@ -87,7 +88,7 @@ export function getExplicitProvider(): AnalyticsProviderType | undefined {
  * @returns True if GA4 measurement ID is set
  */
 export function isGA4Configured(): boolean {
-  return !!process.env[GA4_ENV.MEASUREMENT_ID];
+  return !!process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID;
 }
 
 /**
@@ -96,7 +97,7 @@ export function isGA4Configured(): boolean {
  * @returns GA4 config or null if not configured
  */
 export function getGA4Config(): { measurementId: string; apiSecret?: string } | null {
-  const measurementId = process.env[GA4_ENV.MEASUREMENT_ID];
+  const measurementId = process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID;
 
   if (!measurementId) {
     return null;
@@ -104,7 +105,7 @@ export function getGA4Config(): { measurementId: string; apiSecret?: string } | 
 
   return {
     measurementId,
-    apiSecret: process.env[GA4_ENV.API_SECRET],
+    apiSecret: process.env[GA4_ENV.API_SECRET], // Server-only, dynamic access is fine
   };
 }
 
@@ -114,7 +115,7 @@ export function getGA4Config(): { measurementId: string; apiSecret?: string } | 
  * @returns True if PostHog API key is set
  */
 export function isPostHogConfigured(): boolean {
-  return !!process.env[POSTHOG_ENV.KEY];
+  return !!process.env.NEXT_PUBLIC_POSTHOG_KEY;
 }
 
 /**
@@ -123,7 +124,7 @@ export function isPostHogConfigured(): boolean {
  * @returns PostHog config or null if not configured
  */
 export function getPostHogConfig(): { apiKey: string; host: string } | null {
-  const apiKey = process.env[POSTHOG_ENV.KEY];
+  const apiKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
   if (!apiKey) {
     return null;
@@ -131,7 +132,7 @@ export function getPostHogConfig(): { apiKey: string; host: string } | null {
 
   return {
     apiKey,
-    host: process.env[POSTHOG_ENV.HOST] || DEFAULT_POSTHOG_HOST,
+    host: process.env.NEXT_PUBLIC_POSTHOG_HOST || DEFAULT_POSTHOG_HOST,
   };
 }
 
@@ -141,7 +142,7 @@ export function getPostHogConfig(): { apiKey: string; host: string } | null {
  * @returns True if Plausible domain is set
  */
 export function isPlausibleConfigured(): boolean {
-  return !!process.env[PLAUSIBLE_ENV.DOMAIN];
+  return !!process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN;
 }
 
 /**
@@ -150,7 +151,7 @@ export function isPlausibleConfigured(): boolean {
  * @returns Plausible config or null if not configured
  */
 export function getPlausibleConfig(): { domain: string; host: string } | null {
-  const domain = process.env[PLAUSIBLE_ENV.DOMAIN];
+  const domain = process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN;
 
   if (!domain) {
     return null;
@@ -158,7 +159,7 @@ export function getPlausibleConfig(): { domain: string; host: string } | null {
 
   return {
     domain,
-    host: process.env[PLAUSIBLE_ENV.HOST] || DEFAULT_PLAUSIBLE_HOST,
+    host: process.env.NEXT_PUBLIC_PLAUSIBLE_HOST || DEFAULT_PLAUSIBLE_HOST,
   };
 }
 
