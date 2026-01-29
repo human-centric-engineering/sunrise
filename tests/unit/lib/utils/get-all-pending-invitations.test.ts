@@ -616,10 +616,12 @@ describe('getAllPendingInvitations()', () => {
         .mockResolvedValueOnce(createMockUser('admin-2', 'Admin Two'))
         .mockResolvedValueOnce(createMockUser('admin-1', 'Admin One'));
 
-      // Act
-      const result = await getAllPendingInvitations();
+      // Act - use explicit sort to get deterministic order (default invitedAt desc
+      // can reorder results since each createMockVerification uses new Date() with
+      // slightly different millisecond timestamps)
+      const result = await getAllPendingInvitations({ sortBy: 'email', sortOrder: 'asc' });
 
-      // Assert: Should resolve all inviter names
+      // Assert: Should resolve all inviter names (sorted by email asc: alice, bob, charlie)
       expect(result.invitations[0].invitedByName).toBe('Admin One');
       expect(result.invitations[1].invitedByName).toBe('Admin Two');
       expect(result.invitations[2].invitedByName).toBe('Admin One');
