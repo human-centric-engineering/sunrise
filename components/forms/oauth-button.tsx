@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { authClient } from '@/lib/auth/client';
 import { Button } from '@/components/ui/button';
 import { logger } from '@/lib/logging';
+import { safeCallbackUrl } from '@/lib/security';
 
 interface OAuthButtonProps {
   provider: 'google'; // Can add more providers later: 'github' | 'facebook' etc.
@@ -55,7 +56,7 @@ export function OAuthButton({
 }: OAuthButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const searchParams = useSearchParams();
-  const redirect = callbackUrl || searchParams.get('callbackUrl') || '/dashboard';
+  const redirect = safeCallbackUrl(callbackUrl || searchParams.get('callbackUrl'), '/dashboard');
 
   const handleOAuthSignIn = async () => {
     try {

@@ -199,6 +199,32 @@ describe('GET /api/auth/clear-session', () => {
   });
 
   describe('Security', () => {
+    it('should block external returnUrl to prevent open redirect', async () => {
+      // Arrange
+      const request = createMockGetRequest({ returnUrl: 'https://evil.com/phish' });
+
+      // Act
+      const response = await GET(request);
+
+      // Assert - should redirect to login with safe fallback, not the external URL
+      const location = response.headers.get('location');
+      expect(location).toContain('/login');
+      expect(location).not.toContain('evil.com');
+      expect(location).toContain('callbackUrl=%2F'); // Falls back to /
+    });
+
+    it('should block protocol-relative returnUrl', async () => {
+      // Arrange
+      const request = createMockGetRequest({ returnUrl: '//evil.com/phish' });
+
+      // Act
+      const response = await GET(request);
+
+      // Assert
+      const location = response.headers.get('location');
+      expect(location).not.toContain('evil.com');
+    });
+
     it('should not expose internal errors in response', async () => {
       // Arrange
       mockCookieStore.delete.mockImplementation(() => {

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { signInSchema, type SignInInput } from '@/lib/validations/auth';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
+import { safeCallbackUrl } from '@/lib/security';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -32,7 +33,7 @@ import { OAuthButtons } from './oauth-buttons';
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'), '/dashboard');
   const { track, identify } = useAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);

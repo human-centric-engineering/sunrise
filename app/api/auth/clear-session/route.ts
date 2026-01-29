@@ -10,11 +10,14 @@
 
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { sanitizeRedirectUrl } from '@/lib/security';
 
 export async function GET(request: NextRequest) {
   // Get return URL from query params
   const { searchParams } = request.nextUrl;
-  const returnUrl = searchParams.get('returnUrl') || '/';
+  const rawReturnUrl = searchParams.get('returnUrl') || '/';
+  const baseUrl = request.nextUrl.origin;
+  const returnUrl = sanitizeRedirectUrl(rawReturnUrl, baseUrl);
 
   // Get cookie store
   const cookieStore = await cookies();

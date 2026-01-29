@@ -41,6 +41,7 @@ export {
   stripHtml,
   sanitizeUrl,
   sanitizeRedirectUrl,
+  safeCallbackUrl,
   sanitizeObject,
   sanitizeFilename,
 } from './sanitize';
