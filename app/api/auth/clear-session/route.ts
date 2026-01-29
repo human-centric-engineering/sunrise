@@ -19,9 +19,11 @@ export async function GET(request: NextRequest) {
   // Get cookie store
   const cookieStore = await cookies();
 
-  // Delete better-auth session cookies
+  // Delete better-auth session cookies (both HTTP and HTTPS prefixed variants)
   cookieStore.delete('better-auth.session_token');
   cookieStore.delete('better-auth.csrf_token');
+  cookieStore.delete('__Secure-better-auth.session_token');
+  cookieStore.delete('__Secure-better-auth.csrf_token');
 
   // Construct login URL with callback
   const loginUrl = new URL('/login', request.url);

@@ -60,6 +60,8 @@ NEXT_PUBLIC_PLAUSIBLE_DOMAIN=yourdomain.com
 NEXT_PUBLIC_PLAUSIBLE_HOST=https://plausible.io  # or self-hosted
 ```
 
+**Local development:** Plausible requires domain verification before showing stats. Using `localhost` as the domain won't work because Plausible can't verify it. Use a tunnel (e.g., ngrok) to get a public domain, set that as `NEXT_PUBLIC_PLAUSIBLE_DOMAIN`, and update `BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` to match. Plausible also supports `captureOnLocalhost: true` via `plausible.init()`, but this still requires a verified domain in the dashboard.
+
 ## Provider Selection Logic
 
 1. **Explicit Selection:** `NEXT_PUBLIC_ANALYTICS_PROVIDER` environment variable

@@ -50,8 +50,11 @@ const authRoutes = ['/login', '/signup', '/reset-password'];
  * Check if a user is authenticated by looking for the better-auth session cookie
  */
 function isAuthenticated(request: NextRequest): boolean {
-  // better-auth sets a session cookie named 'better-auth.session_token'
-  const sessionToken = request.cookies.get('better-auth.session_token');
+  // better-auth uses 'better-auth.session_token' over HTTP
+  // and '__Secure-better-auth.session_token' over HTTPS
+  const sessionToken =
+    request.cookies.get('better-auth.session_token') ||
+    request.cookies.get('__Secure-better-auth.session_token');
   return !!sessionToken;
 }
 

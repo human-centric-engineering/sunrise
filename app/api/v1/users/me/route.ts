@@ -185,9 +185,10 @@ export async function DELETE(request: NextRequest) {
       where: { id: session.user.id },
     });
 
-    // Clear the session cookie
+    // Clear the session cookie (both HTTP and HTTPS prefixed variants)
     const cookieStore = await cookies();
     cookieStore.delete('better-auth.session_token');
+    cookieStore.delete('__Secure-better-auth.session_token');
 
     // Track account deletion server-side (bypasses ad blockers for critical events)
     await serverTrack({
