@@ -82,6 +82,15 @@ vi.mock('@/components/forms/avatar-crop-dialog', () => ({
   },
 }));
 
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+  })),
+  EVENTS: {
+    AVATAR_UPLOADED: 'avatar_uploaded',
+  },
+}));
+
 /**
  * Helper function to simulate file selection without causing stack overflow
  */
@@ -119,6 +128,7 @@ describe('components/forms/avatar-upload', () => {
   let mockRouter: {
     refresh: ReturnType<typeof vi.fn>;
   };
+  let mockTrack: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -136,6 +146,18 @@ describe('components/forms/avatar-upload', () => {
       forward: vi.fn(),
       prefetch: vi.fn(),
     } as unknown as ReturnType<typeof useRouter>);
+
+    // Setup mock analytics
+    const { useAnalytics } = await import('@/lib/analytics');
+    mockTrack = vi.fn().mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>;
+    vi.mocked(useAnalytics).mockReturnValue({
+      track: mockTrack,
+      identify: vi.fn(),
+      page: vi.fn(),
+      reset: vi.fn(),
+      isReady: true,
+      isEnabled: true,
+    } as unknown as ReturnType<typeof useAnalytics>);
 
     // Mock fetch for upload
     global.fetch = vi.fn();
@@ -392,6 +414,70 @@ describe('components/forms/avatar-upload', () => {
       expect(screen.queryByTestId('avatar-crop-dialog')).not.toBeInTheDocument();
     });
 
+    it('should track AVATAR_UPLOADED event on successful upload', async () => {
+      // Arrange
+      const user = userEvent.setup();
+
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: { url: 'https://example.com/new-avatar.jpg' } }),
+      } as Response);
+
+      const { container } = render(
+        <AvatarUpload currentAvatar={null} userName="John Doe" initials="JD" />
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const validFile = new File(['image'], 'avatar.jpg', { type: 'image/jpeg' });
+
+      // Act - Select file and confirm crop
+      selectFile(fileInput, validFile);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('avatar-crop-dialog')).toBeInTheDocument();
+      });
+
+      const confirmButton = screen.getByTestId('crop-confirm');
+      await user.click(confirmButton);
+
+      // Assert - Analytics track should be called with AVATAR_UPLOADED event
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('avatar_uploaded');
+      });
+    });
+
+    it('should NOT track analytics on upload failure', async () => {
+      // Arrange
+      const user = userEvent.setup();
+
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        json: async () => ({ error: { message: 'Upload failed' } }),
+      } as Response);
+
+      const { container } = render(
+        <AvatarUpload currentAvatar={null} userName="John Doe" initials="JD" />
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const validFile = new File(['image'], 'avatar.jpg', { type: 'image/jpeg' });
+
+      // Act
+      selectFile(fileInput, validFile);
+      await waitFor(() => {
+        expect(screen.getByTestId('avatar-crop-dialog')).toBeInTheDocument();
+      });
+
+      const confirmButton = screen.getByTestId('crop-confirm');
+      await user.click(confirmButton);
+
+      // Assert - Analytics should NOT be called on error
+      await waitFor(() => {
+        expect(screen.getByText(/Upload failed/i)).toBeInTheDocument();
+      });
+      expect(mockTrack).not.toHaveBeenCalled();
+    });
+
     it('should cleanup blob URL when crop is confirmed', async () => {
       // Arrange
       const user = userEvent.setup();
@@ -417,7 +503,7 @@ describe('components/forms/avatar-upload', () => {
       const confirmButton = screen.getByTestId('crop-confirm');
       await user.click(confirmButton);
 
-      // Assert - Blob URL was revoked
+      // Assert - Blob URL was revoked (no need to import authClient here)
       await waitFor(() => {
         expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
       });

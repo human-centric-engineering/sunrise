@@ -45,11 +45,21 @@ vi.mock('next/navigation', () => ({
   usePathname: vi.fn(() => '/profile'),
 }));
 
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+  })),
+  EVENTS: {
+    PROFILE_UPDATED: 'profile_updated',
+  },
+}));
+
 /**
  * Test Suite: ProfileForm Component
  */
 describe('components/forms/profile-form', () => {
   let mockRouter: { refresh: ReturnType<typeof vi.fn> };
+  let mockTrack: ReturnType<typeof vi.fn>;
 
   const mockUser: PublicUser = {
     id: 'user123',
@@ -89,6 +99,18 @@ describe('components/forms/profile-form', () => {
       forward: vi.fn(),
       prefetch: vi.fn(),
     } as unknown as ReturnType<typeof useRouter>);
+
+    // Setup mock analytics
+    const { useAnalytics } = await import('@/lib/analytics');
+    mockTrack = vi.fn().mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>;
+    vi.mocked(useAnalytics).mockReturnValue({
+      track: mockTrack,
+      identify: vi.fn(),
+      page: vi.fn(),
+      reset: vi.fn(),
+      isReady: true,
+      isEnabled: true,
+    } as unknown as ReturnType<typeof useAnalytics>);
   });
 
   afterEach(() => {
@@ -412,6 +434,83 @@ describe('components/forms/profile-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
       });
+    });
+
+    it('should track PROFILE_UPDATED event with changed fields', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        success: true,
+        data: mockUser,
+      });
+
+      render(<ProfileForm user={mockUser} />);
+
+      const nameInput = screen.getByLabelText('Name');
+      const bioInput = screen.getByLabelText('Bio');
+      const submitButton = screen.getByRole('button', { name: /save changes/i });
+
+      // Act - Update name and bio
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Jane Doe');
+      await user.clear(bioInput);
+      await user.type(bioInput, 'Updated bio');
+      await user.click(submitButton);
+
+      // Assert - Analytics track should be called with changed fields
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('profile_updated', {
+          fields_changed: ['name', 'bio'],
+        });
+      });
+    });
+
+    it('should NOT track analytics when no fields changed', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        success: true,
+        data: mockUser,
+      });
+
+      render(<ProfileForm user={mockUser} />);
+
+      const submitButton = screen.getByRole('button', { name: /save changes/i });
+
+      // Act - Submit without changing anything
+      await user.click(submitButton);
+
+      // Assert - Analytics should NOT be called when no fields changed
+      await waitFor(() => {
+        expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
+      });
+      expect(mockTrack).not.toHaveBeenCalled();
+    });
+
+    it('should NOT track analytics on profile update failure', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      const { APIClientError } = await import('@/lib/api/client');
+
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Email already in use', 'VALIDATION_ERROR')
+      );
+
+      render(<ProfileForm user={mockUser} />);
+
+      const nameInput = screen.getByLabelText('Name');
+      const submitButton = screen.getByRole('button', { name: /save changes/i });
+
+      // Act
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Jane Doe');
+      await user.click(submitButton);
+
+      // Assert - Analytics should NOT be called on error
+      await waitFor(() => {
+        expect(screen.getByText(/email already in use/i)).toBeInTheDocument();
+      });
+      expect(mockTrack).not.toHaveBeenCalled();
     });
 
     it('should refresh router on successful update', async () => {

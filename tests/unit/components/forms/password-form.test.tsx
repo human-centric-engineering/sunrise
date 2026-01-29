@@ -31,6 +31,15 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({
+    track: vi.fn(),
+  })),
+  EVENTS: {
+    PASSWORD_CHANGED: 'password_changed',
+  },
+}));
+
 // Mock password strength utility
 vi.mock('@/lib/utils/password-strength', () => ({
   calculatePasswordStrength: vi.fn((password: string) => {
@@ -51,8 +60,22 @@ vi.mock('@/lib/utils/password-strength', () => ({
  * Test Suite: PasswordForm Component
  */
 describe('components/forms/password-form', () => {
-  beforeEach(() => {
+  let mockTrack: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Setup mock analytics
+    const { useAnalytics } = await import('@/lib/analytics');
+    mockTrack = vi.fn().mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>;
+    vi.mocked(useAnalytics).mockReturnValue({
+      track: mockTrack,
+      identify: vi.fn(),
+      page: vi.fn(),
+      reset: vi.fn(),
+      isReady: true,
+      isEnabled: true,
+    } as unknown as ReturnType<typeof useAnalytics>);
   });
 
   afterEach(() => {
@@ -353,6 +376,32 @@ describe('components/forms/password-form', () => {
       });
     });
 
+    it('should track PASSWORD_CHANGED event on successful password change', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.changePassword).mockResolvedValue(undefined);
+
+      render(<PasswordForm />);
+
+      const currentPasswordInput = screen.getByLabelText('Current Password');
+      const newPasswordInput = screen.getByLabelText('New Password');
+      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
+      const submitButton = screen.getByRole('button', { name: /change password/i });
+
+      // Act
+      await user.type(currentPasswordInput, 'CurrentPassword123!');
+      await user.type(newPasswordInput, 'NewPassword123!');
+      await user.type(confirmPasswordInput, 'NewPassword123!');
+      await user.click(submitButton);
+
+      // Assert - Analytics track should be called with PASSWORD_CHANGED event
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('password_changed');
+      });
+    });
+
     it('should clear form after successful password change', async () => {
       // Arrange
       const user = userEvent.setup({ delay: null });
@@ -427,6 +476,35 @@ describe('components/forms/password-form', () => {
   });
 
   describe('error handling', () => {
+    it('should NOT track analytics on password change failure', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.changePassword).mockRejectedValue(
+        new Error('Current password is incorrect')
+      );
+
+      render(<PasswordForm />);
+
+      const currentPasswordInput = screen.getByLabelText('Current Password');
+      const newPasswordInput = screen.getByLabelText('New Password');
+      const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
+      const submitButton = screen.getByRole('button', { name: /change password/i });
+
+      // Act
+      await user.type(currentPasswordInput, 'WrongPassword123!');
+      await user.type(newPasswordInput, 'NewPassword123!');
+      await user.type(confirmPasswordInput, 'NewPassword123!');
+      await user.click(submitButton);
+
+      // Assert - Analytics should NOT be called on error
+      await waitFor(() => {
+        expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
+      });
+      expect(mockTrack).not.toHaveBeenCalled();
+    });
+
     it('should display error message for incorrect current password', async () => {
       // Arrange
       const user = userEvent.setup({ delay: null });
