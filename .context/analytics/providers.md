@@ -51,7 +51,6 @@ GA4_API_SECRET=your-api-secret  # For server-side tracking
 ```bash
 NEXT_PUBLIC_POSTHOG_KEY=phc_...
 NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com  # or self-hosted
-POSTHOG_API_KEY=your-api-key  # For server-side tracking
 ```
 
 ### Plausible
@@ -187,7 +186,7 @@ export async function POST(request: Request) {
 **Requirements:**
 
 - GA4: `GA4_API_SECRET` environment variable
-- PostHog: `POSTHOG_API_KEY` environment variable
+- PostHog: Uses `NEXT_PUBLIC_POSTHOG_KEY` (project API key, same as client-side)
 - Plausible: Works with standard configuration
 
 ## PostHog Feature Flags

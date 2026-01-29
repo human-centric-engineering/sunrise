@@ -90,7 +90,6 @@ const serverEnvSchema = z.object({
     .string()
     .optional()
     .describe('GA4 API secret for server-side Measurement Protocol tracking'),
-  POSTHOG_API_KEY: z.string().optional().describe('PostHog API key for server-side tracking'),
 });
 
 // Client-side environment variables (NEXT_PUBLIC_* vars)

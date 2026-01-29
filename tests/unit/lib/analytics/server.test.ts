@@ -32,11 +32,6 @@ vi.mock('@/lib/analytics/config', () => ({
     MEASUREMENT_ID: 'NEXT_PUBLIC_GA4_MEASUREMENT_ID',
     API_SECRET: 'GA4_API_SECRET',
   },
-  POSTHOG_ENV: {
-    KEY: 'NEXT_PUBLIC_POSTHOG_KEY',
-    HOST: 'NEXT_PUBLIC_POSTHOG_HOST',
-    API_KEY: 'POSTHOG_API_KEY',
-  },
 }));
 
 // Mock Next.js headers
@@ -294,7 +289,6 @@ describe('lib/analytics/server - serverTrack', () => {
         apiKey: 'phc_test_key',
         host: 'https://us.i.posthog.com',
       });
-      vi.stubEnv('POSTHOG_API_KEY', 'phc_server_key');
 
       mockFetch.mockResolvedValue({ ok: true, status: 200 });
       globalThis.fetch = mockFetch as any;
@@ -329,7 +323,7 @@ describe('lib/analytics/server - serverTrack', () => {
 
       // Verify body structure
       const body = JSON.parse(options.body);
-      expect(body.api_key).toBe('phc_server_key');
+      expect(body.api_key).toBe('phc_test_key');
       expect(body.event).toBe('signup_completed');
       expect(body.distinct_id).toBe('user-ph');
       expect(body.properties.plan).toBe('enterprise');
@@ -377,23 +371,12 @@ describe('lib/analytics/server - serverTrack', () => {
       expect(body.properties.$referrer).toBeUndefined();
     });
 
-    it('should fall back to POSTHOG_KEY env var when POSTHOG_API_KEY is not set', async () => {
-      vi.unstubAllEnvs();
-      vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_public_key_fallback');
-      // POSTHOG_API_KEY intentionally not set
-
-      await serverTrack({
-        event: 'fallback_key_event',
-        userId: 'user-fallback',
-        context: {},
-      });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.api_key).toBe('phc_public_key_fallback');
-    });
-
     it('should return error when PostHog API responds with non-OK status', async () => {
-      mockFetch.mockResolvedValue({ ok: false, status: 401 });
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve('Unauthorized'),
+      });
 
       const result = await serverTrack({
         event: 'unauthorized_ph',
@@ -414,23 +397,7 @@ describe('lib/analytics/server - serverTrack', () => {
 
       expect(result).toEqual({
         success: false,
-        error: 'PostHog server-side tracking requires POSTHOG_API_KEY to be configured',
-      });
-      expect(mockFetch).not.toHaveBeenCalled();
-    });
-
-    it('should return error when both POSTHOG_API_KEY and POSTHOG_KEY env vars are missing', async () => {
-      vi.unstubAllEnvs();
-      // Neither POSTHOG_API_KEY nor NEXT_PUBLIC_POSTHOG_KEY is set
-
-      const result = await serverTrack({
-        event: 'no_ph_key',
-        context: {},
-      });
-
-      expect(result).toEqual({
-        success: false,
-        error: 'PostHog server-side tracking requires POSTHOG_API_KEY to be configured',
+        error: 'PostHog server-side tracking requires NEXT_PUBLIC_POSTHOG_KEY to be configured',
       });
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -610,7 +577,6 @@ describe('lib/analytics/server - serverTrack', () => {
         apiKey: 'phc_err',
         host: 'https://us.i.posthog.com',
       });
-      vi.stubEnv('POSTHOG_API_KEY', 'phc_err');
       mockFetch.mockRejectedValue(new Error('Connection refused'));
 
       const result = await serverTrack({
@@ -681,7 +647,6 @@ describe('lib/analytics/server - serverTrack', () => {
         apiKey: 'phc_ctx',
         host: 'https://us.i.posthog.com',
       });
-      vi.stubEnv('POSTHOG_API_KEY', 'phc_ctx');
 
       mockFetch.mockResolvedValue({ ok: true, status: 200 });
       globalThis.fetch = mockFetch as any;

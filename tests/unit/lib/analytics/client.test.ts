@@ -266,7 +266,7 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       const client = getAnalyticsClient();
 
-      expect(createGA4Provider).toHaveBeenCalledWith(mockConfig);
+      expect(createGA4Provider).toHaveBeenCalledWith({ ...mockConfig, debug: expect.any(Boolean) });
       expect(client?.name).toBe('Google Analytics 4');
     });
 
@@ -303,7 +303,10 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       const client = getAnalyticsClient();
 
-      expect(createPostHogProvider).toHaveBeenCalledWith(mockConfig);
+      expect(createPostHogProvider).toHaveBeenCalledWith({
+        ...mockConfig,
+        debug: expect.any(Boolean),
+      });
       expect(client?.name).toBe('PostHog');
     });
 
@@ -340,7 +343,10 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       const client = getAnalyticsClient();
 
-      expect(createPlausibleProvider).toHaveBeenCalledWith(mockConfig);
+      expect(createPlausibleProvider).toHaveBeenCalledWith({
+        ...mockConfig,
+        debug: expect.any(Boolean),
+      });
       expect(client?.name).toBe('Plausible');
     });
 

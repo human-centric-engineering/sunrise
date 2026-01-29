@@ -16,7 +16,6 @@ import {
   getPostHogConfig,
   getPlausibleConfig,
   GA4_ENV,
-  POSTHOG_ENV,
 } from './config';
 import type { ServerTrackOptions, ServerTrackContext, TrackResult } from './types';
 import { logger } from '@/lib/logging';
@@ -183,14 +182,20 @@ async function trackPostHog(
   context: ServerTrackContext
 ): Promise<TrackResult> {
   const config = getPostHogConfig();
-  const apiKey = process.env[POSTHOG_ENV.API_KEY] || process.env[POSTHOG_ENV.KEY];
 
-  if (!config || !apiKey) {
+  if (!config) {
+    logger.warn('PostHog server-side tracking skipped: missing config', {
+      hint: 'Set NEXT_PUBLIC_POSTHOG_KEY in .env.local',
+    });
     return {
       success: false,
-      error: 'PostHog server-side tracking requires POSTHOG_API_KEY to be configured',
+      error: 'PostHog server-side tracking requires NEXT_PUBLIC_POSTHOG_KEY to be configured',
     };
   }
+
+  // The /capture/ endpoint requires the project API key (phc_...), NOT a Personal API Key (phx_...).
+  // Personal API Keys are for PostHog's REST API (querying data), not event ingestion.
+  const apiKey = config.apiKey;
 
   const distinctId = options.userId ?? options.anonymousId ?? generateAnonymousId();
 
@@ -209,7 +214,15 @@ async function trackPostHog(
     },
   };
 
-  const response = await fetch(`${config.host}/capture/`, {
+  const captureUrl = `${config.host}/capture/`;
+  logger.debug('PostHog server-side capture', {
+    url: captureUrl,
+    event: options.event,
+    distinctId,
+    apiKeyPrefix: apiKey.substring(0, 8) + '...',
+  });
+
+  const response = await fetch(captureUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -218,6 +231,11 @@ async function trackPostHog(
   });
 
   if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    logger.warn('PostHog server-side capture failed', {
+      status: response.status,
+      body,
+    });
     return { success: false, error: `PostHog API error: ${response.status}` };
   }
 

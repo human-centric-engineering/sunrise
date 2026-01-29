@@ -38,7 +38,6 @@ describe('lib/analytics/config', () => {
       expect(GA4_ENV.API_SECRET).toBe('GA4_API_SECRET');
       expect(POSTHOG_ENV.KEY).toBe('NEXT_PUBLIC_POSTHOG_KEY');
       expect(POSTHOG_ENV.HOST).toBe('NEXT_PUBLIC_POSTHOG_HOST');
-      expect(POSTHOG_ENV.API_KEY).toBe('POSTHOG_API_KEY');
       expect(PLAUSIBLE_ENV.DOMAIN).toBe('NEXT_PUBLIC_PLAUSIBLE_DOMAIN');
       expect(PLAUSIBLE_ENV.HOST).toBe('NEXT_PUBLIC_PLAUSIBLE_HOST');
     });

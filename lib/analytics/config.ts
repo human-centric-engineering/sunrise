@@ -30,7 +30,6 @@ export const GA4_ENV = {
 export const POSTHOG_ENV = {
   KEY: 'NEXT_PUBLIC_POSTHOG_KEY',
   HOST: 'NEXT_PUBLIC_POSTHOG_HOST',
-  API_KEY: 'POSTHOG_API_KEY',
 } as const;
 
 /**
