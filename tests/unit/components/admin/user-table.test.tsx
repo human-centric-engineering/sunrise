@@ -601,6 +601,36 @@ describe('components/admin/user-table', () => {
   });
 
   describe('user actions', () => {
+    it('should render user name as link to profile page', () => {
+      // Arrange & Act
+      render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
+
+      // Assert: User names should be links
+      const aliceLink = screen.getByRole('link', { name: 'Alice Johnson' });
+      expect(aliceLink).toBeInTheDocument();
+      expect(aliceLink).toHaveAttribute('href', '/admin/users/user-1');
+
+      const bobLink = screen.getByRole('link', { name: 'Bob Smith' });
+      expect(bobLink).toBeInTheDocument();
+      expect(bobLink).toHaveAttribute('href', '/admin/users/user-2');
+    });
+
+    it('should navigate to profile page when clicking View Profile', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
+
+      // Act: Open actions menu and click View Profile
+      const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
+      await user.click(actionButtons[0]);
+      await user.click(screen.getByRole('menuitem', { name: /view profile/i }));
+
+      // Assert: Should navigate to profile page
+      await waitFor(() => {
+        expect(mockRouter.push).toHaveBeenCalledWith('/admin/users/user-1');
+      });
+    });
+
     it('should open delete confirmation dialog', async () => {
       // Arrange
       const user = userEvent.setup();
@@ -714,7 +744,7 @@ describe('components/admin/user-table', () => {
 
       // Assert: Should navigate to edit page
       await waitFor(() => {
-        expect(mockRouter.push).toHaveBeenCalledWith('/admin/users/user-1');
+        expect(mockRouter.push).toHaveBeenCalledWith('/admin/users/user-1/edit');
       });
     });
   });

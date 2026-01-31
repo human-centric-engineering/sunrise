@@ -142,6 +142,7 @@ export type AdminUser = Pick<
   | 'emailVerified'
   | 'image'
   | 'role'
+  | 'bio'
   | 'createdAt'
   | 'updatedAt'
   | 'phone'

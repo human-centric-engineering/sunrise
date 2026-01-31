@@ -116,9 +116,13 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
   return (
     <div className="space-y-6">
       {/* Back button */}
-      <Button variant="ghost" onClick={() => router.push('/admin/users')} className="-ml-4">
+      <Button
+        variant="ghost"
+        onClick={() => router.push(`/admin/users/${user.id}`)}
+        className="-ml-4"
+      >
         <ArrowLeft className="mr-2 h-4 w-4" />
-        Back to Users
+        Back to Profile
       </Button>
 
       <div className="grid gap-6 md:grid-cols-3">
@@ -221,7 +225,11 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
               </div>
             </CardContent>
             <CardFooter className="flex justify-end gap-2 border-t pt-6">
-              <Button type="button" variant="outline" onClick={() => router.push('/admin/users')}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push(`/admin/users/${user.id}`)}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={!isDirty || isSubmitting}>

@@ -74,6 +74,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         role: true,
         emailVerified: true,
         image: true,
+        bio: true,
+        phone: true,
+        timezone: true,
+        location: true,
         createdAt: true,
         updatedAt: true,
         // Exclude password
