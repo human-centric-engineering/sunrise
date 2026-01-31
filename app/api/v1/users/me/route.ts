@@ -185,10 +185,16 @@ export async function DELETE(request: NextRequest) {
       where: { id: session.user.id },
     });
 
-    // Clear the session cookie (both HTTP and HTTPS prefixed variants)
+    // Clear all better-auth cookies (session, cached session data, CSRF, OAuth state)
     const cookieStore = await cookies();
     cookieStore.delete('better-auth.session_token');
+    cookieStore.delete('better-auth.session_data');
+    cookieStore.delete('better-auth.csrf_token');
+    cookieStore.delete('better-auth.state');
     cookieStore.delete('__Secure-better-auth.session_token');
+    cookieStore.delete('__Secure-better-auth.session_data');
+    cookieStore.delete('__Secure-better-auth.csrf_token');
+    cookieStore.delete('__Secure-better-auth.state');
 
     // Track account deletion server-side (bypasses ad blockers for critical events)
     await serverTrack({

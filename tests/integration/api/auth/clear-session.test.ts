@@ -7,8 +7,8 @@
  *
  * Test Coverage:
  * GET /api/auth/clear-session:
- * - Deletes HTTP session cookies (better-auth.session_token, better-auth.csrf_token)
- * - Deletes HTTPS session cookies (__Secure-better-auth.session_token, __Secure-better-auth.csrf_token)
+ * - Deletes HTTP session cookies (better-auth.session_token, better-auth.session_data, better-auth.csrf_token, better-auth.state)
+ * - Deletes HTTPS session cookies (__Secure-better-auth.session_token, __Secure-better-auth.session_data, __Secure-better-auth.csrf_token, __Secure-better-auth.state)
  * - Redirects to login with returnUrl parameter
  * - Uses default returnUrl if not provided
  *
@@ -100,7 +100,7 @@ describe('GET /api/auth/clear-session', () => {
       expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.csrf_token');
     });
 
-    it('should delete all four cookie variants', async () => {
+    it('should delete HTTP session data cookie (better-auth.session_data)', async () => {
       // Arrange
       const request = createMockGetRequest();
 
@@ -108,11 +108,59 @@ describe('GET /api/auth/clear-session', () => {
       await GET(request);
 
       // Assert
-      expect(mockCookieStore.delete).toHaveBeenCalledTimes(4);
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_data');
+    });
+
+    it('should delete HTTP state cookie (better-auth.state)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.state');
+    });
+
+    it('should delete HTTPS session data cookie (__Secure-better-auth.session_data)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.session_data');
+    });
+
+    it('should delete HTTPS state cookie (__Secure-better-auth.state)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.state');
+    });
+
+    it('should delete all eight cookie variants', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledTimes(8);
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_data');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.csrf_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.state');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.session_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.session_data');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.csrf_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.state');
     });
   });
 

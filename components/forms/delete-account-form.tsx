@@ -10,7 +10,6 @@
  */
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { useAnalytics } from '@/lib/analytics';
@@ -30,7 +29,6 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export function DeleteAccountForm() {
-  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -53,9 +51,10 @@ export function DeleteAccountForm() {
       // Reset analytics identity (event tracked server-side in DELETE /api/v1/users/me)
       void reset();
 
-      // Redirect to home page after successful deletion
-      router.push('/');
-      router.refresh();
+      // Hard redirect to home page after successful deletion.
+      // Using window.location instead of router.push() to ensure all in-memory
+      // session state (better-auth nanostore, cookie cache) is fully cleared.
+      window.location.href = '/';
     } catch (err) {
       if (err instanceof APIClientError) {
         setError(err.message || 'Failed to delete account');

@@ -64,46 +64,23 @@ vi.mock('@/lib/analytics', () => ({
   },
 }));
 
-// Mock next/navigation
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/settings'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));
-
 /**
  * Test Suite: DeleteAccountForm Component
  */
 describe('components/forms/delete-account-form', () => {
-  let mockRouter: { push: ReturnType<typeof vi.fn>; refresh: ReturnType<typeof vi.fn> };
-
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
 
     // Clear analytics mocks
     mockReset.mockClear();
     mockTrack.mockClear();
 
-    // Setup mock router
-    const { useRouter } = await import('next/navigation');
-    mockRouter = {
-      push: vi.fn(),
-      refresh: vi.fn(),
-    };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      replace: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    // Mock window.location.href
+    Object.defineProperty(window, 'location', {
+      value: { href: '' },
+      writable: true,
+      configurable: true,
+    });
   });
 
   afterEach(() => {
@@ -464,10 +441,9 @@ describe('components/forms/delete-account-form', () => {
       const actionButton = actionButtons[actionButtons.length - 1];
       await user.click(actionButton);
 
-      // Assert
+      // Assert: Should redirect to home page
       await waitFor(() => {
-        expect(mockRouter.push).toHaveBeenCalledWith('/');
-        expect(mockRouter.refresh).toHaveBeenCalled();
+        expect(window.location.href).toBe('/');
       });
     });
 
@@ -594,9 +570,8 @@ describe('components/forms/delete-account-form', () => {
         expect(apiClient.delete).toHaveBeenCalled();
       });
 
-      // Assert: Router push should NOT be called on error
-      expect(mockRouter.push).not.toHaveBeenCalled();
-      expect(mockRouter.refresh).not.toHaveBeenCalled();
+      // Assert: window.location.href should NOT be changed on error
+      expect(window.location.href).toBe('');
     });
   });
 

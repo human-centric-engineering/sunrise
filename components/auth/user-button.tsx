@@ -11,7 +11,6 @@
  */
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { User, LogOut, Settings, UserCircle, Shield } from 'lucide-react';
 import { authClient, useSession } from '@/lib/auth/client';
@@ -41,7 +40,6 @@ function getInitials(name: string): string {
 
 export function UserButton() {
   const { data: session, isPending } = useSession();
-  const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const { track, reset } = useAnalytics();
 
@@ -97,8 +95,8 @@ export function UserButton() {
             // Track logout and reset user identity
             await track(EVENTS.USER_LOGGED_OUT);
             await reset();
-            router.push('/');
-            router.refresh();
+            // Hard redirect to fully clear in-memory session state (nanostore, cookie cache)
+            window.location.href = '/';
           },
           onError: () => {
             setIsSigningOut(false);
