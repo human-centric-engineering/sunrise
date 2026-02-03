@@ -42,6 +42,25 @@ export default tseslint.config(
         },
       ],
       '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/consistent-type-assertions': [
+        'error',
+        {
+          assertionStyle: 'as',
+          objectLiteralTypeAssertions: 'never',
+        },
+      ],
+      '@typescript-eslint/explicit-function-return-type': [
+        'warn',
+        {
+          allowExpressions: true,
+          allowTypedFunctionExpressions: true,
+          allowHigherOrderFunctions: true,
+          allowDirectConstAssertionInArrowFunctions: true,
+          allowConciseArrowFunctionExpressionsStartingWithVoid: false,
+          allowFunctionsWithoutTypeParameters: false,
+          allowedNames: [],
+        },
+      ],
     },
   },
 
@@ -83,7 +102,7 @@ export default tseslint.config(
       ...nextPlugin.configs['core-web-vitals'].rules,
 
       // Custom rules
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      'no-console': 'error',
       'react/react-in-jsx-scope': 'off', // Not needed with Next.js
       'react/prop-types': 'off', // Using TypeScript
     },
@@ -118,6 +137,14 @@ export default tseslint.config(
 
       // Allow console in tests (for debugging)
       'no-console': 'off',
+
+      // Allow object literal type assertions in tests (partial mocks)
+      // Reason: Tests commonly use `{} as MockType` for partial mocks of complex interfaces
+      '@typescript-eslint/consistent-type-assertions': 'off',
+
+      // Skip return type annotations in tests
+      // Reason: Test helpers/factories don't benefit from explicit return types
+      '@typescript-eslint/explicit-function-return-type': 'off',
     },
   }
 );

@@ -10,7 +10,7 @@ Run a comprehensive code review on the specified domain of the codebase.
 This specifies which part of the codebase to review. Supported domains and their file mappings:
 
 - `auth` - Authentication & sessions: `app/(auth)/`, `app/api/auth/`, `lib/auth/`, `components/auth/`, auth-related form components
-- `security` - Security infrastructure: `lib/security/`, `middleware.ts`, `app/api/csp-report/`, `lib/env.ts`
+- `security` - Security infrastructure: `lib/security/`, `proxy.ts`, `app/api/csp-report/`, `lib/env.ts`
 - `api` - API layer: `lib/api/`, `app/api/v1/users/`, `app/api/v1/contact/`, `app/api/v1/invitations/`, `app/api/health/`, `lib/validations/`
 - `admin` - Admin panel: `app/admin/`, `app/api/v1/admin/`, `components/admin/`, `lib/admin/`, `lib/feature-flags/`
 - `database` - Database & models: `prisma/`, `lib/db/`, `types/`

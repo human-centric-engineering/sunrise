@@ -167,7 +167,9 @@ const parsed = isBrowser
   : envSchema.safeParse(process.env);
 
 if (!parsed.success) {
+  // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.error('❌ Invalid environment variables:');
+  // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2));
   throw new Error(
     'Environment validation failed - check configuration above or see .context/environment/overview.md'

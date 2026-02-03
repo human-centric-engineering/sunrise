@@ -74,6 +74,7 @@ export function getExplicitProvider(): AnalyticsProviderType | undefined {
   const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER as AnalyticsProviderType | undefined;
 
   if (provider && !['ga4', 'posthog', 'plausible', 'console'].includes(provider)) {
+    // eslint-disable-next-line no-console
     console.warn(`[analytics] Unknown provider: ${provider}. Using auto-detection.`);
     return undefined;
   }

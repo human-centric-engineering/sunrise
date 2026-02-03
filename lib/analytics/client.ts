@@ -115,6 +115,7 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
     case 'ga4': {
       const config = getGA4Config();
       if (!config) {
+        // eslint-disable-next-line no-console
         console.error('[Analytics] GA4 provider requested but not configured', {
           missingVars: ['NEXT_PUBLIC_GA4_MEASUREMENT_ID'],
         });
@@ -129,6 +130,7 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
     case 'posthog': {
       const config = getPostHogConfig();
       if (!config) {
+        // eslint-disable-next-line no-console
         console.error('[Analytics] PostHog provider requested but not configured', {
           missingVars: ['NEXT_PUBLIC_POSTHOG_KEY'],
         });
@@ -143,6 +145,7 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
     case 'plausible': {
       const config = getPlausibleConfig();
       if (!config) {
+        // eslint-disable-next-line no-console
         console.error('[Analytics] Plausible provider requested but not configured', {
           missingVars: ['NEXT_PUBLIC_PLAUSIBLE_DOMAIN'],
         });
@@ -158,6 +161,7 @@ function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
       // Type-safe exhaustive check
       const _exhaustiveCheck: never = type;
 
+      // eslint-disable-next-line no-console
       console.error('[Analytics] Unknown provider type:', _exhaustiveCheck);
       return null;
     }
