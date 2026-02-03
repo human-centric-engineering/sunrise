@@ -631,14 +631,41 @@ describe('components/admin/user-table', () => {
       });
     });
 
+    it('should show cannot-delete message for admin users', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
+
+      // Act: Open actions menu for first user (Alice, ADMIN)
+      const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
+      await user.click(actionButtons[0]);
+
+      // Act: Click delete
+      await user.click(screen.getByRole('menuitem', { name: /delete/i }));
+
+      // Assert: Should show informational message, not delete confirmation
+      await waitFor(() => {
+        expect(screen.getByText('Cannot Delete Admin')).toBeInTheDocument();
+        expect(
+          screen.getByText(/Cannot delete an admin account. Demote the user first./i)
+        ).toBeInTheDocument();
+      });
+
+      // Assert: No delete button should be present
+      expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+
+      // Assert: Close button should be present
+      expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+    });
+
     it('should open delete confirmation dialog', async () => {
       // Arrange
       const user = userEvent.setup();
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
-      // Act: Open actions menu for first user
+      // Act: Open actions menu for second user (Bob, non-admin)
       const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
-      await user.click(actionButtons[0]);
+      await user.click(actionButtons[1]);
 
       // Act: Click delete
       await user.click(screen.getByRole('menuitem', { name: /delete/i }));
@@ -656,9 +683,9 @@ describe('components/admin/user-table', () => {
       const { apiClient } = await import('@/lib/api/client');
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
-      // Act: Open delete dialog
+      // Act: Open delete dialog for second user (Bob, non-admin)
       const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
-      await user.click(actionButtons[0]);
+      await user.click(actionButtons[1]);
       await user.click(screen.getByRole('menuitem', { name: /delete/i }));
 
       // Act: Cancel
@@ -681,9 +708,9 @@ describe('components/admin/user-table', () => {
       );
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
-      // Act: Open delete dialog
+      // Act: Open delete dialog for second user (Bob, non-admin)
       const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
-      await user.click(actionButtons[0]);
+      await user.click(actionButtons[1]);
       await user.click(screen.getByRole('menuitem', { name: /delete/i }));
 
       // Act: Confirm delete
@@ -692,7 +719,7 @@ describe('components/admin/user-table', () => {
 
       // Assert: Should call delete API
       await waitFor(() => {
-        expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/users/user-1');
+        expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/users/user-2');
       });
 
       // Assert: Should refresh user list
@@ -710,9 +737,9 @@ describe('components/admin/user-table', () => {
       );
       render(<UserTable initialUsers={mockUsers} initialMeta={mockMeta} />);
 
-      // Act: Open delete dialog and confirm
+      // Act: Open delete dialog for second user (Bob, non-admin) and confirm
       const actionButtons = screen.getAllByRole('button', { name: /open menu/i });
-      await user.click(actionButtons[0]);
+      await user.click(actionButtons[1]);
       await user.click(screen.getByRole('menuitem', { name: /delete/i }));
 
       // Wait for dialog to open
@@ -726,7 +753,7 @@ describe('components/admin/user-table', () => {
       // Assert: Delete API should be called with correct user ID
       await waitFor(
         () => {
-          expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/users/user-1');
+          expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/users/user-2');
         },
         { timeout: 2000 }
       );

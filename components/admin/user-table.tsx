@@ -177,6 +177,7 @@ export function UserTable({
         }
       } catch (error) {
         if (error instanceof APIClientError) {
+          // eslint-disable-next-line no-console -- client component, no structured logger available
           console.error('Failed to fetch users:', error.message);
         }
       } finally {
@@ -448,24 +449,40 @@ export function UserTable({
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete User</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this user? This action cannot be undone. All user
-              data, sessions, and accounts will be permanently deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => void handleDelete()}
-              className="bg-red-600 hover:bg-red-700"
-              disabled={isLoading}
-            >
-              {isLoading ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+          {users.find((u) => u.id === deleteUserId)?.role === 'ADMIN' ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Cannot Delete Admin</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Cannot delete an admin account. Demote the user first.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Close</AlertDialogCancel>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete User</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete this user? This action cannot be undone. All user
+                  data, sessions, and accounts will be permanently deleted.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => void handleDelete()}
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Deleting...' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </div>
