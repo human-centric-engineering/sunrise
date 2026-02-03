@@ -16,26 +16,33 @@
  */
 
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/lib/logging';
+import { cspReportLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
- * CSP Violation Report structure
- * @see https://w3c.github.io/webappsec-csp/#violation-report
+ * Zod schema for CSP violation reports
+ *
+ * Validates and constrains field sizes to prevent log flooding
+ * with arbitrarily large payloads.
  */
-interface CSPReport {
-  'csp-report'?: {
-    'document-uri'?: string;
-    referrer?: string;
-    'violated-directive'?: string;
-    'effective-directive'?: string;
-    'original-policy'?: string;
-    'blocked-uri'?: string;
-    'status-code'?: number;
-    'source-file'?: string;
-    'line-number'?: number;
-    'column-number'?: number;
-  };
-}
+const cspViolationSchema = z.object({
+  'document-uri': z.string().max(2048).optional(),
+  referrer: z.string().max(2048).optional(),
+  'violated-directive': z.string().max(500).optional(),
+  'effective-directive': z.string().max(500).optional(),
+  'original-policy': z.string().max(5000).optional(),
+  'blocked-uri': z.string().max(2048).optional(),
+  'status-code': z.number().int().min(0).max(999).optional(),
+  'source-file': z.string().max(2048).optional(),
+  'line-number': z.number().int().min(0).optional(),
+  'column-number': z.number().int().min(0).optional(),
+});
+
+const cspReportSchema = z.object({
+  'csp-report': cspViolationSchema.optional(),
+});
 
 /**
  * POST /api/csp-report
@@ -46,14 +53,29 @@ interface CSPReport {
  * @param request - Incoming request with CSP report JSON body
  * @returns 204 No Content on success
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
   try {
-    // Parse the CSP report
-    const report = (await request.json()) as CSPReport;
-    const violation = report['csp-report'];
+    // Rate limit to prevent log flooding
+    const clientIP = getClientIP(request);
+    const rateLimitResult = cspReportLimiter.check(clientIP);
+
+    if (!rateLimitResult.success) {
+      return createRateLimitResponse(rateLimitResult);
+    }
+
+    // Parse and validate the CSP report
+    const rawBody: unknown = await request.json();
+    const parseResult = cspReportSchema.safeParse(rawBody);
+
+    if (!parseResult.success) {
+      // Invalid report format, silently accept (don't expose validation details)
+      return new Response(null, { status: 204 });
+    }
+
+    const violation = parseResult.data['csp-report'];
 
     if (!violation) {
-      // Invalid report format, silently accept
+      // No violation data, silently accept
       return new Response(null, { status: 204 });
     }
 
@@ -88,7 +110,7 @@ export async function POST(request: NextRequest) {
  * Handle CORS preflight for CSP reports.
  * Browsers may send preflight requests before sending violation reports.
  */
-export function OPTIONS() {
+export function OPTIONS(): Response {
   return new Response(null, {
     status: 204,
     headers: {

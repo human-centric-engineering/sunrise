@@ -42,6 +42,31 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+vi.mock('@/lib/security/rate-limit', () => ({
+  uploadLimiter: {
+    check: vi.fn(() => ({
+      success: true,
+      limit: 10,
+      remaining: 9,
+      reset: Math.ceil((Date.now() + 900000) / 1000),
+    })),
+  },
+  createRateLimitResponse: vi.fn(
+    () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+        }),
+        { status: 429 }
+      )
+  ),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
 // Helper to create upload request with a file
 function createUploadRequest(file?: File | null): NextRequest {
   const formData = new FormData();

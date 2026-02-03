@@ -74,6 +74,37 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn().mockResolvedValue({ success: true, status: 'sent', id: 'mock-email-id' }),
 }));
 
+// Mock rate limiting
+vi.mock('@/lib/security/rate-limit', () => ({
+  acceptInviteLimiter: {
+    check: vi.fn(() => ({
+      success: true,
+      limit: 5,
+      remaining: 4,
+      reset: Math.ceil((Date.now() + 900000) / 1000),
+    })),
+  },
+  createRateLimitResponse: vi.fn(
+    () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+        }),
+        { status: 429 }
+      )
+  ),
+  getRateLimitHeaders: vi.fn(() => ({
+    'X-RateLimit-Limit': '5',
+    'X-RateLimit-Remaining': '4',
+    'X-RateLimit-Reset': String(Math.ceil((Date.now() + 900000) / 1000)),
+  })),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
 // Import mocked modules
 import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';

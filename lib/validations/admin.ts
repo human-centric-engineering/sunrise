@@ -9,6 +9,27 @@ import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema } from './common';
 
 /**
+ * Feature flag metadata value schema
+ *
+ * Restricts metadata values to safe primitive types to prevent
+ * XSS risk from arbitrary JSON (e.g., nested objects with script content).
+ */
+const metadataValueSchema = z.union([z.string().max(1000), z.number(), z.boolean()]);
+
+/**
+ * Feature flag metadata schema
+ *
+ * Limits key count, key length, and value types to prevent
+ * storage abuse and XSS via arbitrary nested objects.
+ */
+const featureFlagMetadataSchema = z
+  .record(z.string().max(100), metadataValueSchema)
+  .refine((obj) => Object.keys(obj).length <= 50, {
+    message: 'Metadata cannot have more than 50 keys',
+  })
+  .optional();
+
+/**
  * Log level enum
  */
 export const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
@@ -70,8 +91,8 @@ export const createFeatureFlagSchema = z.object({
   /** Whether the flag is enabled (defaults to false) */
   enabled: z.boolean().default(false),
 
-  /** Additional metadata as JSON object */
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  /** Additional metadata (restricted to safe primitive types) */
+  metadata: featureFlagMetadataSchema,
 });
 
 /**
@@ -90,8 +111,8 @@ export const updateFeatureFlagSchema = z.object({
   /** Whether the flag is enabled */
   enabled: z.boolean().optional(),
 
-  /** Additional metadata as JSON object */
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  /** Additional metadata (restricted to safe primitive types) */
+  metadata: featureFlagMetadataSchema,
 });
 
 /**

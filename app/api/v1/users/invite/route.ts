@@ -52,6 +52,8 @@ import { sendEmail } from '@/lib/email/send';
 import InvitationEmail from '@/emails/invitation';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
+import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * POST /api/v1/users/invite
@@ -74,6 +76,20 @@ import { env } from '@/lib/env';
  * @throws ConflictError if user already exists
  */
 export const POST = withAdminAuth(async (request, session) => {
+  // 1. Check invite rate limit (prevents email bombing)
+  const clientIP = getClientIP(request);
+  const rateLimitResult = inviteLimiter.check(clientIP);
+
+  if (!rateLimitResult.success) {
+    logger.warn('Invite rate limit exceeded', {
+      ip: clientIP,
+      adminId: session.user.id,
+      remaining: rateLimitResult.remaining,
+      reset: rateLimitResult.reset,
+    });
+    return createRateLimitResponse(rateLimitResult);
+  }
+
   // 3. Validate request body
   const body = await validateRequestBody(request, inviteUserSchema);
 

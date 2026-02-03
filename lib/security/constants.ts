@@ -21,6 +21,8 @@ export const SECURITY_CONSTANTS = {
       AUTH: 5,
       /** General API: 100 requests per minute */
       API: 100,
+      /** Admin endpoints: 30 requests per minute */
+      ADMIN: 30,
       /** Password reset: 3 attempts per 15 minutes */
       PASSWORD_RESET: 3,
       /** Password reset window: 15 minutes */
@@ -29,6 +31,18 @@ export const SECURITY_CONSTANTS = {
       CONTACT: 5,
       /** Contact form window: 1 hour */
       CONTACT_INTERVAL: 60 * 60 * 1000,
+      /** Accept invite: 5 attempts per 15 minutes */
+      ACCEPT_INVITE: 5,
+      /** Upload: 10 uploads per 15 minutes */
+      UPLOAD: 10,
+      /** Upload window: 15 minutes */
+      UPLOAD_INTERVAL: 15 * 60 * 1000,
+      /** Invite: 10 invitations per 15 minutes */
+      INVITE: 10,
+      /** Invite window: 15 minutes */
+      INVITE_INTERVAL: 15 * 60 * 1000,
+      /** CSP report: 20 reports per minute */
+      CSP_REPORT: 20,
     },
   },
 

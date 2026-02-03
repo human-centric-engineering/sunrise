@@ -44,6 +44,20 @@ const mockCheckResult = {
   reset: 1234567890,
 };
 
+const mockAdminCheckResult = {
+  success: true,
+  limit: 30,
+  remaining: 29,
+  reset: 1234567890,
+};
+
+const mockAuthCheckResult = {
+  success: true,
+  limit: 5,
+  remaining: 4,
+  reset: 1234567890,
+};
+
 vi.mock('@/lib/security/rate-limit', () => ({
   apiLimiter: {
     check: vi.fn(() => mockCheckResult),
@@ -53,6 +67,12 @@ vi.mock('@/lib/security/rate-limit', () => ({
       limit: 100,
       reset: Date.now() + 60000,
     })),
+  },
+  adminLimiter: {
+    check: vi.fn(() => mockAdminCheckResult),
+  },
+  authLimiter: {
+    check: vi.fn(() => mockAuthCheckResult),
   },
   getRateLimitHeaders: vi.fn((result) => ({
     'X-RateLimit-Limit': String(result.limit),
@@ -596,6 +616,350 @@ describe('proxy middleware', () => {
 
       // Assert - check is called with first valid IP
       expect(apiLimiter.check).toHaveBeenCalledWith('203.0.113.45');
+    });
+  });
+
+  describe('Admin rate limiting', () => {
+    it('should call adminLimiter.check for /api/v1/admin/* routes', async () => {
+      // Import mocked modules
+      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
+      const { getClientIP } = await import('@/lib/security/ip');
+
+      // Arrange
+      const request = createMockRequest('/api/v1/admin/users', {
+        method: 'GET',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert - both admin and API limiters are checked
+      expect(getClientIP).toHaveBeenCalledWith(request);
+      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
+      expect(adminLimiter.check).toHaveBeenCalledWith('192.168.1.100');
+      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
+      expect(apiLimiter.check).toHaveBeenCalledWith('192.168.1.100');
+    });
+
+    it('should NOT call adminLimiter.check for non-admin /api/v1/* routes', async () => {
+      // Import mocked modules
+      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
+
+      // Arrange
+      const request = createMockRequest('/api/v1/users', {
+        method: 'GET',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert - only API limiter is checked, not admin limiter
+      expect(adminLimiter.check).not.toHaveBeenCalled();
+      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return 429 when adminLimiter fails without checking apiLimiter', async () => {
+      // Import mocked modules
+      const { adminLimiter, apiLimiter, createRateLimitResponse } =
+        await import('@/lib/security/rate-limit');
+
+      // Mock admin limiter failure
+      const failedResult = {
+        success: false,
+        limit: 30,
+        remaining: 0,
+        reset: 1234567890,
+      };
+      vi.mocked(adminLimiter.check).mockReturnValueOnce(failedResult);
+
+      // Arrange
+      const request = createMockRequest('/api/v1/admin/settings', {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      const response = proxy(request);
+
+      // Assert
+      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
+      expect(apiLimiter.check).not.toHaveBeenCalled(); // Should NOT be called
+      expect(createRateLimitResponse).toHaveBeenCalledWith(failedResult);
+      expect(response.status).toBe(429);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+    });
+
+    it('should check apiLimiter after adminLimiter passes', async () => {
+      // Import mocked modules
+      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
+
+      // Both limiters pass
+      vi.mocked(adminLimiter.check).mockReturnValueOnce(mockAdminCheckResult);
+      vi.mocked(apiLimiter.check).mockReturnValueOnce(mockCheckResult);
+
+      // Arrange
+      const request = createMockRequest('/api/v1/admin/users', {
+        method: 'GET',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      const response = proxy(request);
+
+      // Assert - both checks happen in sequence
+      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
+      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
+      expect(response.status).not.toBe(429);
+    });
+
+    it('should return 429 when adminLimiter passes but apiLimiter fails', async () => {
+      // Import mocked modules
+      const { adminLimiter, apiLimiter, createRateLimitResponse } =
+        await import('@/lib/security/rate-limit');
+
+      // Admin passes, API fails
+      vi.mocked(adminLimiter.check).mockReturnValueOnce(mockAdminCheckResult);
+      const apiFailedResult = {
+        success: false,
+        limit: 100,
+        remaining: 0,
+        reset: 1234567890,
+      };
+      vi.mocked(apiLimiter.check).mockReturnValueOnce(apiFailedResult);
+
+      // Arrange
+      const request = createMockRequest('/api/v1/admin/roles', {
+        method: 'GET',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      const response = proxy(request);
+
+      // Assert - both checks happen, API limiter blocks
+      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
+      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
+      expect(createRateLimitResponse).toHaveBeenCalledWith(apiFailedResult);
+      expect(response.status).toBe(429);
+    });
+  });
+
+  describe('Auth rate limiting', () => {
+    it('should call authLimiter.check for /api/auth/* routes', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+      const { getClientIP } = await import('@/lib/security/ip');
+
+      // Arrange
+      const request = createMockRequest('/api/auth/sign-in', {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert
+      expect(getClientIP).toHaveBeenCalledWith(request);
+      expect(authLimiter.check).toHaveBeenCalledTimes(1);
+      expect(authLimiter.check).toHaveBeenCalledWith('192.168.1.100');
+    });
+
+    it('should call authLimiter.check for /api/auth/forgot-password', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      // Arrange
+      const request = createMockRequest('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': '10.0.0.5',
+        },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert
+      expect(authLimiter.check).toHaveBeenCalledTimes(1);
+      expect(authLimiter.check).toHaveBeenCalledWith('10.0.0.5');
+    });
+
+    it('should NOT call authLimiter.check for /api/auth/sign-out', async () => {
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      const request = createMockRequest('/api/auth/sign-out', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+      });
+
+      proxy(request);
+
+      expect(authLimiter.check).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call authLimiter.check for /api/auth/callback/*', async () => {
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      const request = createMockRequest('/api/auth/callback/google', {
+        method: 'GET',
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+      });
+
+      proxy(request);
+
+      expect(authLimiter.check).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call authLimiter.check for /api/auth/get-session', async () => {
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      const request = createMockRequest('/api/auth/get-session', {
+        method: 'GET',
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+      });
+
+      proxy(request);
+
+      expect(authLimiter.check).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call authLimiter.check for /api/v1/* routes', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      // Arrange
+      const request = createMockRequest('/api/v1/users', {
+        method: 'GET',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert - authLimiter should NOT be called for API routes
+      expect(authLimiter.check).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call authLimiter.check for non-API routes', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      // Arrange
+      const request = createMockRequest('/dashboard', {
+        method: 'GET',
+        cookies: { 'better-auth.session_token': 'valid-token' },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert
+      expect(authLimiter.check).not.toHaveBeenCalled();
+    });
+
+    it('should return 429 when authLimiter fails', async () => {
+      // Import mocked modules
+      const { authLimiter, createRateLimitResponse } = await import('@/lib/security/rate-limit');
+
+      // Mock auth limiter failure
+      const failedResult = {
+        success: false,
+        limit: 5,
+        remaining: 0,
+        reset: 1234567890,
+      };
+      vi.mocked(authLimiter.check).mockReturnValueOnce(failedResult);
+
+      // Arrange
+      const request = createMockRequest('/api/auth/sign-up/email', {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      const response = proxy(request);
+
+      // Assert
+      expect(authLimiter.check).toHaveBeenCalledTimes(1);
+      expect(createRateLimitResponse).toHaveBeenCalledWith(failedResult);
+      expect(response.status).toBe(429);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+    });
+
+    it('should allow request when authLimiter passes', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      // Auth limiter passes
+      vi.mocked(authLimiter.check).mockReturnValueOnce(mockAuthCheckResult);
+
+      // Arrange
+      const request = createMockRequest('/api/auth/sign-in', {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+        },
+      });
+
+      // Act
+      const response = proxy(request);
+
+      // Assert
+      expect(authLimiter.check).toHaveBeenCalledTimes(1);
+      expect(response.status).not.toBe(429);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+    });
+
+    it('should rate limit all credential-based auth endpoints', async () => {
+      // Import mocked modules
+      const { authLimiter } = await import('@/lib/security/rate-limit');
+
+      // Arrange - only credential-based endpoints are rate limited
+      const requests = [
+        createMockRequest('/api/auth/sign-in', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '192.168.1.100' },
+        }),
+        createMockRequest('/api/auth/sign-up/email', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '192.168.1.100' },
+        }),
+        createMockRequest('/api/auth/forgot-password', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '192.168.1.100' },
+        }),
+        createMockRequest('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '192.168.1.100' },
+        }),
+      ];
+
+      // Act - call proxy for each request
+      requests.forEach((request) => {
+        vi.clearAllMocks();
+        proxy(request);
+        // Assert - each call checks auth limiter with same IP
+        expect(authLimiter.check).toHaveBeenCalledWith('192.168.1.100');
+      });
     });
   });
 });

@@ -16,6 +16,8 @@ import { uploadAvatar, isStorageEnabled, getMaxFileSize } from '@/lib/storage/up
 import { validateImageMagicBytes, SUPPORTED_IMAGE_TYPES } from '@/lib/storage/image';
 import { withAuth } from '@/lib/auth/guards';
 import { logger } from '@/lib/logging';
+import { uploadLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * POST /api/v1/users/me/avatar
@@ -35,6 +37,20 @@ import { logger } from '@/lib/logging';
  */
 export const POST = withAuth(async (request, session) => {
   try {
+    // Check upload rate limit
+    const clientIP = getClientIP(request);
+    const rateLimitResult = uploadLimiter.check(clientIP);
+
+    if (!rateLimitResult.success) {
+      logger.warn('Avatar upload rate limit exceeded', {
+        ip: clientIP,
+        userId: session.user.id,
+        remaining: rateLimitResult.remaining,
+        reset: rateLimitResult.reset,
+      });
+      return createRateLimitResponse(rateLimitResult);
+    }
+
     // Check storage is enabled
     if (!isStorageEnabled()) {
       throw new APIError('File uploads are not configured', ErrorCodes.STORAGE_NOT_CONFIGURED, 503);

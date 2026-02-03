@@ -122,7 +122,11 @@ export function LoginForm() {
             router.refresh();
           },
           onError: (ctx) => {
-            setError(ctx.error.message || 'Invalid email or password');
+            if (ctx.response?.status === 429) {
+              setError('Too many sign-in attempts. Please wait a few minutes before trying again.');
+            } else {
+              setError(ctx.error.message || 'Invalid email or password');
+            }
             setIsLoading(false);
           },
         }

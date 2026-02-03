@@ -47,6 +47,12 @@ import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invi
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
+import {
+  acceptInviteLimiter,
+  createRateLimitResponse,
+  getRateLimitHeaders,
+} from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * POST /api/auth/accept-invite
@@ -68,7 +74,20 @@ import { env } from '@/lib/env';
  */
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validate request body
+    // 1. Check rate limit
+    const clientIP = getClientIP(request);
+    const rateLimitResult = acceptInviteLimiter.check(clientIP);
+
+    if (!rateLimitResult.success) {
+      logger.warn('Accept invite rate limit exceeded', {
+        ip: clientIP,
+        remaining: rateLimitResult.remaining,
+        reset: rateLimitResult.reset,
+      });
+      return createRateLimitResponse(rateLimitResult);
+    }
+
+    // 2. Validate request body
     const body = await validateRequestBody(request, acceptInvitationSchema);
     const { token, email, password } = body;
 
@@ -201,7 +220,7 @@ export async function POST(request: NextRequest) {
         message: 'Invitation accepted successfully. Redirecting to dashboard...',
       },
       undefined,
-      { status: 200 }
+      { status: 200, headers: getRateLimitHeaders(rateLimitResult) }
     );
 
     // Forward session cookies from better-auth to client browser
