@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
+import { getVerificationStatus } from '@/lib/auth/verification-status';
 import { prisma } from '@/lib/db/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { User, Settings, CheckCircle2, AlertCircle, Shield } from 'lucide-react';
+import { EmailStatusCard } from '@/components/dashboard/email-status-card';
+import { User, Settings, Shield } from 'lucide-react';
 
 /**
  * Dashboard Page
@@ -44,8 +46,19 @@ export default async function DashboardPage() {
     clearInvalidSession('/dashboard');
   }
 
-  // Calculate profile completion percentage
-  const profileFields = [user.name, user.email, user.bio, user.phone, user.timezone, user.location];
+  // Get email verification status
+  const verificationStatus = await getVerificationStatus(user.email, user.emailVerified);
+
+  // Calculate profile completion percentage (includes avatar)
+  const profileFields = [
+    user.name,
+    user.email,
+    user.image,
+    user.bio,
+    user.phone,
+    user.timezone,
+    user.location,
+  ];
   const completedFields = profileFields.filter(Boolean).length;
   const profileCompletion = Math.round((completedFields / profileFields.length) * 100);
 
@@ -101,24 +114,7 @@ export default async function DashboardPage() {
         </Card>
 
         {/* Email Status */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Email Status</CardTitle>
-            {user.emailVerified ? (
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            ) : (
-              <AlertCircle className="h-4 w-4 text-yellow-500" />
-            )}
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {user.emailVerified ? 'Verified' : 'Unverified'}
-            </div>
-            <p className="text-muted-foreground text-xs">
-              {user.emailVerified ? 'Your email is verified' : 'Check your inbox to verify'}
-            </p>
-          </CardContent>
-        </Card>
+        <EmailStatusCard status={verificationStatus} email={user.email} />
 
         {/* Account Status */}
         <Card>

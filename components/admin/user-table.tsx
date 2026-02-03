@@ -47,6 +47,7 @@ import {
   ArrowDown,
   ChevronLeft,
   ChevronRight,
+  User,
   Edit,
   Trash2,
   UserPlus,
@@ -356,7 +357,11 @@ export function UserTable({
                       <AvatarFallback className="text-xs">{getInitials(user.name)}</AvatarFallback>
                     </Avatar>
                   </TableCell>
-                  <TableCell className="truncate font-medium">{user.name}</TableCell>
+                  <TableCell className="truncate font-medium">
+                    <Link href={`/admin/users/${user.id}`} className="hover:underline">
+                      {user.name}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-muted-foreground truncate">{user.email}</TableCell>
                   <TableCell className="text-center">
                     <Badge variant={getRoleBadgeVariant(user.role)}>{user.role || 'USER'}</Badge>
@@ -383,6 +388,12 @@ export function UserTable({
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => router.push(`/admin/users/${user.id}`)}>
+                          <User className="mr-2 h-4 w-4" />
+                          View Profile
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/admin/users/${user.id}/edit`)}
+                        >
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>

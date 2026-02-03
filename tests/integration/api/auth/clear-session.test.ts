@@ -7,8 +7,8 @@
  *
  * Test Coverage:
  * GET /api/auth/clear-session:
- * - Deletes HTTP session cookies (better-auth.session_token, better-auth.csrf_token)
- * - Deletes HTTPS session cookies (__Secure-better-auth.session_token, __Secure-better-auth.csrf_token)
+ * - Deletes HTTP session cookies (better-auth.session_token, better-auth.session_data, better-auth.csrf_token, better-auth.state)
+ * - Deletes HTTPS session cookies (__Secure-better-auth.session_token, __Secure-better-auth.session_data, __Secure-better-auth.csrf_token, __Secure-better-auth.state)
  * - Redirects to login with returnUrl parameter
  * - Uses default returnUrl if not provided
  *
@@ -26,6 +26,7 @@ import type { NextRequest } from 'next/server';
 // Mock next/headers
 const mockCookieStore = {
   delete: vi.fn(),
+  set: vi.fn(),
 };
 
 vi.mock('next/headers', () => ({
@@ -78,18 +79,22 @@ describe('GET /api/auth/clear-session', () => {
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.csrf_token');
     });
 
-    it('should delete HTTPS session cookie (__Secure-better-auth.session_token)', async () => {
+    it('should expire HTTPS session cookie with Secure attribute (__Secure-better-auth.session_token)', async () => {
       // Arrange
       const request = createMockGetRequest();
 
       // Act
       await GET(request);
 
-      // Assert
-      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.session_token');
+      // Assert - uses set() with secure: true so browsers accept the deletion
+      expect(mockCookieStore.set).toHaveBeenCalledWith('__Secure-better-auth.session_token', '', {
+        path: '/',
+        secure: true,
+        maxAge: 0,
+      });
     });
 
-    it('should delete HTTPS CSRF cookie (__Secure-better-auth.csrf_token)', async () => {
+    it('should expire HTTPS CSRF cookie with Secure attribute (__Secure-better-auth.csrf_token)', async () => {
       // Arrange
       const request = createMockGetRequest();
 
@@ -97,10 +102,14 @@ describe('GET /api/auth/clear-session', () => {
       await GET(request);
 
       // Assert
-      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.csrf_token');
+      expect(mockCookieStore.set).toHaveBeenCalledWith('__Secure-better-auth.csrf_token', '', {
+        path: '/',
+        secure: true,
+        maxAge: 0,
+      });
     });
 
-    it('should delete all four cookie variants', async () => {
+    it('should delete HTTP session data cookie (better-auth.session_data)', async () => {
       // Arrange
       const request = createMockGetRequest();
 
@@ -108,11 +117,86 @@ describe('GET /api/auth/clear-session', () => {
       await GET(request);
 
       // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_data');
+    });
+
+    it('should delete HTTP state cookie (better-auth.state)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.state');
+    });
+
+    it('should expire HTTPS session data cookie with Secure attribute (__Secure-better-auth.session_data)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.set).toHaveBeenCalledWith('__Secure-better-auth.session_data', '', {
+        path: '/',
+        secure: true,
+        maxAge: 0,
+      });
+    });
+
+    it('should expire HTTPS state cookie with Secure attribute (__Secure-better-auth.state)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert
+      expect(mockCookieStore.set).toHaveBeenCalledWith('__Secure-better-auth.state', '', {
+        path: '/',
+        secure: true,
+        maxAge: 0,
+      });
+    });
+
+    it('should delete all eight cookie variants (4 via delete, 4 via set with Secure)', async () => {
+      // Arrange
+      const request = createMockGetRequest();
+
+      // Act
+      await GET(request);
+
+      // Assert - HTTP cookies use delete()
       expect(mockCookieStore.delete).toHaveBeenCalledTimes(4);
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_data');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.csrf_token');
-      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.session_token');
-      expect(mockCookieStore.delete).toHaveBeenCalledWith('__Secure-better-auth.csrf_token');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.state');
+      // HTTPS __Secure- cookies use set() with secure: true (browsers require Secure attribute)
+      const secureCookieOptions = { path: '/', secure: true, maxAge: 0 };
+      expect(mockCookieStore.set).toHaveBeenCalledTimes(4);
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        '__Secure-better-auth.session_token',
+        '',
+        secureCookieOptions
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        '__Secure-better-auth.session_data',
+        '',
+        secureCookieOptions
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        '__Secure-better-auth.csrf_token',
+        '',
+        secureCookieOptions
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        '__Secure-better-auth.state',
+        '',
+        secureCookieOptions
+      );
     });
   });
 
@@ -167,6 +251,27 @@ describe('GET /api/auth/clear-session', () => {
       const location = response.headers.get('location');
       expect(location).toContain('/login');
       expect(location).toContain('callbackUrl=%2F'); // URL-encoded /
+    });
+
+    it('should use x-forwarded-proto and host headers for redirect URL', async () => {
+      // Arrange - simulate reverse proxy (e.g. ngrok) forwarding
+      const url = new URL('http://localhost:3000/api/auth/clear-session');
+      const request = {
+        nextUrl: url,
+        url: url.toString(),
+        headers: new Headers({
+          host: 'abc123.ngrok.io',
+          'x-forwarded-proto': 'https',
+        }),
+      } as unknown as NextRequest;
+
+      // Act
+      const response = await GET(request);
+
+      // Assert - redirect should use the forwarded origin, not localhost
+      const location = response.headers.get('location');
+      expect(location).toContain('https://abc123.ngrok.io/login');
+      expect(location).not.toContain('localhost');
     });
   });
 

@@ -16,8 +16,6 @@ import userEvent from '@testing-library/user-event';
 // Hoist mock functions to avoid reference errors
 const mockSignOut = vi.hoisted(() => vi.fn());
 const mockUseSession = vi.hoisted(() => vi.fn());
-const mockPush = vi.hoisted(() => vi.fn());
-const mockRefresh = vi.hoisted(() => vi.fn());
 
 // Mock auth client
 vi.mock('@/lib/auth/client', () => ({
@@ -25,18 +23,6 @@ vi.mock('@/lib/auth/client', () => ({
     signOut: mockSignOut,
   },
   useSession: () => mockUseSession(),
-}));
-
-// Mock next/navigation
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: mockPush,
-    refresh: mockRefresh,
-    replace: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
 }));
 
 // Import component after mocks are set up
@@ -48,6 +34,13 @@ import { UserButton } from '@/components/auth/user-button';
 describe('components/auth/user-button', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Mock window.location.href
+    Object.defineProperty(window, 'location', {
+      value: { href: '' },
+      writable: true,
+      configurable: true,
+    });
   });
 
   afterEach(() => {
@@ -325,11 +318,12 @@ describe('components/auth/user-button', () => {
       });
     });
 
-    it('should redirect to home and refresh after successful sign out', async () => {
+    it('should redirect to home after successful sign out', async () => {
       const user = userEvent.setup();
 
       mockSignOut.mockImplementation(({ fetchOptions }) => {
-        fetchOptions.onSuccess();
+        // onSuccess is async, so we need to return a promise
+        fetchOptions.onSuccess().then(() => {});
         return Promise.resolve();
       });
 
@@ -342,8 +336,10 @@ describe('components/auth/user-button', () => {
       });
       await user.click(screen.getByRole('menuitem', { name: /sign out/i }));
 
-      expect(mockPush).toHaveBeenCalledWith('/');
-      expect(mockRefresh).toHaveBeenCalled();
+      // Wait for the redirect to complete
+      await waitFor(() => {
+        expect(window.location.href).toBe('/');
+      });
     });
 
     it('should disable sign out button during sign out process', async () => {

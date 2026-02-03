@@ -204,6 +204,18 @@ export const contactLimiter = createRateLimiter({
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 
+/**
+ * Rate limiter for verification email requests
+ * Limit: 3 requests per 15 minutes per IP
+ *
+ * Same rate as password reset - prevents email bombing
+ */
+export const verificationEmailLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.PASSWORD_RESET_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.PASSWORD_RESET,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
 // =============================================================================
 // Response Helpers
 // =============================================================================

@@ -24,26 +24,14 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { FormError } from './form-error';
-
-// Common timezones for the select dropdown
-const TIMEZONES = [
-  { value: 'UTC', label: 'UTC' },
-  { value: 'America/New_York', label: 'Eastern Time (US)' },
-  { value: 'America/Chicago', label: 'Central Time (US)' },
-  { value: 'America/Denver', label: 'Mountain Time (US)' },
-  { value: 'America/Los_Angeles', label: 'Pacific Time (US)' },
-  { value: 'Europe/London', label: 'London (UK)' },
-  { value: 'Europe/Paris', label: 'Paris (EU)' },
-  { value: 'Europe/Berlin', label: 'Berlin (EU)' },
-  { value: 'Asia/Tokyo', label: 'Tokyo (Japan)' },
-  { value: 'Asia/Shanghai', label: 'Shanghai (China)' },
-  { value: 'Australia/Sydney', label: 'Sydney (Australia)' },
-];
+import { getTimezonesByRegion, getTimezoneRegions } from '@/lib/utils/timezones';
 
 interface ProfileFormProps {
   user: {
@@ -208,12 +196,21 @@ export function ProfileForm({ user }: ProfileFormProps) {
           <SelectTrigger id="timezone">
             <SelectValue placeholder="Select timezone" />
           </SelectTrigger>
-          <SelectContent>
-            {TIMEZONES.map((tz) => (
-              <SelectItem key={tz.value} value={tz.value}>
-                {tz.label}
-              </SelectItem>
-            ))}
+          <SelectContent className="max-h-[300px]">
+            {getTimezoneRegions().map((region) => {
+              const timezones = getTimezonesByRegion()[region];
+              if (!timezones) return null;
+              return (
+                <SelectGroup key={region}>
+                  <SelectLabel>{region}</SelectLabel>
+                  {timezones.map((tz) => (
+                    <SelectItem key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              );
+            })}
           </SelectContent>
         </Select>
         <FormError message={errors.timezone?.message} />

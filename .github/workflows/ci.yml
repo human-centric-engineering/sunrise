@@ -6,10 +6,36 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for code changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!**/*.md'
+              - '!.context/**'
+              - '!.instructions/**'
+              - '!LICENSE'
+
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     # Environment variables needed for Prisma generate (postinstall) and build
     env:
@@ -49,7 +75,8 @@ jobs:
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [changes, validate]
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - name: Checkout code
@@ -71,3 +98,18 @@ jobs:
             BETTER_AUTH_URL=http://localhost:3000
             BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
             NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+  # Gate job for branch protection - always runs and reports success
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [validate, docker]
+    if: always()
+    steps:
+      - name: Check CI result
+        run: |
+          if [[ "${{ needs.validate.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" ]]; then
+            echo "CI failed"
+            exit 1
+          fi
+          echo "CI passed (jobs succeeded or were skipped for docs-only changes)"

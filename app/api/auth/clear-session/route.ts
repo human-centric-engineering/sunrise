@@ -22,14 +22,27 @@ export async function GET(request: NextRequest) {
   // Get cookie store
   const cookieStore = await cookies();
 
-  // Delete better-auth session cookies (both HTTP and HTTPS prefixed variants)
+  // Delete all better-auth cookies (session, cached session data, CSRF, OAuth state)
   cookieStore.delete('better-auth.session_token');
+  cookieStore.delete('better-auth.session_data');
   cookieStore.delete('better-auth.csrf_token');
-  cookieStore.delete('__Secure-better-auth.session_token');
-  cookieStore.delete('__Secure-better-auth.csrf_token');
+  cookieStore.delete('better-auth.state');
+  // __Secure- cookies require the Secure attribute in the Set-Cookie header,
+  // otherwise browsers silently reject the deletion. Use set() with maxAge: 0
+  // instead of delete() to include the required attributes.
+  const secureCookieOptions = { path: '/', secure: true, maxAge: 0 } as const;
+  cookieStore.set('__Secure-better-auth.session_token', '', secureCookieOptions);
+  cookieStore.set('__Secure-better-auth.session_data', '', secureCookieOptions);
+  cookieStore.set('__Secure-better-auth.csrf_token', '', secureCookieOptions);
+  cookieStore.set('__Secure-better-auth.state', '', secureCookieOptions);
 
-  // Construct login URL with callback
-  const loginUrl = new URL('/login', request.url);
+  // Construct login URL using forwarded headers to preserve the original origin.
+  // In Route Handlers, request.url is the server-local URL (e.g. http://localhost:3000)
+  // which differs from the actual client-facing URL when behind a reverse proxy (e.g. ngrok).
+  const proto =
+    request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '');
+  const host = request.headers.get('host') || request.nextUrl.host;
+  const loginUrl = new URL('/login', `${proto}://${host}`);
   loginUrl.searchParams.set('callbackUrl', returnUrl);
 
   // Redirect to login
