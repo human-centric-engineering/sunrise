@@ -35,33 +35,11 @@ import {
   createRateLimitResponse,
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { sendEmail } from '@/lib/email/send';
 import ContactNotificationEmail from '@/emails/contact-notification';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
-
-/**
- * Get client IP address from request headers
- *
- * Checks common proxy headers before falling back to default.
- */
-function getClientIP(request: NextRequest): string {
-  // Check common proxy headers
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    // x-forwarded-for can contain multiple IPs (client, proxy1, proxy2...)
-    // The first one is the original client
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  const realIP = request.headers.get('x-real-ip');
-  if (realIP) {
-    return realIP.trim();
-  }
-
-  // Fallback to unknown (will still work for rate limiting)
-  return 'unknown';
-}
 
 /**
  * POST /api/v1/contact

@@ -581,7 +581,7 @@ describe('POST /api/v1/contact', () => {
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'Contact form honeypot validation failed',
         expect.objectContaining({
-          ip: 'unknown',
+          ip: '127.0.0.1',
         })
       );
     });
@@ -779,8 +779,8 @@ describe('POST /api/v1/contact', () => {
       const request = createMockRequest(validContactData);
       await POST(request);
 
-      // Assert: Rate limiter was called with 'unknown'
-      expect(vi.mocked(contactLimiter.check)).toHaveBeenCalledWith('unknown');
+      // Assert: Rate limiter was called with '127.0.0.1'
+      expect(vi.mocked(contactLimiter.check)).toHaveBeenCalledWith('127.0.0.1');
     });
   });
 

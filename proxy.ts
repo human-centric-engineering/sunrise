@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { generateRequestId } from '@/lib/logging/context';
 import { setSecurityHeaders } from '@/lib/security/headers';
+import { getClientIP } from '@/lib/security/ip';
 import {
   apiLimiter,
   getRateLimitHeaders,
@@ -88,24 +89,7 @@ function validateOrigin(request: NextRequest): boolean {
   }
 }
 
-/**
- * Get client IP from request
- * Handles common proxy headers for deployments behind load balancers
- */
-function getClientIP(request: NextRequest): string {
-  // Check common proxy headers
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) {
-    // Take the first IP if there are multiple (client IP is first)
-    return forwarded.split(',')[0].trim();
-  }
-
-  // NextRequest.ip may be available in some environments
-  // Fall back to localhost for development
-  return request.headers.get('x-real-ip') ?? '127.0.0.1';
-}
-
-export function proxy(request: NextRequest) {
+export function proxy(request: NextRequest): NextResponse | Response {
   const { pathname } = request.nextUrl;
 
   // Generate or extract request ID for distributed tracing
@@ -137,17 +121,21 @@ export function proxy(request: NextRequest) {
   // ==========================================================================
   // Security: Rate limiting for API routes
   // ==========================================================================
+  // Store the result so we can reuse it for response headers (avoids a
+  // separate peek() call which would show post-consumption counts).
+  let apiRateLimitResult: import('@/lib/security/rate-limit').RateLimitResult | null = null;
+
   if (pathname.startsWith('/api/v1/')) {
     const clientIP = getClientIP(request);
-    const rateLimitResult = apiLimiter.check(clientIP);
+    apiRateLimitResult = apiLimiter.check(clientIP);
 
-    if (!rateLimitResult.success) {
-      const response = createRateLimitResponse(rateLimitResult);
+    if (!apiRateLimitResult.success) {
+      const rateLimitResponse = createRateLimitResponse(apiRateLimitResult);
       // Clone to NextResponse to add request ID
-      return new NextResponse(response.body, {
-        status: response.status,
+      return new NextResponse(rateLimitResponse.body, {
+        status: rateLimitResponse.status,
         headers: {
-          ...Object.fromEntries(response.headers),
+          ...Object.fromEntries(rateLimitResponse.headers),
           'x-request-id': requestId,
         },
       });
@@ -198,11 +186,10 @@ export function proxy(request: NextRequest) {
   setSecurityHeaders(response);
 
   // Add rate limit headers for API routes (informational)
-  if (pathname.startsWith('/api/v1/')) {
-    const clientIP = getClientIP(request);
-    const rateLimitResult = apiLimiter.peek(clientIP);
-    const headers = getRateLimitHeaders(rateLimitResult);
-    for (const [key, value] of Object.entries(headers)) {
+  // Reuse the result from check() above — no separate peek() needed.
+  if (apiRateLimitResult) {
+    const rateLimitHeaders = getRateLimitHeaders(apiRateLimitResult);
+    for (const [key, value] of Object.entries(rateLimitHeaders)) {
       response.headers.set(key, value);
     }
   }
@@ -214,21 +201,25 @@ export function proxy(request: NextRequest) {
  * Configure which routes the proxy runs on
  *
  * Match all routes except:
- * - /api/auth/* (better-auth handles these)
  * - /_next/* (Next.js internals)
  * - /static/* (static files)
  * - Favicon, images, etc.
+ *
+ * NOTE: /api/auth/* is no longer excluded. Custom auth routes
+ * (send-verification-email, accept-invite, clear-session) need
+ * security headers and request ID tracking from the proxy.
+ * better-auth's catch-all handler works fine with the proxy
+ * since it just adds headers via NextResponse.next().
  */
 export const config = {
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
-     * - api/auth (better-auth API routes)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - public files (images, etc.)
      */
-    '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };
