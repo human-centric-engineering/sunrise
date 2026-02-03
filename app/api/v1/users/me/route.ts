@@ -191,10 +191,14 @@ export async function DELETE(request: NextRequest) {
     cookieStore.delete('better-auth.session_data');
     cookieStore.delete('better-auth.csrf_token');
     cookieStore.delete('better-auth.state');
-    cookieStore.delete('__Secure-better-auth.session_token');
-    cookieStore.delete('__Secure-better-auth.session_data');
-    cookieStore.delete('__Secure-better-auth.csrf_token');
-    cookieStore.delete('__Secure-better-auth.state');
+    // __Secure- cookies require the Secure attribute in the Set-Cookie header,
+    // otherwise browsers silently reject the deletion. Use set() with maxAge: 0
+    // instead of delete() to include the required attributes.
+    const secureCookieOptions = { path: '/', secure: true, maxAge: 0 } as const;
+    cookieStore.set('__Secure-better-auth.session_token', '', secureCookieOptions);
+    cookieStore.set('__Secure-better-auth.session_data', '', secureCookieOptions);
+    cookieStore.set('__Secure-better-auth.csrf_token', '', secureCookieOptions);
+    cookieStore.set('__Secure-better-auth.state', '', secureCookieOptions);
 
     // Track account deletion server-side (bypasses ad blockers for critical events)
     await serverTrack({
