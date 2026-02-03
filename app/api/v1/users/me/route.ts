@@ -8,14 +8,13 @@
  * Authentication: Required (session-based via better-auth)
  */
 
-import { NextRequest } from 'next/server';
-import { headers, cookies } from 'next/headers';
-import { auth } from '@/lib/auth/config';
+import { cookies } from 'next/headers';
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { UnauthorizedError, handleAPIError, ErrorCodes } from '@/lib/api/errors';
+import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
+import { withAuth } from '@/lib/auth/guards';
 import { logger } from '@/lib/logging';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
@@ -30,47 +29,35 @@ import { EVENTS } from '@/lib/analytics/events';
  * @returns User profile with id, name, email, role, profile fields, etc.
  * @throws UnauthorizedError if not authenticated
  */
-export async function GET(_request: NextRequest) {
-  try {
-    // Get session from better-auth
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAuth(async (_request, session) => {
+  // Fetch user from database with all profile fields
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      emailVerified: true,
+      image: true,
+      role: true,
+      createdAt: true,
+      updatedAt: true,
+      // Extended profile fields (Phase 3.2)
+      bio: true,
+      phone: true,
+      timezone: true,
+      location: true,
+      preferences: true,
+      // Explicitly exclude password
+    },
+  });
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
-    // Fetch user from database with all profile fields
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        image: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-        // Extended profile fields (Phase 3.2)
-        bio: true,
-        phone: true,
-        timezone: true,
-        location: true,
-        preferences: true,
-        // Explicitly exclude password
-      },
-    });
-
-    if (!user) {
-      throw new UnauthorizedError('User not found');
-    }
-
-    return successResponse(user);
-  } catch (error) {
-    return handleAPIError(error);
+  if (!user) {
+    throw new UnauthorizedError('User not found');
   }
-}
+
+  return successResponse(user);
+});
 
 /**
  * PATCH /api/v1/users/me
@@ -87,60 +74,48 @@ export async function GET(_request: NextRequest) {
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if invalid data
  */
-export async function PATCH(request: NextRequest) {
-  try {
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const PATCH = withAuth(async (request, session) => {
+  // Validate request body
+  const body = await validateRequestBody(request, updateUserSchema);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
-    // Validate request body
-    const body = await validateRequestBody(request, updateUserSchema);
-
-    // Check email uniqueness if changing email
-    if (body.email) {
-      const existingUser = await prisma.user.findUnique({
-        where: { email: body.email },
-      });
-
-      if (existingUser && existingUser.id !== session.user.id) {
-        return errorResponse('Email already in use', {
-          code: ErrorCodes.EMAIL_TAKEN,
-          status: 400,
-        });
-      }
-    }
-
-    // Update user with all provided fields
-    const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
-      data: body,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        image: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-        // Extended profile fields (Phase 3.2)
-        bio: true,
-        phone: true,
-        timezone: true,
-        location: true,
-        preferences: true,
-      },
+  // Check email uniqueness if changing email
+  if (body.email) {
+    const existingUser = await prisma.user.findUnique({
+      where: { email: body.email },
     });
 
-    return successResponse(updatedUser);
-  } catch (error) {
-    return handleAPIError(error);
+    if (existingUser && existingUser.id !== session.user.id) {
+      return errorResponse('Email already in use', {
+        code: ErrorCodes.EMAIL_TAKEN,
+        status: 400,
+      });
+    }
   }
-}
+
+  // Update user with all provided fields
+  const updatedUser = await prisma.user.update({
+    where: { id: session.user.id },
+    data: body,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      emailVerified: true,
+      image: true,
+      role: true,
+      createdAt: true,
+      updatedAt: true,
+      // Extended profile fields (Phase 3.2)
+      bio: true,
+      phone: true,
+      timezone: true,
+      location: true,
+      preferences: true,
+    },
+  });
+
+  return successResponse(updatedUser);
+});
 
 /**
  * DELETE /api/v1/users/me
@@ -155,16 +130,8 @@ export async function PATCH(request: NextRequest) {
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if confirmation is missing or incorrect
  */
-export async function DELETE(request: NextRequest) {
+export const DELETE = withAuth(async (request, session) => {
   try {
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
-
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
     // Validate confirmation (ensures user typed "DELETE")
     await validateRequestBody(request, deleteAccountSchema);
 
@@ -218,6 +185,6 @@ export async function DELETE(request: NextRequest) {
     logger.error('Failed to delete user account', error, {
       userId: (error as { userId?: string })?.userId,
     });
-    return handleAPIError(error);
+    throw error;
   }
-}
+});

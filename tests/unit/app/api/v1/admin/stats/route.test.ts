@@ -24,8 +24,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/stats/route';
 import type { SystemStats } from '@/types/admin';
+
+/** Dummy request for handler invocation (auth is mocked via headers) */
+const dummyRequest = new NextRequest('http://localhost:3000/api/v1/admin/stats');
 
 /**
  * Mock dependencies
@@ -137,7 +141,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -157,7 +161,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -177,7 +181,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -210,7 +214,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);
@@ -232,7 +236,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(getDatabaseHealth).mockResolvedValue({ connected: true, latency: 5 });
 
       // Act
-      await GET();
+      await GET(dummyRequest);
 
       // Assert
       expect(logger.debug).toHaveBeenCalledWith('Admin stats requested', {
@@ -266,7 +270,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -296,7 +300,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(getDatabaseHealth).mockResolvedValue({ connected: true });
 
       // Act
-      await GET();
+      await GET(dummyRequest);
 
       // Assert
       expect(prisma.user.count).toHaveBeenNthCalledWith(3, {
@@ -345,7 +349,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(getDatabaseHealth).mockReturnValue(healthPromise as never);
 
       // Act
-      const responsePromise = GET();
+      const responsePromise = GET(dummyRequest);
 
       // Wait a tick to ensure all promises are created
       await new Promise((resolve) => setImmediate(resolve));
@@ -379,7 +383,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(getDatabaseHealth).mockResolvedValue({ connected: true });
 
       // Act
-      await GET();
+      await GET(dummyRequest);
 
       // Assert
       expect(logger.info).toHaveBeenCalledWith('Admin stats fetched', {
@@ -408,7 +412,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -425,7 +429,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -440,7 +444,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -453,7 +457,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.groupBy).mockResolvedValue([]);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -472,7 +476,7 @@ describe('GET /api/v1/admin/stats', () => {
       ] as never);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -487,7 +491,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -514,7 +518,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -528,7 +532,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -543,7 +547,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -558,7 +562,7 @@ describe('GET /api/v1/admin/stats', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -579,7 +583,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include Node.js version in system info', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -589,7 +593,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include app version in system info', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -600,7 +604,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include environment in system info', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -610,7 +614,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include uptime in system info', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -621,13 +625,13 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should calculate uptime in seconds', async () => {
       // Act
-      const response1 = await GET();
+      const response1 = await GET(dummyRequest);
       const data1 = await parseResponse<SuccessResponse>(response1);
 
       // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const response2 = await GET();
+      const response2 = await GET(dummyRequest);
       const data2 = await parseResponse<SuccessResponse>(response2);
 
       // Assert - uptime should increase
@@ -645,7 +649,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.count).mockRejectedValue(new Error('Database connection failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -664,7 +668,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(getDatabaseHealth).mockRejectedValue(new Error('Health check failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -681,7 +685,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.groupBy).mockRejectedValue(new Error('GroupBy failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -696,7 +700,7 @@ describe('GET /api/v1/admin/stats', () => {
         .mockRejectedValueOnce(new Error('Count failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -709,7 +713,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockRejectedValue(new Error('Session fetch failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -722,7 +726,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.count).mockRejectedValue('String error' as never);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<ErrorResponse>(response);
 
       // Assert
@@ -749,7 +753,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should return standardized success response structure', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -761,7 +765,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include all required user stats fields', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -773,7 +777,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include all required role breakdown fields', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -783,7 +787,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should include all required system info fields', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -796,7 +800,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should have correct data types for all fields', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -814,7 +818,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should set correct Content-Type header', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.headers.get('Content-Type')).toContain('application/json');
@@ -822,7 +826,7 @@ describe('GET /api/v1/admin/stats', () => {
 
     it('should not include meta field in success response', async () => {
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse(response);
 
       // Assert
@@ -846,7 +850,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.groupBy).mockResolvedValue([]);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -873,7 +877,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -895,7 +899,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -914,7 +918,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
@@ -934,7 +938,7 @@ describe('GET /api/v1/admin/stats', () => {
       );
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert

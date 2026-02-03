@@ -14,7 +14,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/stats/route';
+
+/** Dummy request for handler invocation (auth is mocked via headers) */
+const dummyRequest = new NextRequest('http://localhost:3000/api/v1/admin/stats');
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -112,7 +116,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(401);
@@ -128,7 +132,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(403);
@@ -161,7 +165,7 @@ describe('GET /api/v1/admin/stats', () => {
       ] as never);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);
@@ -186,7 +190,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.groupBy).mockResolvedValue([] as never);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);
@@ -208,7 +212,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.groupBy).mockResolvedValue([] as never);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);
@@ -233,7 +237,7 @@ describe('GET /api/v1/admin/stats', () => {
       vi.mocked(prisma.user.count).mockRejectedValue(new Error('Database connection failed'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(500);

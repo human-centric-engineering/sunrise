@@ -19,8 +19,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/feature-flags/route';
-import type { NextRequest } from 'next/server';
+
+/** Dummy request for handler invocation (auth is mocked via headers) */
+const dummyRequest = new NextRequest('http://localhost:3000/api/v1/admin/feature-flags');
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -117,7 +120,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(401);
@@ -133,7 +136,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(403);
@@ -159,7 +162,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       vi.mocked(prisma.featureFlag.findMany).mockResolvedValue(mockFlags);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);
@@ -176,7 +179,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       vi.mocked(prisma.featureFlag.findMany).mockResolvedValue([]);
 
       // Act
-      const response = await GET();
+      const response = await GET(dummyRequest);
 
       // Assert
       expect(response.status).toBe(200);

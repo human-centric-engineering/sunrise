@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 import { StatsCards } from '@/components/admin/stats-cards';
 import { StatusPage } from '@/components/status/status-page';
-import type { SystemStats } from '@/types/admin';
+import type { SystemStats, SystemStatsResponse } from '@/types/admin';
 
 export const metadata: Metadata = {
   title: 'Overview',
@@ -10,40 +11,17 @@ export const metadata: Metadata = {
 };
 
 /**
- * API response type
- */
-interface StatsApiResponse {
-  success: boolean;
-  data: SystemStats;
-}
-
-/**
  * Fetch admin stats from API
  */
 async function getStats(): Promise<SystemStats | null> {
   try {
-    // Get cookies to forward to the API
-    const cookieStore = await cookies();
-    const cookieHeader = cookieStore
-      .getAll()
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
-
-    const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/stats`,
-      {
-        headers: {
-          Cookie: cookieHeader,
-        },
-        cache: 'no-store',
-      }
-    );
+    const res = await serverFetch(API.ADMIN.STATS);
 
     if (!res.ok) {
       return null;
     }
 
-    const data = (await res.json()) as StatsApiResponse;
+    const data = (await res.json()) as SystemStatsResponse;
     return data.success ? data.data : null;
   } catch {
     return null;

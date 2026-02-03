@@ -41,6 +41,10 @@ vi.mock('@/lib/auth/utils', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/lib/env', () => ({
+  env: { BETTER_AUTH_URL: 'http://localhost:3000' },
+}));
+
 // Mock ClientDate component to avoid client-side complexity
 vi.mock('@/components/ui/client-date', () => ({
   ClientDate: ({ date }: { date: Date }) => <span>{date.toLocaleDateString()}</span>,

@@ -85,6 +85,9 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
   describe('POST /api/v1/users/me/avatar', () => {
     it('should return 503 when storage is not enabled', async () => {
+      const { auth } = await import('@/lib/auth/config');
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+
       const { isStorageEnabled } = await import('@/lib/storage/upload');
       vi.mocked(isStorageEnabled).mockReturnValue(false);
 

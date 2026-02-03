@@ -9,15 +9,13 @@
  * Phase 3.2: User Management
  */
 
-import { NextRequest } from 'next/server';
-import { headers } from 'next/headers';
 import type { Prisma } from '@prisma/client';
-import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { UnauthorizedError, handleAPIError } from '@/lib/api/errors';
+import { UnauthorizedError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updatePreferencesSchema } from '@/lib/validations/user';
+import { withAuth } from '@/lib/auth/guards';
 import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
 
 /**
@@ -29,36 +27,24 @@ import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
  * @returns User preferences object
  * @throws UnauthorizedError if not authenticated
  */
-export async function GET(_request: NextRequest) {
-  try {
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAuth(async (_request, session) => {
+  // Fetch user preferences
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      preferences: true,
+    },
+  });
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
-    // Fetch user preferences
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        preferences: true,
-      },
-    });
-
-    if (!user) {
-      throw new UnauthorizedError('User not found');
-    }
-
-    // Parse preferences or return defaults
-    const preferences = parsePreferences(user.preferences);
-
-    return successResponse(preferences);
-  } catch (error) {
-    return handleAPIError(error);
+  if (!user) {
+    throw new UnauthorizedError('User not found');
   }
-}
+
+  // Parse preferences or return defaults
+  const preferences = parsePreferences(user.preferences);
+
+  return successResponse(preferences);
+});
 
 /**
  * PATCH /api/v1/users/me/preferences
@@ -72,56 +58,44 @@ export async function GET(_request: NextRequest) {
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if invalid data
  */
-export async function PATCH(request: NextRequest) {
-  try {
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const PATCH = withAuth(async (request, session) => {
+  // Validate request body
+  const body = await validateRequestBody(request, updatePreferencesSchema);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+  // Fetch current preferences
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      preferences: true,
+    },
+  });
 
-    // Validate request body
-    const body = await validateRequestBody(request, updatePreferencesSchema);
-
-    // Fetch current preferences
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        preferences: true,
-      },
-    });
-
-    if (!user) {
-      throw new UnauthorizedError('User not found');
-    }
-
-    // Parse current preferences
-    const currentPreferences = parsePreferences(user.preferences);
-
-    // Merge with updates (ensure securityAlerts stays true)
-    const updatedPreferences: UserPreferences = {
-      email: {
-        ...currentPreferences.email,
-        ...(body.email || {}),
-        securityAlerts: true, // Cannot be disabled
-      },
-    };
-
-    // Save updated preferences (cast to Prisma JSON type)
-    await prisma.user.update({
-      where: { id: session.user.id },
-      data: {
-        preferences: updatedPreferences as unknown as Prisma.InputJsonValue,
-      },
-    });
-
-    return successResponse(updatedPreferences);
-  } catch (error) {
-    return handleAPIError(error);
+  if (!user) {
+    throw new UnauthorizedError('User not found');
   }
-}
+
+  // Parse current preferences
+  const currentPreferences = parsePreferences(user.preferences);
+
+  // Merge with updates (ensure securityAlerts stays true)
+  const updatedPreferences: UserPreferences = {
+    email: {
+      ...currentPreferences.email,
+      ...(body.email || {}),
+      securityAlerts: true, // Cannot be disabled
+    },
+  };
+
+  // Save updated preferences (cast to Prisma JSON type)
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: {
+      preferences: updatedPreferences as unknown as Prisma.InputJsonValue,
+    },
+  });
+
+  return successResponse(updatedPreferences);
+});
 
 /**
  * Parse preferences from database JSON field

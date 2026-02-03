@@ -13,12 +13,9 @@
  *   - sortOrder: Sort order (asc, desc)
  */
 
-import { NextRequest } from 'next/server';
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth/config';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
 import { validateQueryParams, parsePaginationParams } from '@/lib/api/validation';
 import { listUsersQuerySchema } from '@/lib/validations/user';
 
@@ -37,58 +34,42 @@ import { listUsersQuerySchema } from '@/lib/validations/user';
  * @throws ForbiddenError if not admin
  * @throws ValidationError if invalid query params
  */
-export async function GET(request: NextRequest) {
-  try {
-    // Authenticate and check role
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAdminAuth(async (request, _session) => {
+  // Validate and parse query params
+  const { searchParams } = request.nextUrl;
+  const query = validateQueryParams(searchParams, listUsersQuerySchema);
+  const { page, limit, skip } = parsePaginationParams(searchParams);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+  // Build Prisma where clause for search
+  const where = query.search
+    ? {
+        OR: [
+          { name: { contains: query.search, mode: 'insensitive' as const } },
+          { email: { contains: query.search, mode: 'insensitive' as const } },
+        ],
+      }
+    : {};
 
-    if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required');
-    }
+  // Execute queries in parallel for performance
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
+      where,
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        role: true,
+        emailVerified: true,
+        createdAt: true,
+      },
+      orderBy: { [query.sortBy]: query.sortOrder },
+    }),
+    prisma.user.count({ where }),
+  ]);
 
-    // Validate and parse query params
-    const { searchParams } = request.nextUrl;
-    const query = validateQueryParams(searchParams, listUsersQuerySchema);
-    const { page, limit, skip } = parsePaginationParams(searchParams);
-
-    // Build Prisma where clause for search
-    const where = query.search
-      ? {
-          OR: [
-            { name: { contains: query.search, mode: 'insensitive' as const } },
-            { email: { contains: query.search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
-
-    // Execute queries in parallel for performance
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-          role: true,
-          emailVerified: true,
-          createdAt: true,
-        },
-        orderBy: { [query.sortBy]: query.sortOrder },
-      }),
-      prisma.user.count({ where }),
-    ]);
-
-    // Return paginated response
-    return paginatedResponse(users, { page, limit, total });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
+  // Return paginated response
+  return paginatedResponse(users, { page, limit, total });
+});

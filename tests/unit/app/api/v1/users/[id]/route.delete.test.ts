@@ -123,7 +123,7 @@ describe('DELETE /api/v1/users/[id]', () => {
   });
 
   describe('Authentication and Authorization', () => {
-    it('should return 403 when user is not authenticated', async () => {
+    it('should return 401 when user is not authenticated', async () => {
       // Arrange
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
       const mockRequest = {} as NextRequest;
@@ -133,11 +133,10 @@ describe('DELETE /api/v1/users/[id]', () => {
       const response = await DELETE(mockRequest, { params });
       const data = await parseResponse<ErrorResponse>(response);
 
-      // Assert
-      expect(response.status).toBe(403);
+      // Assert — withAdminAuth returns 401 for missing session (not 403)
+      expect(response.status).toBe(401);
       expect(data.success).toBe(false);
-      expect(data.error.code).toBe('FORBIDDEN');
-      expect(data.error.message).toBe('Admin access required');
+      expect(data.error.code).toBe('UNAUTHORIZED');
 
       // Should not query database when not authenticated
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
@@ -225,6 +224,42 @@ describe('DELETE /api/v1/users/[id]', () => {
 
       // Should not query database or delete when trying to self-delete
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Admin Deletion Safeguard', () => {
+    it('should return 400 when admin tries to delete another admin account', async () => {
+      // Arrange
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const targetAdminId = 'cmjbv4i3x00020wsloputgwaa'; // Different admin user
+      const mockTargetAdmin = {
+        id: targetAdminId,
+        name: 'Another Admin',
+        email: 'admin2@example.com',
+        role: 'ADMIN',
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockTargetAdmin as any);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams(targetAdminId);
+
+      // Act
+      const response = await DELETE(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error.message).toBe('Cannot delete an admin account. Demote the user first.');
+
+      // Should check if user exists but not attempt deletion
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: targetAdminId },
+      });
       expect(prisma.user.delete).not.toHaveBeenCalled();
     });
   });
