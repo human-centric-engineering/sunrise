@@ -48,8 +48,7 @@ export function ProtectedNav() {
   const pathname = usePathname();
   const { data: session } = useSession();
 
-  // Type assertion needed because better-auth client doesn't include custom fields by default
-  const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'ADMIN';
+  const isAdmin = session?.user?.role === 'ADMIN';
 
   return (
     <nav className="flex items-center gap-1">

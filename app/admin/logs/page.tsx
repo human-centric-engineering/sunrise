@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 import { LogsViewer } from '@/components/admin/logs-viewer';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
@@ -11,12 +12,6 @@ export const metadata: Metadata = {
   description: 'View application logs',
 };
 
-interface LogsApiResponse {
-  success: boolean;
-  data: LogEntry[];
-  meta?: PaginationMeta;
-}
-
 /**
  * Fetch logs from API
  */
@@ -25,22 +20,7 @@ async function getLogs(): Promise<{
   meta: PaginationMeta;
 }> {
   try {
-    // Get cookies to forward to the API
-    const cookieStore = await cookies();
-    const cookieHeader = cookieStore
-      .getAll()
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
-
-    const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/logs?limit=${DEFAULT_PAGE_LIMIT}`,
-      {
-        headers: {
-          Cookie: cookieHeader,
-        },
-        cache: 'no-store',
-      }
-    );
+    const res = await serverFetch(API.ADMIN.LOGS + `?limit=${DEFAULT_PAGE_LIMIT}`);
 
     if (!res.ok) {
       return {
@@ -49,7 +29,7 @@ async function getLogs(): Promise<{
       };
     }
 
-    const data = (await res.json()) as LogsApiResponse;
+    const data = await parseApiResponse<LogEntry[]>(res);
 
     if (!data.success) {
       return {
@@ -60,7 +40,7 @@ async function getLogs(): Promise<{
 
     return {
       logs: data.data,
-      meta: data.meta || {
+      meta: (data.meta as PaginationMeta) || {
         page: 1,
         limit: DEFAULT_PAGE_LIMIT,
         total: data.data.length,

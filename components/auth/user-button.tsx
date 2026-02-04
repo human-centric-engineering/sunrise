@@ -25,18 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
-/**
- * Get user initials from name
- */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
+import { getInitials } from '@/lib/utils/initials';
 
 export function UserButton() {
   const { data: session, isPending } = useSession();
@@ -82,8 +71,6 @@ export function UserButton() {
 
   // Authenticated - show avatar with profile/settings/signout options
   const { user } = session;
-  // Cast to include role field (configured in better-auth additionalFields)
-  const userRole = (user as { role?: string | null }).role;
   const initials = getInitials(user.name || 'U');
 
   const handleSignOut = async () => {
@@ -138,7 +125,7 @@ export function UserButton() {
             Settings
           </Link>
         </DropdownMenuItem>
-        {userRole === 'ADMIN' && (
+        {user.role === 'ADMIN' && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>

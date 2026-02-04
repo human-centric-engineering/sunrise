@@ -38,15 +38,33 @@
  * - Session is preserved for auto-login (user redirected to dashboard, not login)
  */
 
+import { z } from 'zod';
 import { NextRequest } from 'next/server';
 import { validateRequestBody } from '@/lib/api/validation';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { acceptInvitationSchema } from '@/lib/validations/user';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
+import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
+import {
+  acceptInviteLimiter,
+  createRateLimitResponse,
+  getRateLimitHeaders,
+} from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+
+/** Schema for better-auth signup success response */
+const betterAuthSignupResponseSchema = z.object({
+  user: z.object({ id: z.string() }),
+});
+
+/** Schema for better-auth error response */
+const betterAuthErrorResponseSchema = z.object({
+  message: z.string(),
+});
 
 /**
  * POST /api/auth/accept-invite
@@ -68,7 +86,20 @@ import { env } from '@/lib/env';
  */
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validate request body
+    // 1. Check rate limit
+    const clientIP = getClientIP(request);
+    const rateLimitResult = acceptInviteLimiter.check(clientIP);
+
+    if (!rateLimitResult.success) {
+      logger.warn('Accept invite rate limit exceeded', {
+        ip: clientIP,
+        remaining: rateLimitResult.remaining,
+        reset: rateLimitResult.reset,
+      });
+      return createRateLimitResponse(rateLimitResult);
+    }
+
+    // 2. Validate request body
     const body = await validateRequestBody(request, acceptInvitationSchema);
     const { token, email, password } = body;
 
@@ -98,14 +129,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const metadata = invitation.metadata as {
-      name: string;
-      role: string;
-      invitedBy: string;
-      invitedAt: string;
-    };
+    const metadata = parseInvitationMetadata(invitation.metadata);
 
-    logger.info('Invitation metadata retrieved', { email, metadata });
+    if (!metadata) {
+      logger.warn('Invalid invitation metadata', { email });
+      return errorResponse('Invalid invitation data', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
+    }
+
+    logger.info('Invitation metadata retrieved', { email, role: metadata.role });
 
     // 4. Create user via better-auth signup (FIRST TIME - stable ID)
     const signupResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
@@ -122,12 +156,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (!signupResponse.ok) {
-      const error = (await signupResponse.json().catch(() => ({ message: 'Signup failed' }))) as {
-        message?: string;
-      };
+      const errorBody: unknown = await signupResponse
+        .json()
+        .catch(() => ({ message: 'Signup failed' }));
+      const parsedError = betterAuthErrorResponseSchema.safeParse(errorBody);
+      const errorMessage = parsedError.success ? parsedError.data.message : 'Unknown error';
       logger.error('better-auth signup failed', undefined, {
         email,
-        error: error.message ?? 'Unknown error',
+        error: errorMessage,
       });
       return errorResponse('Failed to create user account', {
         code: ErrorCodes.INTERNAL_ERROR,
@@ -135,11 +171,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const signupData = (await signupResponse.json()) as {
-      user: { id: string };
-      session?: { token: string };
-    };
-    const newUserId = signupData.user.id;
+    const signupData: unknown = await signupResponse.json();
+    const parsedSignup = betterAuthSignupResponseSchema.safeParse(signupData);
+    const newUserId = parsedSignup.success ? parsedSignup.data.user.id : null;
+
+    if (!newUserId) {
+      logger.error('better-auth signup returned unexpected response', undefined, { email });
+      return errorResponse('Failed to create user account', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
+    }
 
     logger.info('User created via better-auth', { email, userId: newUserId });
 
@@ -177,13 +219,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (!sessionResponse.ok) {
-      const error = (await sessionResponse.json().catch(() => ({ message: 'Sign-in failed' }))) as {
-        message?: string;
-      };
+      const sessionErrorBody: unknown = await sessionResponse
+        .json()
+        .catch(() => ({ message: 'Sign-in failed' }));
+      const parsedSessionError = betterAuthErrorResponseSchema.safeParse(sessionErrorBody);
+      const sessionErrorMessage = parsedSessionError.success
+        ? parsedSessionError.data.message
+        : 'Unknown error';
       logger.error('better-auth sign-in failed after invitation acceptance', undefined, {
         email,
         userId: newUserId,
-        error: error.message ?? 'Unknown error',
+        error: sessionErrorMessage,
       });
       return errorResponse('User created but failed to create session', {
         code: ErrorCodes.INTERNAL_ERROR,
@@ -201,7 +247,7 @@ export async function POST(request: NextRequest) {
         message: 'Invitation accepted successfully. Redirecting to dashboard...',
       },
       undefined,
-      { status: 200 }
+      { status: 200, headers: getRateLimitHeaders(rateLimitResult) }
     );
 
     // Forward session cookies from better-auth to client browser

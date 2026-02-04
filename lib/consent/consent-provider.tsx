@@ -34,24 +34,28 @@ function readStoredConsent(): ConsentState | null {
     const stored = localStorage.getItem(CONSENT_STORAGE_KEY);
     if (!stored) return null;
 
-    const parsed = JSON.parse(stored) as ConsentState;
+    const parsed: unknown = JSON.parse(stored);
 
     // Validate the stored data structure
     if (
-      typeof parsed.essential !== 'boolean' ||
-      typeof parsed.optional !== 'boolean' ||
-      typeof parsed.version !== 'number'
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).essential !== 'boolean' ||
+      typeof (parsed as Record<string, unknown>).optional !== 'boolean' ||
+      typeof (parsed as Record<string, unknown>).version !== 'number'
     ) {
       return null;
     }
 
+    const consent = parsed as ConsentState;
+
     // Check version - if outdated, treat as no consent
-    if (parsed.version !== CONSENT_VERSION) {
+    if (consent.version !== CONSENT_VERSION) {
       return null;
     }
 
     // Ensure essential is always true
-    return { ...parsed, essential: true };
+    return { ...consent, essential: true };
   } catch {
     return null;
   }

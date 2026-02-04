@@ -398,6 +398,40 @@ describe('components/forms/login-form', () => {
       });
     });
 
+    it('should display rate limit message on 429 response', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      vi.mocked(authClient.signIn.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onRequest?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onRequest>>[0]
+        );
+        void callbacks?.onError?.({
+          response: { status: 429 },
+          error: { message: 'Too many requests.' },
+        } as unknown as Parameters<NonNullable<typeof callbacks.onError>>[0]);
+      });
+
+      render(<LoginForm />);
+
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText('Password');
+      const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+      // Act
+      await user.type(emailInput, 'test@example.com');
+      await user.type(passwordInput, 'wrongpassword');
+      await user.click(submitButton);
+
+      // Assert
+      await waitFor(() => {
+        expect(screen.getByText(/too many sign-in attempts/i)).toBeInTheDocument();
+      });
+      // Should NOT show the generic auth error
+      expect(screen.queryByText(/invalid email or password/i)).not.toBeInTheDocument();
+    });
+
     it('should display OAuth error from URL params', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');

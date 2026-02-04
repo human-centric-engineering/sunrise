@@ -66,6 +66,20 @@ export const userPreferencesSchema = z.object({
 });
 
 /**
+ * Default User Preferences
+ *
+ * Default values for new users or when preferences are not set.
+ * Canonical source — also re-exported from `@/types` for backward compatibility.
+ */
+export const DEFAULT_USER_PREFERENCES: z.infer<typeof userPreferencesSchema> = {
+  email: {
+    marketing: false,
+    productUpdates: true,
+    securityAlerts: true,
+  },
+};
+
+/**
  * Partial preferences update schema
  *
  * For PATCH operations where only some preferences are updated.

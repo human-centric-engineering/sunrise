@@ -210,7 +210,6 @@ describe('components/admin/feature-flags-page', () => {
   describe('fetch error handling', () => {
     it('should handle non-ok response gracefully', async () => {
       // Arrange
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.mocked(global.fetch).mockResolvedValue({
         ok: false,
         status: 500,
@@ -226,19 +225,10 @@ describe('components/admin/feature-flags-page', () => {
 
       expect(screen.getByTestId('feature-flag-list')).toBeInTheDocument();
       expect(screen.getByTestId('flags-count')).toHaveTextContent('0');
-
-      // Should log error
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to fetch feature flags:',
-        expect.any(Error)
-      );
-
-      consoleErrorSpy.mockRestore();
     });
 
     it('should handle API response with success: false', async () => {
       // Arrange
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
         json: async () => ({ success: false, error: { message: 'Unauthorized' } }),
@@ -254,16 +244,10 @@ describe('components/admin/feature-flags-page', () => {
 
       expect(screen.getByTestId('feature-flag-list')).toBeInTheDocument();
       expect(screen.getByTestId('flags-count')).toHaveTextContent('0');
-
-      // Should NOT log error (only logs on exception)
-      expect(consoleErrorSpy).not.toHaveBeenCalled();
-
-      consoleErrorSpy.mockRestore();
     });
 
     it('should handle fetch network error gracefully', async () => {
       // Arrange
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.mocked(global.fetch).mockRejectedValue(new Error('Network error'));
 
       // Act
@@ -276,14 +260,6 @@ describe('components/admin/feature-flags-page', () => {
 
       expect(screen.getByTestId('feature-flag-list')).toBeInTheDocument();
       expect(screen.getByTestId('flags-count')).toHaveTextContent('0');
-
-      // Should log error
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to fetch feature flags:',
-        expect.any(Error)
-      );
-
-      consoleErrorSpy.mockRestore();
     });
   });
 

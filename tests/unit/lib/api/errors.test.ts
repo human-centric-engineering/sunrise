@@ -572,6 +572,82 @@ describe('handleAPIError', () => {
         const details = error.details as Record<string, unknown>;
         expect(details.field).toBe('field');
       });
+
+      it('should handle unique constraint when target is a number instead of array', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: 123 as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target is a string instead of array', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: 'email' as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target array contains non-strings', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: [123, 456] as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target is null', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: null as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
     });
 
     describe('P2025 - Record not found', () => {
@@ -739,7 +815,7 @@ describe('handleAPIError', () => {
       expect(details.stack).toBeDefined();
     });
 
-    it('should handle generic Error in production without stack trace', async () => {
+    it('should mask generic Error message in production', async () => {
       (env as { NODE_ENV: string }).NODE_ENV = 'production';
 
       const error = new Error('Something went wrong');
@@ -747,19 +823,85 @@ describe('handleAPIError', () => {
       const body = await parseResponse(response);
 
       expect(response.status).toBe(500);
-      expect(body.error.message).toBe('Something went wrong');
+      // In production, unknown error messages are masked to avoid leaking internals
+      expect(body.error.message).toBe('An unexpected error occurred');
       expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
       expect(body.error.details).toBeUndefined();
     });
 
-    it('should handle non-Error objects', async () => {
+    it('should handle generic Error with message in test mode (non-production)', async () => {
+      (env as { NODE_ENV: string }).NODE_ENV = 'test';
+
+      const error = new Error('Test error message');
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(500);
+      // In test mode (non-production), the actual error message should be returned
+      expect(body.error.message).toBe('Test error message');
+      expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+    });
+
+    it('should NOT mask APIError message in production', async () => {
+      (env as { NODE_ENV: string }).NODE_ENV = 'production';
+
+      const error = new APIError('This is an APIError message', 'CUSTOM_ERROR', 500);
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(500);
+      // APIError subclasses always return their actual message
+      expect(body.error.message).toBe('This is an APIError message');
+      expect(body.error.code).toBe('CUSTOM_ERROR');
+    });
+
+    it('should NOT mask ValidationError message in production', async () => {
+      (env as { NODE_ENV: string }).NODE_ENV = 'production';
+
+      const error = new ValidationError('Custom validation message', { field: ['error'] });
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(400);
+      // ValidationError (APIError subclass) always returns actual message
+      expect(body.error.message).toBe('Custom validation message');
+      expect(body.error.code).toBe(ErrorCodes.VALIDATION_ERROR);
+    });
+
+    it('should handle non-Error objects (string)', async () => {
       const error = 'String error';
       const response = handleAPIError(error);
       const body = await parseResponse(response);
 
       expect(response.status).toBe(500);
+      // Non-Error objects always get masked message
       expect(body.error.message).toBe('An unexpected error occurred');
       expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+      expect(body.error.details).toBeUndefined();
+    });
+
+    it('should handle non-Error objects (number)', async () => {
+      const error = 42;
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(500);
+      // Non-Error objects always get masked message
+      expect(body.error.message).toBe('An unexpected error occurred');
+      expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+      expect(body.error.details).toBeUndefined();
+    });
+
+    it('should handle non-Error objects (plain object)', async () => {
+      const error = { custom: 'error', code: 'CUSTOM' };
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(500);
+      // Non-Error objects always get masked message
+      expect(body.error.message).toBe('An unexpected error occurred');
+      expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+      expect(body.error.details).toBeUndefined();
     });
 
     it('should handle null error', async () => {
@@ -769,6 +911,7 @@ describe('handleAPIError', () => {
       expect(response.status).toBe(500);
       expect(body.error.message).toBe('An unexpected error occurred');
       expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+      expect(body.error.details).toBeUndefined();
     });
 
     it('should handle undefined error', async () => {
@@ -778,6 +921,7 @@ describe('handleAPIError', () => {
       expect(response.status).toBe(500);
       expect(body.error.message).toBe('An unexpected error occurred');
       expect(body.error.code).toBe(ErrorCodes.INTERNAL_ERROR);
+      expect(body.error.details).toBeUndefined();
     });
 
     it('should log generic errors', () => {

@@ -18,6 +18,7 @@
 import { randomBytes, createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { parseInvitationMetadata, type InvitationMetadata } from '@/lib/validations/admin';
 
 /**
  * Token Configuration
@@ -36,16 +37,8 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-/**
- * Invitation metadata structure
- */
-export type InvitationMetadata = {
-  name: string;
-  role: string;
-  invitedBy: string;
-  invitedAt: string;
-  [key: string]: string; // Index signature for Prisma JSON compatibility
-};
+// Re-export InvitationMetadata from validations for backward compatibility
+export type { InvitationMetadata } from '@/lib/validations/admin';
 
 /**
  * Generate a secure invitation token and store it in the database with metadata
@@ -91,7 +84,7 @@ export async function generateInvitationToken(
     logger.info('Invitation token generated', {
       email,
       expiresAt: expiresAt.toISOString(),
-      metadata,
+      role: metadata.role,
     });
 
     // Return unhashed token (this is what gets sent in the email)
@@ -234,9 +227,15 @@ export async function getValidInvitation(email: string): Promise<InvitationRecor
       return null;
     }
 
+    const metadata = parseInvitationMetadata(verification.metadata);
+    if (!metadata) {
+      logger.warn('Invalid invitation metadata', { email });
+      return null;
+    }
+
     return {
       email,
-      metadata: verification.metadata as InvitationMetadata,
+      metadata,
       expiresAt: verification.expiresAt,
       createdAt: verification.createdAt,
     };
@@ -347,9 +346,15 @@ export async function getInvitationMetadata(
 
     logger.info('Invitation metadata retrieved', { email });
 
+    const metadata = parseInvitationMetadata(anyInvitation.metadata);
+    if (!metadata) {
+      logger.warn('Invalid invitation metadata for metadata lookup', { email });
+      return { valid: false, reason: 'not_found' as const };
+    }
+
     return {
       valid: true,
-      metadata: anyInvitation.metadata as InvitationMetadata,
+      metadata,
       expiresAt: anyInvitation.expiresAt,
     };
   } catch (error) {
@@ -429,9 +434,12 @@ export async function getAllPendingInvitations(
     ]);
 
     // Transform verification records to invitation items with metadata
-    let invitations: PendingInvitationItem[] = await Promise.all(
+    // Skip records with invalid/corrupt metadata
+    const allItems = await Promise.all(
       verifications.map(async (v) => {
-        const metadata = v.metadata as InvitationMetadata;
+        const metadata = parseInvitationMetadata(v.metadata);
+        if (!metadata) return null;
+
         const email = v.identifier.replace(IDENTIFIER_PREFIX, '');
 
         // Look up the inviter's name
@@ -454,6 +462,10 @@ export async function getAllPendingInvitations(
           expiresAt: v.expiresAt,
         };
       })
+    );
+
+    let invitations: PendingInvitationItem[] = allItems.filter(
+      (item): item is PendingInvitationItem => item !== null
     );
 
     // Apply search filter if provided

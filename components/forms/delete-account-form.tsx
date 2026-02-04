@@ -12,6 +12,7 @@
 import { useState } from 'react';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { useAnalytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,7 @@ export function DeleteAccountForm() {
       setIsLoading(true);
       setError(null);
 
-      await apiClient.delete('/api/v1/users/me', {
+      await apiClient.delete(API.USERS.ME, {
         body: { confirmation: 'DELETE' },
       });
 

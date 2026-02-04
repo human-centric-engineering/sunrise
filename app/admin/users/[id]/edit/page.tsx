@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 import { getServerSession } from '@/lib/auth/utils';
 import { UserEditForm } from '@/components/admin/user-edit-form';
 import type { AdminUser } from '@/types/admin';
@@ -17,50 +18,18 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-interface UserApiResponse {
-  success: boolean;
-  data: {
-    id: string;
-    name: string;
-    email: string;
-    emailVerified: boolean;
-    image: string | null;
-    role: string | null;
-    bio?: string | null;
-    createdAt: string;
-    updatedAt: string;
-    phone?: string | null;
-    timezone?: string | null;
-    location?: string | null;
-  };
-}
-
 /**
  * Fetch user by ID from API
  */
 async function getUser(id: string): Promise<AdminUser | null> {
   try {
-    const cookieStore = await cookies();
-    const cookieHeader = cookieStore
-      .getAll()
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
-
-    const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/users/${id}`,
-      {
-        headers: {
-          Cookie: cookieHeader,
-        },
-        cache: 'no-store',
-      }
-    );
+    const res = await serverFetch(API.USERS.byId(id));
 
     if (!res.ok) {
       return null;
     }
 
-    const data = (await res.json()) as UserApiResponse;
+    const data = await parseApiResponse<AdminUser>(res);
 
     if (!data.success) {
       return null;

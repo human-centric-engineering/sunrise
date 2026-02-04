@@ -150,6 +150,29 @@ export const listQuerySchema = z.object({
 });
 
 /**
+ * Pagination response metadata schema
+ *
+ * Validates the `meta` field returned by paginated API responses.
+ * Use `parsePaginationMeta` for safe runtime extraction instead of `as` casts.
+ */
+export const paginationMetaSchema = z.object({
+  page: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  totalPages: z.number().int().nonnegative(),
+});
+
+/**
+ * Safely parse an unknown value into PaginationMeta.
+ *
+ * @returns The validated pagination meta, or `null` if the value doesn't match.
+ */
+export function parsePaginationMeta(value: unknown): z.infer<typeof paginationMetaSchema> | null {
+  const result = paginationMetaSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+/**
  * Type inference helpers
  *
  * Export inferred types for use in other files.

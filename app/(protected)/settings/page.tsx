@@ -17,8 +17,10 @@ import type { Metadata } from 'next';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
-import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
+import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
+import type { UserPreferences } from '@/types';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
+import { getInitials } from '@/lib/utils/initials';
 
 export const metadata: Metadata = {
   title: 'Settings',
@@ -73,12 +75,7 @@ export default async function SettingsPage() {
     .map((account) => formatProviderName(account.providerId));
 
   // Get user initials for avatar fallback
-  const initials = user.name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = getInitials(user.name);
 
   return (
     <div className="space-y-6">

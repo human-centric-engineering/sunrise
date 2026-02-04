@@ -9,15 +9,15 @@
  * @see .context/storage/overview.md for storage documentation
  */
 
-import { NextRequest } from 'next/server';
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { UnauthorizedError, APIError, handleAPIError, ErrorCodes } from '@/lib/api/errors';
+import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { uploadAvatar, isStorageEnabled, getMaxFileSize } from '@/lib/storage/upload';
 import { validateImageMagicBytes, SUPPORTED_IMAGE_TYPES } from '@/lib/storage/image';
+import { withAuth } from '@/lib/auth/guards';
 import { logger } from '@/lib/logging';
+import { uploadLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * POST /api/v1/users/me/avatar
@@ -35,19 +35,25 @@ import { logger } from '@/lib/logging';
  * @throws UnauthorizedError if not authenticated
  * @throws APIError for validation/upload failures
  */
-export async function POST(request: NextRequest) {
+export const POST = withAuth(async (request, session) => {
   try {
+    // Check upload rate limit
+    const clientIP = getClientIP(request);
+    const rateLimitResult = uploadLimiter.check(clientIP);
+
+    if (!rateLimitResult.success) {
+      logger.warn('Avatar upload rate limit exceeded', {
+        ip: clientIP,
+        userId: session.user.id,
+        remaining: rateLimitResult.remaining,
+        reset: rateLimitResult.reset,
+      });
+      return createRateLimitResponse(rateLimitResult);
+    }
+
     // Check storage is enabled
     if (!isStorageEnabled()) {
       throw new APIError('File uploads are not configured', ErrorCodes.STORAGE_NOT_CONFIGURED, 503);
-    }
-
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
-
-    if (!session) {
-      throw new UnauthorizedError();
     }
 
     const userId = session.user.id;
@@ -87,9 +93,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Sanitize client-provided filename before logging to prevent log injection
+    const sanitizedFileName = file.name.slice(0, 255).replace(/[^\w.-]/g, '_');
+
     logger.info('Avatar upload started', {
       userId,
-      fileName: file.name,
+      fileName: sanitizedFileName,
       fileSize: file.size,
       detectedType: validation.detectedType,
     });
@@ -122,7 +131,7 @@ export async function POST(request: NextRequest) {
       height: result.height,
     });
   } catch (error) {
-    // Log upload-specific errors
+    // Log upload-specific errors before re-throwing for withAuth to handle
     if (error instanceof APIError) {
       logger.warn('Avatar upload failed', {
         code: error.code,
@@ -130,9 +139,9 @@ export async function POST(request: NextRequest) {
         details: error.details,
       });
     }
-    return handleAPIError(error);
+    throw error;
   }
-}
+});
 
 /**
  * DELETE /api/v1/users/me/avatar
@@ -143,37 +152,25 @@ export async function POST(request: NextRequest) {
  * @returns { success: true, message: "Avatar removed" }
  * @throws UnauthorizedError if not authenticated
  */
-export async function DELETE(_request: NextRequest) {
-  try {
-    // Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const DELETE = withAuth(async (_request, session) => {
+  const userId = session.user.id;
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
-    const userId = session.user.id;
-
-    // Delete avatar and its folder from storage
-    if (isStorageEnabled()) {
-      const { deleteByPrefix } = await import('@/lib/storage/upload');
-      await deleteByPrefix(`avatars/${userId}/`);
-    }
-
-    // Clear avatar URL in database
-    await prisma.user.update({
-      where: { id: userId },
-      data: { image: null },
-    });
-
-    logger.info('Avatar removed', { userId });
-
-    return successResponse({
-      success: true,
-      message: 'Avatar removed',
-    });
-  } catch (error) {
-    return handleAPIError(error);
+  // Delete avatar and its folder from storage
+  if (isStorageEnabled()) {
+    const { deleteByPrefix } = await import('@/lib/storage/upload');
+    await deleteByPrefix(`avatars/${userId}/`);
   }
-}
+
+  // Clear avatar URL in database
+  await prisma.user.update({
+    where: { id: userId },
+    data: { image: null },
+  });
+
+  logger.info('Avatar removed', { userId });
+
+  return successResponse({
+    success: true,
+    message: 'Avatar removed',
+  });
+});

@@ -265,25 +265,23 @@ export function trackError(error: Error | string, context?: ErrorContext): strin
   // Send to Sentry if configured
   const Sentry = getSentry();
   if (Sentry) {
-    const sentryContext: Record<string, unknown> = {};
-
-    if (user) {
-      Sentry.setUser(user);
-    }
-
-    if (tags) {
-      Sentry.setTags(tags);
-    }
-
-    if (extra) {
-      sentryContext.extra = extra;
-    }
-
-    if (level) {
-      sentryContext.level = level;
-    }
-
-    return Sentry.captureException(error, sentryContext);
+    let eventId = '';
+    Sentry.withScope((scope) => {
+      if (user) {
+        scope.setUser(user);
+      }
+      if (tags) {
+        Object.entries(tags).forEach(([key, value]) => scope.setTag(key, value));
+      }
+      if (extra) {
+        Object.entries(extra).forEach(([key, value]) => scope.setExtra(key, value));
+      }
+      if (level) {
+        scope.setLevel(level);
+      }
+      eventId = Sentry.captureException(error);
+    });
+    return eventId;
   }
 
   return 'logged';
@@ -334,19 +332,20 @@ export function trackMessage(
   // Send to Sentry if configured
   const Sentry = getSentry();
   if (Sentry) {
-    if (user) {
-      Sentry.setUser(user);
-    }
-
-    if (tags) {
-      Sentry.setTags(tags);
-    }
-
-    if (extra) {
-      Sentry.setContext('extra', extra);
-    }
-
-    return Sentry.captureMessage(message, level);
+    let eventId = '';
+    Sentry.withScope((scope) => {
+      if (user) {
+        scope.setUser(user);
+      }
+      if (tags) {
+        Object.entries(tags).forEach(([key, value]) => scope.setTag(key, value));
+      }
+      if (extra) {
+        Object.entries(extra).forEach(([key, value]) => scope.setExtra(key, value));
+      }
+      eventId = Sentry.captureMessage(message, level);
+    });
+    return eventId;
   }
 
   return 'logged';

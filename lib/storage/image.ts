@@ -9,28 +9,14 @@
 
 import sharp from 'sharp';
 import { logger } from '@/lib/logging';
+import {
+  SUPPORTED_IMAGE_TYPES,
+  IMAGE_EXTENSIONS,
+  type SupportedImageType,
+} from '@/lib/storage/constants';
 
-/**
- * Supported image MIME types
- */
-export const SUPPORTED_IMAGE_TYPES = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-] as const;
-
-export type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
-
-/**
- * File extension mapping for MIME types
- */
-export const IMAGE_EXTENSIONS: Record<SupportedImageType, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-};
+// Re-export client-safe constants from the shared constants module
+export { SUPPORTED_IMAGE_TYPES, IMAGE_EXTENSIONS, type SupportedImageType };
 
 /**
  * Magic byte signatures for image types
@@ -86,7 +72,9 @@ export function validateImageMagicBytes(buffer: Buffer): ImageValidationResult {
   }
 
   // Check each supported type
-  for (const [mimeType, signatures] of Object.entries(MAGIC_BYTES)) {
+  // Iterate via SUPPORTED_IMAGE_TYPES for proper typing (Object.entries loses key type to `string`)
+  for (const mimeType of SUPPORTED_IMAGE_TYPES) {
+    const signatures = MAGIC_BYTES[mimeType];
     for (const signature of signatures) {
       let matches = true;
 
@@ -124,7 +112,7 @@ export function validateImageMagicBytes(buffer: Buffer): ImageValidationResult {
       if (matches) {
         return {
           valid: true,
-          detectedType: mimeType as SupportedImageType,
+          detectedType: mimeType,
         };
       }
     }

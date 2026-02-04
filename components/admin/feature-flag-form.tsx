@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { AlertCircle, Save } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import type { FeatureFlag } from '@/types/prisma';
 
 /**
@@ -99,7 +100,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
 
       if (isEditMode && flag) {
         // Edit existing flag (PATCH)
-        savedFlag = await apiClient.patch<FeatureFlag>(`/api/v1/admin/feature-flags/${flag.id}`, {
+        savedFlag = await apiClient.patch<FeatureFlag>(API.ADMIN.featureFlag(flag.id), {
           body: {
             description: data.description,
             enabled: data.enabled,
@@ -107,7 +108,7 @@ export function FeatureFlagForm({ open, onOpenChange, onSuccess, flag }: Feature
         });
       } else {
         // Create new flag (POST)
-        savedFlag = await apiClient.post<FeatureFlag>('/api/v1/admin/feature-flags', {
+        savedFlag = await apiClient.post<FeatureFlag>(API.ADMIN.FEATURE_FLAGS, {
           body: data,
         });
       }

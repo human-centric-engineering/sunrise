@@ -16,15 +16,18 @@ import { authClient } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { isRecord } from '@/lib/utils';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { AvatarCropDialog } from './avatar-crop-dialog';
+import { getMaxFileSizeBytes } from '@/lib/validations/storage';
+import { SUPPORTED_IMAGE_TYPES } from '@/lib/storage/constants';
 
 /**
- * Supported image MIME types (must match server-side validation)
+ * Max file size for client-side display (derived from canonical constant)
  */
-const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-const MAX_FILE_SIZE_MB = 5;
-const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+const MAX_FILE_SIZE = getMaxFileSizeBytes();
+const MAX_FILE_SIZE_MB = Math.round(MAX_FILE_SIZE / (1024 * 1024));
 
 interface AvatarUploadProps {
   /** Current avatar URL */
@@ -51,7 +54,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
 
   // Validate file before showing cropper
   const validateFile = (file: File): string | null => {
-    if (!SUPPORTED_TYPES.includes(file.type)) {
+    if (!(SUPPORTED_IMAGE_TYPES as readonly string[]).includes(file.type)) {
       return 'Invalid file type. Supported: JPEG, PNG, WebP, GIF';
     }
     if (file.size > MAX_FILE_SIZE) {
@@ -94,23 +97,31 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         const formData = new FormData();
         formData.append('file', croppedBlob, 'avatar.jpg');
 
-        const response = await fetch('/api/v1/users/me/avatar', {
+        const response = await fetch(API.USERS.ME_AVATAR, {
           method: 'POST',
           body: formData,
         });
 
         if (!response.ok) {
-          const result = (await response.json()) as { error?: { message?: string } };
-          throw new Error(result.error?.message ?? 'Upload failed');
+          const raw: unknown = await response.json();
+          const errorMsg =
+            isRecord(raw) && isRecord(raw.error) && typeof raw.error.message === 'string'
+              ? raw.error.message
+              : 'Upload failed';
+          throw new Error(errorMsg);
         }
 
-        const result = (await response.json()) as { data?: { url?: string } };
+        const raw: unknown = await response.json();
+        const avatarUrl =
+          isRecord(raw) && isRecord(raw.data) && typeof raw.data.url === 'string'
+            ? raw.data.url
+            : '';
 
         // Track avatar upload
         void track(EVENTS.AVATAR_UPLOADED);
 
         // Update session via better-auth (invalidates cookie cache + signals useSession())
-        await authClient.updateUser({ image: result.data?.url ?? '' });
+        await authClient.updateUser({ image: avatarUrl });
         router.refresh();
       } catch (err) {
         if (err instanceof Error) {
@@ -191,7 +202,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
     setError(null);
 
     apiClient
-      .delete('/api/v1/users/me/avatar')
+      .delete(API.USERS.ME_AVATAR)
       .then(async () => {
         // Update session via better-auth (invalidates cookie cache + signals useSession())
         await authClient.updateUser({ image: '' });
@@ -250,7 +261,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
           <input
             ref={fileInputRef}
             type="file"
-            accept={SUPPORTED_TYPES.join(',')}
+            accept={SUPPORTED_IMAGE_TYPES.join(',')}
             onChange={handleInputChange}
             className="hidden"
             disabled={isLoading}

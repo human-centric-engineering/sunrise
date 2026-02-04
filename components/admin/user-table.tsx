@@ -6,7 +6,7 @@
  * Data table for managing users with search, sorting, pagination, and actions.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -56,8 +56,12 @@ import {
 } from 'lucide-react';
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
+import { getInitials, getRoleBadgeVariant } from '@/lib/utils/initials';
 
 interface UserTableProps {
   initialUsers: UserListItem[];
@@ -67,30 +71,6 @@ interface UserTableProps {
   initialSortOrder?: 'asc' | 'desc';
   /** Hide the invite button (when shown in tabs with shared header) */
   hideInviteButton?: boolean;
-}
-
-/**
- * Get initials from a name
- */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-/**
- * Role badge variant
- */
-function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'outline' {
-  switch (role) {
-    case 'ADMIN':
-      return 'default';
-    default:
-      return 'outline';
-  }
 }
 
 export function UserTable({
@@ -112,6 +92,13 @@ export function UserTable({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Clean up search debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
+
   /**
    * Fetch users with current filters
    */
@@ -127,15 +114,9 @@ export function UserTable({
           name: string;
           email: string;
           image: string | null;
-          role: string | null;
+          role: string;
           emailVerified: boolean;
           createdAt: string;
-        }
-
-        interface ApiResponse {
-          success: boolean;
-          data: UserListResponse[];
-          meta?: PaginationMeta;
         }
 
         // Build URL with params
@@ -151,7 +132,7 @@ export function UserTable({
         });
         if (searchValue) params.set('search', searchValue);
 
-        const res = await fetch(`/api/v1/users?${params.toString()}`, {
+        const res = await fetch(`${API.USERS.LIST}?${params.toString()}`, {
           credentials: 'same-origin',
         });
 
@@ -159,7 +140,7 @@ export function UserTable({
           throw new Error('Failed to fetch users');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<UserListResponse[]>(res);
 
         if (!response.success) {
           throw new Error('Failed to fetch users');
@@ -172,13 +153,12 @@ export function UserTable({
         }));
 
         setUsers(usersWithDates);
-        if (response.meta) {
-          setMeta(response.meta);
+        const parsedMeta = parsePaginationMeta(response.meta);
+        if (parsedMeta) {
+          setMeta(parsedMeta);
         }
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          console.error('Failed to fetch users:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }
@@ -245,7 +225,7 @@ export function UserTable({
     setIsLoading(true);
     setDeleteError(null);
     try {
-      await apiClient.delete(`/api/v1/users/${deleteUserId}`);
+      await apiClient.delete(API.USERS.byId(deleteUserId));
       setDeleteUserId(null);
       void fetchUsers(meta.page);
     } catch (error) {
@@ -448,24 +428,40 @@ export function UserTable({
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete User</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this user? This action cannot be undone. All user
-              data, sessions, and accounts will be permanently deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => void handleDelete()}
-              className="bg-red-600 hover:bg-red-700"
-              disabled={isLoading}
-            >
-              {isLoading ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+          {users.find((u) => u.id === deleteUserId)?.role === 'ADMIN' ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Cannot Delete Admin</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Cannot delete an admin account. Demote the user first.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Close</AlertDialogCancel>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete User</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete this user? This action cannot be undone. All user
+                  data, sessions, and accounts will be permanently deleted.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => void handleDelete()}
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Deleting...' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </div>

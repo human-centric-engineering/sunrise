@@ -13,10 +13,16 @@ import {
 interface WelcomeEmailProps {
   userName: string;
   userEmail: string;
+  /** Base URL of the application (e.g., "https://example.com") */
+  baseUrl: string;
 }
 
-export default function WelcomeEmail({ userName, userEmail }: WelcomeEmailProps) {
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard`;
+export default function WelcomeEmail({
+  userName,
+  userEmail,
+  baseUrl,
+}: WelcomeEmailProps): React.ReactElement {
+  const dashboardUrl = `${baseUrl}/dashboard`;
 
   return (
     <Html lang="en">

@@ -51,17 +51,15 @@ async function main() {
   // Seed default feature flags
   logger.info('🚩 Seeding feature flags...');
 
-  for (const flag of DEFAULT_FLAGS) {
-    const createdFlag = await prisma.featureFlag.create({
-      data: {
-        name: flag.name,
-        description: flag.description,
-        enabled: flag.enabled,
-        metadata: flag.metadata,
-      },
-    });
-    logger.info('✅ Created feature flag', { name: createdFlag.name });
-  }
+  const { count } = await prisma.featureFlag.createMany({
+    data: DEFAULT_FLAGS.map((flag) => ({
+      name: flag.name,
+      description: flag.description,
+      enabled: flag.enabled,
+      metadata: flag.metadata,
+    })),
+  });
+  logger.info(`✅ Created ${count} feature flags`);
 
   logger.info('🎉 Seeding complete!');
 }

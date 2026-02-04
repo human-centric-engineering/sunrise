@@ -7,7 +7,7 @@
  * pagination, and actions (resend, delete).
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -51,8 +51,12 @@ import {
 } from 'lucide-react';
 import type { InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
+import { getRoleBadgeVariant } from '@/lib/utils/initials';
 
 interface InvitationTableProps {
   initialInvitations: InvitationListItem[];
@@ -60,18 +64,6 @@ interface InvitationTableProps {
   initialSearch?: string;
   initialSortBy?: 'name' | 'email' | 'invitedAt' | 'expiresAt';
   initialSortOrder?: 'asc' | 'desc';
-}
-
-/**
- * Role badge variant
- */
-function getRoleBadgeVariant(role: string): 'default' | 'secondary' | 'outline' {
-  switch (role) {
-    case 'ADMIN':
-      return 'default';
-    default:
-      return 'outline';
-  }
 }
 
 /**
@@ -101,6 +93,15 @@ export function InvitationTable({
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const resendSuccessTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (resendSuccessTimeoutRef.current) clearTimeout(resendSuccessTimeoutRef.current);
+    };
+  }, []);
 
   /**
    * Fetch invitations with current filters
@@ -126,12 +127,6 @@ export function InvitationTable({
           expiresAt: string;
         }
 
-        interface ApiResponse {
-          success: boolean;
-          data: InvitationListResponse[];
-          meta?: PaginationMeta;
-        }
-
         // Build URL with params
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
         const sortByValue = overrides?.sortBy !== undefined ? overrides.sortBy : sortBy;
@@ -144,7 +139,7 @@ export function InvitationTable({
         });
         if (searchValue) params.set('search', searchValue);
 
-        const res = await fetch(`/api/v1/admin/invitations?${params.toString()}`, {
+        const res = await fetch(`${API.ADMIN.INVITATIONS}?${params.toString()}`, {
           credentials: 'same-origin',
         });
 
@@ -152,7 +147,7 @@ export function InvitationTable({
           throw new Error('Failed to fetch invitations');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<InvitationListResponse[]>(res);
 
         if (!response.success) {
           throw new Error('Failed to fetch invitations');
@@ -166,13 +161,12 @@ export function InvitationTable({
         }));
 
         setInvitations(invitationsWithDates);
-        if (response.meta) {
-          setMeta(response.meta);
+        const parsedMeta = parsePaginationMeta(response.meta);
+        if (parsedMeta) {
+          setMeta(parsedMeta);
         }
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          console.error('Failed to fetch invitations:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }
@@ -235,7 +229,7 @@ export function InvitationTable({
     setIsLoading(true);
     setDeleteError(null);
     try {
-      await apiClient.delete(`/api/v1/admin/invitations/${encodeURIComponent(deleteEmail)}`);
+      await apiClient.delete(API.ADMIN.invitationByEmail(deleteEmail));
       setDeleteEmail(null);
       void fetchInvitations(meta.page);
     } catch (error) {
@@ -256,7 +250,7 @@ export function InvitationTable({
       setResendSuccess(null);
       try {
         // Use the existing invite API with resend=true
-        await apiClient.post('/api/v1/users/invite?resend=true', {
+        await apiClient.post(`${API.USERS.INVITE}?resend=true`, {
           body: {
             name: invitation.name,
             email: invitation.email,
@@ -265,13 +259,11 @@ export function InvitationTable({
         });
         setResendSuccess(invitation.email);
         // Clear success message after 3 seconds
-        setTimeout(() => setResendSuccess(null), 3000);
+        resendSuccessTimeoutRef.current = setTimeout(() => setResendSuccess(null), 3000);
         // Refresh the list to get updated expiration
         void fetchInvitations(meta.page);
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          console.error('Failed to resend invitation:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setResendingEmail(null);
       }

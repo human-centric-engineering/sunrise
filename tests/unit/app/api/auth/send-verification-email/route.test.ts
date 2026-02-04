@@ -377,7 +377,7 @@ describe('POST /api/auth/send-verification-email', () => {
       await POST(request);
 
       // Assert
-      expect(verificationEmailLimiter.check).toHaveBeenCalledWith('unknown');
+      expect(verificationEmailLimiter.check).toHaveBeenCalledWith('127.0.0.1');
     });
   });
 

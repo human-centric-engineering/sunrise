@@ -24,6 +24,8 @@ import {
   urlSchema,
   slugSchema,
   listQuerySchema,
+  paginationMetaSchema,
+  parsePaginationMeta,
 } from '@/lib/validations/common';
 
 describe('paginationQuerySchema', () => {
@@ -509,6 +511,306 @@ describe('listQuerySchema', () => {
     it('should reject invalid sorting', () => {
       const result = listQuerySchema.safeParse({ sortOrder: 'invalid' });
       expect(result.success).toBe(false);
+    });
+  });
+});
+
+describe('paginationMetaSchema', () => {
+  describe('valid pagination meta', () => {
+    it('should accept valid meta object', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({
+          page: 1,
+          limit: 10,
+          total: 100,
+          totalPages: 10,
+        });
+      }
+    });
+
+    it('should accept page: 0 (nonnegative)', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 0,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept total: 0 and totalPages: 0', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 0,
+        totalPages: 0,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept large numbers', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 9999,
+        limit: 100,
+        total: 999999,
+        totalPages: 9999,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('invalid pagination meta', () => {
+    it('should reject negative page', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: -1,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject limit: 0 (must be positive)', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 0,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative limit', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: -10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative total', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: -100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative totalPages', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 100,
+        totalPages: -10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-integer page', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1.5,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-integer limit', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10.5,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-integer total', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 100.5,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-integer totalPages', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 100,
+        totalPages: 10.5,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject missing page field', () => {
+      const result = paginationMetaSchema.safeParse({
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject missing limit field', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject missing total field', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        totalPages: 10,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject missing totalPages field', () => {
+      const result = paginationMetaSchema.safeParse({
+        page: 1,
+        limit: 10,
+        total: 100,
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+});
+
+describe('parsePaginationMeta', () => {
+  describe('valid input', () => {
+    it('should return parsed object for valid input', () => {
+      const result = parsePaginationMeta({
+        page: 1,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result).toEqual({
+        page: 1,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+    });
+
+    it('should return parsed object with page: 0', () => {
+      const result = parsePaginationMeta({
+        page: 0,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result).toEqual({
+        page: 0,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+    });
+
+    it('should return parsed object with zero total', () => {
+      const result = parsePaginationMeta({
+        page: 1,
+        limit: 10,
+        total: 0,
+        totalPages: 0,
+      });
+      expect(result).toEqual({
+        page: 1,
+        limit: 10,
+        total: 0,
+        totalPages: 0,
+      });
+    });
+  });
+
+  describe('invalid input', () => {
+    it('should return null for missing fields', () => {
+      const result = parsePaginationMeta({
+        page: 1,
+        limit: 10,
+        total: 100,
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should return null for wrong types', () => {
+      const result = parsePaginationMeta({
+        page: '1',
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should return null for negative values', () => {
+      const result = parsePaginationMeta({
+        page: -1,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-integer values', () => {
+      const result = parsePaginationMeta({
+        page: 1.5,
+        limit: 10,
+        total: 100,
+        totalPages: 10,
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should return null for null input', () => {
+      const result = parsePaginationMeta(null);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for undefined input', () => {
+      const result = parsePaginationMeta(undefined);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-object input (string)', () => {
+      const result = parsePaginationMeta('not an object');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-object input (number)', () => {
+      const result = parsePaginationMeta(42);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for array input', () => {
+      const result = parsePaginationMeta([1, 2, 3, 4]);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for empty object', () => {
+      const result = parsePaginationMeta({});
+      expect(result).toBeNull();
     });
   });
 });

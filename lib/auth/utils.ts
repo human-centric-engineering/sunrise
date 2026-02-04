@@ -3,31 +3,13 @@ import { headers } from 'next/headers';
 import { logger } from '@/lib/logging';
 
 /**
- * Session type from better-auth
- * Contains both session data and user data
+ * Session type derived from better-auth configuration.
+ *
+ * Uses ReturnType inference so the type automatically includes custom fields
+ * (e.g. `role`) defined in `auth.user.additionalFields` and stays in sync
+ * with the better-auth config without manual maintenance.
  */
-type AuthSession = {
-  session: {
-    id: string;
-    userId: string;
-    token: string;
-    expiresAt: Date;
-    ipAddress?: string | null;
-    userAgent?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    emailVerified: boolean;
-    image?: string | null;
-    role?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-};
+type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
 
 /**
  * Get the current user session on the server

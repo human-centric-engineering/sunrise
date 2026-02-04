@@ -18,6 +18,7 @@ import type {
   ProviderFeatures,
 } from '../types';
 import type { AnalyticsProvider, PostHogProviderConfig } from './types';
+import { logger } from '@/lib/logging';
 
 // PostHog type definitions
 interface PostHogInstance {
@@ -294,8 +295,7 @@ export class PostHogProvider implements AnalyticsProvider {
   private log(method: string, ...args: unknown[]): void {
     if (!this.debug) return;
 
-    // eslint-disable-next-line no-console
-    console.log(`[PostHog] ${method}:`, ...args);
+    logger.debug(`[PostHog] ${method}`, { args });
   }
 }
 

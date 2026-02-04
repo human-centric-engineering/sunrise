@@ -27,24 +27,8 @@ import {
   createRateLimitResponse,
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { logger } from '@/lib/logging';
-
-/**
- * Get client IP address from request headers
- */
-function getClientIP(request: NextRequest): string {
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  const realIP = request.headers.get('x-real-ip');
-  if (realIP) {
-    return realIP.trim();
-  }
-
-  return 'unknown';
-}
 
 /**
  * POST /api/auth/send-verification-email

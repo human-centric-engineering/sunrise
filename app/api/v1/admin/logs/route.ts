@@ -12,11 +12,8 @@
  *   - limit: Items per page (default: 50, max: 100)
  */
 
-import { headers } from 'next/headers';
-import { NextRequest } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { paginatedResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
 import { validateQueryParams } from '@/lib/api/validation';
 import { logsQuerySchema } from '@/lib/validations/admin';
 import { getLogEntries } from '@/lib/admin/logs';
@@ -30,39 +27,23 @@ import { getLogEntries } from '@/lib/admin/logs';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  */
-export async function GET(request: NextRequest) {
-  try {
-    // Authenticate and check role
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAdminAuth((request, _session) => {
+  // Validate and parse query params
+  const { searchParams } = request.nextUrl;
+  const query = validateQueryParams(searchParams, logsQuerySchema);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+  // Get filtered log entries
+  const { entries, total } = getLogEntries({
+    level: query.level,
+    search: query.search,
+    page: query.page,
+    limit: query.limit,
+  });
 
-    if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required');
-    }
-
-    // Validate and parse query params
-    const { searchParams } = request.nextUrl;
-    const query = validateQueryParams(searchParams, logsQuerySchema);
-
-    // Get filtered log entries
-    const { entries, total } = getLogEntries({
-      level: query.level,
-      search: query.search,
-      page: query.page,
-      limit: query.limit,
-    });
-
-    // Return paginated response
-    return paginatedResponse(entries, {
-      page: query.page,
-      limit: query.limit,
-      total,
-    });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
+  // Return paginated response
+  return paginatedResponse(entries, {
+    page: query.page,
+    limit: query.limit,
+    total,
+  });
+});

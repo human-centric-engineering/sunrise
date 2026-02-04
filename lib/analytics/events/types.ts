@@ -3,6 +3,14 @@
  *
  * Type definitions for event properties to ensure type-safe tracking.
  *
+ * NOTE: The `[key: string]: unknown` index signatures on each interface are
+ * structurally required so that these types remain assignable to the base
+ * `EventProperties` type used by analytics providers. TypeScript forbids
+ * assigning an interface without an index signature to one that has one.
+ * This is a known trade-off in analytics systems: we get named-property
+ * guidance (autocomplete, documentation) while accepting that additional
+ * properties can be passed without compile-time errors.
+ *
  * Phase 4.5: Analytics Integration
  *
  * @see .context/analytics/overview.md for event catalog and schemas

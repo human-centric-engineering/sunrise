@@ -13,11 +13,8 @@
  *   - sortOrder: Sort order (asc, desc)
  */
 
-import { NextRequest } from 'next/server';
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth/config';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { paginatedResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
 import { validateQueryParams } from '@/lib/api/validation';
 import { listInvitationsQuerySchema } from '@/lib/validations/admin';
 import { getAllPendingInvitations } from '@/lib/utils/invitation-token';
@@ -37,40 +34,24 @@ import { getAllPendingInvitations } from '@/lib/utils/invitation-token';
  * @throws ForbiddenError if not admin
  * @throws ValidationError if invalid query params
  */
-export async function GET(request: NextRequest) {
-  try {
-    // Authenticate and check role
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAdminAuth(async (request, _session) => {
+  // Validate and parse query params
+  const { searchParams } = request.nextUrl;
+  const query = validateQueryParams(searchParams, listInvitationsQuerySchema);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+  // Fetch pending invitations
+  const { invitations, total } = await getAllPendingInvitations({
+    search: query.search,
+    page: query.page,
+    limit: query.limit,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+  });
 
-    if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required');
-    }
-
-    // Validate and parse query params
-    const { searchParams } = request.nextUrl;
-    const query = validateQueryParams(searchParams, listInvitationsQuerySchema);
-
-    // Fetch pending invitations
-    const { invitations, total } = await getAllPendingInvitations({
-      search: query.search,
-      page: query.page,
-      limit: query.limit,
-      sortBy: query.sortBy,
-      sortOrder: query.sortOrder,
-    });
-
-    // Return paginated response
-    return paginatedResponse(invitations, {
-      page: query.page,
-      limit: query.limit,
-      total,
-    });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
+  // Return paginated response
+  return paginatedResponse(invitations, {
+    page: query.page,
+    limit: query.limit,
+    total,
+  });
+});

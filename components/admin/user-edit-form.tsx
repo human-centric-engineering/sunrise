@@ -33,8 +33,10 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AlertCircle, Save, ArrowLeft } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
+import { getInitials } from '@/lib/utils/initials';
 
 /**
  * Form validation schema
@@ -50,18 +52,6 @@ type UserEditFormData = z.infer<typeof userEditSchema>;
 interface UserEditFormProps {
   user: AdminUser;
   currentUserId: string;
-}
-
-/**
- * Get initials from a name
- */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
 }
 
 export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
@@ -82,7 +72,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     resolver: zodResolver(userEditSchema),
     defaultValues: {
       name: user.name,
-      role: (user.role as 'USER' | 'ADMIN') || 'USER',
+      role: user.role === 'ADMIN' ? 'ADMIN' : 'USER',
       emailVerified: user.emailVerified,
     },
   });
@@ -96,7 +86,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     setSuccess(false);
 
     try {
-      await apiClient.patch(`/api/v1/users/${user.id}`, {
+      await apiClient.patch(API.USERS.byId(user.id), {
         body: data,
       });
       setSuccess(true);

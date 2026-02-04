@@ -15,6 +15,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { updateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
@@ -93,7 +94,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
         location: data.location?.trim() || null,
       };
 
-      await apiClient.patch('/api/v1/users/me', { body: cleanData });
+      await apiClient.patch(API.USERS.ME, { body: cleanData });
 
       // Determine which fields changed
       const fieldsChanged: string[] = [];

@@ -31,6 +31,7 @@ import {
 import { Plus, Trash2, Info } from 'lucide-react';
 import type { FeatureFlag } from '@/types/prisma';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 
 interface FeatureFlagListProps {
@@ -63,12 +64,9 @@ export function FeatureFlagList({
     setError(null);
 
     try {
-      const updatedFlag = await apiClient.patch<FeatureFlag>(
-        `/api/v1/admin/feature-flags/${flag.id}`,
-        {
-          body: { enabled: !flag.enabled },
-        }
-      );
+      const updatedFlag = await apiClient.patch<FeatureFlag>(API.ADMIN.featureFlag(flag.id), {
+        body: { enabled: !flag.enabled },
+      });
 
       setFlags((prev) => prev.map((f) => (f.id === flag.id ? updatedFlag : f)));
     } catch (err) {
@@ -90,7 +88,7 @@ export function FeatureFlagList({
     setError(null);
 
     try {
-      await apiClient.delete(`/api/v1/admin/feature-flags/${deleteId}`);
+      await apiClient.delete(API.ADMIN.featureFlag(deleteId));
       setFlags((prev) => prev.filter((f) => f.id !== deleteId));
       setDeleteId(null);
     } catch (err) {

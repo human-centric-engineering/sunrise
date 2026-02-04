@@ -222,7 +222,11 @@ export function handleAPIError(error: unknown): Response {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     // Unique constraint violation (e.g., duplicate email)
     if (error.code === 'P2002') {
-      const target = (error.meta?.target as string[]) || [];
+      const rawTarget = error.meta?.target;
+      const target =
+        Array.isArray(rawTarget) && rawTarget.every((v): v is string => typeof v === 'string')
+          ? rawTarget
+          : [];
       const field = target[0] || 'field';
 
       return errorResponse(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`, {
@@ -267,8 +271,12 @@ export function handleAPIError(error: unknown): Response {
     });
   }
 
-  // Handle unknown errors
-  const message = error instanceof Error ? error.message : 'An unexpected error occurred';
+  // Handle unknown errors — use generic message in production to avoid leaking
+  // implementation details (database errors, internal paths, etc.)
+  const message =
+    env.NODE_ENV !== 'production' && error instanceof Error
+      ? error.message
+      : 'An unexpected error occurred';
 
   return errorResponse(message, {
     code: ErrorCodes.INTERNAL_ERROR,

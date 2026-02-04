@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 import { UserManagementTabs } from '@/components/admin/user-management-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
@@ -12,49 +13,6 @@ export const metadata: Metadata = {
   description: 'Manage user accounts and invitations',
 };
 
-interface UsersResponse {
-  id: string;
-  name: string;
-  email: string;
-  image: string | null;
-  role: string | null;
-  emailVerified: boolean;
-  createdAt: string;
-}
-
-interface UsersApiResponse {
-  success: boolean;
-  data: UsersResponse[];
-  meta?: PaginationMeta;
-}
-
-interface InvitationsResponse {
-  email: string;
-  name: string;
-  role: string;
-  invitedBy: string;
-  invitedByName: string | null;
-  invitedAt: string;
-  expiresAt: string;
-}
-
-interface InvitationsApiResponse {
-  success: boolean;
-  data: InvitationsResponse[];
-  meta?: PaginationMeta;
-}
-
-/**
- * Get cookies header for API requests
- */
-async function getCookieHeader(): Promise<string> {
-  const cookieStore = await cookies();
-  return cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
-}
-
 /**
  * Fetch users from API
  */
@@ -63,16 +21,8 @@ async function getUsers(): Promise<{
   meta: PaginationMeta;
 }> {
   try {
-    const cookieHeader = await getCookieHeader();
-
-    const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/users?limit=${DEFAULT_PAGE_LIMIT}&sortBy=createdAt&sortOrder=desc`,
-      {
-        headers: {
-          Cookie: cookieHeader,
-        },
-        cache: 'no-store',
-      }
+    const res = await serverFetch(
+      API.USERS.LIST + `?limit=${DEFAULT_PAGE_LIMIT}&sortBy=createdAt&sortOrder=desc`
     );
 
     if (!res.ok) {
@@ -82,7 +32,7 @@ async function getUsers(): Promise<{
       };
     }
 
-    const data = (await res.json()) as UsersApiResponse;
+    const data = await parseApiResponse<UserListItem[]>(res);
 
     if (!data.success) {
       return {
@@ -99,7 +49,12 @@ async function getUsers(): Promise<{
 
     return {
       users,
-      meta: data.meta || { page: 1, limit: DEFAULT_PAGE_LIMIT, total: users.length, totalPages: 1 },
+      meta: (data.meta as PaginationMeta) || {
+        page: 1,
+        limit: DEFAULT_PAGE_LIMIT,
+        total: users.length,
+        totalPages: 1,
+      },
     };
   } catch {
     return {
@@ -117,16 +72,8 @@ async function getInvitations(): Promise<{
   meta: PaginationMeta;
 }> {
   try {
-    const cookieHeader = await getCookieHeader();
-
-    const res = await fetch(
-      `${process.env.BETTER_AUTH_URL || 'http://localhost:3000'}/api/v1/admin/invitations?limit=${DEFAULT_PAGE_LIMIT}&sortBy=invitedAt&sortOrder=desc`,
-      {
-        headers: {
-          Cookie: cookieHeader,
-        },
-        cache: 'no-store',
-      }
+    const res = await serverFetch(
+      API.ADMIN.INVITATIONS + `?limit=${DEFAULT_PAGE_LIMIT}&sortBy=invitedAt&sortOrder=desc`
     );
 
     if (!res.ok) {
@@ -136,7 +83,7 @@ async function getInvitations(): Promise<{
       };
     }
 
-    const data = (await res.json()) as InvitationsApiResponse;
+    const data = await parseApiResponse<InvitationListItem[]>(res);
 
     if (!data.success) {
       return {
@@ -154,7 +101,7 @@ async function getInvitations(): Promise<{
 
     return {
       invitations,
-      meta: data.meta || {
+      meta: (data.meta as PaginationMeta) || {
         page: 1,
         limit: DEFAULT_PAGE_LIMIT,
         total: invitations.length,

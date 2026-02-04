@@ -194,6 +194,8 @@ npm run test:watch       # Run tests in watch mode
 npm run test:coverage    # Run tests with coverage report
 ```
 
+**IMPORTANT:** Never run test-engineer subagents in the background (`run_in_background: true`). Always run them sequentially or in parallel (foreground) to avoid context pollution from background task notifications.
+
 ## Project Architecture
 
 ### Core Stack

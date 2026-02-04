@@ -24,7 +24,7 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   // Custom fields for RBAC
-  role          String?   @default("USER")
+  role          String    @default("USER")
 
   // Extended Profile Fields (Phase 3.2)
   bio           String?   @db.Text        // User biography (long text)
@@ -38,7 +38,6 @@ model User {
   accounts      Account[]
 
   @@unique([email])
-  @@index([email])
   @@index([role])
   @@map("user")
 }
@@ -93,6 +92,7 @@ model Verification {
   metadata   Json?    // Stores invitation details (name, role, invitedBy, invitedAt)
 
   @@index([identifier])
+  @@index([expiresAt])
   @@map("verification")
 }
 
@@ -107,8 +107,7 @@ model ContactSubmission {
   createdAt DateTime @default(now())
   read      Boolean  @default(false)
 
-  @@index([createdAt])
-  @@index([read])
+  @@index([read, createdAt])
   @@map("contact_submission")
 }
 

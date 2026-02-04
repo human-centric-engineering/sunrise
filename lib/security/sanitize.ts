@@ -208,12 +208,7 @@ export function safeCallbackUrl(url: string | null, fallback: string = '/'): str
   return fallback;
 }
 
-/**
- * Type guard for record objects
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@/lib/utils';
 
 /**
  * Recursively sanitize all string values in an object
@@ -265,6 +260,9 @@ export function sanitizeObject<T extends Record<string, unknown>>(
     }
   }
 
+  // SAFETY: The assertion is sound — we iterate every key of `obj` and only
+  // transform string values via `sanitizer`, preserving all keys and non-string
+  // values unchanged. The structural shape of `T` is therefore maintained.
   return result as T;
 }
 

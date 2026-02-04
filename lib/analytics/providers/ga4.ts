@@ -18,6 +18,7 @@ import type {
   ProviderFeatures,
 } from '../types';
 import type { AnalyticsProvider, GA4ProviderConfig } from './types';
+import { logger } from '@/lib/logging';
 
 // Extend Window interface for gtag
 declare global {
@@ -229,8 +230,7 @@ export class GA4Provider implements AnalyticsProvider {
   private log(method: string, ...args: unknown[]): void {
     if (!this.debug) return;
 
-    // eslint-disable-next-line no-console
-    console.log(`[GA4] ${method}:`, ...args);
+    logger.debug(`[GA4] ${method}`, { args });
   }
 }
 

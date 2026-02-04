@@ -212,13 +212,13 @@ describe('generateInvitationToken()', () => {
       // Act
       await generateInvitationToken(email, metadata);
 
-      // Assert: Should log info with email, expiration, and metadata
+      // Assert: Should log info with email, expiration, and role (not full metadata)
       expect(logger.info).toHaveBeenCalledWith(
         'Invitation token generated',
         expect.objectContaining({
           email,
           expiresAt: expect.any(String),
-          metadata: expect.any(Object),
+          role: metadata.role,
         })
       );
     });

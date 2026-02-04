@@ -216,6 +216,66 @@ export const verificationEmailLimiter = createRateLimiter({
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 
+/**
+ * Rate limiter for admin endpoints
+ * Limit: 30 requests per minute per IP
+ *
+ * Tighter than general API to limit admin abuse
+ */
+export const adminLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.ADMIN,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
+ * Rate limiter for accept-invite endpoint
+ * Limit: 5 attempts per 15 minutes per IP
+ *
+ * Prevents brute-force token guessing on public endpoint
+ */
+export const acceptInviteLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.PASSWORD_RESET_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.ACCEPT_INVITE,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
+ * Rate limiter for file uploads
+ * Limit: 10 uploads per 15 minutes per IP
+ *
+ * Prevents storage exhaustion via rapid uploads
+ */
+export const uploadLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.UPLOAD_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.UPLOAD,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
+ * Rate limiter for invitation emails
+ * Limit: 10 invitations per 15 minutes per IP
+ *
+ * Prevents email bombing via admin invitation endpoint
+ */
+export const inviteLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.INVITE_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.INVITE,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
+ * Rate limiter for CSP violation reports
+ * Limit: 20 reports per minute per IP
+ *
+ * Prevents log flooding from malicious CSP report submissions
+ */
+export const cspReportLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CSP_REPORT,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
 // =============================================================================
 // Response Helpers
 // =============================================================================

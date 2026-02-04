@@ -35,33 +35,12 @@ import {
   createRateLimitResponse,
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { sendEmail } from '@/lib/email/send';
 import ContactNotificationEmail from '@/emails/contact-notification';
+import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
-
-/**
- * Get client IP address from request headers
- *
- * Checks common proxy headers before falling back to default.
- */
-function getClientIP(request: NextRequest): string {
-  // Check common proxy headers
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    // x-forwarded-for can contain multiple IPs (client, proxy1, proxy2...)
-    // The first one is the original client
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  const realIP = request.headers.get('x-real-ip');
-  if (realIP) {
-    return realIP.trim();
-  }
-
-  // Fallback to unknown (will still work for rate limiting)
-  return 'unknown';
-}
 
 /**
  * POST /api/v1/contact
@@ -179,8 +158,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // Special handling for honeypot validation error (to not reveal the field)
     if (error instanceof ValidationError && error.details) {
-      const details = error.details as { errors?: Array<{ path: string }> };
-      if (details.errors?.some((e) => e.path === 'website')) {
+      const details = error.details;
+      if (
+        Array.isArray(details.errors) &&
+        details.errors.some((e: unknown) => isRecord(e) && e.path === 'website')
+      ) {
         logger.warn('Contact form honeypot validation failed', {
           ip: getClientIP(request),
         });

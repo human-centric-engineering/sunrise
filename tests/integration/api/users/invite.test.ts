@@ -83,6 +83,32 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+// Mock rate limiting
+vi.mock('@/lib/security/rate-limit', () => ({
+  inviteLimiter: {
+    check: vi.fn(() => ({
+      success: true,
+      limit: 10,
+      remaining: 9,
+      reset: Math.ceil((Date.now() + 900000) / 1000),
+    })),
+  },
+  createRateLimitResponse: vi.fn(
+    () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+        }),
+        { status: 429 }
+      )
+  ),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
 // Import mocked modules
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
@@ -93,6 +119,8 @@ import {
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import { logger } from '@/lib/logging';
+import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * Helper function to create a mock NextRequest
@@ -934,6 +962,181 @@ describe('POST /api/v1/users/invite', () => {
         (envModule.env as any).NEXT_PUBLIC_APP_URL = originalUrl;
         process.env.BETTER_AUTH_URL = originalBetterAuthUrl;
       }
+    });
+  });
+
+  /**
+   * Rate Limiting Scenarios
+   */
+  describe('Rate limiting', () => {
+    it('should return 429 when rate limit is exceeded', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock rate limit exceeded
+      vi.mocked(inviteLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Math.ceil((Date.now() + 900000) / 1000),
+      });
+
+      // Mock createRateLimitResponse to return 429
+      vi.mocked(createRateLimitResponse).mockReturnValue(
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+          }),
+          { status: 429 }
+        )
+      );
+
+      // Act: Call the invite endpoint
+      const request = createMockRequest({
+        name: 'Rate Limited User',
+        email: 'ratelimited@example.com',
+        role: 'USER',
+      });
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponse>(response);
+
+      // Assert: Rate limit error
+      expect(response.status).toBe(429);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+      expect(body.error.message).toBe('Too many requests.');
+    });
+
+    it('should log warning with IP and admin ID when rate limited', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock getClientIP to return specific IP
+      vi.mocked(getClientIP).mockReturnValue('192.168.1.100');
+
+      // Mock rate limit exceeded
+      const rateLimitResult = {
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Math.ceil((Date.now() + 900000) / 1000),
+      };
+      vi.mocked(inviteLimiter.check).mockReturnValue(rateLimitResult);
+
+      // Mock createRateLimitResponse
+      vi.mocked(createRateLimitResponse).mockReturnValue(
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+          }),
+          { status: 429 }
+        )
+      );
+
+      // Act: Call the invite endpoint
+      const request = createMockRequest({
+        name: 'Rate Limited User',
+        email: 'ratelimited@example.com',
+        role: 'USER',
+      });
+      await POST(request);
+
+      // Assert: Warning was logged with correct data
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invite rate limit exceeded', {
+        ip: '192.168.1.100',
+        adminId: adminSession.user.id,
+        remaining: 0,
+        reset: rateLimitResult.reset,
+      });
+    });
+
+    it('should not proceed to validation or database queries when rate limited', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock rate limit exceeded
+      vi.mocked(inviteLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Math.ceil((Date.now() + 900000) / 1000),
+      });
+
+      // Mock createRateLimitResponse
+      vi.mocked(createRateLimitResponse).mockReturnValue(
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+          }),
+          { status: 429 }
+        )
+      );
+
+      // Act: Call the invite endpoint
+      const request = createMockRequest({
+        name: 'Rate Limited User',
+        email: 'ratelimited@example.com',
+        role: 'USER',
+      });
+      await POST(request);
+
+      // Assert: No database queries were made
+      expect(vi.mocked(prisma.user.findUnique)).not.toHaveBeenCalled();
+      expect(vi.mocked(getValidInvitation)).not.toHaveBeenCalled();
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
+
+      // Assert: No email was sent
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+    });
+
+    it('should use client IP from getClientIP for rate limiting', async () => {
+      // Arrange: Mock admin session
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession as never);
+
+      // Mock getClientIP to return specific IP
+      const testIP = '203.0.113.42';
+      vi.mocked(getClientIP).mockReturnValue(testIP);
+
+      // Mock rate limit check (success)
+      vi.mocked(inviteLimiter.check).mockReturnValue({
+        success: true,
+        limit: 10,
+        remaining: 9,
+        reset: Math.ceil((Date.now() + 900000) / 1000),
+      });
+
+      // Mock no existing user
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Mock no existing invitation
+      vi.mocked(getValidInvitation).mockResolvedValue(null);
+
+      // Mock invitation token generation
+      vi.mocked(generateInvitationToken).mockResolvedValue('token-123');
+
+      // Mock email sending
+      mockEmailSuccess(vi.mocked(sendEmail), 'email-id-123');
+
+      // Act: Call the invite endpoint
+      const request = createMockRequest({
+        name: 'Test User',
+        email: 'test@example.com',
+        role: 'USER',
+      });
+      await POST(request);
+
+      // Assert: getClientIP was called with the request
+      expect(vi.mocked(getClientIP)).toHaveBeenCalledWith(request);
+
+      // Assert: inviteLimiter.check was called with the client IP
+      expect(vi.mocked(inviteLimiter.check)).toHaveBeenCalledWith(testIP);
     });
   });
 });

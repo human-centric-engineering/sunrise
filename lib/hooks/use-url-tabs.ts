@@ -104,7 +104,6 @@ export function useUrlTabs<T extends string = string>({
     (tab: T) => {
       // Validate the tab value
       if (!allowedTabs.includes(tab)) {
-        console.warn(`[useUrlTabs] Invalid tab value: ${tab}`);
         return;
       }
 

@@ -17,6 +17,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
+import { validateStorageKey } from './validate-key';
 import { logger } from '@/lib/logging';
 
 /**
@@ -84,6 +85,7 @@ export class S3Provider implements StorageProvider {
 
   async upload(file: Buffer, options: UploadOptions): Promise<UploadResult> {
     const { key, contentType, metadata } = options;
+    validateStorageKey(key);
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
@@ -117,6 +119,7 @@ export class S3Provider implements StorageProvider {
   }
 
   async delete(key: string): Promise<DeleteResult> {
+    validateStorageKey(key);
     const command = new DeleteObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -141,6 +144,7 @@ export class S3Provider implements StorageProvider {
   }
 
   async deletePrefix(prefix: string): Promise<DeleteResult> {
+    validateStorageKey(prefix);
     try {
       // List all objects with the prefix
       const listCommand = new ListObjectsV2Command({
@@ -156,11 +160,21 @@ export class S3Provider implements StorageProvider {
         return { success: true, key: prefix };
       }
 
+      // Filter out objects with undefined keys
+      const keysToDelete = objects
+        .map((obj) => obj.Key)
+        .filter((key): key is string => key !== undefined);
+
+      if (keysToDelete.length === 0) {
+        logger.debug('No valid keys found for prefix', { prefix });
+        return { success: true, key: prefix };
+      }
+
       // Batch delete all objects
       const deleteCommand = new DeleteObjectsCommand({
         Bucket: this.bucket,
         Delete: {
-          Objects: objects.map((obj) => ({ Key: obj.Key })),
+          Objects: keysToDelete.map((key) => ({ Key: key })),
         },
       });
 

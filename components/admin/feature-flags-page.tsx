@@ -4,14 +4,8 @@ import { useState, useEffect } from 'react';
 import { FeatureFlagList } from '@/components/admin/feature-flag-list';
 import { FeatureFlagForm } from '@/components/admin/feature-flag-form';
 import type { FeatureFlag } from '@/types/prisma';
-
-/**
- * API response type
- */
-interface ApiResponse {
-  success: boolean;
-  data: FeatureFlag[];
-}
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { API } from '@/lib/api/endpoints';
 
 /**
  * Feature Flags Page Content (Client Component)
@@ -30,7 +24,7 @@ export function FeatureFlagsPage() {
   useEffect(() => {
     const fetchFlags = async () => {
       try {
-        const res = await fetch('/api/v1/admin/feature-flags', {
+        const res = await fetch(API.ADMIN.FEATURE_FLAGS, {
           credentials: 'same-origin',
         });
 
@@ -38,13 +32,13 @@ export function FeatureFlagsPage() {
           throw new Error('Failed to fetch flags');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<FeatureFlag[]>(res);
 
         if (response.success) {
           setFlags(response.data);
         }
-      } catch (error) {
-        console.error('Failed to fetch feature flags:', error);
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }

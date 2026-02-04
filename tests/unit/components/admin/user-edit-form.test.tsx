@@ -562,14 +562,14 @@ describe('components/admin/user-edit-form', () => {
       expect(emailVerifiedSwitch).not.toBeChecked();
     });
 
-    it('should handle user with null role', () => {
-      // Arrange
-      const userWithNullRole = { ...mockUser, role: null };
+    it('should handle user with unexpected role value', () => {
+      // Arrange: role is a string that is neither 'USER' nor 'ADMIN'
+      const userWithUnexpectedRole = { ...mockUser, role: 'MODERATOR' };
 
       // Act
-      render(<UserEditForm user={userWithNullRole} currentUserId={currentUserId} />);
+      render(<UserEditForm user={userWithUnexpectedRole} currentUserId={currentUserId} />);
 
-      // Assert: Form should render without crashing
+      // Assert: Form should render without crashing, defaulting to USER
       expect(screen.getByText('Edit User')).toBeInTheDocument();
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });

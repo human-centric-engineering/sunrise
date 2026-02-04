@@ -13,6 +13,7 @@ import { writeFile, unlink, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
+import { validateStorageKey } from './validate-key';
 import { logger } from '@/lib/logging';
 
 /**
@@ -48,6 +49,7 @@ export class LocalProvider implements StorageProvider {
 
   async upload(file: Buffer, options: UploadOptions): Promise<UploadResult> {
     const { key } = options;
+    validateStorageKey(key);
     const filePath = join(this.baseDir, key);
     const fileDir = dirname(filePath);
 
@@ -76,6 +78,7 @@ export class LocalProvider implements StorageProvider {
   }
 
   async delete(key: string): Promise<DeleteResult> {
+    validateStorageKey(key);
     const filePath = join(this.baseDir, key);
 
     try {
@@ -100,6 +103,7 @@ export class LocalProvider implements StorageProvider {
   }
 
   async deletePrefix(prefix: string): Promise<DeleteResult> {
+    validateStorageKey(prefix);
     const dirPath = join(this.baseDir, prefix);
 
     try {

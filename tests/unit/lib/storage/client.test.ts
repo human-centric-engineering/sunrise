@@ -140,7 +140,7 @@ describe('lib/storage/client', () => {
       );
     });
 
-    it('should log error for unknown provider', async () => {
+    it('should warn about unknown provider and return null', async () => {
       vi.stubEnv('STORAGE_PROVIDER', 'unknown-provider');
       vi.stubEnv('NODE_ENV', 'production');
 
@@ -151,9 +151,14 @@ describe('lib/storage/client', () => {
       const client = getStorageClient();
 
       expect(client).toBeNull();
-      expect(logger.error).toHaveBeenCalledWith('Unknown storage provider', {
-        provider: 'unknown-provider',
-      });
+      // Should warn specifically about the invalid provider value
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Unknown STORAGE_PROVIDER value, ignoring',
+        expect.objectContaining({
+          provider: 'unknown-provider',
+          validProviders: ['s3', 'vercel-blob', 'local'],
+        })
+      );
     });
   });
 

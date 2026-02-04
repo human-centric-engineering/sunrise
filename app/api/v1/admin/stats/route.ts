@@ -10,12 +10,10 @@
  *   - System info (uptime, version, environment)
  */
 
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth/config';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { getDatabaseHealth } from '@/lib/db/utils';
 import { successResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
 import { logger } from '@/lib/logging';
 import type { SystemStats } from '@/types/admin';
 
@@ -39,73 +37,57 @@ const APP_VERSION = process.env.npm_package_version || '1.0.0';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  */
-export async function GET() {
-  try {
-    // Authenticate and check role
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAdminAuth(async (_request, session) => {
+  logger.debug('Admin stats requested', { userId: session.user.id });
 
-    if (!session) {
-      throw new UnauthorizedError();
+  // Get 24 hours ago timestamp
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  // Execute all queries in parallel for performance
+  const [totalUsers, verifiedUsers, recentSignups, usersByRole, dbHealth] = await Promise.all([
+    prisma.user.count(),
+    prisma.user.count({ where: { emailVerified: true } }),
+    prisma.user.count({ where: { createdAt: { gte: twentyFourHoursAgo } } }),
+    prisma.user.groupBy({
+      by: ['role'],
+      _count: { role: true },
+    }),
+    getDatabaseHealth(),
+  ]);
+
+  // Convert role counts to object
+  const roleCountMap: Record<string, number> = {
+    USER: 0,
+    ADMIN: 0,
+  };
+
+  for (const roleGroup of usersByRole) {
+    if (roleGroup.role) {
+      roleCountMap[roleGroup.role] = roleGroup._count.role;
     }
-
-    if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required');
-    }
-
-    logger.debug('Admin stats requested', { userId: session.user.id });
-
-    // Get 24 hours ago timestamp
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // Execute all queries in parallel for performance
-    const [totalUsers, verifiedUsers, recentSignups, usersByRole, dbHealth] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { emailVerified: true } }),
-      prisma.user.count({ where: { createdAt: { gte: twentyFourHoursAgo } } }),
-      prisma.user.groupBy({
-        by: ['role'],
-        _count: { role: true },
-      }),
-      getDatabaseHealth(),
-    ]);
-
-    // Convert role counts to object
-    const roleCountMap: Record<string, number> = {
-      USER: 0,
-      ADMIN: 0,
-    };
-
-    for (const roleGroup of usersByRole) {
-      if (roleGroup.role) {
-        roleCountMap[roleGroup.role] = roleGroup._count.role;
-      }
-    }
-
-    // Build stats response
-    const stats: SystemStats = {
-      users: {
-        total: totalUsers,
-        verified: verifiedUsers,
-        recentSignups,
-        byRole: {
-          USER: roleCountMap['USER'] || 0,
-          ADMIN: roleCountMap['ADMIN'] || 0,
-        },
-      },
-      system: {
-        nodeVersion: process.version,
-        appVersion: APP_VERSION,
-        environment: process.env.NODE_ENV || 'development',
-        uptime: Math.floor((Date.now() - PROCESS_START_TIME) / 1000),
-        databaseStatus: dbHealth.connected ? 'connected' : 'error',
-      },
-    };
-
-    logger.info('Admin stats fetched', { userId: session.user.id });
-
-    return successResponse(stats);
-  } catch (error) {
-    return handleAPIError(error);
   }
-}
+
+  // Build stats response
+  const stats: SystemStats = {
+    users: {
+      total: totalUsers,
+      verified: verifiedUsers,
+      recentSignups,
+      byRole: {
+        USER: roleCountMap['USER'] || 0,
+        ADMIN: roleCountMap['ADMIN'] || 0,
+      },
+    },
+    system: {
+      nodeVersion: process.version,
+      appVersion: APP_VERSION,
+      environment: process.env.NODE_ENV || 'development',
+      uptime: Math.floor((Date.now() - PROCESS_START_TIME) / 1000),
+      databaseStatus: dbHealth.connected ? 'connected' : 'error',
+    },
+  };
+
+  logger.info('Admin stats fetched', { userId: session.user.id });
+
+  return successResponse(stats);
+});

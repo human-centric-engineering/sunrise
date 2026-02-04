@@ -223,7 +223,13 @@ export class Logger {
     const envLevel = process.env.LOG_LEVEL?.toLowerCase();
     const defaultLevel = process.env.NODE_ENV === 'production' ? LogLevel.INFO : LogLevel.DEBUG;
 
-    this.level = level ?? (envLevel as LogLevel) ?? defaultLevel;
+    // Validate LOG_LEVEL env var against known levels to prevent silent misconfiguration
+    // (an invalid value like "verbose" would cause shouldLog() to always return false)
+    const validLevels = new Set<string>(Object.values(LogLevel));
+    const resolvedEnvLevel =
+      envLevel && validLevels.has(envLevel) ? (envLevel as LogLevel) : undefined;
+
+    this.level = level ?? resolvedEnvLevel ?? defaultLevel;
     this.context = context;
   }
 
@@ -362,7 +368,7 @@ export class Logger {
           message: error.message,
           stack: error.stack,
           // Add error code if available (e.g., Prisma errors, custom errors)
-          code: (error as { code?: string }).code,
+          code: 'code' in error && typeof error.code === 'string' ? error.code : undefined,
         };
       } else {
         // For non-Error objects, try to extract meaningful information
@@ -385,8 +391,10 @@ export class Logger {
       }
     }
 
-    // Push to admin log buffer
-    this.pushToLogBuffer(entry);
+    // Push sanitized entry to admin log buffer (secrets always, PII based on config)
+    // Sanitize BEFORE buffering so the admin logs viewer never exposes raw PII/secrets
+    const sanitizedForBuffer = this.sanitize(entry, shouldSanitizePII()) as LogEntry;
+    this.pushToLogBuffer(sanitizedForBuffer);
 
     // Format based on environment
     const formatted =

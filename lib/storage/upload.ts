@@ -11,24 +11,22 @@ import { getStorageClient, isStorageEnabled } from './client';
 import { processImage, type ProcessImageOptions } from './image';
 import type { UploadResult, DeleteResult } from './providers/types';
 import { logger } from '@/lib/logging';
+import { MAX_FILE_SIZE_BYTES, getMaxFileSizeBytes } from '@/lib/validations/storage';
 
 /**
  * Default maximum file size in bytes (5 MB)
+ *
+ * @deprecated Use MAX_FILE_SIZE_BYTES from '@/lib/validations/storage' instead
  */
-export const DEFAULT_MAX_FILE_SIZE = 5 * 1024 * 1024;
+export const DEFAULT_MAX_FILE_SIZE = MAX_FILE_SIZE_BYTES;
 
 /**
  * Get configured max file size from environment
+ *
+ * @deprecated Use getMaxFileSizeBytes from '@/lib/validations/storage' instead
  */
 export function getMaxFileSize(): number {
-  const maxSizeMB = process.env.MAX_FILE_SIZE_MB;
-  if (maxSizeMB) {
-    const parsed = parseInt(maxSizeMB, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed * 1024 * 1024;
-    }
-  }
-  return DEFAULT_MAX_FILE_SIZE;
+  return getMaxFileSizeBytes();
 }
 
 /**

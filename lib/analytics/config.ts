@@ -10,6 +10,7 @@
  */
 
 import type { AnalyticsProviderType } from './types';
+import { logger } from '@/lib/logging';
 
 /**
  * Analytics provider environment variable name
@@ -71,14 +72,25 @@ export function isDevelopment(): boolean {
  */
 export function getExplicitProvider(): AnalyticsProviderType | undefined {
   // Must use literal process.env access for Next.js client-side inlining
-  const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER as AnalyticsProviderType | undefined;
+  const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER;
 
-  if (provider && !['ga4', 'posthog', 'plausible', 'console'].includes(provider)) {
-    console.warn(`[analytics] Unknown provider: ${provider}. Using auto-detection.`);
+  if (!provider) return undefined;
+
+  const validProviders: readonly string[] = [
+    'ga4',
+    'posthog',
+    'plausible',
+    'console',
+  ] satisfies AnalyticsProviderType[];
+  if (!validProviders.includes(provider)) {
+    logger.warn('Unknown analytics provider, using auto-detection', {
+      provider,
+      validProviders: ['ga4', 'posthog', 'plausible', 'console'],
+    });
     return undefined;
   }
 
-  return provider;
+  return provider as AnalyticsProviderType;
 }
 
 /**
