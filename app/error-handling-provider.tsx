@@ -43,11 +43,13 @@ export function ErrorHandlingProvider({ children }: ErrorHandlingProviderProps) 
   useEffect(() => {
     // Initialize global error handler
     // This catches unhandled promise rejections and runtime errors
-    initGlobalErrorHandler();
+    const cleanup = initGlobalErrorHandler();
 
     // Initialize error tracking
     // This sets up Sentry (if configured) or no-op mode
     initErrorTracking();
+
+    return cleanup;
   }, []); // Run only once on mount
 
   return <>{children}</>;

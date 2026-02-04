@@ -270,13 +270,13 @@ export function handleClientError(error: unknown, context: Record<string, unknow
  *
  * function ErrorHandlingInit() {
  *   useEffect(() => {
- *     initGlobalErrorHandler();
+ *     return initGlobalErrorHandler();
  *   }, []);
  *   return null;
  * }
  * ```
  */
-export function initGlobalErrorHandler(): void {
+export function initGlobalErrorHandler(): (() => void) | undefined {
   // Only run in browser
   if (typeof window === 'undefined') {
     return;
@@ -289,26 +289,31 @@ export function initGlobalErrorHandler(): void {
   (window as { __errorHandlerInitialized?: boolean }).__errorHandlerInitialized = true;
 
   // Handle unhandled promise rejections
-  window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
-    event.preventDefault(); // Prevent default browser error logging
-
+  const onUnhandledRejection = (event: PromiseRejectionEvent): void => {
     handleClientError(event.reason, {
       errorType: 'unhandledRejection',
-      promise: event.promise,
     });
-  });
+  };
 
   // Handle uncaught runtime errors
-  window.addEventListener('error', (event: ErrorEvent) => {
-    event.preventDefault(); // Prevent default browser error logging
-
+  const onError = (event: ErrorEvent): void => {
     handleClientError(event.error || event.message, {
       errorType: 'uncaughtError',
       filename: event.filename,
       lineno: event.lineno,
       colno: event.colno,
     });
-  });
+  };
+
+  window.addEventListener('unhandledrejection', onUnhandledRejection);
+  window.addEventListener('error', onError);
 
   logger.debug('Global error handler initialized');
+
+  // Return cleanup function for HMR and useEffect teardown
+  return (): void => {
+    window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    window.removeEventListener('error', onError);
+    (window as { __errorHandlerInitialized?: boolean }).__errorHandlerInitialized = false;
+  };
 }
