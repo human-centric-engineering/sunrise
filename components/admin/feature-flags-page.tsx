@@ -4,15 +4,8 @@ import { useState, useEffect } from 'react';
 import { FeatureFlagList } from '@/components/admin/feature-flag-list';
 import { FeatureFlagForm } from '@/components/admin/feature-flag-form';
 import type { FeatureFlag } from '@/types/prisma';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
-
-/**
- * API response type
- */
-interface ApiResponse {
-  success: boolean;
-  data: FeatureFlag[];
-}
 
 /**
  * Feature Flags Page Content (Client Component)
@@ -39,7 +32,7 @@ export function FeatureFlagsPage() {
           throw new Error('Failed to fetch flags');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<FeatureFlag[]>(res);
 
         if (response.success) {
           setFlags(response.data);

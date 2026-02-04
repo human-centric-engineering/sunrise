@@ -57,6 +57,7 @@ import {
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { getInitials, getRoleBadgeVariant } from '@/lib/utils/initials';
@@ -117,12 +118,6 @@ export function UserTable({
           createdAt: string;
         }
 
-        interface ApiResponse {
-          success: boolean;
-          data: UserListResponse[];
-          meta?: PaginationMeta;
-        }
-
         // Build URL with params
         // Use overrides if provided (to avoid stale closure issues), otherwise use state
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
@@ -144,7 +139,7 @@ export function UserTable({
           throw new Error('Failed to fetch users');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<UserListResponse[]>(res);
 
         if (!response.success) {
           throw new Error('Failed to fetch users');
@@ -158,7 +153,7 @@ export function UserTable({
 
         setUsers(usersWithDates);
         if (response.meta) {
-          setMeta(response.meta);
+          setMeta(response.meta as PaginationMeta);
         }
       } catch {
         // Error is silently caught — Batch 6 will add proper error state UI

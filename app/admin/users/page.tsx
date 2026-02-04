@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
-import { serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
 import { UserManagementTabs } from '@/components/admin/user-management-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
-import type { APIResponse, PaginationMeta } from '@/types/api';
+import type { PaginationMeta } from '@/types/api';
 
 /** Default pagination limit for users and invitations tables */
 const DEFAULT_PAGE_LIMIT = 20;
@@ -32,7 +32,7 @@ async function getUsers(): Promise<{
       };
     }
 
-    const data = (await res.json()) as APIResponse<UserListItem[]> & { meta?: PaginationMeta };
+    const data = await parseApiResponse<UserListItem[]>(res);
 
     if (!data.success) {
       return {
@@ -49,7 +49,12 @@ async function getUsers(): Promise<{
 
     return {
       users,
-      meta: data.meta || { page: 1, limit: DEFAULT_PAGE_LIMIT, total: users.length, totalPages: 1 },
+      meta: (data.meta as PaginationMeta) || {
+        page: 1,
+        limit: DEFAULT_PAGE_LIMIT,
+        total: users.length,
+        totalPages: 1,
+      },
     };
   } catch {
     return {
@@ -78,9 +83,7 @@ async function getInvitations(): Promise<{
       };
     }
 
-    const data = (await res.json()) as APIResponse<InvitationListItem[]> & {
-      meta?: PaginationMeta;
-    };
+    const data = await parseApiResponse<InvitationListItem[]>(res);
 
     if (!data.success) {
       return {
@@ -98,7 +101,7 @@ async function getInvitations(): Promise<{
 
     return {
       invitations,
-      meta: data.meta || {
+      meta: (data.meta as PaginationMeta) || {
         page: 1,
         limit: DEFAULT_PAGE_LIMIT,
         total: invitations.length,

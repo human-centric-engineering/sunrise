@@ -52,6 +52,7 @@ import {
 import type { InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { getRoleBadgeVariant } from '@/lib/utils/initials';
@@ -125,12 +126,6 @@ export function InvitationTable({
           expiresAt: string;
         }
 
-        interface ApiResponse {
-          success: boolean;
-          data: InvitationListResponse[];
-          meta?: PaginationMeta;
-        }
-
         // Build URL with params
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
         const sortByValue = overrides?.sortBy !== undefined ? overrides.sortBy : sortBy;
@@ -151,7 +146,7 @@ export function InvitationTable({
           throw new Error('Failed to fetch invitations');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<InvitationListResponse[]>(res);
 
         if (!response.success) {
           throw new Error('Failed to fetch invitations');
@@ -166,7 +161,7 @@ export function InvitationTable({
 
         setInvitations(invitationsWithDates);
         if (response.meta) {
-          setMeta(response.meta);
+          setMeta(response.meta as PaginationMeta);
         }
       } catch {
         // Error is silently caught — Batch 6 will add proper error state UI

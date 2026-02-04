@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
 import { LogsViewer } from '@/components/admin/logs-viewer';
-import type { LogEntry, LogsResponse } from '@/types/admin';
+import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -29,7 +29,7 @@ async function getLogs(): Promise<{
       };
     }
 
-    const data = (await res.json()) as LogsResponse;
+    const data = await parseApiResponse<LogEntry[]>(res);
 
     if (!data.success) {
       return {
@@ -40,7 +40,7 @@ async function getLogs(): Promise<{
 
     return {
       logs: data.data,
-      meta: data.meta || {
+      meta: (data.meta as PaginationMeta) || {
         page: 1,
         limit: DEFAULT_PAGE_LIMIT,
         total: data.data.length,

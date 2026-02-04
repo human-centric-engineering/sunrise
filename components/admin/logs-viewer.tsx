@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { ClientDate } from '@/components/ui/client-date';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 
 interface LogsViewerProps {
@@ -178,12 +179,6 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
     async (page = 1, overrides?: { search?: string; level?: string }) => {
       setIsLoading(true);
       try {
-        interface ApiResponse {
-          success: boolean;
-          data: LogEntry[];
-          meta?: PaginationMeta;
-        }
-
         // Build URL with params
         // Use overrides if provided (from handlers), otherwise use state
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
@@ -203,7 +198,7 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
           throw new Error('Failed to fetch logs');
         }
 
-        const response = (await res.json()) as ApiResponse;
+        const response = await parseApiResponse<LogEntry[]>(res);
 
         if (!response.success) {
           throw new Error('Failed to fetch logs');
@@ -211,7 +206,7 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
 
         setLogs(response.data);
         if (response.meta) {
-          setMeta(response.meta);
+          setMeta(response.meta as PaginationMeta);
         }
       } catch {
         // Error is silently caught — Batch 6 will add proper error state UI

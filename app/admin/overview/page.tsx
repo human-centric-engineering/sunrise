@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
-import { serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
 import { StatsCards } from '@/components/admin/stats-cards';
 import { StatusPage } from '@/components/status/status-page';
-import type { SystemStats, SystemStatsResponse } from '@/types/admin';
+import type { SystemStats } from '@/types/admin';
 
 export const metadata: Metadata = {
   title: 'Overview',
@@ -21,7 +21,7 @@ async function getStats(): Promise<SystemStats | null> {
       return null;
     }
 
-    const data = (await res.json()) as SystemStatsResponse;
+    const data = await parseApiResponse<SystemStats>(res);
     return data.success ? data.data : null;
   } catch {
     return null;

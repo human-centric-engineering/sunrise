@@ -18,6 +18,8 @@
 import { cookies } from 'next/headers';
 import { env } from '@/lib/env';
 
+export { parseApiResponse } from './parse-response';
+
 /**
  * Build the cookie header string from the current request's cookies.
  *

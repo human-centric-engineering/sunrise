@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
 import { getServerSession } from '@/lib/auth/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ArrowLeft, Mail, Phone, MapPin, Clock, Calendar, RefreshCw, Pencil } from 'lucide-react';
 import { ClientDate } from '@/components/ui/client-date';
-import type { AdminUser, AdminUserResponse } from '@/types/admin';
+import type { AdminUser } from '@/types/admin';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -36,7 +36,7 @@ async function getUser(id: string): Promise<AdminUser | null> {
       return null;
     }
 
-    const data = (await res.json()) as AdminUserResponse;
+    const data = await parseApiResponse<AdminUser>(res);
 
     if (!data.success) {
       return null;

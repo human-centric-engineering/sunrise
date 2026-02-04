@@ -6,7 +6,6 @@
  */
 
 import type { FeatureFlag, User } from './prisma';
-import type { APIResponse, PaginationMeta } from './api';
 
 /**
  * System Statistics
@@ -149,24 +148,3 @@ export type AdminUser = Pick<
   | 'timezone'
   | 'location'
 >;
-
-/**
- * API Response Types
- */
-
-/** System stats response */
-export type SystemStatsResponse = APIResponse<SystemStats>;
-
-/** Logs list response with pagination */
-export type LogsResponse = APIResponse<LogEntry[]> & {
-  meta?: PaginationMeta;
-};
-
-/** Single feature flag response */
-export type FeatureFlagResponse = APIResponse<FeatureFlagWithMeta>;
-
-/** Feature flags list response */
-export type FeatureFlagsResponse = APIResponse<FeatureFlagWithMeta[]>;
-
-/** Admin user response */
-export type AdminUserResponse = APIResponse<AdminUser>;
