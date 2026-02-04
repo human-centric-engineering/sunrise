@@ -171,7 +171,7 @@ export function AcceptInviteForm() {
       setIsLoading(true);
       setError(null);
 
-      // Submit to accept-invite endpoint
+      // Submit to accept-invite endpoint (creates user, verifies email, sets role)
       await apiClient.post('/api/auth/accept-invite', {
         body: {
           token: data.token,
@@ -181,10 +181,18 @@ export function AcceptInviteForm() {
         },
       });
 
-      // Get session to identify user before tracking
-      const { data: session } = await authClient.getSession();
-      if (session?.user?.id) {
-        await identify(session.user.id);
+      // Sign in via better-auth client to update client-side session state.
+      // The API endpoint already created a server session, but the better-auth
+      // nanostore (used by useSession) doesn't know about it. Signing in via
+      // the client ensures the nanostore is updated so UserButton reflects
+      // the authenticated state immediately without a hard refresh.
+      const signInResult = await authClient.signIn.email({
+        email: data.email,
+        password: data.password,
+      });
+
+      if (signInResult.data?.user?.id) {
+        await identify(signInResult.data.user.id);
       }
 
       // Track invite acceptance
@@ -193,11 +201,9 @@ export function AcceptInviteForm() {
       // Show success message
       setSuccess(true);
 
-      // Session is created automatically by backend - redirect to dashboard
-      // better-auth client picks up the session cookie automatically
+      // Redirect to dashboard
       setTimeout(() => {
         router.push('/dashboard');
-        router.refresh(); // Force server component re-render to pick up session
       }, 1500);
     } catch (err) {
       setIsLoading(false);

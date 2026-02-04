@@ -63,9 +63,13 @@ vi.mock('@/components/forms/form-error', () => ({
 
 // Mock auth client
 const mockGetSession = vi.fn();
+const mockSignInEmail = vi.fn();
 vi.mock('@/lib/auth/client', () => ({
   authClient: {
     getSession: () => mockGetSession(),
+    signIn: {
+      email: (...args: unknown[]) => mockSignInEmail(...args),
+    },
   },
 }));
 
@@ -106,8 +110,8 @@ describe('components/forms/accept-invite-form', () => {
     vi.mocked(apiClient.get).mockResolvedValue({ name: 'Test User', role: 'member' });
     vi.mocked(apiClient.post).mockResolvedValue({ success: true });
 
-    // Default mock: session with user ID (for analytics identify)
-    mockGetSession.mockResolvedValue({ data: { user: { id: 'user-123' } } });
+    // Default mock: signIn returns session with user ID (for analytics identify)
+    mockSignInEmail.mockResolvedValue({ data: { user: { id: 'user-123' } } });
 
     // Default router mock
     const { useRouter } = await import('next/navigation');
@@ -616,7 +620,6 @@ describe('components/forms/accept-invite-form', () => {
       // Assert
       await waitFor(() => {
         expect(mockPush).toHaveBeenCalledWith('/dashboard');
-        expect(mockRefresh).toHaveBeenCalled();
       });
     });
 
