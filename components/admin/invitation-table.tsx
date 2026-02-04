@@ -169,10 +169,8 @@ export function InvitationTable({
         if (response.meta) {
           setMeta(response.meta);
         }
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          console.error('Failed to fetch invitations:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }
@@ -268,10 +266,8 @@ export function InvitationTable({
         setTimeout(() => setResendSuccess(null), 3000);
         // Refresh the list to get updated expiration
         void fetchInvitations(meta.page);
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          console.error('Failed to resend invitation:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setResendingEmail(null);
       }

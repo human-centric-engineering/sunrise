@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Mock the logger
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 // Mock all dependencies
 vi.mock('@/lib/analytics/config', () => ({
   detectProvider: vi.fn(),
@@ -116,9 +126,9 @@ describe('lib/analytics/client', () => {
     });
 
     it('should log debug message when provider is initialized', async () => {
-      const consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
       const { detectProvider, isBrowser } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue('console');
       vi.mocked(isBrowser).mockReturnValue(true);
@@ -126,15 +136,15 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       getAnalyticsClient();
 
-      expect(consoleDebugSpy).toHaveBeenCalledWith('[Analytics] Provider initialized: Console');
-
-      consoleDebugSpy.mockRestore();
+      expect(logger.debug).toHaveBeenCalledWith('Analytics provider initialized', {
+        provider: 'Console',
+      });
     });
 
     it('should log debug message when no provider is configured (browser)', async () => {
-      const consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
       const { detectProvider, isBrowser } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue(null);
       vi.mocked(isBrowser).mockReturnValue(true);
@@ -142,17 +152,15 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       getAnalyticsClient();
 
-      expect(consoleDebugSpy).toHaveBeenCalledWith(
-        '[Analytics] No analytics provider configured - tracking disabled'
+      expect(logger.debug).toHaveBeenCalledWith(
+        'No analytics provider configured - tracking disabled'
       );
-
-      consoleDebugSpy.mockRestore();
     });
 
     it('should only log warning once when no provider is configured', async () => {
-      const consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
       const { detectProvider } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue(null);
 
@@ -160,9 +168,7 @@ describe('lib/analytics/client', () => {
       getAnalyticsClient();
       getAnalyticsClient(); // Second call
 
-      expect(consoleDebugSpy).toHaveBeenCalledTimes(1);
-
-      consoleDebugSpy.mockRestore();
+      expect(logger.debug).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -271,9 +277,9 @@ describe('lib/analytics/client', () => {
     });
 
     it('should return null when GA4 requested but not configured', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { detectProvider, getGA4Config } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue('ga4');
       vi.mocked(getGA4Config).mockReturnValue(null);
@@ -282,12 +288,11 @@ describe('lib/analytics/client', () => {
       const client = getAnalyticsClient();
 
       expect(client).toBeNull();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[Analytics] GA4 provider requested but not configured',
+      expect(logger.error).toHaveBeenCalledWith(
+        'GA4 provider requested but not configured',
+        undefined,
         expect.objectContaining({ missingVars: ['NEXT_PUBLIC_GA4_MEASUREMENT_ID'] })
       );
-
-      consoleErrorSpy.mockRestore();
     });
 
     it('should create PostHog provider with config', async () => {
@@ -311,9 +316,9 @@ describe('lib/analytics/client', () => {
     });
 
     it('should return null when PostHog requested but not configured', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { detectProvider, getPostHogConfig } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue('posthog');
       vi.mocked(getPostHogConfig).mockReturnValue(null);
@@ -322,12 +327,11 @@ describe('lib/analytics/client', () => {
       const client = getAnalyticsClient();
 
       expect(client).toBeNull();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[Analytics] PostHog provider requested but not configured',
+      expect(logger.error).toHaveBeenCalledWith(
+        'PostHog provider requested but not configured',
+        undefined,
         expect.objectContaining({ missingVars: ['NEXT_PUBLIC_POSTHOG_KEY'] })
       );
-
-      consoleErrorSpy.mockRestore();
     });
 
     it('should create Plausible provider with config', async () => {
@@ -351,9 +355,9 @@ describe('lib/analytics/client', () => {
     });
 
     it('should return null when Plausible requested but not configured', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { detectProvider, getPlausibleConfig } = await import('@/lib/analytics/config');
       const { getAnalyticsClient, resetAnalyticsClient } = await import('@/lib/analytics/client');
+      const { logger } = await import('@/lib/logging');
 
       vi.mocked(detectProvider).mockReturnValue('plausible');
       vi.mocked(getPlausibleConfig).mockReturnValue(null);
@@ -362,12 +366,11 @@ describe('lib/analytics/client', () => {
       const client = getAnalyticsClient();
 
       expect(client).toBeNull();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[Analytics] Plausible provider requested but not configured',
+      expect(logger.error).toHaveBeenCalledWith(
+        'Plausible provider requested but not configured',
+        undefined,
         expect.objectContaining({ missingVars: ['NEXT_PUBLIC_PLAUSIBLE_DOMAIN'] })
       );
-
-      consoleErrorSpy.mockRestore();
     });
   });
 

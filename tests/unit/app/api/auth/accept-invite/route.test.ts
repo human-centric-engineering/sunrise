@@ -898,4 +898,132 @@ describe('POST /api/auth/accept-invite', () => {
       expect(logger.error).toHaveBeenCalledWith('Failed to accept invitation', expect.any(Error));
     });
   });
+
+  describe('PII Reduction in Logging (Batch 5 Fix)', () => {
+    it('should log only role from metadata, not full metadata object', async () => {
+      // Arrange
+      const mockSignupResponse = createMockFetchResponse({
+        user: { id: mockUserId },
+      });
+
+      const mockSignInResponse = createMockFetchResponse({ user: { id: mockUserId } }, 200, []);
+
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(mockSignupResponse)
+        .mockResolvedValueOnce(mockSignInResponse);
+
+      const request = createMockRequest(validInvitationData);
+
+      // Act
+      await POST(request);
+
+      // Assert: Check the metadata retrieved log
+      expect(logger.info).toHaveBeenCalledWith('Invitation metadata retrieved', {
+        email: validInvitationData.email,
+        role: mockInvitationMetadata.role,
+      });
+
+      // Verify we didn't log the full metadata object (which contains name and invitedBy - PII)
+      const metadataLogCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
+      expect(metadataLogCall).toBeDefined();
+      const loggedData = metadataLogCall?.[1];
+
+      // Should only have email and role
+      expect(loggedData).toEqual({
+        email: validInvitationData.email,
+        role: mockInvitationMetadata.role,
+      });
+
+      // Should NOT have name or invitedBy
+      expect(loggedData).not.toHaveProperty('name');
+      expect(loggedData).not.toHaveProperty('invitedBy');
+      expect(loggedData).not.toHaveProperty('invitedAt');
+      expect(loggedData).not.toHaveProperty('metadata');
+    });
+
+    it('should not log PII fields from metadata (name, invitedBy)', async () => {
+      // Arrange: Invitation with ADMIN role and full metadata
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
+        id: 'verification-id',
+        identifier: 'invitation:admin@example.com',
+        value: 'hashed-token',
+        expiresAt: new Date('2024-12-31'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+        metadata: {
+          name: 'Jane Admin',
+          role: 'ADMIN',
+          invitedBy: 'super-admin-id',
+          invitedAt: '2024-01-01T00:00:00.000Z',
+        },
+      });
+
+      const mockSignupResponse = createMockFetchResponse({
+        user: { id: mockUserId },
+      });
+
+      const mockSignInResponse = createMockFetchResponse({ user: { id: mockUserId } }, 200, []);
+
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(mockSignupResponse)
+        .mockResolvedValueOnce(mockSignInResponse);
+
+      const requestData = {
+        ...validInvitationData,
+        email: 'admin@example.com',
+      };
+      const request = createMockRequest(requestData);
+
+      // Act
+      await POST(request);
+
+      // Assert: Metadata log should only include role, not name or invitedBy
+      const metadataLogCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
+      expect(metadataLogCall).toBeDefined();
+      const loggedData = metadataLogCall?.[1];
+
+      expect(loggedData).toEqual({
+        email: 'admin@example.com',
+        role: 'ADMIN',
+      });
+
+      // Ensure PII is not leaked
+      expect(loggedData).not.toHaveProperty('name');
+      expect(loggedData).not.toHaveProperty('invitedBy');
+    });
+
+    it('should handle USER role (default) without logging unnecessary data', async () => {
+      // Arrange: Regular user invitation
+      const mockSignupResponse = createMockFetchResponse({
+        user: { id: mockUserId },
+      });
+
+      const mockSignInResponse = createMockFetchResponse({ user: { id: mockUserId } }, 200, []);
+
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(mockSignupResponse)
+        .mockResolvedValueOnce(mockSignInResponse);
+
+      const request = createMockRequest(validInvitationData);
+
+      // Act
+      await POST(request);
+
+      // Assert: USER role logged without extra metadata
+      const metadataLogCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
+      expect(metadataLogCall?.[1]).toEqual({
+        email: validInvitationData.email,
+        role: 'USER',
+      });
+    });
+  });
 });

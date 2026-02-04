@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    logger.info('Invitation metadata retrieved', { email, metadata });
+    logger.info('Invitation metadata retrieved', { email, role: metadata.role });
 
     // 4. Create user via better-auth signup (FIRST TIME - stable ID)
     const signupResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {

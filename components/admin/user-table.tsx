@@ -175,11 +175,8 @@ export function UserTable({
         if (response.meta) {
           setMeta(response.meta);
         }
-      } catch (error) {
-        if (error instanceof APIClientError) {
-          // eslint-disable-next-line no-console -- client component, no structured logger available
-          console.error('Failed to fetch users:', error.message);
-        }
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }

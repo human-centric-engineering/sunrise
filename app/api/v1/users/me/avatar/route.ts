@@ -93,9 +93,12 @@ export const POST = withAuth(async (request, session) => {
       );
     }
 
+    // Sanitize client-provided filename before logging to prevent log injection
+    const sanitizedFileName = file.name.slice(0, 255).replace(/[^\w.-]/g, '_');
+
     logger.info('Avatar upload started', {
       userId,
-      fileName: file.name,
+      fileName: sanitizedFileName,
       fileSize: file.size,
       detectedType: validation.detectedType,
     });

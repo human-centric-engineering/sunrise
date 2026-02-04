@@ -18,6 +18,7 @@ import type {
   ProviderFeatures,
 } from '../types';
 import type { AnalyticsProvider, PlausibleProviderConfig } from './types';
+import { logger } from '@/lib/logging';
 
 // Plausible type definitions
 interface PlausibleFunction {
@@ -271,8 +272,7 @@ export class PlausibleProvider implements AnalyticsProvider {
   private log(method: string, ...args: unknown[]): void {
     if (!this.debug) return;
 
-    // eslint-disable-next-line no-console
-    console.log(`[Plausible] ${method}:`, ...args);
+    logger.debug(`[Plausible] ${method}`, { args });
   }
 }
 

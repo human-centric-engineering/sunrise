@@ -28,6 +28,23 @@ interface ParsedLogOutput {
   context?: Record<string, unknown>;
 }
 
+/**
+ * Type for buffered log entries (used in pushToLogBuffer spy)
+ */
+interface BufferedLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  context?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  error?: {
+    name: string;
+    message: string;
+    stack?: string;
+    code?: string;
+  };
+}
+
 describe('Logger', () => {
   // Mock console methods
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -1003,6 +1020,283 @@ describe('Logger', () => {
 
       // Assert
       expect(consoleLogSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('LOG_LEVEL Environment Variable Validation (Batch 5 Fix)', () => {
+    it('should ignore invalid LOG_LEVEL and use default level', () => {
+      // Arrange: Set invalid LOG_LEVEL (like "verbose")
+      vi.stubEnv('LOG_LEVEL', 'verbose');
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act: Create new logger with invalid LOG_LEVEL
+      const testLogger = new Logger();
+
+      // Assert: Should use default INFO level for production (not get stuck with invalid level)
+      expect(testLogger.getLevel()).toBe(LogLevel.INFO);
+
+      // Verify debug messages are blocked (would be allowed if level was stuck at invalid value)
+      testLogger.debug('Debug message');
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+
+      // Verify info messages work (confirms we're at INFO level)
+      testLogger.info('Info message');
+      expect(consoleLogSpy).toHaveBeenCalled();
+    });
+
+    it('should use valid LOG_LEVEL when provided', () => {
+      // Arrange: Set valid LOG_LEVEL
+      vi.stubEnv('LOG_LEVEL', 'warn');
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act
+      const testLogger = new Logger();
+
+      // Assert: Uses the valid LOG_LEVEL
+      expect(testLogger.getLevel()).toBe(LogLevel.WARN);
+    });
+
+    it('should handle empty LOG_LEVEL and use default', () => {
+      // Arrange: Empty LOG_LEVEL
+      vi.stubEnv('LOG_LEVEL', '');
+      vi.stubEnv('NODE_ENV', 'development');
+
+      // Act
+      const testLogger = new Logger();
+
+      // Assert: Uses default DEBUG for development
+      expect(testLogger.getLevel()).toBe(LogLevel.DEBUG);
+    });
+
+    it('should handle undefined LOG_LEVEL and use default', () => {
+      // Arrange: No LOG_LEVEL set
+      vi.unstubAllEnvs();
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act
+      const testLogger = new Logger();
+
+      // Assert: Uses default INFO for production
+      expect(testLogger.getLevel()).toBe(LogLevel.INFO);
+    });
+
+    it('should handle case-insensitive valid LOG_LEVEL', () => {
+      // Arrange: Valid level with different case
+      vi.stubEnv('LOG_LEVEL', 'ERROR');
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act: The toLowerCase() call should normalize this
+      const testLogger = new Logger();
+
+      // Assert: Should recognize ERROR as valid
+      expect(testLogger.getLevel()).toBe(LogLevel.ERROR);
+    });
+
+    it('should prioritize explicit level parameter over invalid env variable', () => {
+      // Arrange: Invalid LOG_LEVEL env var
+      vi.stubEnv('LOG_LEVEL', 'invalid');
+      vi.stubEnv('NODE_ENV', 'production');
+
+      // Act: Pass explicit level to constructor
+      const testLogger = new Logger(LogLevel.DEBUG);
+
+      // Assert: Uses explicit level, not env var or default
+      expect(testLogger.getLevel()).toBe(LogLevel.DEBUG);
+    });
+
+    it('should validate all valid log levels are accepted', () => {
+      // Arrange & Act & Assert: Test all valid levels
+      const validLevels: LogLevel[] = [
+        LogLevel.DEBUG,
+        LogLevel.INFO,
+        LogLevel.WARN,
+        LogLevel.ERROR,
+      ];
+
+      validLevels.forEach((level) => {
+        vi.stubEnv('LOG_LEVEL', level);
+        const testLogger = new Logger();
+        expect(testLogger.getLevel()).toBe(level);
+      });
+    });
+  });
+
+  describe('Log Buffer Sanitization (Batch 5 Fix)', () => {
+    it('should sanitize secrets before pushing to log buffer', () => {
+      // Arrange
+      vi.stubEnv('NODE_ENV', 'production');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      // Mock the pushToLogBuffer method to spy on it
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = {
+        user: { id: 'usr_123', password: 'secret123', email: 'user@example.com' },
+      };
+
+      // Act
+      testLogger.info('User action', meta);
+
+      // Assert: pushToLogBuffer was called
+      expect(pushToLogBufferSpy).toHaveBeenCalled();
+
+      // Verify the entry passed to buffer has sanitized data
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect(bufferedEntry.meta).toBeDefined();
+
+      // Password should be redacted (secret)
+      expect((bufferedEntry.meta as any).user.password).toBe('[REDACTED]');
+
+      // Email should be redacted (PII in production)
+      expect((bufferedEntry.meta as any).user.email).toBe('[PII REDACTED]');
+
+      // Non-sensitive data preserved
+      expect((bufferedEntry.meta as any).user.id).toBe('usr_123');
+    });
+
+    it('should sanitize PII before pushing to log buffer in production', () => {
+      // Arrange
+      vi.stubEnv('NODE_ENV', 'production');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = {
+        email: 'admin@example.com',
+        phone: '+1234567890',
+        address: '123 Main St',
+      };
+
+      // Act
+      testLogger.info('User data', meta);
+
+      // Assert
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+
+      // All PII should be redacted in production
+      expect((bufferedEntry.meta as any).email).toBe('[PII REDACTED]');
+      expect((bufferedEntry.meta as any).phone).toBe('[PII REDACTED]');
+      expect((bufferedEntry.meta as any).address).toBe('[PII REDACTED]');
+    });
+
+    it('should sanitize PII before pushing to log buffer when LOG_SANITIZE_PII=true in dev', () => {
+      // Arrange: Development with explicit PII sanitization
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('LOG_SANITIZE_PII', 'true');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = { email: 'user@example.com', name: 'John Doe' };
+
+      // Act
+      testLogger.info('User action', meta);
+
+      // Assert: PII redacted even in dev
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect((bufferedEntry.meta as any).email).toBe('[PII REDACTED]');
+      expect((bufferedEntry.meta as any).name).toBe('John Doe'); // name is not in PII_FIELDS
+    });
+
+    it('should not sanitize PII in dev buffer by default', () => {
+      // Arrange: Development without explicit sanitization
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.unstubAllEnvs();
+      vi.stubEnv('NODE_ENV', 'development');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = { email: 'user@example.com' };
+
+      // Act
+      testLogger.info('User action', meta);
+
+      // Assert: PII visible in dev buffer by default
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect((bufferedEntry.meta as any).email).toBe('user@example.com');
+    });
+
+    it('should always sanitize secrets in buffer regardless of environment', () => {
+      // Arrange: Development with PII sanitization disabled
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('LOG_SANITIZE_PII', 'false');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = {
+        password: 'secret123',
+        token: 'tok_abc',
+        apiKey: 'key_xyz',
+        email: 'user@example.com',
+      };
+
+      // Act
+      testLogger.info('Auth data', meta);
+
+      // Assert: Secrets always redacted
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect((bufferedEntry.meta as any).password).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).token).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).apiKey).toBe('[REDACTED]');
+
+      // PII shown (LOG_SANITIZE_PII=false)
+      expect((bufferedEntry.meta as any).email).toBe('user@example.com');
+    });
+
+    it('should sanitize nested objects before buffering', () => {
+      // Arrange
+      vi.stubEnv('NODE_ENV', 'production');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = {
+        user: {
+          credentials: { password: 'secret', apiKey: 'key123' },
+          profile: { email: 'user@example.com', phone: '+1234567890' },
+        },
+      };
+
+      // Act
+      testLogger.info('Complex data', meta);
+
+      // Assert: All nested sensitive data sanitized
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect((bufferedEntry.meta as any).user.credentials.password).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).user.credentials.apiKey).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).user.profile.email).toBe('[PII REDACTED]');
+      expect((bufferedEntry.meta as any).user.profile.phone).toBe('[PII REDACTED]');
+    });
+
+    it('should sanitize arrays before buffering', () => {
+      // Arrange
+      vi.stubEnv('NODE_ENV', 'production');
+      const testLogger = new Logger(LogLevel.INFO);
+
+      const pushToLogBufferSpy = vi.spyOn(testLogger as any, 'pushToLogBuffer');
+
+      const meta = {
+        users: [
+          { id: 'usr_1', email: 'user1@example.com', password: 'pass1' },
+          { id: 'usr_2', email: 'user2@example.com', password: 'pass2' },
+        ],
+      };
+
+      // Act
+      testLogger.info('User list', meta);
+
+      // Assert: All array items sanitized
+      const bufferedEntry = pushToLogBufferSpy.mock.calls[0][0] as BufferedLogEntry;
+      expect((bufferedEntry.meta as any).users[0].password).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).users[0].email).toBe('[PII REDACTED]');
+      expect((bufferedEntry.meta as any).users[1].password).toBe('[REDACTED]');
+      expect((bufferedEntry.meta as any).users[1].email).toBe('[PII REDACTED]');
+
+      // Non-sensitive preserved
+      expect((bufferedEntry.meta as any).users[0].id).toBe('usr_1');
+      expect((bufferedEntry.meta as any).users[1].id).toBe('usr_2');
     });
   });
 });

@@ -212,8 +212,8 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
         if (response.meta) {
           setMeta(response.meta);
         }
-      } catch (error) {
-        console.error('Failed to fetch logs:', error);
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }

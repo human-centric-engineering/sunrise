@@ -276,6 +276,201 @@ describe('app/api/v1/users/me/avatar/route', () => {
     });
   });
 
+  describe('Filename Sanitization (Batch 5 Fix)', () => {
+    it('should sanitize filename with special characters before logging', async () => {
+      const { isStorageEnabled, uploadAvatar, getMaxFileSize } =
+        await import('@/lib/storage/upload');
+      const { auth } = await import('@/lib/auth/config');
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+      vi.mocked(getMaxFileSize).mockReturnValue(5 * 1024 * 1024);
+      vi.mocked(validateImageMagicBytes).mockReturnValue({
+        valid: true,
+        detectedType: 'image/jpeg',
+      });
+      vi.mocked(uploadAvatar).mockResolvedValue({
+        url: 'https://storage.example.com/avatars/user-123/avatar.jpg',
+        key: 'avatars/user-123/avatar.jpg',
+        size: 2048,
+        width: 500,
+        height: 500,
+      });
+
+      const { POST } = await import('@/app/api/v1/users/me/avatar/route');
+
+      // Create file with special characters in filename
+      const maliciousFile = createMockFile(
+        'fake image data',
+        '../../../etc/passwd\n<script>alert("xss")</script>.jpg',
+        'image/jpeg'
+      );
+      const request = createUploadRequest(maliciousFile);
+
+      await POST(request);
+
+      // Assert: Logger was called with sanitized filename
+      expect(logger.info).toHaveBeenCalledWith(
+        'Avatar upload started',
+        expect.objectContaining({
+          // Special characters should be replaced with underscores
+          fileName: expect.stringMatching(/^[.\w\-_]+$/),
+          userId: mockSession.user.id,
+        })
+      );
+
+      // Verify special characters are removed/replaced
+      const logCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Avatar upload started');
+      expect(logCall).toBeDefined();
+      const loggedFileName = (logCall?.[1] as any)?.fileName;
+
+      // The sanitization regex /[^\w.\-]/g replaces non-word, non-dot, non-hyphen chars with _
+      // So slashes, angle brackets, parentheses, newlines become underscores
+      expect(loggedFileName).not.toContain('/');
+      expect(loggedFileName).not.toContain('<');
+      expect(loggedFileName).not.toContain('>');
+      expect(loggedFileName).not.toContain('(');
+      expect(loggedFileName).not.toContain(')');
+      expect(loggedFileName).not.toContain('\n');
+
+      // Filename should only contain safe characters (alphanumeric, dots, underscores, hyphens)
+      expect(loggedFileName).toMatch(/^[.\w-]+$/);
+
+      // The dangerous path traversal pattern "../" becomes ".._" (slash replaced with underscore)
+      // This prevents log injection but dots themselves are preserved as valid filename chars
+    });
+
+    it('should sanitize very long filenames before logging', async () => {
+      const { isStorageEnabled, uploadAvatar, getMaxFileSize } =
+        await import('@/lib/storage/upload');
+      const { auth } = await import('@/lib/auth/config');
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+      vi.mocked(getMaxFileSize).mockReturnValue(5 * 1024 * 1024);
+      vi.mocked(validateImageMagicBytes).mockReturnValue({
+        valid: true,
+        detectedType: 'image/jpeg',
+      });
+      vi.mocked(uploadAvatar).mockResolvedValue({
+        url: 'https://storage.example.com/avatars/user-123/avatar.jpg',
+        key: 'avatars/user-123/avatar.jpg',
+        size: 2048,
+        width: 500,
+        height: 500,
+      });
+
+      const { POST } = await import('@/app/api/v1/users/me/avatar/route');
+
+      // Create file with very long filename (300 characters)
+      const longFileName = 'a'.repeat(300) + '.jpg';
+      const longFile = createMockFile('fake image data', longFileName, 'image/jpeg');
+      const request = createUploadRequest(longFile);
+
+      await POST(request);
+
+      // Assert: Filename truncated to 255 characters
+      const logCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Avatar upload started');
+      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      expect(loggedFileName.length).toBeLessThanOrEqual(255);
+    });
+
+    it('should sanitize control characters in filename', async () => {
+      const { isStorageEnabled, uploadAvatar, getMaxFileSize } =
+        await import('@/lib/storage/upload');
+      const { auth } = await import('@/lib/auth/config');
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+      vi.mocked(getMaxFileSize).mockReturnValue(5 * 1024 * 1024);
+      vi.mocked(validateImageMagicBytes).mockReturnValue({
+        valid: true,
+        detectedType: 'image/jpeg',
+      });
+      vi.mocked(uploadAvatar).mockResolvedValue({
+        url: 'https://storage.example.com/avatars/user-123/avatar.jpg',
+        key: 'avatars/user-123/avatar.jpg',
+        size: 2048,
+        width: 500,
+        height: 500,
+      });
+
+      const { POST } = await import('@/app/api/v1/users/me/avatar/route');
+
+      // Create file with control characters
+      const fileWithControlChars = createMockFile(
+        'fake image data',
+        'test\r\n\t\x00file.jpg',
+        'image/jpeg'
+      );
+      const request = createUploadRequest(fileWithControlChars);
+
+      await POST(request);
+
+      // Assert: Control characters removed/replaced
+      const logCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Avatar upload started');
+      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      expect(loggedFileName).not.toContain('\r');
+      expect(loggedFileName).not.toContain('\n');
+      expect(loggedFileName).not.toContain('\t');
+      expect(loggedFileName).not.toContain('\x00');
+    });
+
+    it('should preserve valid filename characters', async () => {
+      const { isStorageEnabled, uploadAvatar, getMaxFileSize } =
+        await import('@/lib/storage/upload');
+      const { auth } = await import('@/lib/auth/config');
+      const { validateImageMagicBytes } = await import('@/lib/storage/image');
+      const { logger } = await import('@/lib/logging');
+
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+      vi.mocked(getMaxFileSize).mockReturnValue(5 * 1024 * 1024);
+      vi.mocked(validateImageMagicBytes).mockReturnValue({
+        valid: true,
+        detectedType: 'image/jpeg',
+      });
+      vi.mocked(uploadAvatar).mockResolvedValue({
+        url: 'https://storage.example.com/avatars/user-123/avatar.jpg',
+        key: 'avatars/user-123/avatar.jpg',
+        size: 2048,
+        width: 500,
+        height: 500,
+      });
+
+      const { POST } = await import('@/app/api/v1/users/me/avatar/route');
+
+      // Create file with valid characters
+      const validFile = createMockFile(
+        'fake image data',
+        'my-avatar_2024.profile.jpg',
+        'image/jpeg'
+      );
+      const request = createUploadRequest(validFile);
+
+      await POST(request);
+
+      // Assert: Valid characters preserved
+      const logCall = vi
+        .mocked(logger.info)
+        .mock.calls.find((call) => call[0] === 'Avatar upload started');
+      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      expect(loggedFileName).toBe('my-avatar_2024.profile.jpg');
+    });
+  });
+
   describe('DELETE /api/v1/users/me/avatar', () => {
     it('should return 401 when not authenticated', async () => {
       const { auth } = await import('@/lib/auth/config');

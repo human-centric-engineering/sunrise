@@ -84,7 +84,7 @@ export async function generateInvitationToken(
     logger.info('Invitation token generated', {
       email,
       expiresAt: expiresAt.toISOString(),
-      metadata,
+      role: metadata.role,
     });
 
     // Return unhashed token (this is what gets sent in the email)

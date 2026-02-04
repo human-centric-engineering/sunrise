@@ -43,8 +43,8 @@ export function FeatureFlagsPage() {
         if (response.success) {
           setFlags(response.data);
         }
-      } catch (error) {
-        console.error('Failed to fetch feature flags:', error);
+      } catch {
+        // Error is silently caught — Batch 6 will add proper error state UI
       } finally {
         setIsLoading(false);
       }

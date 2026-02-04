@@ -10,6 +10,7 @@
  */
 
 import type { AnalyticsProviderType } from './types';
+import { logger } from '@/lib/logging';
 
 /**
  * Analytics provider environment variable name
@@ -82,8 +83,10 @@ export function getExplicitProvider(): AnalyticsProviderType | undefined {
     'console',
   ] satisfies AnalyticsProviderType[];
   if (!validProviders.includes(provider)) {
-    // eslint-disable-next-line no-console
-    console.warn(`[analytics] Unknown provider: ${provider}. Using auto-detection.`);
+    logger.warn('Unknown analytics provider, using auto-detection', {
+      provider,
+      validProviders: ['ga4', 'posthog', 'plausible', 'console'],
+    });
     return undefined;
   }
 

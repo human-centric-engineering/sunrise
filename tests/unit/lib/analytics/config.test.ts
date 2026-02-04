@@ -1,4 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock the logger
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import {
   ANALYTICS_PROVIDER_ENV,
   GA4_ENV,
@@ -108,18 +119,20 @@ describe('lib/analytics/config', () => {
       expect(getExplicitProvider()).toBeUndefined();
     });
 
-    it('should return undefined and warn for unknown provider', () => {
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('should return undefined and warn for unknown provider', async () => {
       vi.stubEnv('NEXT_PUBLIC_ANALYTICS_PROVIDER', 'unknown');
+      const { logger } = await import('@/lib/logging');
 
       const result = getExplicitProvider();
 
       expect(result).toBeUndefined();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        '[analytics] Unknown provider: unknown. Using auto-detection.'
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Unknown analytics provider, using auto-detection',
+        expect.objectContaining({
+          provider: 'unknown',
+          validProviders: ['ga4', 'posthog', 'plausible', 'console'],
+        })
       );
-
-      consoleWarnSpy.mockRestore();
     });
   });
 
