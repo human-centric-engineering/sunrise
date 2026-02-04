@@ -1,24 +1,20 @@
 /**
  * Error Handler Tests
  *
- * Tests for normalizeError function in lib/errors/handler.ts
+ * Tests for error handler functions in lib/errors/handler.ts
  *
  * Test Coverage:
- * - Case 1: Error instances (standard Error, Error with extra properties)
- * - Case 2: String errors
- * - Case 3: Objects with message property
- * - Case 4: Objects without message property
- * - Case 5: Primitives (null, undefined, numbers)
- *
- * Note: This test file focuses on the pure normalizeError function.
- * handleClientError and initGlobalErrorHandler are not tested here as they
- * depend on browser globals (window, navigator) and Sentry integration.
+ * - normalizeError: Error normalization for all input types
+ * - handleClientError: Client-side error handling, logging, tracking, deduplication, scrubbing
+ * - initGlobalErrorHandler: Global error handler initialization and cleanup
  *
  * @see lib/errors/handler.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { normalizeError } from '@/lib/errors/handler';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { normalizeError, handleClientError, initGlobalErrorHandler } from '@/lib/errors/handler';
+import { logger } from '@/lib/logging';
+import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 // Mock dependencies to avoid side effects
 vi.mock('@/lib/logging', () => ({
@@ -379,6 +375,750 @@ describe('normalizeError', () => {
         expect(result.message).toBe(expectedMessage);
         expect(result.error.message).toBe(expectedMessage);
       }
+    });
+  });
+});
+
+describe('handleClientError', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Clear the processedErrors Set via reflection
+    // Since it's module-level state, we need to clear it between tests
+    // We do this by calling handleClientError with unique errors
+    // The Set cleanup happens automatically at MAX_PROCESSED_ERRORS (100)
+  });
+
+  describe('Error logging and tracking', () => {
+    it('should call logger.error with normalized error and context', () => {
+      const error = new Error('test error');
+      const context = { component: 'TestComponent', action: 'testAction' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          component: 'TestComponent',
+          action: 'testAction',
+          errorType: 'unhandled',
+        })
+      );
+    });
+
+    it('should call trackError with normalized error and options', () => {
+      const error = new Error('test error');
+      const context = { userId: '123' };
+
+      handleClientError(error, context);
+
+      expect(trackError).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          tags: {
+            errorType: 'unhandled',
+            source: 'globalHandler',
+          },
+          extra: expect.objectContaining({
+            userId: '123',
+          }),
+          level: ErrorSeverity.Error,
+        })
+      );
+    });
+
+    it('should handle errors without context', () => {
+      const error = new Error('test error');
+
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          errorType: 'unhandled',
+        })
+      );
+    });
+  });
+
+  describe('Sensitive data scrubbing', () => {
+    it('should scrub password from context', () => {
+      const error = new Error('test error');
+      const context = { username: 'john', password: 'secret123' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          username: 'john',
+          password: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub token from context', () => {
+      const error = new Error('test error');
+      const context = { authToken: 'bearer-token-123', userId: '123' };
+
+      handleClientError(error, context);
+
+      expect(trackError).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          extra: expect.objectContaining({
+            authToken: '[REDACTED]',
+            userId: '123',
+          }),
+        })
+      );
+    });
+
+    it('should scrub apiKey from context', () => {
+      const error = new Error('test error');
+      const context = { apiKey: 'sk_live_123', action: 'payment' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          apiKey: '[REDACTED]',
+          action: 'payment',
+        })
+      );
+    });
+
+    it('should scrub secret from context', () => {
+      const error = new Error('test error');
+      const context = { clientSecret: 'cs_test_123' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          clientSecret: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub creditCard from context', () => {
+      const error = new Error('test error');
+      const context = { creditCard: '4111111111111111' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          creditCard: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub ssn from context', () => {
+      const error = new Error('test error');
+      const context = { ssn: '123-45-6789' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          ssn: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub authorization from context', () => {
+      const error = new Error('test error');
+      const context = { authorization: 'Bearer token123' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          authorization: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub sessionToken from context', () => {
+      const error = new Error('test error');
+      const context = { sessionToken: 'session-abc-123' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          sessionToken: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub refreshToken from context', () => {
+      const error = new Error('test error');
+      const context = { refreshToken: 'refresh-xyz-789' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          refreshToken: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub accessToken from context', () => {
+      const error = new Error('test error');
+      const context = { accessToken: 'access-token-456' };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          accessToken: '[REDACTED]',
+        })
+      );
+    });
+
+    it('should scrub sensitive data recursively in nested objects', () => {
+      const error = new Error('test error');
+      const context = {
+        user: {
+          name: 'John',
+          credentials: {
+            password: 'secret123',
+            apiKey: 'sk_test_123',
+          },
+        },
+        metadata: {
+          token: 'bearer-token',
+        },
+      };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          user: {
+            name: 'John',
+            credentials: {
+              password: '[REDACTED]',
+              apiKey: '[REDACTED]',
+            },
+          },
+          metadata: {
+            token: '[REDACTED]',
+          },
+        })
+      );
+    });
+
+    it('should scrub sensitive data from metadata', () => {
+      const error = new Error('test error') as Error & { apiKey: string; userId: string };
+      error.apiKey = 'sk_live_123';
+      error.userId = 'user-123';
+
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          apiKey: '[REDACTED]',
+          userId: 'user-123',
+        })
+      );
+    });
+
+    it('should handle arrays with sensitive data', () => {
+      const error = new Error('test error');
+      const context = {
+        users: [
+          { name: 'John', password: 'secret1' },
+          { name: 'Jane', password: 'secret2' },
+        ],
+      };
+
+      handleClientError(error, context);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          users: [
+            { name: 'John', password: '[REDACTED]' },
+            { name: 'Jane', password: '[REDACTED]' },
+          ],
+        })
+      );
+    });
+  });
+
+  describe('Browser context (userAgent and url)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('should include userAgent when navigator is available', () => {
+      const mockNavigator = {
+        userAgent: 'Mozilla/5.0 (Test Browser)',
+      };
+      vi.stubGlobal('navigator', mockNavigator);
+
+      const error = new Error('test error');
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          userAgent: 'Mozilla/5.0 (Test Browser)',
+        })
+      );
+    });
+
+    it('should include url when window is available', () => {
+      const mockWindow = {
+        location: {
+          href: 'https://example.com/test',
+        },
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const error = new Error('test error');
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          url: 'https://example.com/test',
+        })
+      );
+    });
+
+    it('should include both userAgent and url when both are available', () => {
+      const mockNavigator = {
+        userAgent: 'Mozilla/5.0 (Test Browser)',
+      };
+      const mockWindow = {
+        location: {
+          href: 'https://example.com/test',
+        },
+      };
+      vi.stubGlobal('navigator', mockNavigator);
+      vi.stubGlobal('window', mockWindow);
+
+      const error = new Error('test error');
+      handleClientError(error);
+
+      expect(trackError).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          extra: expect.objectContaining({
+            userAgent: 'Mozilla/5.0 (Test Browser)',
+            url: 'https://example.com/test',
+          }),
+        })
+      );
+    });
+
+    it('should handle missing navigator gracefully', () => {
+      vi.stubGlobal('navigator', undefined);
+
+      const error = new Error('test error');
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          userAgent: undefined,
+        })
+      );
+    });
+
+    it('should handle missing window gracefully', () => {
+      vi.stubGlobal('window', undefined);
+
+      const error = new Error('test error');
+      handleClientError(error);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        error,
+        expect.objectContaining({
+          url: undefined,
+        })
+      );
+    });
+  });
+
+  describe('Error deduplication', () => {
+    it('should not process the same error twice', () => {
+      const error = new Error('duplicate error');
+
+      handleClientError(error);
+      handleClientError(error);
+
+      // Should only be called once
+      expect(logger.error).toHaveBeenCalledTimes(1);
+    });
+
+    it('should process different errors separately', () => {
+      const error1 = new Error('error 1');
+      const error2 = new Error('error 2');
+
+      handleClientError(error1);
+      handleClientError(error2);
+
+      // Should be called twice
+      expect(logger.error).toHaveBeenCalledTimes(2);
+    });
+
+    it('should use error message and stack for fingerprinting', () => {
+      const error1 = new Error('same message');
+      const error2 = new Error('same message');
+      // Different stack traces make them unique
+
+      // Clear mocks to get fresh count
+      vi.clearAllMocks();
+
+      handleClientError(error1);
+      handleClientError(error2);
+
+      // Both should be processed because they have different stacks
+      // (created at different times/lines)
+      expect(logger.error).toHaveBeenCalledTimes(2);
+    });
+
+    it('should cleanup old errors when exceeding MAX_PROCESSED_ERRORS (100)', () => {
+      // Clear mocks
+      vi.clearAllMocks();
+
+      // Generate 101 unique errors to trigger cleanup
+      for (let i = 0; i < 101; i++) {
+        const error = new Error(`unique error ${i}`);
+        handleClientError(error);
+      }
+
+      // All 101 should be processed
+      expect(logger.error).toHaveBeenCalledTimes(101);
+
+      // Now the first error should be removed from the Set, so it can be processed again
+      const firstError = new Error('unique error 0');
+      handleClientError(firstError);
+
+      // Should be processed (102 total calls now)
+      expect(logger.error).toHaveBeenCalledTimes(102);
+    });
+  });
+});
+
+describe('initGlobalErrorHandler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  describe('SSR safety', () => {
+    it('should return undefined when window is undefined (SSR)', () => {
+      vi.stubGlobal('window', undefined);
+
+      const cleanup = initGlobalErrorHandler();
+
+      expect(cleanup).toBeUndefined();
+    });
+
+    it('should not initialize when running on server', () => {
+      vi.stubGlobal('window', undefined);
+
+      initGlobalErrorHandler();
+
+      expect(logger.debug).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Initialization', () => {
+    it('should add event listeners to window', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      expect(mockWindow.addEventListener).toHaveBeenCalledWith(
+        'unhandledrejection',
+        expect.any(Function)
+      );
+      expect(mockWindow.addEventListener).toHaveBeenCalledWith('error', expect.any(Function));
+    });
+
+    it('should log initialization message', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      expect(logger.debug).toHaveBeenCalledWith('Global error handler initialized');
+    });
+
+    it('should set __errorHandlerInitialized flag on window', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      expect(
+        (mockWindow as { __errorHandlerInitialized?: boolean }).__errorHandlerInitialized
+      ).toBe(true);
+    });
+
+    it('should return cleanup function', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const cleanup = initGlobalErrorHandler();
+
+      expect(cleanup).toBeInstanceOf(Function);
+    });
+  });
+
+  describe('Double initialization prevention', () => {
+    it('should not initialize twice if already initialized', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        __errorHandlerInitialized: true,
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const cleanup = initGlobalErrorHandler();
+
+      expect(cleanup).toBeUndefined();
+      expect(mockWindow.addEventListener).not.toHaveBeenCalled();
+    });
+
+    it('should allow re-initialization after cleanup', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const cleanup = initGlobalErrorHandler();
+      expect(cleanup).toBeInstanceOf(Function);
+
+      // Call cleanup
+      cleanup!();
+
+      // Should be able to initialize again
+      vi.clearAllMocks();
+      const cleanup2 = initGlobalErrorHandler();
+
+      expect(cleanup2).toBeInstanceOf(Function);
+      expect(mockWindow.addEventListener).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Cleanup function', () => {
+    it('should remove event listeners when called', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const cleanup = initGlobalErrorHandler();
+      cleanup!();
+
+      expect(mockWindow.removeEventListener).toHaveBeenCalledWith(
+        'unhandledrejection',
+        expect.any(Function)
+      );
+      expect(mockWindow.removeEventListener).toHaveBeenCalledWith('error', expect.any(Function));
+    });
+
+    it('should reset __errorHandlerInitialized flag', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      const cleanup = initGlobalErrorHandler();
+      expect(
+        (mockWindow as { __errorHandlerInitialized?: boolean }).__errorHandlerInitialized
+      ).toBe(true);
+
+      cleanup!();
+
+      expect(
+        (mockWindow as { __errorHandlerInitialized?: boolean }).__errorHandlerInitialized
+      ).toBe(false);
+    });
+  });
+
+  describe('Event handling', () => {
+    it('should handle unhandledrejection events', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        location: {
+          href: 'https://example.com',
+        },
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      // Get the handler that was registered
+      const unhandledRejectionHandler = mockWindow.addEventListener.mock.calls.find(
+        (call) => call[0] === 'unhandledrejection'
+      )?.[1] as (event: PromiseRejectionEvent) => void;
+
+      expect(unhandledRejectionHandler).toBeDefined();
+
+      // Clear mocks to test handler behavior
+      vi.clearAllMocks();
+
+      // Simulate unhandledrejection event
+      const mockEvent = {
+        reason: new Error('Unhandled promise rejection'),
+      } as PromiseRejectionEvent;
+
+      unhandledRejectionHandler(mockEvent);
+
+      // Should call logger.error with errorType: 'unhandled' (hardcoded in handleClientError)
+      // The context.errorType is passed but then overridden by the hardcoded value
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        expect.any(Error),
+        expect.objectContaining({
+          errorType: 'unhandled',
+        })
+      );
+    });
+
+    it('should handle error events', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        location: {
+          href: 'https://example.com',
+        },
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      // Get the handler that was registered
+      const errorHandler = mockWindow.addEventListener.mock.calls.find(
+        (call) => call[0] === 'error'
+      )?.[1] as (event: ErrorEvent) => void;
+
+      expect(errorHandler).toBeDefined();
+
+      // Clear mocks to test handler behavior
+      vi.clearAllMocks();
+
+      // Simulate error event
+      const mockEvent = {
+        error: new Error('Uncaught error'),
+        message: 'Uncaught error',
+        filename: 'test.js',
+        lineno: 42,
+        colno: 15,
+      } as ErrorEvent;
+
+      errorHandler(mockEvent);
+
+      // Should call logger.error with errorType: 'unhandled' (hardcoded in handleClientError) and location info
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        expect.any(Error),
+        expect.objectContaining({
+          errorType: 'unhandled',
+          filename: 'test.js',
+          lineno: 42,
+          colno: 15,
+        })
+      );
+    });
+
+    it('should handle error events without error object (fallback to message)', () => {
+      const mockWindow = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        location: {
+          href: 'https://example.com',
+        },
+      };
+      vi.stubGlobal('window', mockWindow);
+
+      initGlobalErrorHandler();
+
+      // Get the handler that was registered
+      const errorHandler = mockWindow.addEventListener.mock.calls.find(
+        (call) => call[0] === 'error'
+      )?.[1] as (event: ErrorEvent) => void;
+
+      // Clear mocks to test handler behavior
+      vi.clearAllMocks();
+
+      // Simulate error event without error object
+      const mockEvent = {
+        error: null,
+        message: 'Script error',
+        filename: 'unknown',
+        lineno: 0,
+        colno: 0,
+      } as ErrorEvent;
+
+      errorHandler(mockEvent);
+
+      // Should still be called with the message and errorType: 'unhandled'
+      expect(logger.error).toHaveBeenCalledWith(
+        'Unhandled client error',
+        expect.any(Error),
+        expect.objectContaining({
+          errorType: 'unhandled',
+        })
+      );
     });
   });
 });
