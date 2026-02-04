@@ -22,7 +22,7 @@ export default function ResetPasswordEmail({
   userName,
   resetUrl,
   expiresAt,
-}: ResetPasswordEmailProps) {
+}: ResetPasswordEmailProps): React.ReactElement {
   const previewText = 'Reset your password';
 
   // Format expiration time

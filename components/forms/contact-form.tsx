@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { FormError } from './form-error';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 
 interface ContactFormResponse {
   message: string;
@@ -60,7 +61,7 @@ export function ContactForm() {
       setError(null);
 
       // Send form data including honeypot field
-      await apiClient.post<ContactFormResponse>('/api/v1/contact', {
+      await apiClient.post<ContactFormResponse>(API.PUBLIC.CONTACT, {
         body: data,
       });
 

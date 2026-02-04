@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { FeatureFlagList } from '@/components/admin/feature-flag-list';
 import { FeatureFlagForm } from '@/components/admin/feature-flag-form';
 import type { FeatureFlag } from '@/types/prisma';
+import { API } from '@/lib/api/endpoints';
 
 /**
  * API response type
@@ -30,7 +31,7 @@ export function FeatureFlagsPage() {
   useEffect(() => {
     const fetchFlags = async () => {
       try {
-        const res = await fetch('/api/v1/admin/feature-flags', {
+        const res = await fetch(API.ADMIN.FEATURE_FLAGS, {
           credentials: 'same-origin',
         });
 

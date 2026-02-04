@@ -15,7 +15,10 @@ interface WelcomeEmailProps {
   userEmail: string;
 }
 
-export default function WelcomeEmail({ userName, userEmail }: WelcomeEmailProps) {
+export default function WelcomeEmail({
+  userName,
+  userEmail,
+}: WelcomeEmailProps): React.ReactElement {
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard`;
 
   return (

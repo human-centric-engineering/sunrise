@@ -26,7 +26,7 @@ export default function InvitationEmail({
   inviteeEmail,
   invitationUrl,
   expiresAt,
-}: InvitationEmailProps) {
+}: InvitationEmailProps): React.ReactElement {
   const previewText = "You've been invited to join Sunrise";
   const appName = 'Sunrise';
 

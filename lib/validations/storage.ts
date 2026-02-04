@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { SUPPORTED_IMAGE_TYPES } from '@/lib/storage/image';
+import { SUPPORTED_IMAGE_TYPES } from '@/lib/storage/constants';
 
 /**
  * Default max file size (5 MB)

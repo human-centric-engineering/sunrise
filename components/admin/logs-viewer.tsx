@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { ClientDate } from '@/components/ui/client-date';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
+import { API } from '@/lib/api/endpoints';
 
 interface LogsViewerProps {
   initialLogs: LogEntry[];
@@ -194,7 +195,7 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
         if (levelValue !== 'all') params.set('level', levelValue);
         if (searchValue) params.set('search', searchValue);
 
-        const res = await fetch(`/api/v1/admin/logs?${params.toString()}`, {
+        const res = await fetch(`${API.ADMIN.LOGS}?${params.toString()}`, {
           credentials: 'same-origin',
         });
 

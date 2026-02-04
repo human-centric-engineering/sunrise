@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -40,7 +41,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       setError(null);
       setSuccess(false);
 
-      await apiClient.patch<UserPreferences>('/api/v1/users/me/preferences', {
+      await apiClient.patch<UserPreferences>(API.USERS.ME_PREFERENCES, {
         body: {
           email: {
             marketing,

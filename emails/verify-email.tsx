@@ -16,7 +16,11 @@ interface VerifyEmailProps {
   expiresAt: Date;
 }
 
-export default function VerifyEmail({ userName, verificationUrl, expiresAt }: VerifyEmailProps) {
+export default function VerifyEmail({
+  userName,
+  verificationUrl,
+  expiresAt,
+}: VerifyEmailProps): React.ReactElement {
   // Format expiration time
   const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
     month: 'long',

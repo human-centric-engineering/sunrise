@@ -32,6 +32,7 @@ import {
 import { FormError } from '@/components/forms/form-error';
 import { AlertCircle, Send, ArrowLeft, CheckCircle, Copy, ExternalLink } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 
 /**
  * Form validation schema
@@ -90,7 +91,7 @@ export function UserInviteForm() {
       setError(null);
       setInvitation(null);
 
-      const response = await apiClient.post<InvitationResponse>('/api/v1/users/invite', {
+      const response = await apiClient.post<InvitationResponse>(API.USERS.INVITE, {
         body: data,
       });
       setInvitation(response);

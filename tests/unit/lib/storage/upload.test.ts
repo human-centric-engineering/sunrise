@@ -11,6 +11,7 @@ vi.mock('@/lib/storage/image', () => ({
   processImage: vi.fn(),
   getExtensionForMimeType: vi.fn(() => 'jpg'),
   validateImageMagicBytes: vi.fn(() => ({ valid: true, detectedType: 'image/jpeg' })),
+  SUPPORTED_IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
 }));
 
 vi.mock('@/lib/logging', () => ({

@@ -37,11 +37,19 @@ export const API = {
     INVITE: '/api/v1/users/invite',
   },
 
+  /** Invitation endpoints (public, token-gated) */
+  INVITATIONS: {
+    METADATA: '/api/v1/invitations/metadata',
+  },
+
   /** Admin endpoints */
   ADMIN: {
     STATS: '/api/v1/admin/stats',
     LOGS: '/api/v1/admin/logs',
     INVITATIONS: '/api/v1/admin/invitations',
+    /** Delete invitation by email */
+    invitationByEmail: (email: string): string =>
+      `/api/v1/admin/invitations/${encodeURIComponent(email)}`,
     FEATURE_FLAGS: '/api/v1/admin/feature-flags',
     /** Feature flag by ID */
     featureFlag: (id: string): string => `/api/v1/admin/feature-flags/${id}`,

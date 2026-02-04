@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { acceptInvitationSchema, type AcceptInvitationInput } from '@/lib/validations/user';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { authClient } from '@/lib/auth/client';
 import { useAnalytics } from '@/lib/analytics';
 import { useFormAnalytics } from '@/lib/analytics/events';
@@ -120,7 +121,7 @@ export function AcceptInviteForm() {
         setInvitationStatus('loading');
         // Fetch invitation metadata
         const response = await apiClient.get<{ name: string; role: string }>(
-          `/api/v1/invitations/metadata?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
+          `${API.INVITATIONS.METADATA}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailFromUrl)}`
         );
 
         // Store invitation name and mark as valid

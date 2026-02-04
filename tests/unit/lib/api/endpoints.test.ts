@@ -296,6 +296,33 @@ describe('API Endpoints', () => {
     });
   });
 
+  describe('INVITATIONS endpoints', () => {
+    it('should have correct METADATA path', () => {
+      expect(API.INVITATIONS.METADATA).toBe('/api/v1/invitations/metadata');
+    });
+
+    it('should start with /api/', () => {
+      expect(API.INVITATIONS.METADATA).toMatch(/^\/api\//);
+    });
+  });
+
+  describe('ADMIN.invitationByEmail dynamic path', () => {
+    it('should generate correct path with simple email', () => {
+      const path = API.ADMIN.invitationByEmail('user@example.com');
+      expect(path).toBe('/api/v1/admin/invitations/user%40example.com');
+    });
+
+    it('should encode special characters in email', () => {
+      const path = API.ADMIN.invitationByEmail('user+test@example.com');
+      expect(path).toBe('/api/v1/admin/invitations/user%2Btest%40example.com');
+    });
+
+    it('should return string starting with /api/', () => {
+      const path = API.ADMIN.invitationByEmail('test@test.com');
+      expect(path).toMatch(/^\/api\//);
+    });
+  });
+
   describe('PUBLIC endpoints', () => {
     it('should have correct HEALTH path', () => {
       // Assert

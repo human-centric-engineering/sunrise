@@ -6,7 +6,7 @@
  * Data table for managing users with search, sorting, pagination, and actions.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -57,7 +57,9 @@ import {
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
+import { getInitials, getRoleBadgeVariant } from '@/lib/utils/initials';
 
 interface UserTableProps {
   initialUsers: UserListItem[];
@@ -67,30 +69,6 @@ interface UserTableProps {
   initialSortOrder?: 'asc' | 'desc';
   /** Hide the invite button (when shown in tabs with shared header) */
   hideInviteButton?: boolean;
-}
-
-/**
- * Get initials from a name
- */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-/**
- * Role badge variant
- */
-function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'outline' {
-  switch (role) {
-    case 'ADMIN':
-      return 'default';
-    default:
-      return 'outline';
-  }
 }
 
 export function UserTable({
@@ -111,6 +89,13 @@ export function UserTable({
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up search debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
 
   /**
    * Fetch users with current filters
@@ -151,7 +136,7 @@ export function UserTable({
         });
         if (searchValue) params.set('search', searchValue);
 
-        const res = await fetch(`/api/v1/users?${params.toString()}`, {
+        const res = await fetch(`${API.USERS.LIST}?${params.toString()}`, {
           credentials: 'same-origin',
         });
 
@@ -243,7 +228,7 @@ export function UserTable({
     setIsLoading(true);
     setDeleteError(null);
     try {
-      await apiClient.delete(`/api/v1/users/${deleteUserId}`);
+      await apiClient.delete(API.USERS.byId(deleteUserId));
       setDeleteUserId(null);
       void fetchUsers(meta.page);
     } catch (error) {

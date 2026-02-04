@@ -15,7 +15,7 @@ export default function ContactNotificationEmail({
   subject,
   message,
   submittedAt,
-}: ContactNotificationEmailProps) {
+}: ContactNotificationEmailProps): React.ReactElement {
   const formattedDate = submittedAt.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
