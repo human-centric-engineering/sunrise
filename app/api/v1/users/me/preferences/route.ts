@@ -16,7 +16,8 @@ import { UnauthorizedError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updatePreferencesSchema, userPreferencesSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
-import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
+import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
+import type { UserPreferences } from '@/types';
 
 /**
  * GET /api/v1/users/me/preferences

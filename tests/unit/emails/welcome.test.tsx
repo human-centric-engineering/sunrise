@@ -6,6 +6,7 @@ describe('WelcomeEmail', () => {
   const defaultProps = {
     userName: 'John Doe',
     userEmail: 'john@example.com',
+    baseUrl: 'https://example.com',
   };
 
   it('should render with all required props', async () => {
@@ -29,12 +30,11 @@ describe('WelcomeEmail', () => {
     expect(html).toContain('lang="en"');
   });
 
-  it('should include CTA button with dashboard href', async () => {
+  it('should include CTA button with dashboard href using baseUrl', async () => {
     const html = await render(<WelcomeEmail {...defaultProps} />);
 
-    expect(html).toContain('href=');
+    expect(html).toContain('https://example.com/dashboard');
     expect(html).toContain('Get Started');
-    expect(html).toContain('dashboard');
   });
 
   it('should render without errors', () => {
@@ -43,7 +43,11 @@ describe('WelcomeEmail', () => {
 
   it('should display user name in greeting', async () => {
     const html = await render(
-      <WelcomeEmail userName="Alice Smith" userEmail="alice@example.com" />
+      <WelcomeEmail
+        userName="Alice Smith"
+        userEmail="alice@example.com"
+        baseUrl="https://example.com"
+      />
     );
 
     expect(html).toContain('Alice Smith');
@@ -51,7 +55,11 @@ describe('WelcomeEmail', () => {
 
   it('should display user email in footer', async () => {
     const html = await render(
-      <WelcomeEmail userName="Bob" userEmail="bob.jones@testcompany.com" />
+      <WelcomeEmail
+        userName="Bob"
+        userEmail="bob.jones@testcompany.com"
+        baseUrl="https://example.com"
+      />
     );
 
     expect(html).toContain('bob.jones@testcompany.com');

@@ -241,9 +241,9 @@ export function setSecurityHeaders(response: NextResponse): void {
   // Content Security Policy - environment-specific
   response.headers.set('Content-Security-Policy', getCSP());
 
-  // Prevent clickjacking - SAMEORIGIN allows same-origin iframes
+  // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
   // Note: CSP frame-ancestors supersedes this in modern browsers
-  response.headers.set('X-Frame-Options', 'SAMEORIGIN');
+  response.headers.set('X-Frame-Options', 'DENY');
 
   // Prevent MIME type sniffing
   response.headers.set('X-Content-Type-Options', 'nosniff');

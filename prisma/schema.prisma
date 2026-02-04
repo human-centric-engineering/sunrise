@@ -38,7 +38,6 @@ model User {
   accounts      Account[]
 
   @@unique([email])
-  @@index([email])
   @@index([role])
   @@map("user")
 }

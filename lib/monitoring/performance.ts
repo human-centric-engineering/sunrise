@@ -103,6 +103,7 @@ export async function measureAsync<T>(
   let success = false;
   let error: Error | undefined;
   let result: T;
+  let metric: PerformanceMetric;
 
   try {
     result = await fn();
@@ -115,7 +116,7 @@ export async function measureAsync<T>(
     const endTime = new Date();
     const duration = Math.round(endMs - startMs);
 
-    const metric: PerformanceMetric = {
+    metric = {
       name,
       duration,
       startTime,
@@ -130,20 +131,7 @@ export async function measureAsync<T>(
     }
   }
 
-  const endMs = performance.now();
-  const endTime = new Date();
-  const duration = Math.round(endMs - startMs);
-
-  const metric: PerformanceMetric = {
-    name,
-    duration,
-    startTime,
-    endTime,
-    success: true,
-    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-  };
-
-  return { result: result!, metric };
+  return { result: result!, metric: metric! };
 }
 
 /**
@@ -179,6 +167,7 @@ export function measureSync<T>(
   let success = false;
   let error: Error | undefined;
   let result: T;
+  let metric: PerformanceMetric;
 
   try {
     result = fn();
@@ -191,7 +180,7 @@ export function measureSync<T>(
     const endTime = new Date();
     const duration = Math.round(endMs - startMs);
 
-    const metric: PerformanceMetric = {
+    metric = {
       name,
       duration,
       startTime,
@@ -206,20 +195,7 @@ export function measureSync<T>(
     }
   }
 
-  const endMs = performance.now();
-  const endTime = new Date();
-  const duration = Math.round(endMs - startMs);
-
-  const metric: PerformanceMetric = {
-    name,
-    duration,
-    startTime,
-    endTime,
-    success: true,
-    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-  };
-
-  return { result: result!, metric };
+  return { result: result!, metric: metric! };
 }
 
 /**

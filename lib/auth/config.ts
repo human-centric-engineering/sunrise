@@ -14,7 +14,7 @@ import {
   deleteInvitationToken,
   getValidInvitation,
 } from '@/lib/utils/invitation-token';
-import { DEFAULT_USER_PREFERENCES } from '@/types';
+import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
 
 /**
  * Better Auth Configuration
@@ -159,6 +159,7 @@ export const auth = betterAuth({
         react: WelcomeEmail({
           userName: user.name || 'User',
           userEmail: user.email,
+          baseUrl: env.BETTER_AUTH_URL,
         }),
       }).catch((error) => {
         logger.warn('Failed to send welcome email after verification', {
@@ -432,6 +433,7 @@ export const auth = betterAuth({
               react: WelcomeEmail({
                 userName: user.name || 'User',
                 userEmail: user.email,
+                baseUrl: env.BETTER_AUTH_URL,
               }),
             }).catch((error) => {
               logger.warn('Failed to send welcome email', {

@@ -68,15 +68,9 @@ export interface UserPreferences {
 /**
  * Default User Preferences
  *
- * Default values for new users or when preferences are not set.
+ * @deprecated Use DEFAULT_USER_PREFERENCES from '@/lib/validations/user' instead
  */
-export const DEFAULT_USER_PREFERENCES: UserPreferences = {
-  email: {
-    marketing: false,
-    productUpdates: true,
-    securityAlerts: true,
-  },
-};
+export { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
 
 /**
  * Public User Type
