@@ -9,12 +9,12 @@
  * Phase 3.2: User Management
  */
 
-import type { Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { UnauthorizedError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
-import { updatePreferencesSchema } from '@/lib/validations/user';
+import { updatePreferencesSchema, userPreferencesSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
 import { DEFAULT_USER_PREFERENCES, type UserPreferences } from '@/types';
 
@@ -86,11 +86,15 @@ export const PATCH = withAuth(async (request, session) => {
     },
   };
 
-  // Save updated preferences (cast to Prisma JSON type)
+  // Save updated preferences.
+  // The JSON round-trip converts our validated interface into a plain object
+  // whose type (`{ email: { marketing: boolean; ... } }`) satisfies Prisma's
+  // InputJsonObject without needing a cast on the interface itself.
+  const preferencesForDb = toJsonValue(updatedPreferences);
   await prisma.user.update({
     where: { id: session.user.id },
     data: {
-      preferences: updatedPreferences as unknown as Prisma.InputJsonValue,
+      preferences: preferencesForDb,
     },
   });
 
@@ -98,28 +102,32 @@ export const PATCH = withAuth(async (request, session) => {
 });
 
 /**
- * Parse preferences from database JSON field
+ * Parse preferences from database JSON field using Zod validation.
  *
- * Handles null/undefined preferences and merges with defaults
+ * Returns validated preferences or defaults if the stored data doesn't
+ * match the expected shape (e.g., null, legacy format, or corrupt data).
  */
 function parsePreferences(dbPreferences: unknown): UserPreferences {
-  if (!dbPreferences || typeof dbPreferences !== 'object') {
-    return DEFAULT_USER_PREFERENCES;
+  const result = userPreferencesSchema.safeParse(dbPreferences);
+  if (result.success) {
+    // Ensure securityAlerts is always true regardless of stored value
+    return { ...result.data, email: { ...result.data.email, securityAlerts: true } };
   }
+  return DEFAULT_USER_PREFERENCES;
+}
 
-  const prefs = dbPreferences as Record<string, unknown>;
-
-  return {
-    email: {
-      marketing:
-        typeof (prefs.email as Record<string, unknown>)?.marketing === 'boolean'
-          ? ((prefs.email as Record<string, unknown>).marketing as boolean)
-          : DEFAULT_USER_PREFERENCES.email.marketing,
-      productUpdates:
-        typeof (prefs.email as Record<string, unknown>)?.productUpdates === 'boolean'
-          ? ((prefs.email as Record<string, unknown>).productUpdates as boolean)
-          : DEFAULT_USER_PREFERENCES.email.productUpdates,
-      securityAlerts: true, // Always true
-    },
-  };
+/**
+ * Convert a Zod-validated value to a JSON-serializable form that satisfies
+ * Prisma's InputJsonValue type.
+ *
+ * TypeScript interfaces lack the index signature that Prisma's InputJsonObject
+ * requires (`{ readonly [Key in string]?: InputJsonValue | null }`). A JSON
+ * round-trip produces a structurally identical plain object whose inferred type
+ * _does_ satisfy InputJsonValue, eliminating the need for a type assertion.
+ */
+function toJsonValue(value: UserPreferences): Prisma.InputJsonValue {
+  // JSON.parse returns `any`; the runtime value is a plain JSON object
+  // validated by our Zod schema above.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+  return JSON.parse(JSON.stringify(value));
 }

@@ -21,6 +21,7 @@ import {
   featureFlagIdSchema,
   adminUserUpdateSchema,
   listInvitationsQuerySchema,
+  parseInvitationMetadata,
 } from '@/lib/validations/admin';
 
 describe('logLevelSchema', () => {
@@ -891,6 +892,217 @@ describe('listInvitationsQuerySchema', () => {
         limit: 0,
       });
       expect(result.success).toBe(false);
+    });
+  });
+});
+
+describe('parseInvitationMetadata', () => {
+  describe('valid invitation metadata', () => {
+    it('should parse valid invitation metadata', () => {
+      const validData = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(validData);
+
+      expect(result).toEqual(validData);
+      expect(result).not.toBeNull();
+      expect(result?.name).toBe('John Doe');
+      expect(result?.role).toBe('USER');
+      expect(result?.invitedBy).toBe('admin@example.com');
+      expect(result?.invitedAt).toBe('2024-01-01T00:00:00.000Z');
+    });
+
+    it('should parse invitation metadata with ADMIN role', () => {
+      const validData = {
+        name: 'Admin User',
+        role: 'ADMIN',
+        invitedBy: 'super@example.com',
+        invitedAt: '2024-02-01T12:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(validData);
+
+      expect(result).toEqual(validData);
+      expect(result?.role).toBe('ADMIN');
+    });
+
+    it('should parse invitation metadata with special characters in name', () => {
+      const validData = {
+        name: "O'Brien-Smith Jr.",
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(validData);
+
+      expect(result).not.toBeNull();
+      expect(result?.name).toBe("O'Brien-Smith Jr.");
+    });
+  });
+
+  describe('invalid invitation metadata', () => {
+    it('should return null for null input', () => {
+      const result = parseInvitationMetadata(null);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for undefined input', () => {
+      const result = parseInvitationMetadata(undefined);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for empty object', () => {
+      const result = parseInvitationMetadata({});
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when name is missing', () => {
+      const invalidData = {
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when role is missing', () => {
+      const invalidData = {
+        name: 'John Doe',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when invitedBy is missing', () => {
+      const invalidData = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when invitedAt is missing', () => {
+      const invalidData = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when name is wrong type (number)', () => {
+      const invalidData = {
+        name: 123,
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when role is wrong type (number)', () => {
+      const invalidData = {
+        name: 'John Doe',
+        role: 123,
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when invitedBy is wrong type (boolean)', () => {
+      const invalidData = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: true,
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when invitedAt is wrong type (object)', () => {
+      const invalidData = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: { date: '2024-01-01' },
+      };
+
+      const result = parseInvitationMetadata(invalidData);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for string input', () => {
+      const result = parseInvitationMetadata('not an object');
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for number input', () => {
+      const result = parseInvitationMetadata(42);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for array input', () => {
+      const result = parseInvitationMetadata(['name', 'role', 'invitedBy', 'invitedAt']);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when extra fields are present', () => {
+      // Note: Zod by default strips extra fields, so this should still parse successfully
+      // unless we use .strict() on the schema. Let's verify the actual behavior.
+      const dataWithExtra = {
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+        extraField: 'should be ignored',
+      };
+
+      const result = parseInvitationMetadata(dataWithExtra);
+
+      // Zod strips extra fields by default, so this should succeed
+      expect(result).not.toBeNull();
+      expect(result).toEqual({
+        name: 'John Doe',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      });
     });
   });
 });

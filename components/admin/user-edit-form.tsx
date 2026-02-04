@@ -82,7 +82,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     resolver: zodResolver(userEditSchema),
     defaultValues: {
       name: user.name,
-      role: (user.role as 'USER' | 'ADMIN') || 'USER',
+      role: user.role === 'ADMIN' ? 'ADMIN' : 'USER',
       emailVerified: user.emailVerified,
     },
   });

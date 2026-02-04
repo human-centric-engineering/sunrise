@@ -82,8 +82,6 @@ export function UserButton() {
 
   // Authenticated - show avatar with profile/settings/signout options
   const { user } = session;
-  // Cast to include role field (configured in better-auth additionalFields)
-  const userRole = (user as { role?: string | null }).role;
   const initials = getInitials(user.name || 'U');
 
   const handleSignOut = async () => {
@@ -138,7 +136,7 @@ export function UserButton() {
             Settings
           </Link>
         </DropdownMenuItem>
-        {userRole === 'ADMIN' && (
+        {user.role === 'ADMIN' && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>

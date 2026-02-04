@@ -4,6 +4,12 @@
  * TypeScript interfaces for the pluggable analytics system.
  * Follows Segment-like API patterns for cross-provider compatibility.
  *
+ * NOTE: The `[key: string]: unknown` index signatures on `UserTraits`,
+ * `EventProperties`, and `PageProperties` are intentional. Analytics
+ * providers pass these objects to third-party SDKs that accept arbitrary
+ * key-value pairs. Removing the index signatures would prevent passing
+ * domain-specific event types (e.g., `AuthEventProps`) to `track()`.
+ *
  * Phase 4.5: Analytics Integration
  *
  * @see .context/analytics/overview.md for architecture documentation

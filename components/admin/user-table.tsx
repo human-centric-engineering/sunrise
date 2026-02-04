@@ -127,7 +127,7 @@ export function UserTable({
           name: string;
           email: string;
           image: string | null;
-          role: string | null;
+          role: string;
           emailVerified: boolean;
           createdAt: string;
         }

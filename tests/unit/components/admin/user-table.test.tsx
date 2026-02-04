@@ -77,7 +77,7 @@ describe('components/admin/user-table', () => {
       name: 'Bob Smith',
       email: 'bob@example.com',
       image: null,
-      role: null,
+      role: 'USER',
       emailVerified: false,
       createdAt: new Date('2025-02-20T14:30:00Z'),
     },

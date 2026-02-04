@@ -265,6 +265,9 @@ export function sanitizeObject<T extends Record<string, unknown>>(
     }
   }
 
+  // SAFETY: The assertion is sound — we iterate every key of `obj` and only
+  // transform string values via `sanitizer`, preserving all keys and non-string
+  // values unchanged. The structural shape of `T` is therefore maintained.
   return result as T;
 }
 

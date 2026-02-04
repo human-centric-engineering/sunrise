@@ -24,7 +24,7 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   // Custom fields for RBAC
-  role          String?   @default("USER")
+  role          String    @default("USER")
 
   // Extended Profile Fields (Phase 3.2)
   bio           String?   @db.Text        // User biography (long text)

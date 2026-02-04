@@ -267,8 +267,12 @@ export function handleAPIError(error: unknown): Response {
     });
   }
 
-  // Handle unknown errors
-  const message = error instanceof Error ? error.message : 'An unexpected error occurred';
+  // Handle unknown errors — use generic message in production to avoid leaking
+  // implementation details (database errors, internal paths, etc.)
+  const message =
+    env.NODE_ENV !== 'production' && error instanceof Error
+      ? error.message
+      : 'An unexpected error occurred';
 
   return errorResponse(message, {
     code: ErrorCodes.INTERNAL_ERROR,

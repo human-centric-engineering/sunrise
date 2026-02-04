@@ -129,7 +129,7 @@ export class PlausibleProvider implements AnalyticsProvider {
       // Handle revenue tracking
       if (properties.revenue !== undefined) {
         options.revenue = {
-          currency: (properties.currency as string) ?? 'USD',
+          currency: typeof properties.currency === 'string' ? properties.currency : 'USD',
           amount: properties.revenue,
         };
       }

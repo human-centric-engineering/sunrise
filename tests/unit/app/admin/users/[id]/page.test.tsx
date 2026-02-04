@@ -120,7 +120,7 @@ describe('AdminUserProfilePage', () => {
       email: 'jane@example.com',
       emailVerified: false,
       image: null,
-      role: null,
+      role: 'USER',
       bio: null,
       phone: null,
       timezone: null,
@@ -461,10 +461,9 @@ describe('AdminUserProfilePage', () => {
       expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
     });
 
-    it('should show default role "USER" when role is null', async () => {
+    it('should display user role correctly', async () => {
       // Arrange
       const mockUser = createMinimalMockUser();
-      mockUser.role = null;
       mockUserApiResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
@@ -472,7 +471,7 @@ describe('AdminUserProfilePage', () => {
       const Component = await AdminUserProfilePage({ params });
       render(Component);
 
-      // Assert: Default role is shown
+      // Assert: Role from user data is shown
       expect(screen.getByText('USER')).toBeInTheDocument();
     });
 

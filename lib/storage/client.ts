@@ -43,7 +43,23 @@ export function getStorageClient(): StorageProvider | null {
     return storageClient;
   }
 
-  const explicitProvider = process.env.STORAGE_PROVIDER as StorageProviderType | undefined;
+  const rawProvider = process.env.STORAGE_PROVIDER;
+  const validProviders: readonly string[] = [
+    's3',
+    'vercel-blob',
+    'local',
+  ] satisfies StorageProviderType[];
+  let explicitProvider: StorageProviderType | undefined;
+  if (rawProvider) {
+    if (validProviders.includes(rawProvider)) {
+      explicitProvider = rawProvider as StorageProviderType;
+    } else {
+      logger.warn('Unknown STORAGE_PROVIDER value, ignoring', {
+        provider: rawProvider,
+        validProviders: ['s3', 'vercel-blob', 'local'],
+      });
+    }
+  }
   const isDevelopment = process.env.NODE_ENV === 'development';
 
   // Try to create provider based on explicit configuration or auto-detection

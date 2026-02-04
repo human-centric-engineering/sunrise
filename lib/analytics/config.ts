@@ -71,15 +71,23 @@ export function isDevelopment(): boolean {
  */
 export function getExplicitProvider(): AnalyticsProviderType | undefined {
   // Must use literal process.env access for Next.js client-side inlining
-  const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER as AnalyticsProviderType | undefined;
+  const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER;
 
-  if (provider && !['ga4', 'posthog', 'plausible', 'console'].includes(provider)) {
+  if (!provider) return undefined;
+
+  const validProviders: readonly string[] = [
+    'ga4',
+    'posthog',
+    'plausible',
+    'console',
+  ] satisfies AnalyticsProviderType[];
+  if (!validProviders.includes(provider)) {
     // eslint-disable-next-line no-console
     console.warn(`[analytics] Unknown provider: ${provider}. Using auto-detection.`);
     return undefined;
   }
 
-  return provider;
+  return provider as AnalyticsProviderType;
 }
 
 /**

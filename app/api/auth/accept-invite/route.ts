@@ -44,6 +44,7 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { acceptInvitationSchema } from '@/lib/validations/user';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
+import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
@@ -117,12 +118,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const metadata = invitation.metadata as {
-      name: string;
-      role: string;
-      invitedBy: string;
-      invitedAt: string;
-    };
+    const metadata = parseInvitationMetadata(invitation.metadata);
+
+    if (!metadata) {
+      logger.warn('Invalid invitation metadata', { email });
+      return errorResponse('Invalid invitation data', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
+    }
 
     logger.info('Invitation metadata retrieved', { email, metadata });
 
@@ -141,12 +145,16 @@ export async function POST(request: NextRequest) {
     });
 
     if (!signupResponse.ok) {
-      const error = (await signupResponse.json().catch(() => ({ message: 'Signup failed' }))) as {
-        message?: string;
-      };
+      const errorBody: unknown = await signupResponse
+        .json()
+        .catch(() => ({ message: 'Signup failed' }));
+      const errorMessage =
+        typeof errorBody === 'object' && errorBody !== null && 'message' in errorBody
+          ? String((errorBody as Record<string, unknown>).message)
+          : 'Unknown error';
       logger.error('better-auth signup failed', undefined, {
         email,
-        error: error.message ?? 'Unknown error',
+        error: errorMessage,
       });
       return errorResponse('Failed to create user account', {
         code: ErrorCodes.INTERNAL_ERROR,
@@ -154,11 +162,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const signupData = (await signupResponse.json()) as {
-      user: { id: string };
-      session?: { token: string };
-    };
-    const newUserId = signupData.user.id;
+    const signupData: unknown = await signupResponse.json();
+    const newUserId =
+      typeof signupData === 'object' &&
+      signupData !== null &&
+      'user' in signupData &&
+      typeof (signupData as Record<string, unknown>).user === 'object' &&
+      (signupData as Record<string, unknown>).user !== null &&
+      'id' in ((signupData as Record<string, unknown>).user as Record<string, unknown>)
+        ? String(((signupData as Record<string, unknown>).user as Record<string, unknown>).id)
+        : null;
+
+    if (!newUserId) {
+      logger.error('better-auth signup returned unexpected response', undefined, { email });
+      return errorResponse('Failed to create user account', {
+        code: ErrorCodes.INTERNAL_ERROR,
+        status: 500,
+      });
+    }
 
     logger.info('User created via better-auth', { email, userId: newUserId });
 
@@ -196,13 +217,19 @@ export async function POST(request: NextRequest) {
     });
 
     if (!sessionResponse.ok) {
-      const error = (await sessionResponse.json().catch(() => ({ message: 'Sign-in failed' }))) as {
-        message?: string;
-      };
+      const sessionErrorBody: unknown = await sessionResponse
+        .json()
+        .catch(() => ({ message: 'Sign-in failed' }));
+      const sessionErrorMessage =
+        typeof sessionErrorBody === 'object' &&
+        sessionErrorBody !== null &&
+        'message' in sessionErrorBody
+          ? String((sessionErrorBody as Record<string, unknown>).message)
+          : 'Unknown error';
       logger.error('better-auth sign-in failed after invitation acceptance', undefined, {
         email,
         userId: newUserId,
-        error: error.message ?? 'Unknown error',
+        error: sessionErrorMessage,
       });
       return errorResponse('User created but failed to create session', {
         code: ErrorCodes.INTERNAL_ERROR,

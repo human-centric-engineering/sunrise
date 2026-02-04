@@ -181,3 +181,29 @@ export const listInvitationsQuerySchema = z.object({
 });
 
 export type ListInvitationsQuery = z.infer<typeof listInvitationsQuerySchema>;
+
+/**
+ * Invitation metadata schema for Prisma JSON field validation.
+ *
+ * Used to safely parse `Verification.metadata` from the database
+ * instead of using bare `as InvitationMetadata` type assertions.
+ */
+export const invitationMetadataSchema = z.object({
+  name: z.string(),
+  role: z.string(),
+  invitedBy: z.string(),
+  invitedAt: z.string(),
+});
+
+export type InvitationMetadata = z.infer<typeof invitationMetadataSchema>;
+
+/**
+ * Parse and validate invitation metadata from a Prisma JSON field.
+ *
+ * Returns the validated metadata or `null` if the data doesn't match
+ * the expected shape (e.g., corrupted or legacy data).
+ */
+export function parseInvitationMetadata(data: unknown): InvitationMetadata | null {
+  const result = invitationMetadataSchema.safeParse(data);
+  return result.success ? result.data : null;
+}

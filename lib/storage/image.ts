@@ -86,7 +86,9 @@ export function validateImageMagicBytes(buffer: Buffer): ImageValidationResult {
   }
 
   // Check each supported type
-  for (const [mimeType, signatures] of Object.entries(MAGIC_BYTES)) {
+  // Iterate via SUPPORTED_IMAGE_TYPES for proper typing (Object.entries loses key type to `string`)
+  for (const mimeType of SUPPORTED_IMAGE_TYPES) {
+    const signatures = MAGIC_BYTES[mimeType];
     for (const signature of signatures) {
       let matches = true;
 
@@ -124,7 +126,7 @@ export function validateImageMagicBytes(buffer: Buffer): ImageValidationResult {
       if (matches) {
         return {
           valid: true,
-          detectedType: mimeType as SupportedImageType,
+          detectedType: mimeType,
         };
       }
     }
