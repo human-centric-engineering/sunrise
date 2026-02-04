@@ -368,7 +368,7 @@ export class Logger {
           message: error.message,
           stack: error.stack,
           // Add error code if available (e.g., Prisma errors, custom errors)
-          code: (error as { code?: string }).code,
+          code: 'code' in error && typeof error.code === 'string' ? error.code : undefined,
         };
       } else {
         // For non-Error objects, try to extract meaningful information

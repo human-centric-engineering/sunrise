@@ -3,10 +3,11 @@
  *
  * Tests for utility functions in lib/utils.ts
  * - cn() - Tailwind CSS class merging utility
+ * - isRecord() - Type guard for Record<string, unknown>
  */
 
 import { describe, it, expect } from 'vitest';
-import { cn } from '@/lib/utils';
+import { cn, isRecord } from '@/lib/utils';
 
 describe('cn()', () => {
   describe('basic functionality', () => {
@@ -210,5 +211,54 @@ describe('cn()', () => {
       expect(result).toContain('bg-white');
       expect(result).toContain('dark:bg-gray-900');
     });
+  });
+});
+
+describe('isRecord()', () => {
+  it('should return true for plain objects', () => {
+    expect(isRecord({})).toBe(true);
+    expect(isRecord({ key: 'value' })).toBe(true);
+    expect(isRecord({ a: 1, b: 2, c: 3 })).toBe(true);
+  });
+
+  it('should return true for objects created with Object.create(null)', () => {
+    const obj = Object.create(null);
+    expect(isRecord(obj)).toBe(true);
+  });
+
+  it('should return false for null', () => {
+    expect(isRecord(null)).toBe(false);
+  });
+
+  it('should return false for undefined', () => {
+    expect(isRecord(undefined)).toBe(false);
+  });
+
+  it('should return false for arrays', () => {
+    expect(isRecord([])).toBe(false);
+    expect(isRecord([1, 2, 3])).toBe(false);
+    expect(isRecord(['a', 'b'])).toBe(false);
+  });
+
+  it('should return false for primitives', () => {
+    expect(isRecord('string')).toBe(false);
+    expect(isRecord(42)).toBe(false);
+    expect(isRecord(true)).toBe(false);
+    expect(isRecord(false)).toBe(false);
+  });
+
+  it('should return false for functions', () => {
+    expect(isRecord(() => {})).toBe(false);
+    expect(isRecord(function () {})).toBe(false);
+  });
+
+  it('should return true for class instances', () => {
+    class MyClass {}
+    const instance = new MyClass();
+    expect(isRecord(instance)).toBe(true);
+  });
+
+  it('should return true for Date objects', () => {
+    expect(isRecord(new Date())).toBe(true);
   });
 });

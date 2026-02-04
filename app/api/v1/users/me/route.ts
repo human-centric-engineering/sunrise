@@ -15,6 +15,7 @@ import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
+import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
@@ -183,7 +184,7 @@ export const DELETE = withAuth(async (request, session) => {
     });
   } catch (error) {
     logger.error('Failed to delete user account', error, {
-      userId: (error as { userId?: string })?.userId,
+      userId: isRecord(error) && typeof error.userId === 'string' ? error.userId : undefined,
     });
     throw error;
   }

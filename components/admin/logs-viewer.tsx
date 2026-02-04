@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { ClientDate } from '@/components/ui/client-date';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 
@@ -205,8 +206,9 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
         }
 
         setLogs(response.data);
-        if (response.meta) {
-          setMeta(response.meta as PaginationMeta);
+        const parsedMeta = parsePaginationMeta(response.meta);
+        if (parsedMeta) {
+          setMeta(parsedMeta);
         }
       } catch {
         // Error is silently caught — Batch 6 will add proper error state UI

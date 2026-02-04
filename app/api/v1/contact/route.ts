@@ -38,6 +38,7 @@ import {
 import { getClientIP } from '@/lib/security/ip';
 import { sendEmail } from '@/lib/email/send';
 import ContactNotificationEmail from '@/emails/contact-notification';
+import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
 
@@ -157,8 +158,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // Special handling for honeypot validation error (to not reveal the field)
     if (error instanceof ValidationError && error.details) {
-      const details = error.details as { errors?: Array<{ path: string }> };
-      if (details.errors?.some((e) => e.path === 'website')) {
+      const details = error.details;
+      if (
+        Array.isArray(details.errors) &&
+        details.errors.some((e: unknown) => isRecord(e) && e.path === 'website')
+      ) {
         logger.warn('Contact form honeypot validation failed', {
           ip: getClientIP(request),
         });

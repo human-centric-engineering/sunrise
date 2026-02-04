@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { signInSchema, type SignInInput } from '@/lib/validations/auth';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
+import { isRecord } from '@/lib/utils';
 import { safeCallbackUrl } from '@/lib/security';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
@@ -78,8 +79,12 @@ export function LoginForm() {
       });
 
       if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(data.message ?? 'Failed to send verification email');
+        const raw: unknown = await response.json().catch(() => ({}));
+        const msg =
+          isRecord(raw) && typeof raw.message === 'string'
+            ? raw.message
+            : 'Failed to send verification email';
+        throw new Error(msg);
       }
 
       setVerificationSent(true);

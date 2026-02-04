@@ -16,6 +16,7 @@ import { authClient } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { isRecord } from '@/lib/utils';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { AvatarCropDialog } from './avatar-crop-dialog';
@@ -102,17 +103,25 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         });
 
         if (!response.ok) {
-          const result = (await response.json()) as { error?: { message?: string } };
-          throw new Error(result.error?.message ?? 'Upload failed');
+          const raw: unknown = await response.json();
+          const errorMsg =
+            isRecord(raw) && isRecord(raw.error) && typeof raw.error.message === 'string'
+              ? raw.error.message
+              : 'Upload failed';
+          throw new Error(errorMsg);
         }
 
-        const result = (await response.json()) as { data?: { url?: string } };
+        const raw: unknown = await response.json();
+        const avatarUrl =
+          isRecord(raw) && isRecord(raw.data) && typeof raw.data.url === 'string'
+            ? raw.data.url
+            : '';
 
         // Track avatar upload
         void track(EVENTS.AVATAR_UPLOADED);
 
         // Update session via better-auth (invalidates cookie cache + signals useSession())
-        await authClient.updateUser({ image: result.data?.url ?? '' });
+        await authClient.updateUser({ image: avatarUrl });
         router.refresh();
       } catch (err) {
         if (err instanceof Error) {

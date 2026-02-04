@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getOAuthState, APIError } from 'better-auth/api';
@@ -15,6 +16,17 @@ import {
   getValidInvitation,
 } from '@/lib/utils/invitation-token';
 import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
+
+/**
+ * Zod schema for OAuth invitation state passed via `additionalData`.
+ * Validates that `invitationEmail` and `invitationToken` are strings when present.
+ */
+const oauthInvitationStateSchema = z
+  .object({
+    invitationEmail: z.string().optional(),
+    invitationToken: z.string().optional(),
+  })
+  .passthrough();
 
 /**
  * Better Auth Configuration
@@ -236,10 +248,8 @@ export const auth = betterAuth({
           if (isOAuthSignup) {
             try {
               const oauthState = await getOAuthState();
-              const invitationEmail =
-                oauthState && typeof oauthState === 'object'
-                  ? (oauthState.invitationEmail as string | undefined)
-                  : null;
+              const parsed = oauthInvitationStateSchema.safeParse(oauthState);
+              const invitationEmail = parsed.success ? parsed.data.invitationEmail : null;
 
               // If invitation data is present, email MUST match
               if (invitationEmail && user.email !== invitationEmail) {
@@ -320,16 +330,15 @@ export const auth = betterAuth({
             if (isOAuthSignup) {
               // Get OAuth state (contains additionalData from client)
               const oauthState = await getOAuthState();
+              const parsedState = oauthInvitationStateSchema.safeParse(oauthState);
 
               // Check if invitation data is present in OAuth state additionalData
-              const invitationToken =
-                oauthState && typeof oauthState === 'object'
-                  ? (oauthState.invitationToken as string | undefined)
-                  : null;
-              const invitationEmail =
-                oauthState && typeof oauthState === 'object'
-                  ? (oauthState.invitationEmail as string | undefined)
-                  : null;
+              const invitationToken = parsedState.success
+                ? (parsedState.data.invitationToken ?? null)
+                : null;
+              const invitationEmail = parsedState.success
+                ? (parsedState.data.invitationEmail ?? null)
+                : null;
 
               if (invitationToken && invitationEmail && user.email === invitationEmail) {
                 logger.info('Processing OAuth invitation', {

@@ -600,21 +600,18 @@ describe('POST /api/auth/accept-invite', () => {
         user: { id: undefined }, // No valid id
       });
 
-      const mockSignInResponse = createMockFetchResponse({ user: {} }, 200, []);
-
-      global.fetch = vi
-        .fn()
-        .mockResolvedValueOnce(mockSignupResponse)
-        .mockResolvedValueOnce(mockSignInResponse);
+      global.fetch = vi.fn().mockResolvedValueOnce(mockSignupResponse);
 
       const request = createMockRequest(validInvitationData);
 
       // Act
       const response = await POST(request);
+      const data = await response.json();
 
-      // Assert: Should still complete (user.update will use undefined id)
-      // This is a graceful degradation - the request completes but may fail at DB level
-      expect(response.status).toBe(200);
+      // Assert: Runtime validation catches the malformed response and returns 500
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error.message).toContain('Failed to create user account');
     });
   });
 

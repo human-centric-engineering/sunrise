@@ -30,6 +30,7 @@
  * ```
  */
 
+import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
 import { trackError, ErrorSeverity } from './sentry';
 
@@ -107,26 +108,20 @@ export function normalizeError(error: unknown): {
   }
 
   // Case 3: Object with message property
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof error.message === 'string'
-  ) {
+  if (isRecord(error) && typeof error.message === 'string') {
     return {
       message: error.message,
       error: new Error(error.message),
-      metadata: error as Record<string, unknown>,
+      metadata: error,
     };
   }
 
   // Case 4: Other objects (extract useful info)
-  if (error && typeof error === 'object') {
-    const metadata = error as Record<string, unknown>;
+  if (isRecord(error)) {
     return {
       message: 'Unknown error occurred',
       error: new Error('Unknown error occurred'),
-      metadata,
+      metadata: error,
     };
   }
 
@@ -227,8 +222,10 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   }
 
   // Scrub sensitive data from context and metadata
-  const scrubbedContext = scrubSensitiveData(context) as Record<string, unknown>;
-  const scrubbedMetadata = scrubSensitiveData(normalized.metadata) as Record<string, unknown>;
+  const rawScrubbedContext = scrubSensitiveData(context);
+  const scrubbedContext = isRecord(rawScrubbedContext) ? rawScrubbedContext : {};
+  const rawScrubbedMetadata = scrubSensitiveData(normalized.metadata);
+  const scrubbedMetadata = isRecord(rawScrubbedMetadata) ? rawScrubbedMetadata : {};
 
   // Log the error with structured logger
   logger.error('Unhandled client error', normalized.error, {

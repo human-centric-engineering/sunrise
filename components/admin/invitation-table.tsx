@@ -51,6 +51,7 @@ import {
 } from 'lucide-react';
 import type { InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
@@ -160,8 +161,9 @@ export function InvitationTable({
         }));
 
         setInvitations(invitationsWithDates);
-        if (response.meta) {
-          setMeta(response.meta as PaginationMeta);
+        const parsedMeta = parsePaginationMeta(response.meta);
+        if (parsedMeta) {
+          setMeta(parsedMeta);
         }
       } catch {
         // Error is silently caught — Batch 6 will add proper error state UI

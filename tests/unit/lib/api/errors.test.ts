@@ -572,6 +572,82 @@ describe('handleAPIError', () => {
         const details = error.details as Record<string, unknown>;
         expect(details.field).toBe('field');
       });
+
+      it('should handle unique constraint when target is a number instead of array', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: 123 as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target is a string instead of array', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: 'email' as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target array contains non-strings', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: [123, 456] as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
+
+      it('should handle unique constraint when target is null', async () => {
+        const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '5.0.0',
+          meta: { target: null as unknown as string[] },
+        });
+
+        const response = handleAPIError(prismaError);
+        const body = await parseResponse(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error.message).toBe('Field already exists');
+        expect(body.error.code).toBe(ErrorCodes.EMAIL_TAKEN);
+        expect(body.error.details).toEqual({
+          field: 'field',
+          constraint: 'unique',
+        });
+      });
     });
 
     describe('P2025 - Record not found', () => {

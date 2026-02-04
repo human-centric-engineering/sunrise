@@ -31,6 +31,7 @@
  */
 
 import type { APIResponse } from '@/types/api';
+import { parseApiResponse } from '@/lib/api/parse-response';
 
 /**
  * Custom error class for API client errors
@@ -125,9 +126,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
   let data: APIResponse<T>;
 
   try {
-    data = (await response.json()) as APIResponse<T>;
+    data = await parseApiResponse<T>(response);
   } catch {
-    // Non-JSON response
+    // Non-JSON or malformed response
     throw new APIClientError(
       `Invalid response format: ${response.statusText}`,
       'INVALID_RESPONSE',

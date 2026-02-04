@@ -38,6 +38,7 @@
  * - Session is preserved for auto-login (user redirected to dashboard, not login)
  */
 
+import { z } from 'zod';
 import { NextRequest } from 'next/server';
 import { validateRequestBody } from '@/lib/api/validation';
 import { successResponse, errorResponse } from '@/lib/api/responses';
@@ -54,6 +55,16 @@ import {
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+
+/** Schema for better-auth signup success response */
+const betterAuthSignupResponseSchema = z.object({
+  user: z.object({ id: z.string() }),
+});
+
+/** Schema for better-auth error response */
+const betterAuthErrorResponseSchema = z.object({
+  message: z.string(),
+});
 
 /**
  * POST /api/auth/accept-invite
@@ -148,10 +159,8 @@ export async function POST(request: NextRequest) {
       const errorBody: unknown = await signupResponse
         .json()
         .catch(() => ({ message: 'Signup failed' }));
-      const errorMessage =
-        typeof errorBody === 'object' && errorBody !== null && 'message' in errorBody
-          ? String((errorBody as Record<string, unknown>).message)
-          : 'Unknown error';
+      const parsedError = betterAuthErrorResponseSchema.safeParse(errorBody);
+      const errorMessage = parsedError.success ? parsedError.data.message : 'Unknown error';
       logger.error('better-auth signup failed', undefined, {
         email,
         error: errorMessage,
@@ -163,15 +172,8 @@ export async function POST(request: NextRequest) {
     }
 
     const signupData: unknown = await signupResponse.json();
-    const newUserId =
-      typeof signupData === 'object' &&
-      signupData !== null &&
-      'user' in signupData &&
-      typeof (signupData as Record<string, unknown>).user === 'object' &&
-      (signupData as Record<string, unknown>).user !== null &&
-      'id' in ((signupData as Record<string, unknown>).user as Record<string, unknown>)
-        ? String(((signupData as Record<string, unknown>).user as Record<string, unknown>).id)
-        : null;
+    const parsedSignup = betterAuthSignupResponseSchema.safeParse(signupData);
+    const newUserId = parsedSignup.success ? parsedSignup.data.user.id : null;
 
     if (!newUserId) {
       logger.error('better-auth signup returned unexpected response', undefined, { email });
@@ -220,12 +222,10 @@ export async function POST(request: NextRequest) {
       const sessionErrorBody: unknown = await sessionResponse
         .json()
         .catch(() => ({ message: 'Sign-in failed' }));
-      const sessionErrorMessage =
-        typeof sessionErrorBody === 'object' &&
-        sessionErrorBody !== null &&
-        'message' in sessionErrorBody
-          ? String((sessionErrorBody as Record<string, unknown>).message)
-          : 'Unknown error';
+      const parsedSessionError = betterAuthErrorResponseSchema.safeParse(sessionErrorBody);
+      const sessionErrorMessage = parsedSessionError.success
+        ? parsedSessionError.data.message
+        : 'Unknown error';
       logger.error('better-auth sign-in failed after invitation acceptance', undefined, {
         email,
         userId: newUserId,
