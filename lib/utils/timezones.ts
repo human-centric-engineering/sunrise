@@ -152,16 +152,13 @@ export const TIMEZONES: TimezoneOption[] = [
  * Get timezones grouped by region
  */
 export function getTimezonesByRegion(): Record<string, TimezoneOption[]> {
-  return TIMEZONES.reduce(
-    (acc, tz) => {
-      if (!acc[tz.region]) {
-        acc[tz.region] = [];
-      }
-      acc[tz.region].push(tz);
-      return acc;
-    },
-    {} as Record<string, TimezoneOption[]>
-  );
+  return TIMEZONES.reduce<Record<string, TimezoneOption[]>>((acc, tz) => {
+    if (!acc[tz.region]) {
+      acc[tz.region] = [];
+    }
+    acc[tz.region].push(tz);
+    return acc;
+  }, {});
 }
 
 /**

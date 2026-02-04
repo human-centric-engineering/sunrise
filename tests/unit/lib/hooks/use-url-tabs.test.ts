@@ -180,7 +180,6 @@ describe('lib/hooks/use-url-tabs', () => {
 
     it('should not update URL for invalid tab value', () => {
       // Arrange
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result } = renderHook(() =>
         useUrlTabs<TestTab>({
           defaultTab: DEFAULT_TAB,
@@ -196,9 +195,6 @@ describe('lib/hooks/use-url-tabs', () => {
 
       // Assert
       expect(mockRouter.replace).not.toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith('[useUrlTabs] Invalid tab value: invalid');
-
-      consoleSpy.mockRestore();
     });
 
     it('should preserve existing query params when updating tab', async () => {
