@@ -189,7 +189,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Security       | `.context/security/`     | Rate limiting, headers, CORS  |
 | Testing        | `.context/testing/`      | Patterns, mocking, async      |
 | Email          | `.context/email/`        | Templates, sending            |
-| Guidelines     | `.context/guidelines.md` | Workflow, conventions         |
+| Workflow       | `.context/workflow.md`   | Git, commits, PR process      |
 
 ## Troubleshooting
 
