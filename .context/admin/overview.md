@@ -15,7 +15,9 @@ app/admin/
 ├── users/
 │   ├── page.tsx        # User management tabs (users + invitations)
 │   ├── [id]/
-│   │   └── page.tsx    # Edit individual user
+│   │   ├── page.tsx    # View user profile (read-only)
+│   │   └── edit/
+│   │       └── page.tsx  # Edit individual user
 │   └── invite/
 │       └── page.tsx    # Send new invitation
 ├── features/

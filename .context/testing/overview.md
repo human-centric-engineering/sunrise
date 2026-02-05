@@ -173,8 +173,8 @@ npm run validate          # Type-check + lint + format check
 
 **Directories**:
 
-- `tests/unit/` - Unit tests (545 tests currently)
-- `tests/integration/` - Integration tests (14 tests currently)
+- `tests/unit/` - Unit tests (majority of tests)
+- `tests/integration/` - Integration tests (API route tests)
 - `tests/helpers/` - Test utilities (assertions, mocks, factories)
 - `tests/types/` - Shared type definitions (MockHeaders, MockSession)
 

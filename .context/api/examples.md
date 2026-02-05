@@ -558,6 +558,96 @@ return paginatedResponse(users, { page, limit, total });
 return errorResponse('Something went wrong', { code: 'CUSTOM_ERROR', status: 500 });
 ```
 
+## Server-Side API Consumption
+
+✅ **Implemented in:** `lib/api/server-fetch.ts`
+
+When server components need to call internal API routes (e.g., fetching data for SSR), use the `serverFetch` utility which handles cookie forwarding automatically.
+
+### serverFetch Utility
+
+```typescript
+// lib/api/server-fetch.ts
+import { cookies } from 'next/headers';
+import { env } from '@/lib/env';
+
+/**
+ * Fetch an internal API route from a server component with cookie forwarding.
+ * - Automatically forwards the current request's cookies (for auth)
+ * - Constructs absolute URL from relative path
+ * - Disables caching by default
+ */
+export async function serverFetch(path: string, init?: RequestInit): Promise<Response> {
+  const cookieHeader = await getCookieHeader();
+  const baseUrl = getBaseUrl();
+
+  return fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      Cookie: cookieHeader,
+      ...init?.headers,
+    },
+    cache: init?.cache ?? 'no-store',
+  });
+}
+```
+
+### Usage in Server Components
+
+```typescript
+// app/(protected)/admin/page.tsx
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import type { SystemStats } from '@/types/admin';
+
+export default async function AdminDashboard() {
+  const res = await serverFetch('/api/v1/admin/stats');
+  const { data: stats } = await parseApiResponse<SystemStats>(res);
+
+  return <StatsDisplay stats={stats} />;
+}
+```
+
+### With Query Parameters
+
+```typescript
+// Fetch paginated list
+const res = await serverFetch('/api/v1/users?limit=20&sortBy=createdAt');
+
+// With search
+const res = await serverFetch(`/api/v1/users?q=${encodeURIComponent(searchTerm)}`);
+```
+
+### POST Request from Server
+
+```typescript
+// Server action calling internal API
+const res = await serverFetch('/api/v1/users/invite', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: 'user@example.com', role: 'USER' }),
+});
+```
+
+### parseApiResponse Helper
+
+```typescript
+// lib/api/parse-response.ts
+export async function parseApiResponse<T>(response: Response): Promise<APIResponse<T>> {
+  const json = await response.json();
+  if (!json.success) {
+    throw new Error(json.error?.message || 'API request failed');
+  }
+  return json;
+}
+```
+
+**Key Benefits:**
+
+- Cookie forwarding for authentication (session cookies are passed to API routes)
+- Absolute URL construction (works in any server context)
+- Consistent error handling with parseApiResponse
+- No caching by default (fresh data for SSR)
+
 ## Type-Safe API Client
 
 📋 **Guidance** - Client-side TypeScript patterns for consuming the API

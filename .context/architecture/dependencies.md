@@ -196,8 +196,8 @@ import { z } from 'zod';
 const envSchema = z.object({
   // Required
   DATABASE_URL: z.string().url(),
-  NEXTAUTH_SECRET: z.string().min(32),
-  NEXTAUTH_URL: z.string().url(),
+  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_URL: z.string().url(),
 
   // Optional
   GOOGLE_CLIENT_ID: z.string().optional(),

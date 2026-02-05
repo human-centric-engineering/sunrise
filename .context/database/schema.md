@@ -10,18 +10,15 @@ Sunrise uses **PostgreSQL 15+** as the relational database with **Prisma ORM** f
 erDiagram
     User ||--o{ Account : "has"
     User ||--o{ Session : "has"
-    User ||--o{ VerificationToken : "requests"
     User {
         string id PK
         string name
         string email UK
-        datetime emailVerified
+        boolean emailVerified
         string image
-        string password
-        enum role
+        string role
         datetime createdAt
         datetime updatedAt
-        datetime lastLoginAt
         string bio
         string phone
         string timezone
@@ -32,29 +29,48 @@ erDiagram
     Account {
         string id PK
         string userId FK
-        string type
-        string provider
-        string providerAccountId
-        string refresh_token
-        string access_token
-        int expires_at
-        string token_type
+        string accountId
+        string providerId
+        string accessToken
+        string refreshToken
+        string idToken
+        datetime accessTokenExpiresAt
+        datetime refreshTokenExpiresAt
         string scope
-        string id_token
-        string session_state
+        string password
+        datetime createdAt
+        datetime updatedAt
     }
 
     Session {
         string id PK
-        string sessionToken UK
+        string token UK
         string userId FK
-        datetime expires
+        datetime expiresAt
+        string ipAddress
+        string userAgent
+        datetime createdAt
+        datetime updatedAt
     }
 
-    VerificationToken {
+    Verification {
+        string id PK
         string identifier
-        string token UK
-        datetime expires
+        string value
+        datetime expiresAt
+        json metadata
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    ContactSubmission {
+        string id PK
+        string name
+        string email
+        string subject
+        string message
+        datetime createdAt
+        boolean read
     }
 
     FeatureFlag {
@@ -92,79 +108,113 @@ enum Role {
   ADMIN
 }
 
+// Better Auth User model
+//
+// ID Generation: @default(cuid()) generates 25-character CUIDs
+// better-auth is configured to delegate ID generation to Prisma
 model User {
   id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
   image         String?
-  password      String?   // Nullable for OAuth-only users
-  role          Role      @default(USER)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  lastLoginAt   DateTime?
 
-  // Extended Profile Fields (Phase 3.2)
-  bio           String?   @db.Text      // User biography
-  phone         String?   @db.VarChar(20)  // Phone number
-  timezone      String?   @default("UTC")  // User timezone
-  location      String?   @db.VarChar(100) // User location
-  preferences   Json?     @default("{}")   // Email/notification preferences
+  // Custom fields for RBAC
+  role          String    @default("USER")
+
+  // Extended Profile Fields
+  bio           String?   @db.Text        // User biography
+  phone         String?   @db.VarChar(20) // Phone number
+  timezone      String?   @default("UTC") // IANA timezone
+  location      String?   @db.VarChar(100) // Free-form location
+  preferences   Json?     @default("{}")  // Email/notification preferences
 
   // Relations
-  accounts Account[]
-  sessions Session[]
+  sessions      Session[]
+  accounts      Account[]
 
-  @@index([email])
+  @@unique([email])
   @@index([role])
-  @@map("users")
+  @@map("user")
 }
 
 // ============================================
-// NextAuth.js Required Models
+// better-auth Required Models
 // ============================================
 
-model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
+// Better Auth Session model
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([provider, providerAccountId])
   @@index([userId])
-  @@map("accounts")
+  @@map("session")
 }
 
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+// Better Auth Account model
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?   // Hashed password for email/password auth
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@map("sessions")
+  @@map("account")
 }
 
-model VerificationToken {
+// Better Auth Verification model
+// Used for email verification, password reset, and invitation tokens
+model Verification {
+  id         String   @id @default(cuid())
   identifier String
-  token      String   @unique
-  expires    DateTime
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  metadata   Json?    // Stores invitation details (name, role, invitedBy)
 
-  @@unique([identifier, token])
   @@index([identifier])
-  @@index([token])
-  @@map("verification_tokens")
+  @@index([expiresAt])
+  @@map("verification")
+}
+
+// ============================================
+// Application Models
+// ============================================
+
+// Contact Form Submissions
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+  read      Boolean  @default(false)
+
+  @@index([read, createdAt])
+  @@map("contact_submission")
 }
 
 // ============================================
@@ -267,17 +317,19 @@ updatedAt DateTime @updatedAt
 
 **Required Fields** (not null):
 
+- `name`: User display name (required at signup)
 - `email`: Essential for user identification
-- `role`: Every user must have a role (defaults to USER)
+- `role`: Every user must have a role (defaults to "USER")
+- `emailVerified`: Boolean flag (defaults to false)
 - `createdAt`, `updatedAt`: System-managed timestamps
 
 **Nullable Fields** (`?`):
 
-- `name`: Optional, some users may not provide
-- `password`: OAuth users don't have passwords
-- `emailVerified`: Null until verified
 - `image`: Profile picture is optional
-- `lastLoginAt`: Null for users who never logged in
+- `bio`, `phone`, `location`: Extended profile fields
+- `password` (in Account): OAuth users don't have passwords
+- `ipAddress`, `userAgent` (in Session): May not be available
+- `metadata` (in Verification): Optional invitation details
 
 ### Cascading Deletes
 
@@ -383,14 +435,14 @@ const flags = await prisma.featureFlag.findMany({
 ## Table Naming Convention
 
 ```prisma
-@@map("users")  // Table name in PostgreSQL
+@@map("user")  // Table name in PostgreSQL
 ```
 
-**Convention**: Plural snake_case
+**Convention**: Singular snake_case (better-auth default)
 
 - Model: `User` (PascalCase)
-- Table: `users` (plural snake_case)
-- Consistency with SQL conventions
+- Table: `user` (singular snake_case)
+- Matches better-auth adapter expectations
 
 ## Data Types
 

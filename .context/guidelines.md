@@ -28,7 +28,7 @@ npm install
 cp .env.example .env.local
 
 # Edit .env.local with your database credentials
-# Required: DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL
+# Required: DATABASE_URL, BETTER_AUTH_SECRET, BETTER_AUTH_URL
 
 # 4. Initialize database
 npx prisma migrate dev
@@ -50,9 +50,9 @@ npm run dev
 # Database
 DATABASE_URL="postgresql://user:password@localhost:5432/sunrise"
 
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="generate-with-openssl-rand-base64-32"
+# better-auth
+BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_SECRET="generate-with-openssl-rand-base64-32"
 
 # OAuth (optional)
 GOOGLE_CLIENT_ID="your-google-client-id"
@@ -66,7 +66,7 @@ EMAIL_FROM="noreply@localhost"
 NODE_ENV="development"
 ```
 
-**Generate NEXTAUTH_SECRET**:
+**Generate BETTER_AUTH_SECRET**:
 
 ```bash
 openssl rand -base64 32
@@ -508,7 +508,7 @@ railway up
 
 ```bash
 NODE_ENV=development
-NEXTAUTH_URL=http://localhost:3000
+BETTER_AUTH_URL=http://localhost:3000
 DATABASE_URL=postgresql://localhost:5432/sunrise_dev
 ```
 
@@ -516,7 +516,7 @@ DATABASE_URL=postgresql://localhost:5432/sunrise_dev
 
 ```bash
 NODE_ENV=production
-NEXTAUTH_URL=https://staging.sunrise.com
+BETTER_AUTH_URL=https://staging.sunrise.com
 DATABASE_URL=postgresql://staging-db:5432/sunrise
 ```
 
@@ -524,7 +524,7 @@ DATABASE_URL=postgresql://staging-db:5432/sunrise
 
 ```bash
 NODE_ENV=production
-NEXTAUTH_URL=https://sunrise.com
+BETTER_AUTH_URL=https://sunrise.com
 DATABASE_URL=postgresql://prod-db:5432/sunrise
 ```
 
@@ -589,7 +589,7 @@ Sentry.captureException(error);
 
 # Use environment variables
 DATABASE_URL=postgresql://...
-NEXTAUTH_SECRET=...
+BETTER_AUTH_SECRET=...
 
 # For production, use secret managers
 # - Vercel: Environment Variables
@@ -606,7 +606,7 @@ NEXTAUTH_SECRET=...
 - [ ] Passwords hashed with bcrypt (12 rounds)
 - [ ] SQL injection prevented (Prisma parameterized queries)
 - [ ] XSS prevented (React auto-escaping + CSP)
-- [ ] CSRF protection enabled (NextAuth)
+- [ ] CSRF protection enabled (better-auth)
 - [ ] Dependencies updated regularly (`npm audit`)
 - [ ] Environment variables validated at startup
 

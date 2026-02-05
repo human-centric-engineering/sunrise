@@ -42,7 +42,11 @@ System design, component boundaries, and architectural patterns. Includes:
 Authentication and authorization implementation with better-auth. Includes:
 
 - [Overview](./auth/overview.md) - Authentication flows and session management
-- [Integration](./auth/integration.md) - Next.js App Router integration patterns
+- [Integration](./auth/integration.md) - Route protection patterns (proxy, page-level, API guards)
+- [Forms](./auth/forms.md) - Signup, login, and client-side form patterns
+- [OAuth](./auth/oauth.md) - OAuth provider setup (Google and adding new providers)
+- [Sessions](./auth/sessions.md) - Session management, logout, and client updates
+- [Decisions](./auth/decisions.md) - Architecture decisions and best practices
 - [Security](./auth/security.md) - Security model, threats, and mitigations
 
 **Use When**: Implementing auth features, securing endpoints, managing sessions, adding OAuth providers
@@ -51,7 +55,11 @@ Authentication and authorization implementation with better-auth. Includes:
 
 RESTful API design and implementation patterns. Includes:
 
-- [Endpoints](./api/endpoints.md) - API reference with all route handlers
+- [Endpoints](./api/endpoints.md) - API overview, design principles, response format
+- [User Endpoints](./api/user-endpoints.md) - User CRUD, avatar, preferences
+- [Auth Endpoints](./api/auth-endpoints.md) - Sign-in, sign-up, OAuth, invitations
+- [Admin Endpoints](./api/admin-endpoints.md) - Stats, logs, feature flags
+- [Utility Endpoints](./api/utility-endpoints.md) - Health, CSP reports, contact form
 - [Headers](./api/headers.md) - HTTP headers, CORS, and middleware
 - [Examples](./api/examples.md) - Client implementations and usage patterns
 
@@ -72,7 +80,12 @@ PostgreSQL schema, Prisma models, and data patterns. Includes:
 Environment variable configuration, validation, and management. Includes:
 
 - [Overview](./environment/overview.md) - Setup guide, patterns, and troubleshooting
-- [Reference](./environment/reference.md) - Complete variable documentation with examples
+- [Reference](./environment/reference.md) - Quick reference table and validation schema
+- [Database](./environment/database-env.md) - `DATABASE_URL` configuration
+- [Authentication](./environment/auth-env.md) - `BETTER_AUTH_*`, `GOOGLE_*` variables
+- [Email](./environment/email-env.md) - `RESEND_*`, `EMAIL_*` variables
+- [Storage](./environment/storage-env.md) - `S3_*`, `BLOB_*`, `STORAGE_PROVIDER`
+- [Services](./environment/services-env.md) - `NODE_ENV`, `LOG_*`, `ALLOWED_ORIGINS`
 
 **Use When**: Setting up new environments, configuring deployment, adding new variables, troubleshooting configuration issues
 
@@ -193,6 +206,23 @@ Development workflow, testing, deployment, and operational procedures.
 
 **Use When**: Setting up development environment, deploying, following team conventions
 
+### 🧪 [Testing](./testing/overview.md)
+
+Testing patterns, mocking strategies, and quality guidelines. Includes:
+
+- [Overview](./testing/overview.md) - Testing philosophy, tech stack, organization
+- [Patterns](./testing/patterns.md) - Test structure, AAA pattern, organization
+- [Mocking](./testing/mocking.md) - Mock strategies by dependency (Prisma, auth, Next.js)
+- [Async Testing](./testing/async-testing.md) - Async functions, fake timers with RTL
+- [Type Safety](./testing/type-safety.md) - Response types, assertion helpers
+- [Edge Cases](./testing/edge-cases.md) - Error testing, parameterized tests
+- [Decisions](./testing/decisions.md) - Architecture rationale
+- [History](./testing/history.md) - Key learnings and solutions
+
+**Use When**: Writing tests, debugging test failures, understanding mock patterns, setting up test infrastructure
+
+**Key Features**: Vitest, React Testing Library, shared mock factories, type-safe assertions
+
 ## AI Usage Patterns
 
 ### For Code Generation
@@ -231,37 +261,49 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | -------------------------- | ----------------------------- | ----------------------------------------------- |
 | Add new page               | architecture/overview.md      | architecture/patterns.md                        |
 | Build API endpoint         | api/endpoints.md              | api/headers.md, database/models.md              |
+| Build user endpoint        | api/user-endpoints.md         | api/endpoints.md, database/models.md            |
+| Build admin endpoint       | api/admin-endpoints.md        | api/endpoints.md, auth/integration.md           |
 | Modify database            | database/schema.md            | database/migrations.md                          |
-| Add auth provider          | auth/integration.md           | auth/security.md                                |
+| Add auth provider          | auth/oauth.md                 | auth/integration.md, auth/security.md           |
+| Add login/signup forms     | auth/forms.md                 | auth/sessions.md                                |
+| Protect routes             | auth/integration.md           | auth/sessions.md                                |
 | Configure environment      | environment/overview.md       | environment/reference.md                        |
+| Configure database env     | environment/database-env.md   | environment/overview.md                         |
+| Configure auth env         | environment/auth-env.md       | auth/overview.md                                |
+| Configure email env        | environment/email-env.md      | email/overview.md                               |
+| Configure storage env      | environment/storage-env.md    | storage/overview.md                             |
 | Deploy application         | deployment/overview.md        | environment/overview.md, database/migrations.md |
 | Set up Docker              | deployment/overview.md        | environment/overview.md                         |
 | Configure CI/CD            | deployment/overview.md        | guidelines.md                                   |
 | Add error handling         | errors/overview.md            | errors/logging.md                               |
 | Debug production           | errors/logging.md             | errors/overview.md, api/endpoints.md            |
 | Set up error tracking      | errors/overview.md            | environment/overview.md                         |
+| Write unit tests           | testing/patterns.md           | testing/mocking.md, testing/type-safety.md      |
+| Test async code            | testing/async-testing.md      | testing/patterns.md                             |
+| Mock dependencies          | testing/mocking.md            | testing/patterns.md                             |
+| Test edge cases            | testing/edge-cases.md         | testing/patterns.md                             |
 | Add tabbed interface       | ui/overview.md                | architecture/patterns.md                        |
 | URL state management       | ui/overview.md                | architecture/patterns.md                        |
 | Build landing pages        | ui/marketing.md               | ui/overview.md                                  |
 | Configure cookie consent   | privacy/overview.md           | security/overview.md                            |
 | Configure SEO/sitemap      | seo/overview.md               | deployment/overview.md                          |
-| Add contact form           | api/endpoints.md              | email/overview.md                               |
+| Add contact form           | api/utility-endpoints.md      | email/overview.md                               |
 | Configure CSP/headers      | security/overview.md          | api/headers.md                                  |
-| Set up CORS                | security/overview.md          | environment/overview.md                         |
+| Set up CORS                | security/overview.md          | environment/services-env.md                     |
 | Add rate limiting          | security/overview.md          | auth/security.md                                |
 | Sanitize user input        | security/overview.md          | api/endpoints.md                                |
 | Secure auth flows          | auth/security.md              | security/overview.md                            |
 | Add performance monitoring | monitoring/performance.md     | monitoring/overview.md                          |
-| Configure health checks    | monitoring/health-checks.md   | deployment/overview.md                          |
+| Configure health checks    | monitoring/health-checks.md   | api/utility-endpoints.md                        |
 | Set up Sentry              | monitoring/sentry-setup.md    | errors/overview.md                              |
 | Configure log aggregation  | monitoring/log-aggregation.md | monitoring/overview.md                          |
 | Add status page            | monitoring/health-checks.md   | monitoring/overview.md                          |
-| Build admin dashboard      | admin/overview.md             | architecture/overview.md, api/endpoints.md      |
-| Manage users (admin)       | admin/overview.md             | database/schema.md, api/endpoints.md            |
-| Add feature flags          | admin/overview.md             | database/schema.md, api/endpoints.md            |
+| Build admin dashboard      | admin/overview.md             | api/admin-endpoints.md                          |
+| Manage users (admin)       | admin/overview.md             | api/admin-endpoints.md, api/user-endpoints.md   |
+| Add feature flags          | admin/overview.md             | api/admin-endpoints.md                          |
 | View system logs           | admin/overview.md             | errors/logging.md                               |
-| Add file uploads           | storage/overview.md           | api/endpoints.md, security/overview.md          |
-| Configure storage          | storage/overview.md           | environment/overview.md                         |
+| Add file uploads           | storage/overview.md           | api/user-endpoints.md, security/overview.md     |
+| Configure storage          | storage/overview.md           | environment/storage-env.md                      |
 | Add event tracking         | analytics/overview.md         | privacy/overview.md                             |
 | Configure analytics        | analytics/overview.md         | environment/overview.md                         |
 | Server-side tracking       | analytics/overview.md         | api/endpoints.md                                |

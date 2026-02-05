@@ -17,6 +17,7 @@ All security utilities are located in `lib/security/`:
 | `headers.ts`    | CSP and security headers utilities            |
 | `sanitize.ts`   | XSS prevention and input sanitization         |
 | `cors.ts`       | CORS configuration and utilities              |
+| `ip.ts`         | Client IP extraction with validation          |
 | `index.ts`      | Module exports                                |
 
 ## Security Headers
@@ -128,11 +129,18 @@ LRU cache-based sliding window rate limiter. No Redis required for single-server
 
 ### Pre-configured Limiters
 
-| Limiter                | Limit        | Window     | Use Case           |
-| ---------------------- | ------------ | ---------- | ------------------ |
-| `authLimiter`          | 5 requests   | 1 minute   | Login, signup      |
-| `apiLimiter`           | 100 requests | 1 minute   | General API routes |
-| `passwordResetLimiter` | 3 requests   | 15 minutes | Password reset     |
+| Limiter                    | Limit        | Window     | Use Case                    |
+| -------------------------- | ------------ | ---------- | --------------------------- |
+| `authLimiter`              | 5 requests   | 1 minute   | Login, signup               |
+| `apiLimiter`               | 100 requests | 1 minute   | General API routes          |
+| `adminLimiter`             | 30 requests  | 1 minute   | Admin endpoints             |
+| `passwordResetLimiter`     | 3 requests   | 15 minutes | Password reset              |
+| `contactLimiter`           | 5 requests   | 1 hour     | Contact form submissions    |
+| `verificationEmailLimiter` | 3 requests   | 15 minutes | Email verification requests |
+| `acceptInviteLimiter`      | 5 requests   | 15 minutes | Invitation acceptance       |
+| `uploadLimiter`            | 10 requests  | 15 minutes | File uploads                |
+| `inviteLimiter`            | 10 requests  | 15 minutes | Sending invitations         |
+| `cspReportLimiter`         | 20 requests  | 1 minute   | CSP violation reports       |
 
 ### Usage
 
@@ -173,6 +181,37 @@ All rate-limited responses include:
 - **LRU eviction**: Automatic cleanup (max 500 unique tokens)
 - **Peek without consume**: Check limits without incrementing
 - **Manual reset**: Clear limits for specific tokens
+
+## Client IP Extraction
+
+**Implementation**: `lib/security/ip.ts`
+
+Extracts client IP addresses from requests for rate limiting and security logging.
+
+### Functions
+
+```typescript
+import { getClientIP, isValidIP } from '@/lib/security/ip';
+
+// Extract client IP from request (checks X-Forwarded-For, X-Real-IP)
+const clientIP = getClientIP(request);
+
+// Validate IP format (prevents arbitrary strings as rate limit keys)
+if (isValidIP(headerValue)) {
+  // Safe to use as rate limit key
+}
+```
+
+### IP Header Priority
+
+1. `X-Forwarded-For` (first IP in comma-separated list)
+2. `X-Real-IP`
+3. Fallback: `127.0.0.1`
+
+### Security Considerations
+
+- **IP Validation**: Prevents arbitrary strings from being used as rate limit keys
+- **Proxy Trust**: In production, ensure your reverse proxy (nginx, Cloudflare) strips and re-sets `X-Forwarded-For` to prevent client spoofing
 
 ## CORS Configuration
 
@@ -262,6 +301,7 @@ import {
 | `sanitizeRedirectUrl()` | Prevent open redirects        | External URLs → `/`            |
 | `sanitizeObject()`      | Recursive object sanitization | Escapes all string values      |
 | `sanitizeFilename()`    | Prevent path traversal        | `../etc/passwd` → `etc_passwd` |
+| `safeCallbackUrl()`     | Safe relative URL extraction  | External URLs → fallback       |
 
 ### Examples
 

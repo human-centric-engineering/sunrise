@@ -11,6 +11,7 @@ lib/storage/
 ├── image.ts               # validateImageMagicBytes(), processImage()
 └── providers/
     ├── types.ts           # StorageProvider interface
+    ├── validate-key.ts    # validateStorageKey() - path traversal prevention
     ├── s3.ts              # AWS S3 / S3-compatible
     ├── vercel-blob.ts     # Vercel Blob Storage
     └── local.ts           # Local filesystem (dev only)
@@ -204,6 +205,24 @@ if (storage) {
 | `STORAGE_NOT_CONFIGURED` | No storage provider available |
 
 ## Security
+
+### Key Validation
+
+All storage keys are validated before use with `validateStorageKey()`:
+
+```typescript
+import { validateStorageKey } from '@/lib/storage/providers/validate-key';
+
+// Called automatically by all providers before upload/delete operations
+validateStorageKey(key); // Throws if invalid
+```
+
+**Prevents:**
+
+- Path traversal attacks (`..` in key)
+- Absolute path injection (`/etc/passwd`)
+- Null byte injection (`file\0.jpg`)
+- Backslash attacks (`uploads\..\..\etc`)
 
 ### File Validation
 

@@ -233,46 +233,35 @@ export async function GET(request: NextRequest) {
 
 ## Rate Limiting Headers
 
-📋 **Planned** - Not yet implemented
+✅ **Implemented in:** `lib/security/rate-limit.ts` and `proxy.ts`
 
 ### Rate Limit Implementation
 
-Example implementation for future API rate limiting:
+Rate limiting is applied in the proxy and individual route handlers using pre-configured limiters:
 
 ```typescript
-// proxy.ts (planned addition)
-import { rateLimit } from '@/lib/security/rate-limit';
-
-const limiter = rateLimit({
-  interval: 60 * 1000, // 1 minute
-  uniqueTokenPerInterval: 500,
-});
-
-export function proxy(request: NextRequest) {
-  // Apply rate limiting to API routes
-  if (request.nextUrl.pathname.startsWith('/api/v1/')) {
-    const ip = request.ip ?? '127.0.0.1';
-    const { success, remaining, reset } = limiter.check(100, ip);
-
-    const response = success
-      ? NextResponse.next()
-      : new NextResponse('Too Many Requests', { status: 429 });
-
-    // Add rate limit headers
-    response.headers.set('X-RateLimit-Limit', '100');
-    response.headers.set('X-RateLimit-Remaining', String(remaining));
-    response.headers.set('X-RateLimit-Reset', String(reset));
-
-    if (!success) {
-      response.headers.set('Retry-After', '60');
-    }
-
-    return response;
-  }
-
-  return NextResponse.next();
-}
+// lib/security/rate-limit.ts - Pre-configured limiters
+export const authLimiter = createRateLimiter({ limit: 5, window: 60 * 1000 }); // 5/min - login, signup
+export const apiLimiter = createRateLimiter({ limit: 60, window: 60 * 1000 }); // 60/min - general API
+export const adminLimiter = createRateLimiter({ limit: 30, window: 60 * 1000 }); // 30/min - admin endpoints
+export const contactLimiter = createRateLimiter({ limit: 5, window: 60 * 60 * 1000 }); // 5/hour - contact form
+export const verificationEmailLimiter = createRateLimiter({ limit: 3, window: 15 * 60 * 1000 }); // 3/15min
+export const uploadLimiter = createRateLimiter({ limit: 10, window: 60 * 1000 }); // 10/min - file uploads
+export const inviteLimiter = createRateLimiter({ limit: 10, window: 60 * 1000 }); // 10/min - invitations
+export const cspReportLimiter = createRateLimiter({ limit: 100, window: 60 * 1000 }); // 100/min - CSP reports
 ```
+
+**Proxy-level rate limiting** (applied in `proxy.ts`):
+
+- `/api/v1/*` routes: 60 requests/minute (apiLimiter)
+- `/api/v1/admin/*` routes: 30 requests/minute (adminLimiter)
+- `/api/auth/sign-in`, `/api/auth/sign-up`, password reset: 5 requests/minute (authLimiter)
+
+**Route-level rate limiting** (applied in individual handlers):
+
+- Contact form: 5 submissions/hour
+- Verification emails: 3 requests/15 minutes
+- File uploads: 10 requests/minute
 
 ### Rate Limit Headers
 

@@ -177,29 +177,16 @@ export async function GET(request: NextRequest) {
 // lib/auth/utils.ts
 import { auth } from './config';
 import { headers } from 'next/headers';
+import { logger } from '@/lib/logging';
 
-type AuthSession = {
-  session: {
-    id: string;
-    userId: string;
-    token: string;
-    expiresAt: Date;
-    ipAddress?: string | null;
-    userAgent?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    emailVerified: boolean;
-    image?: string | null;
-    role?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-};
+/**
+ * Session type derived from better-auth configuration.
+ *
+ * Uses ReturnType inference so the type automatically includes custom fields
+ * (e.g. `role`) defined in `auth.user.additionalFields` and stays in sync
+ * with the better-auth config without manual maintenance.
+ */
+type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
 
 /**
  * Get the current user session on the server
@@ -210,10 +197,9 @@ export async function getServerSession(): Promise<AuthSession | null> {
     const session = await auth.api.getSession({
       headers: requestHeaders,
     });
-
     return session;
   } catch (error) {
-    console.error('Failed to get server session:', error);
+    logger.error('Failed to get server session', error);
     return null;
   }
 }
@@ -231,38 +217,93 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
  */
 export async function hasRole(requiredRole: string): Promise<boolean> {
   const user = await getServerUser();
-
-  if (!user) {
-    return false;
-  }
-
+  if (!user) return false;
   return user.role === requiredRole;
 }
 
 /**
  * Require authentication for a server component or API route
+ * @throws Error if not authenticated
  */
 export async function requireAuth(): Promise<AuthSession> {
   const session = await getServerSession();
-
   if (!session) {
     throw new Error('Authentication required');
   }
-
   return session;
 }
 
 /**
  * Require a specific role for a server component or API route
+ * @throws Error if not authenticated or doesn't have required role
  */
 export async function requireRole(requiredRole: string): Promise<AuthSession> {
   const session = await requireAuth();
-
   if (session.user.role !== requiredRole) {
     throw new Error(`Role ${requiredRole} required`);
   }
-
   return session;
+}
+
+/**
+ * Type guard for checking if a session exists
+ */
+export function isAuthenticated(session: AuthSession | null): session is AuthSession {
+  return session !== null;
+}
+```
+
+### Email Verification Status
+
+```typescript
+// lib/auth/verification-status.ts
+import { prisma } from '@/lib/db/client';
+
+export type VerificationStatus = 'verified' | 'pending' | 'not_sent';
+
+/**
+ * Get the verification status for a user's email
+ *
+ * @returns 'verified' - Email is verified
+ * @returns 'pending' - Verification email sent, awaiting user action
+ * @returns 'not_sent' - Email unverified and no verification email sent
+ */
+export async function getVerificationStatus(
+  email: string,
+  emailVerified: boolean
+): Promise<VerificationStatus> {
+  if (emailVerified) return 'verified';
+
+  // Check if a verification token exists
+  const verificationToken = await prisma.verification.findFirst({
+    where: {
+      identifier: email,
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+
+  return verificationToken ? 'pending' : 'not_sent';
+}
+```
+
+### Clear Invalid Session
+
+```typescript
+// lib/auth/clear-session.ts
+import { redirect } from 'next/navigation';
+
+/**
+ * Clear the better-auth session cookie and redirect to login
+ *
+ * Use when you detect an invalid session (user deleted, session expired)
+ * to prevent infinite redirect loops.
+ *
+ * @param returnUrl - Optional URL to return to after login
+ */
+export function clearInvalidSession(returnUrl: string = '/'): never {
+  const clearSessionUrl = `/api/auth/clear-session?returnUrl=${encodeURIComponent(returnUrl)}`;
+  redirect(clearSessionUrl);
 }
 ```
 
