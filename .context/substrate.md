@@ -4,7 +4,7 @@
 **Version**: 1.0.0
 **Stack**: Next.js 16 (App Router), TypeScript, PostgreSQL, Prisma 7, better-auth
 **Architecture**: Monolithic with API routes, server/client component separation
-**Last Updated**: 2026-01-19
+**Last Updated**: 2026-02-05
 
 ## Overview
 
@@ -206,6 +206,12 @@ Development workflow, testing, deployment, and operational procedures.
 
 **Use When**: Setting up development environment, deploying, following team conventions
 
+### 💻 [Commands](./commands.md)
+
+Complete reference for all project commands (development, database, testing, Docker).
+
+**Use When**: Running development tasks, database operations, Docker management
+
 ### 🧪 [Testing](./testing/overview.md)
 
 Testing patterns, mocking strategies, and quality guidelines. Includes:
@@ -308,14 +314,16 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 | Configure analytics        | analytics/overview.md         | environment/overview.md                         |
 | Server-side tracking       | analytics/overview.md         | api/endpoints.md                                |
 | Feature flags (PostHog)    | analytics/overview.md         | admin/overview.md                               |
+| Run dev commands           | commands.md                   | guidelines.md                                   |
+| Docker operations          | commands.md                   | deployment/overview.md                          |
 
 ## Technology Stack
 
 **Core Framework:**
 
-- Next.js 14+ with App Router (React Server Components)
+- Next.js 16 with App Router (React Server Components)
 - TypeScript 5+ in strict mode
-- React 18+ (server/client components)
+- React 19 (server/client components)
 
 **Data Layer:**
 
@@ -331,7 +339,7 @@ Cross-reference .context/security/overview.md and .context/auth/security.md for:
 
 **UI/Styling:**
 
-- Tailwind CSS 3+ (utility-first styling)
+- Tailwind CSS 4 (utility-first styling)
 - shadcn/ui (accessible component library)
 - Lucide React (icon library)
 
@@ -442,5 +450,5 @@ When updating this substrate:
 For questions about this documentation:
 
 - Check [Guidelines](./guidelines.md) for development workflows
-- Review build plan in `.instructions/HCE-BASE-BUILD-PLAN.md`
+- Review build plan in `.instructions/SUNRISE-BUILD-PLAN.md`
 - See `CLAUDE.md` for AI-specific development guidance
