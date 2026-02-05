@@ -51,7 +51,7 @@ RESEND_API_KEY="re_123456789_abcdefghijklmnopqrstuvwxyz"
 - **Type:** Email address
 - **Format:** `name@domain.com` or `Name <name@domain.com>`
 - **Used By:**
-  - `lib/email/send.ts` - Email sending utilities
+  - `lib/email/client.ts` - Default sender configuration (`getDefaultSender()`)
   - All email templates
 
 **Format Options:**

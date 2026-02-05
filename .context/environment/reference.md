@@ -31,19 +31,24 @@ Complete reference for all environment variables used in Sunrise.
 | [`LOG_LEVEL`](./services-env.md)                          | ❌ No    | Enum         | Auto          | Minimum log level                     |
 | [`LOG_SANITIZE_PII`](./services-env.md)                   | ❌ No    | Boolean      | Auto          | PII sanitization in logs              |
 | [`ALLOWED_ORIGINS`](./services-env.md)                    | ❌ No    | String       | -             | CORS allowed origins                  |
-| [`STORAGE_PROVIDER`](./storage-env.md)                    | ❌ No    | Enum         | Auto-detect   | Storage provider selection            |
-| [`MAX_FILE_SIZE_MB`](./storage-env.md)                    | ❌ No    | Number       | `5`           | Max upload file size (MB)             |
-| [`S3_BUCKET`](./storage-env.md)                           | ⚠️ Cond  | String       | -             | S3 bucket name                        |
-| [`S3_ACCESS_KEY_ID`](./storage-env.md)                    | ⚠️ Cond  | String       | -             | AWS access key ID                     |
-| [`S3_SECRET_ACCESS_KEY`](./storage-env.md)                | ⚠️ Cond  | String       | -             | AWS secret access key                 |
-| [`S3_REGION`](./storage-env.md)                           | ❌ No    | String       | `us-east-1`   | AWS region                            |
-| [`S3_ENDPOINT`](./storage-env.md)                         | ❌ No    | URL          | -             | Custom S3-compatible endpoint         |
-| [`S3_PUBLIC_URL_BASE`](./storage-env.md)                  | ❌ No    | URL          | -             | CDN/domain for public URLs            |
-| [`S3_USE_ACL`](./storage-env.md)                          | ❌ No    | Boolean      | `false`       | Enable ACL on uploads                 |
-| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md)               | ⚠️ Cond  | String       | -             | Vercel Blob storage token             |
-| `PERF_SLOW_THRESHOLD_MS`                                  | ❌ No    | Number       | `1000`        | Threshold for logging slow operations |
-| `PERF_CRITICAL_THRESHOLD_MS`                              | ❌ No    | Number       | `5000`        | Threshold for Sentry alerts           |
-| `NEXT_TELEMETRY_DISABLED`                                 | ❌ No    | Boolean      | -             | Set to 1 to disable Next.js telemetry |
+| [`STORAGE_PROVIDER`](./storage-env.md) ²                  | ❌ No    | Enum         | Auto-detect   | Storage provider selection            |
+| [`MAX_FILE_SIZE_MB`](./storage-env.md) ²                  | ❌ No    | Number       | `5`           | Max upload file size (MB)             |
+| [`S3_BUCKET`](./storage-env.md) ²                         | ⚠️ Cond  | String       | -             | S3 bucket name                        |
+| [`S3_ACCESS_KEY_ID`](./storage-env.md) ²                  | ⚠️ Cond  | String       | -             | AWS access key ID                     |
+| [`S3_SECRET_ACCESS_KEY`](./storage-env.md) ²              | ⚠️ Cond  | String       | -             | AWS secret access key                 |
+| [`S3_REGION`](./storage-env.md) ²                         | ❌ No    | String       | `us-east-1`   | AWS region                            |
+| [`S3_ENDPOINT`](./storage-env.md) ²                       | ❌ No    | URL          | -             | Custom S3-compatible endpoint         |
+| [`S3_PUBLIC_URL_BASE`](./storage-env.md) ²                | ❌ No    | URL          | -             | CDN/domain for public URLs            |
+| [`S3_USE_ACL`](./storage-env.md) ²                        | ❌ No    | Boolean      | `false`       | Enable ACL on uploads                 |
+| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md) ²             | ⚠️ Cond  | String       | -             | Vercel Blob storage token             |
+| `PERF_SLOW_THRESHOLD_MS` ¹                                | ❌ No    | Number       | `1000`        | Threshold for logging slow operations |
+| `PERF_CRITICAL_THRESHOLD_MS` ¹                            | ❌ No    | Number       | `5000`        | Threshold for Sentry alerts           |
+| `HEALTH_INCLUDE_MEMORY` ¹                                 | ❌ No    | Boolean      | `false`       | Include memory stats in health check  |
+| [`NEXT_TELEMETRY_DISABLED`](./services-env.md)            | ❌ No    | Boolean      | -             | Set to 1 to disable Next.js telemetry |
+
+¹ **Not validated at startup.** These variables are accessed directly from `process.env` rather than through the validated `lib/env.ts` schema. Invalid values are handled at runtime.
+
+² **Storage variables use graceful degradation.** Not included in `lib/env.ts` schema. See [storage-env.md](./storage-env.md) for details.
 
 ## Environment-Specific Values
 

@@ -2,6 +2,8 @@
 
 Configuration for file storage providers (S3, Vercel Blob, local).
 
+> **Validation Note:** Storage variables use **graceful degradation** rather than fail-fast validation. They are not included in the `lib/env.ts` Zod schema and are accessed directly from `process.env` in storage modules. Invalid or missing values are handled at runtime, not caught at startup. This allows storage to be fully optional—the system falls back to local filesystem if no provider credentials are configured.
+
 ## Provider Selection
 
 ### Auto-Detection Behavior
@@ -39,7 +41,7 @@ STORAGE_PROVIDER="local"
 - **Purpose:** Maximum allowed file upload size in megabytes
 - **Required:** ❌ No
 - **Type:** Number
-- **Default:** `5`
+- **Default:** `5` (application-level default, not schema-validated)
 
 **Examples:**
 
@@ -110,7 +112,7 @@ S3_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 - **Purpose:** AWS region for the S3 bucket
 - **Required:** ❌ No
 - **Type:** String
-- **Default:** `us-east-1`
+- **Default:** `us-east-1` (application-level default, not schema-validated)
 
 **Examples:**
 

@@ -84,9 +84,11 @@ LOG_LEVEL="error"   # Errors only
 - **Purpose:** Controls whether PII is redacted in logs
 - **Required:** ❌ No
 - **Type:** Boolean
-- **Default:** `true` in production, `false` in development
+- **Default:** `true` in production, `false` in development (runtime default, not schema-validated)
 - **Used By:**
   - `lib/logging/index.ts` - PII sanitization
+
+> **Note:** This variable uses a runtime default in `lib/logging/index.ts` rather than being validated in the central `lib/env.ts` schema. The default is applied based on `NODE_ENV` when the logger initializes.
 
 **Examples:**
 
@@ -156,10 +158,12 @@ ALLOWED_ORIGINS="https://app.example.com,capacitor://localhost"
 - **Purpose:** Enable or disable the cookie consent banner
 - **Required:** ❌ No
 - **Type:** Boolean
-- **Default:** `true`
+- **Default:** `true` (applied in `lib/consent/config.ts`, not schema-validated)
 - **Used By:**
   - `lib/consent/config.ts` - Consent system configuration
   - `lib/consent/consent-provider.tsx` - Provider behavior
+
+> **Note:** This variable's default is applied in `lib/consent/config.ts` rather than being validated in the central `lib/env.ts` schema.
 
 **Examples:**
 
@@ -218,6 +222,44 @@ NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=false
 **Changes not taking effect (NEXT*PUBLIC*\*):**
 
 - Restart dev server or rebuild
+
+## Runtime Variables
+
+Variables automatically provided by Node.js or the framework at runtime.
+
+### `npm_package_version`
+
+- **Purpose:** Reports the application version from `package.json`
+- **Required:** N/A (automatically provided by Node.js)
+- **Type:** String (semver)
+- **Used By:**
+  - `app/api/health/route.ts` - Health check version reporting
+  - `app/api/v1/admin/stats/route.ts` - Admin stats endpoint
+
+**Note:** This is automatically set by Node.js when running via npm scripts. It reflects the `version` field from your `package.json`.
+
+### `NEXT_TELEMETRY_DISABLED`
+
+- **Purpose:** Disable Next.js anonymous telemetry collection
+- **Required:** ❌ No
+- **Type:** Boolean (`1` to disable)
+- **Default:** Telemetry enabled
+
+**Examples:**
+
+```bash
+# Disable Next.js telemetry
+NEXT_TELEMETRY_DISABLED=1
+```
+
+**When to Use:**
+
+- CI/CD environments (reduce network calls)
+- Air-gapped or restricted networks
+- Privacy-sensitive deployments
+- When telemetry interferes with debugging
+
+**Note:** Next.js collects anonymous usage data to improve the framework. See [Next.js Telemetry](https://nextjs.org/telemetry) for details on what's collected.
 
 ## Related Documentation
 
