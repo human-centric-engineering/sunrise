@@ -47,6 +47,30 @@ The `trackFormSubmitted()` helper:
 - Accepts optional properties for additional context
 - No library changes needed for new forms
 
+## EventName Type
+
+The `EventName` type is a union of all predefined event names, derived from the `EVENTS` constant. Use it for type-safe event tracking functions:
+
+```typescript
+import type { EventName } from '@/lib/analytics';
+
+function trackEvent(event: EventName, props?: Record<string, unknown>) {
+  // event is type-checked against EVENTS values
+}
+
+// Also works with direct track() calls
+import { useAnalytics, EVENTS } from '@/lib/analytics';
+
+const { track } = useAnalytics();
+track(EVENTS.USER_LOGGED_IN, { method: 'email' }); // Type-safe
+```
+
+The type is defined in `lib/analytics/events/constants.ts` as:
+
+```typescript
+export type EventName = (typeof EVENTS)[keyof typeof EVENTS];
+```
+
 ## Naming Convention
 
 **Standard: `snake_case` with past tense**

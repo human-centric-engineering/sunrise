@@ -80,6 +80,9 @@ export type {
 // Provider interface
 export type { AnalyticsProvider as AnalyticsProviderInterface } from './providers/types';
 
+// PostHog provider (for type guards and feature flag access)
+export { PostHogProvider } from './providers/posthog';
+
 // React context and hooks (client-side only)
 export { AnalyticsProvider, AnalyticsContext } from './analytics-provider';
 export {
