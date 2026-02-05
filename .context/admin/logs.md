@@ -113,7 +113,22 @@ const { entries, total } = getLogEntries({
 
 // Clear buffer
 clearLogBuffer();
+
+// Check buffer usage
+const currentSize = getBufferSize(); // Current number of entries
+const maxSize = getMaxBufferSize(); // Maximum capacity (1000)
 ```
+
+### Buffer Monitoring
+
+Two utility functions help monitor buffer usage:
+
+| Function             | Returns | Description                             |
+| -------------------- | ------- | --------------------------------------- |
+| `getBufferSize()`    | number  | Current number of entries in the buffer |
+| `getMaxBufferSize()` | number  | Maximum buffer capacity (1000)          |
+
+Useful for dashboards or alerts when the buffer approaches capacity.
 
 ### Buffer Behavior
 

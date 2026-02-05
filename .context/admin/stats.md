@@ -167,23 +167,25 @@ graph TD
 
 ## Server-Side Data Fetching
 
-The page uses server-side data fetching with cookie forwarding:
+The page uses the `serverFetch` utility for authenticated server-side requests:
 
 ```typescript
-async function getStats(): Promise<SystemStats | null> {
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 
-  const res = await fetch(`${process.env.BETTER_AUTH_URL}/api/v1/admin/stats`, {
-    headers: { Cookie: cookieHeader },
-    cache: 'no-store',
-  });
-  // ...
+async function getStats(): Promise<SystemStats | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.STATS);
+    if (!res.ok) return null;
+    const data = await parseApiResponse<SystemStats>(res);
+    return data.success ? data.data : null;
+  } catch {
+    return null;
+  }
 }
 ```
+
+**Note**: `serverFetch` handles cookie forwarding internally, so you don't need to manually extract and forward cookies from the cookie store.
 
 ## Error Handling
 

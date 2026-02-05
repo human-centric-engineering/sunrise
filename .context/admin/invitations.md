@@ -85,6 +85,46 @@ interface InvitationTableProps {
 }
 ```
 
+### UserInviteForm
+
+**Location**: `components/admin/user-invite-form.tsx`
+
+Form component for inviting new users with name, email, and role selection.
+
+**Features**:
+
+- Form validation with Zod schema (name, email, role)
+- Success state displaying invitation details
+- Copyable invitation link with clipboard support
+- "Invite Another" button to reset form for multiple invitations
+- Role selection (USER or ADMIN)
+- Loading and error states
+
+**Internal Types**:
+
+```typescript
+// Form data validated by local Zod schema
+interface InviteFormData {
+  name: string;
+  email: string;
+  role: 'USER' | 'ADMIN';
+}
+
+// API response structure
+interface InvitationResponse {
+  message: string;
+  invitation: {
+    email: string;
+    name: string;
+    role: string;
+    invitedAt: string;
+    expiresAt: string;
+    link?: string;
+  };
+  emailStatus: 'sent' | 'failed' | 'disabled' | 'pending';
+}
+```
+
 ## Actions
 
 ### Resend Invitation
@@ -157,6 +197,47 @@ Visual indicators:
 | `search`    | string   | -         | Search name/email        |
 | `sortBy`    | string   | invitedAt | Sort field               |
 | `sortOrder` | asc/desc | desc      | Sort direction           |
+
+## Validation Schemas
+
+**Location**: `lib/validations/admin.ts`
+
+### listInvitationsQuerySchema
+
+Validates query parameters for `GET /api/v1/admin/invitations`:
+
+```typescript
+const listInvitationsQuerySchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  sortBy: z.enum(['name', 'email', 'invitedAt', 'expiresAt']).default('invitedAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+```
+
+### invitationMetadataSchema
+
+Validates the Prisma JSON `metadata` field on `Verification` records:
+
+```typescript
+const invitationMetadataSchema = z.object({
+  name: z.string(),
+  role: z.string(),
+  invitedBy: z.string(),
+  invitedAt: z.string(),
+});
+```
+
+### parseInvitationMetadata
+
+Utility function to safely parse invitation metadata from the database:
+
+```typescript
+function parseInvitationMetadata(data: unknown): InvitationMetadata | null;
+```
+
+Returns the validated metadata object or `null` if the data doesn't match the expected shape (e.g., corrupted or legacy data). Use this instead of bare `as InvitationMetadata` type assertions.
 
 ## Type Definitions
 
