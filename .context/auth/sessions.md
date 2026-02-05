@@ -175,9 +175,17 @@ export function LogoutButton() {
   const router = useRouter()
 
   const handleLogout = async () => {
-    await authClient.signOut()
-    router.push('/')
-    router.refresh()
+    await authClient.signOut({
+      fetchOptions: {
+        onSuccess: async () => {
+          router.push('/')
+          router.refresh()
+        },
+        onError: (ctx) => {
+          console.error('Logout failed:', ctx.error)
+        }
+      }
+    })
   }
 
   return (
