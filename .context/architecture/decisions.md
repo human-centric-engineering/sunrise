@@ -170,6 +170,28 @@ Key architectural decisions and their rationale. Reference this when making simi
 
 ---
 
+## Database Migrations at Deploy Time
+
+**Decision:** Run migrations during deployment vs. during Docker build
+
+**Chosen:** Migrations run as deployment step (after container starts)
+
+**Rationale:**
+
+- Database doesn't exist during `docker build`
+- Migrations modify state, not build artifacts
+- Industry standard pattern
+- Migration files are included in image, execution happens at deploy time
+
+**Trade-offs:**
+
+- Requires explicit migration step in deployment workflow
+- Can't be fully automated in Dockerfile
+
+**When to reconsider:** This is the standard approach; no reason to change.
+
+---
+
 ## Adding New Decisions
 
 When making architectural decisions, document them here with:
