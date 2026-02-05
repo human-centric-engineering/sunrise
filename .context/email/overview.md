@@ -1,7 +1,7 @@
 # Email System Overview
 
 **Version**: 1.0.0
-**Last Updated**: 2026-01-07
+**Last Updated**: 2026-02-05
 **Status**: Production-ready
 
 ## Architecture
@@ -16,7 +16,7 @@ Sunrise uses Resend for production email delivery and React Email for template r
 
 - Sent after user accepts invitation
 - Template: `emails/welcome.tsx`
-- Props: `userName`, `userEmail`
+- Props: `userName`, `userEmail`, `baseUrl`
 - Non-blocking: Failure doesn't prevent invitation acceptance
 
 **Email Verification**
@@ -39,6 +39,14 @@ Sunrise uses Resend for production email delivery and React Email for template r
 - Template: `emails/invitation.tsx`
 - Props: `inviterName`, `inviteeName`, `inviteeEmail`, `invitationUrl`, `expiresAt`
 - Non-blocking: Failure doesn't prevent invitation creation
+
+**Contact Notification**
+
+- Sent to admin when contact form is submitted via `POST /api/v1/contact`
+- Template: `emails/contact-notification.tsx`
+- Props: `name`, `email`, `subject`, `message`, `submittedAt`
+- Recipient: `CONTACT_EMAIL` environment variable (falls back to `EMAIL_FROM`)
+- Non-blocking: Failure doesn't prevent contact submission success response
 
 ## Configuration
 
@@ -76,14 +84,28 @@ Sunrise uses Resend for production email delivery and React Email for template r
 
 **`lib/email/client.ts`**
 
-- Singleton Resend client initialization with `getResendClient()`
-- Configuration validation via `isEmailEnabled()` and `getDefaultSender()`
+- `getResendClient()` - Singleton Resend client initialization
+- `isEmailEnabled()` - Check if email is fully configured (API key + sender)
+- `getDefaultSender()` - Get sender address, with optional display name (RFC 5322)
+- `validateEmailConfig()` - Startup validation, warns if email verification required but email not configured (idempotent)
 
 **`lib/email/send.ts`**
 
-- Core `sendEmail()` function with graceful degradation by environment
+- `sendEmail(options)` - Core send function with graceful degradation by environment
 - React component rendering to HTML via `@react-email/render`
 - Structured logging for all operations (success, failure, warnings)
+
+Exports: `sendEmail()`, `SendEmailOptions`, `SendEmailResult`, `EmailStatus`
+
+**SendEmailOptions:**
+
+| Property  | Type                 | Required | Description                                                    |
+| --------- | -------------------- | -------- | -------------------------------------------------------------- |
+| `to`      | `string \| string[]` | Yes      | Recipient email address(es)                                    |
+| `subject` | `string`             | Yes      | Email subject line                                             |
+| `react`   | `React.ReactElement` | Yes      | React Email template component                                 |
+| `from`    | `string`             | No       | Override default sender (uses `getDefaultSender()` if omitted) |
+| `replyTo` | `string`             | No       | Reply-to address (used by contact form)                        |
 
 ### Templates
 
@@ -92,7 +114,7 @@ All templates use React Email components (`Html`, `Head`, `Preview`, `Body`, etc
 **`emails/welcome.tsx`**
 
 - Welcome message with dashboard link
-- Props: `userName`, `userEmail`
+- Props: `userName`, `userEmail`, `baseUrl`
 
 **`emails/verify-email.tsx`**
 
@@ -107,7 +129,12 @@ All templates use React Email components (`Html`, `Head`, `Preview`, `Body`, etc
 **`emails/invitation.tsx`**
 
 - User invitation from existing user with personalized message
-- Props: `inviterName`, `inviteeEmail`, `inviteUrl`, `expiresAt`
+- Props: `inviterName`, `inviteeName`, `inviteeEmail`, `invitationUrl`, `expiresAt`
+
+**`emails/contact-notification.tsx`**
+
+- Admin notification of contact form submission
+- Props: `name`, `email`, `subject`, `message`, `submittedAt`
 
 ## User Creation Integration
 
@@ -162,12 +189,14 @@ Sunrise supports two user creation patterns with different email behaviors:
 
 **Test Helpers (`tests/helpers/email.ts`):**
 
-- `mockEmailSuccess(mock, id)` - Configure mock to return success
-- `mockEmailFailure(mock, error)` - Configure mock to return failure
-- `mockEmailError(mock, error)` - Configure mock to throw exception
-- `resetEmailMock(mock)` - Clear mock state between tests
-- `createMockEmailResult(id)` - Create typed success result
-- `createMockEmailFailure(error)` - Create typed failure result
+| Helper                         | Purpose                           | Default                  |
+| ------------------------------ | --------------------------------- | ------------------------ |
+| `mockEmailSuccess(mock, id?)`  | Configure mock to return success  | `'mock-email-id-123'`    |
+| `mockEmailFailure(mock, msg?)` | Configure mock to return failure  | `'Email sending failed'` |
+| `mockEmailError(mock, error)`  | Configure mock to throw exception | (none)                   |
+| `resetEmailMock(mock)`         | Clear mock state between tests    | —                        |
+| `createMockEmailResult(id?)`   | Create typed success result       | `'mock-email-id'`        |
+| `createMockEmailFailure(msg?)` | Create typed failure result       | `'Email sending failed'` |
 
 ### Integration Tests
 
