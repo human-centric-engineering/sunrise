@@ -136,6 +136,7 @@ Use these for implementation tasks:
 | `/testing`           | Unit and integration tests       |
 | `/security-hardener` | Rate limiting, CORS, CSP         |
 | `/email-designer`    | React Email templates            |
+| `/docs-writer`       | Create/update .context/ docs     |
 | `/docs-audit`        | Check documentation accuracy     |
 
 ## Test Engineering
