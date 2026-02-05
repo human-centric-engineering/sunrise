@@ -85,6 +85,79 @@ erDiagram
     }
 ```
 
+## Prisma 7 Configuration
+
+Prisma 7 uses a TypeScript configuration file (`prisma.config.ts`) instead of relying solely on environment variables at build time.
+
+### Configuration File
+
+```typescript
+// prisma.config.ts
+import { config } from 'dotenv';
+import { defineConfig, env } from 'prisma/config';
+
+// Load .env.local first (for Next.js local development), then .env as fallback
+config({ path: '.env.local' });
+config({ path: '.env' });
+
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  migrations: {
+    path: 'prisma/migrations',
+  },
+  datasource: {
+    url: env('DATABASE_URL'),
+  },
+});
+```
+
+**Key points:**
+
+- `.env.local` takes priority over `.env` (matches Next.js conventions)
+- Configuration is type-safe with `defineConfig()`
+- Migrations path is explicitly configured
+
+### Prisma Client Setup
+
+Prisma 7 requires a database adapter. The client singleton in `lib/db/client.ts`:
+
+```typescript
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import { env } from '@/lib/env';
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+  pool: Pool | undefined;
+};
+
+// Create connection pool (reuse across hot reloads in development)
+const pool = globalForPrisma.pool ?? new Pool({ connectionString: env.DATABASE_URL });
+
+if (env.NODE_ENV !== 'production') globalForPrisma.pool = pool;
+
+// Create Prisma adapter
+const adapter = new PrismaPg(pool);
+
+// Create Prisma client
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    adapter,
+    log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+
+if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+```
+
+**Key differences from Prisma 6:**
+
+- Requires `@prisma/adapter-pg` package
+- Requires `pg` package for connection pooling
+- Adapter must be passed to `PrismaClient` constructor
+- Pool is managed separately for hot reload reuse
+
 ## Prisma Schema
 
 ```prisma
@@ -96,17 +169,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ============================================
 // User Management
 // ============================================
-
-enum Role {
-  USER
-  ADMIN
-}
 
 // Better Auth User model
 //
@@ -121,7 +188,7 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  // Custom fields for RBAC
+  // Custom fields for RBAC (string-based, not enum)
   role          String    @default("USER")
 
   // Extended Profile Fields
@@ -417,20 +484,53 @@ Feature flags are managed through the admin dashboard at `/admin/features`. The 
 - **Metadata storage**: JSON field for complex configurations (rollout percentages, user segments)
 - **Audit trail**: `createdBy` tracks which admin created each flag
 
-### Query Patterns
+### Utilities
+
+Feature flag utilities are in `lib/feature-flags/index.ts`. Use these instead of raw Prisma queries.
+
+| Function                    | Purpose                         | Returns                        |
+| --------------------------- | ------------------------------- | ------------------------------ |
+| `isFeatureEnabled(name)`    | Check if flag enabled           | `Promise<boolean>`             |
+| `getAllFlags()`             | Get all flags (sorted by name)  | `Promise<FeatureFlag[]>`       |
+| `getFlag(name)`             | Get single flag by name         | `Promise<FeatureFlag \| null>` |
+| `toggleFlag(name, enabled)` | Toggle flag state               | `Promise<FeatureFlag \| null>` |
+| `createFlag(data)`          | Create new flag                 | `Promise<FeatureFlag>`         |
+| `updateFlag(id, data)`      | Update flag by ID               | `Promise<FeatureFlag>`         |
+| `deleteFlag(id)`            | Delete flag by ID               | `Promise<void>`                |
+| `seedDefaultFlags()`        | Seed default flags (idempotent) | `Promise<void>`                |
+
+**Usage examples**:
 
 ```typescript
-// Check if a feature is enabled
-const flag = await prisma.featureFlag.findUnique({
-  where: { name: 'ENABLE_BETA_FEATURES' },
-  select: { enabled: true },
-});
+import { isFeatureEnabled, getAllFlags, toggleFlag } from '@/lib/feature-flags';
 
-// List all flags for admin dashboard
-const flags = await prisma.featureFlag.findMany({
-  orderBy: { name: 'asc' },
+// Check if a feature is enabled (returns false if not found)
+if (await isFeatureEnabled('MAINTENANCE_MODE')) {
+  return <MaintenancePage />;
+}
+
+// Get all flags for admin dashboard
+const flags = await getAllFlags();
+
+// Toggle a flag
+await toggleFlag('ENABLE_BETA_FEATURES', true);
+```
+
+**Creating a flag**:
+
+```typescript
+import { createFlag } from '@/lib/feature-flags';
+
+await createFlag({
+  name: 'NEW_FEATURE', // Auto-uppercased
+  description: 'Enables the new feature',
+  enabled: false,
+  metadata: { rolloutPercent: 10 },
+  createdBy: userId,
 });
 ```
+
+**Error handling**: All utilities catch errors internally and log them. `isFeatureEnabled()` returns `false` on error, query functions return `null` or empty arrays.
 
 ## Table Naming Convention
 
@@ -466,27 +566,28 @@ expires   DateTime
 - Stored as TIMESTAMP WITH TIME ZONE
 - UTC recommended for consistency
 
-### Enums
+### Role Field
+
+The `role` field uses a String type with application-level validation rather than a database enum:
 
 ```prisma
-enum Role {
-  USER
-  ADMIN
-}
-
-role Role @default(USER)
+role String @default("USER")
 ```
 
-**Benefits**:
+**Why String instead of Enum**:
 
-- Type safety
-- Database-level constraint
-- Clear documentation
+- Easier to add new roles without migrations
+- better-auth compatibility (expects string role)
+- Validation handled at application layer with Zod
 
-**Alternative**: String with validation
+**Valid role values**: `"USER"`, `"ADMIN"`
 
-```prisma
-role String @default("user")  // Requires app-level validation
+**Validation example**:
+
+```typescript
+import { z } from 'zod';
+
+const roleSchema = z.enum(['USER', 'ADMIN']);
 ```
 
 ## Schema Evolution

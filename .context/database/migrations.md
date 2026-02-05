@@ -289,55 +289,86 @@ npx prisma migrate dev
 
 ### Seed File
 
+The seed file uses Prisma 7's PostgreSQL adapter pattern and creates test users plus default feature flags.
+
+**Important notes:**
+
+- **better-auth handles passwords separately** — users are created without a password field in the seed
+- **Uses `deleteMany` + `create` pattern** — clears existing data in development before seeding (not upsert)
+- **Seeds feature flags** — creates default feature flags from `lib/feature-flags/config.ts`
+- **Uses structured logging** — uses `logger` from `@/lib/logging`, not `console.log`
+
 ```typescript
 // prisma/seed.ts
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-import { hashPassword } from '../lib/auth/passwords';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
+import { logger } from '../lib/logging';
+import { DEFAULT_FLAGS } from '../lib/feature-flags/config';
 
-const prisma = new PrismaClient();
+const { Pool } = pg;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('Seeding database...');
+  logger.info('Seeding database...');
 
-  // Create admin user
-  const adminPassword = await hashPassword('admin123');
+  // Clear existing data (in development only)
+  if (process.env.NODE_ENV === 'development') {
+    logger.info('Clearing existing data...');
+    await prisma.verification.deleteMany();
+    await prisma.session.deleteMany();
+    await prisma.account.deleteMany();
+    await prisma.user.deleteMany();
+    await prisma.featureFlag.deleteMany();
+  }
 
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
-    update: {},
-    create: {
-      email: 'admin@example.com',
-      name: 'Admin User',
-      password: adminPassword,
-      role: 'ADMIN',
-      emailVerified: new Date(),
+  // Create test users (2 users: test + admin)
+  logger.info('Creating test users...');
+
+  const testUser = await prisma.user.create({
+    data: {
+      email: 'test@example.com',
+      name: 'Test User',
+      emailVerified: true,
+      role: 'USER',
     },
   });
 
-  console.log('Created admin user:', admin.email);
+  const adminUser = await prisma.user.create({
+    data: {
+      email: 'admin@example.com',
+      name: 'Admin User',
+      emailVerified: true,
+      role: 'ADMIN',
+    },
+  });
 
-  // Create test users
-  for (let i = 1; i <= 10; i++) {
-    const userPassword = await hashPassword('password123');
+  logger.info('Created test user', { email: testUser.email });
+  logger.info('Created admin user', { email: adminUser.email });
 
-    await prisma.user.upsert({
-      where: { email: `user${i}@example.com` },
-      update: {},
-      create: {
-        email: `user${i}@example.com`,
-        name: `Test User ${i}`,
-        password: userPassword,
-        role: 'USER',
-      },
-    });
-  }
+  // Seed default feature flags
+  logger.info('Seeding feature flags...');
 
-  console.log('Created 10 test users');
+  const { count } = await prisma.featureFlag.createMany({
+    data: DEFAULT_FLAGS.map((flag) => ({
+      name: flag.name,
+      description: flag.description,
+      enabled: flag.enabled,
+      metadata: flag.metadata,
+    })),
+  });
+  logger.info(`Created ${count} feature flags`);
+
+  logger.info('Seeding complete!');
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    logger.error('Seeding failed', e);
     process.exit(1);
   })
   .finally(async () => {
@@ -602,14 +633,16 @@ npx prisma generate
 
 ### Seed Data Strategy
 
-**Decision**: Seed file for initial admin user, minimal test data
+**Decision**: Seed file with 2 test users (test + admin) and default feature flags
 **Rationale**:
 
 - Admin user needed for first login
-- Test data useful for development
-- Production uses real data, not seeds
+- Test user for development testing
+- Feature flags seeded from centralized config (`lib/feature-flags/config.ts`)
+- Uses `deleteMany` + `create` pattern (not upsert) for clean reseeding
+- better-auth handles passwords separately, so users created without password field
 
-**Trade-offs**: Must maintain seed script as schema evolves
+**Trade-offs**: Must maintain seed script as schema evolves; `deleteMany` pattern requires correct deletion order for foreign key constraints
 
 ## Related Documentation
 
