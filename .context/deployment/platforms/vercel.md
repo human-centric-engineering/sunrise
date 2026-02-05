@@ -46,6 +46,13 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 ```
 
+**Optional (for file uploads):**
+
+```
+STORAGE_PROVIDER=vercel-blob  # Options: s3, vercel-blob, local
+# See .env.example for full S3/Vercel Blob configuration
+```
+
 ### 3. Database Setup
 
 **Option A: Vercel Postgres (Recommended)**
@@ -99,9 +106,13 @@ Vercel automatically builds and deploys.
 - **Output Directory:** `.next`
 - **Install Command:** `npm install`
 
-### Function Configuration
+### Function Configuration (vercel.json)
 
-For API routes with longer execution times, configure in `vercel.json`:
+Create `vercel.json` in your project root only if you need custom function configuration (e.g., longer timeouts). This file is **not included** in the starter template — Vercel auto-detects Next.js settings by default.
+
+See [Vercel Project Configuration](https://vercel.com/docs/projects/project-configuration) for the full schema reference.
+
+**Example configuration for longer API timeouts:**
 
 ```json
 {
@@ -117,14 +128,25 @@ For API routes with longer execution times, configure in `vercel.json`:
 
 Every pull request gets a unique preview URL automatically.
 
+### Health Monitoring
+
+Vercel handles infrastructure health monitoring automatically. The `/api/health` endpoint can be used with external monitoring services (UptimeRobot, Pingdom, Better Uptime) for application-level health checks and alerting.
+
 ## Verifying Deployment
 
 1. Check deployment status in Vercel dashboard
 2. Visit `https://your-project.vercel.app/api/health`
 3. Expected response:
    ```json
-   { "status": "ok", "database": { "connected": true } }
+   {
+     "status": "ok",
+     "version": "1.0.0",
+     "services": {
+       "database": { "status": "operational", "connected": true }
+     }
+   }
    ```
+   **Note:** `services.database.status` is `operational`, `degraded`, or `outage`. Returns HTTP 503 on database failure.
 
 ## Common Issues
 

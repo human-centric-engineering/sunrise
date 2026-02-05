@@ -18,6 +18,23 @@ Choose a deployment platform and follow its guide. This document helps you decid
 - **Budget-conscious?** → Render (free tier)
 - **Need full control?** → Self-hosted Docker
 
+## Development with Docker
+
+```bash
+docker-compose up    # Starts dev environment with hot-reload
+```
+
+- **Dockerfile.dev** includes Python3/make/g++ for native module compilation (bcrypt, sharp)
+- Source code mounted as volume — changes trigger hot-reload automatically
+- Use `db` as hostname instead of `localhost` for database connections
+
+**When to use:**
+
+| Approach         | Best For                                                |
+| ---------------- | ------------------------------------------------------- |
+| `docker-compose` | Consistent environment, team onboarding, CI parity      |
+| `npm run dev`    | Faster iteration, no Docker overhead, simpler debugging |
+
 ## Architecture
 
 **Development:**
@@ -61,14 +78,42 @@ Use `-T` flag for non-interactive CI environments.
 
 ## Health Checks
 
-All deployments should monitor `/api/health`:
+All deployments should monitor `/api/health`.
+
+**Response structure:**
 
 ```json
 {
   "status": "ok",
-  "database": { "connected": true, "latency": 5 }
+  "version": "1.0.0",
+  "uptime": 3600,
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "services": {
+    "database": {
+      "status": "operational",
+      "connected": true,
+      "latency": 5
+    }
+  }
 }
 ```
+
+**Service status values:**
+
+| Status        | Meaning                      |
+| ------------- | ---------------------------- |
+| `operational` | Service healthy              |
+| `degraded`    | High latency (> 500ms)       |
+| `outage`      | Service unavailable or error |
+
+**HTTP status codes:**
+
+- `200` — All services operational
+- `503` — Database connection failed
+
+**Memory stats (optional):**
+
+Set `HEALTH_INCLUDE_MEMORY=true` to include memory usage in response. Disabled by default for security (avoids exposing server internals).
 
 **Recommended monitoring:** UptimeRobot, Pingdom, or platform-native health checks.
 
@@ -79,8 +124,10 @@ Before going live:
 - [ ] Strong `BETTER_AUTH_SECRET` (32+ characters)
 - [ ] SSL/HTTPS enabled
 - [ ] Environment variables not in git
+- [ ] `LOG_SANITIZE_PII=true` for GDPR/CCPA compliance (redacts emails, names, IPs in logs)
 - [ ] Database backups configured
 - [ ] Rate limiting enabled
+- [ ] Storage provider configured (if using file uploads)
 - [ ] Health monitoring set up
 
 ## Related Documentation

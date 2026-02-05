@@ -14,33 +14,36 @@ Complete reference for all environment variables used in Sunrise.
 
 ## Quick Reference Table
 
-| Variable                                                  | Required | Type         | Default       | Description                   |
-| --------------------------------------------------------- | -------- | ------------ | ------------- | ----------------------------- |
-| [`DATABASE_URL`](./database-env.md)                       | ✅ Yes   | URL          | -             | PostgreSQL connection string  |
-| [`BETTER_AUTH_URL`](./auth-env.md)                        | ✅ Yes   | URL          | -             | Application base URL          |
-| [`BETTER_AUTH_SECRET`](./auth-env.md)                     | ✅ Yes   | String (32+) | -             | JWT signing secret            |
-| [`GOOGLE_CLIENT_ID`](./auth-env.md)                       | ❌ No    | String       | -             | Google OAuth client ID        |
-| [`GOOGLE_CLIENT_SECRET`](./auth-env.md)                   | ❌ No    | String       | -             | Google OAuth secret           |
-| [`RESEND_API_KEY`](./email-env.md)                        | ❌ No    | String       | -             | Resend email API key          |
-| [`EMAIL_FROM`](./email-env.md)                            | ❌ No    | Email        | -             | Sender email address          |
-| [`EMAIL_FROM_NAME`](./email-env.md)                       | ❌ No    | String       | -             | Sender display name           |
-| [`CONTACT_EMAIL`](./email-env.md)                         | ❌ No    | Email        | `EMAIL_FROM`  | Contact form notifications    |
-| [`NODE_ENV`](./services-env.md)                           | ✅ Yes   | Enum         | `development` | Environment name              |
-| [`NEXT_PUBLIC_APP_URL`](./services-env.md)                | ✅ Yes   | URL          | -             | Public app URL (client-side)  |
-| [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](./services-env.md) | ❌ No    | Boolean      | `true`        | Enable cookie consent banner  |
-| [`LOG_LEVEL`](./services-env.md)                          | ❌ No    | Enum         | Auto          | Minimum log level             |
-| [`LOG_SANITIZE_PII`](./services-env.md)                   | ❌ No    | Boolean      | Auto          | PII sanitization in logs      |
-| [`ALLOWED_ORIGINS`](./services-env.md)                    | ❌ No    | String       | -             | CORS allowed origins          |
-| [`STORAGE_PROVIDER`](./storage-env.md)                    | ❌ No    | Enum         | Auto-detect   | Storage provider selection    |
-| [`MAX_FILE_SIZE_MB`](./storage-env.md)                    | ❌ No    | Number       | `5`           | Max upload file size (MB)     |
-| [`S3_BUCKET`](./storage-env.md)                           | ⚠️ Cond  | String       | -             | S3 bucket name                |
-| [`S3_ACCESS_KEY_ID`](./storage-env.md)                    | ⚠️ Cond  | String       | -             | AWS access key ID             |
-| [`S3_SECRET_ACCESS_KEY`](./storage-env.md)                | ⚠️ Cond  | String       | -             | AWS secret access key         |
-| [`S3_REGION`](./storage-env.md)                           | ❌ No    | String       | `us-east-1`   | AWS region                    |
-| [`S3_ENDPOINT`](./storage-env.md)                         | ❌ No    | URL          | -             | Custom S3-compatible endpoint |
-| [`S3_PUBLIC_URL_BASE`](./storage-env.md)                  | ❌ No    | URL          | -             | CDN/domain for public URLs    |
-| [`S3_USE_ACL`](./storage-env.md)                          | ❌ No    | Boolean      | `false`       | Enable ACL on uploads         |
-| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md)               | ⚠️ Cond  | String       | -             | Vercel Blob storage token     |
+| Variable                                                  | Required | Type         | Default       | Description                           |
+| --------------------------------------------------------- | -------- | ------------ | ------------- | ------------------------------------- |
+| [`DATABASE_URL`](./database-env.md)                       | ✅ Yes   | URL          | -             | PostgreSQL connection string          |
+| [`BETTER_AUTH_URL`](./auth-env.md)                        | ✅ Yes   | URL          | -             | Application base URL                  |
+| [`BETTER_AUTH_SECRET`](./auth-env.md)                     | ✅ Yes   | String (32+) | -             | JWT signing secret                    |
+| [`GOOGLE_CLIENT_ID`](./auth-env.md)                       | ❌ No    | String       | -             | Google OAuth client ID                |
+| [`GOOGLE_CLIENT_SECRET`](./auth-env.md)                   | ❌ No    | String       | -             | Google OAuth secret                   |
+| [`RESEND_API_KEY`](./email-env.md)                        | ❌ No    | String       | -             | Resend email API key                  |
+| [`EMAIL_FROM`](./email-env.md)                            | ❌ No    | Email        | -             | Sender email address                  |
+| [`EMAIL_FROM_NAME`](./email-env.md)                       | ❌ No    | String       | -             | Sender display name                   |
+| [`CONTACT_EMAIL`](./email-env.md)                         | ❌ No    | Email        | `EMAIL_FROM`  | Contact form notifications            |
+| [`NODE_ENV`](./services-env.md)                           | ✅ Yes   | Enum         | `development` | Environment name                      |
+| [`NEXT_PUBLIC_APP_URL`](./services-env.md)                | ✅ Yes   | URL          | -             | Public app URL (client-side)          |
+| [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](./services-env.md) | ❌ No    | Boolean      | `true`        | Enable cookie consent banner          |
+| [`LOG_LEVEL`](./services-env.md)                          | ❌ No    | Enum         | Auto          | Minimum log level                     |
+| [`LOG_SANITIZE_PII`](./services-env.md)                   | ❌ No    | Boolean      | Auto          | PII sanitization in logs              |
+| [`ALLOWED_ORIGINS`](./services-env.md)                    | ❌ No    | String       | -             | CORS allowed origins                  |
+| [`STORAGE_PROVIDER`](./storage-env.md)                    | ❌ No    | Enum         | Auto-detect   | Storage provider selection            |
+| [`MAX_FILE_SIZE_MB`](./storage-env.md)                    | ❌ No    | Number       | `5`           | Max upload file size (MB)             |
+| [`S3_BUCKET`](./storage-env.md)                           | ⚠️ Cond  | String       | -             | S3 bucket name                        |
+| [`S3_ACCESS_KEY_ID`](./storage-env.md)                    | ⚠️ Cond  | String       | -             | AWS access key ID                     |
+| [`S3_SECRET_ACCESS_KEY`](./storage-env.md)                | ⚠️ Cond  | String       | -             | AWS secret access key                 |
+| [`S3_REGION`](./storage-env.md)                           | ❌ No    | String       | `us-east-1`   | AWS region                            |
+| [`S3_ENDPOINT`](./storage-env.md)                         | ❌ No    | URL          | -             | Custom S3-compatible endpoint         |
+| [`S3_PUBLIC_URL_BASE`](./storage-env.md)                  | ❌ No    | URL          | -             | CDN/domain for public URLs            |
+| [`S3_USE_ACL`](./storage-env.md)                          | ❌ No    | Boolean      | `false`       | Enable ACL on uploads                 |
+| [`BLOB_READ_WRITE_TOKEN`](./storage-env.md)               | ⚠️ Cond  | String       | -             | Vercel Blob storage token             |
+| `PERF_SLOW_THRESHOLD_MS`                                  | ❌ No    | Number       | `1000`        | Threshold for logging slow operations |
+| `PERF_CRITICAL_THRESHOLD_MS`                              | ❌ No    | Number       | `5000`        | Threshold for Sentry alerts           |
+| `NEXT_TELEMETRY_DISABLED`                                 | ❌ No    | Boolean      | -             | Set to 1 to disable Next.js telemetry |
 
 ## Environment-Specific Values
 
