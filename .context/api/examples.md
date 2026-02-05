@@ -171,63 +171,174 @@ const res = await serverFetch('/api/v1/users/invite', {
 });
 ```
 
-## API Route Implementation
+### Server Fetch Helpers
 
-### Standard Pattern
-
-From `app/api/v1/users/me/route.ts`:
+The `serverFetch` module provides helpers for internal API calls:
 
 ```typescript
-import { NextRequest } from 'next/server';
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth/config';
+import { serverFetch, parseApiResponse, getCookieHeader, getBaseUrl } from '@/lib/api/server-fetch';
+```
+
+**`getCookieHeader()`** - Serializes all cookies from the current request for forwarding:
+
+```typescript
+const cookieHeader = await getCookieHeader();
+// Returns: "session_token=abc; other=xyz"
+```
+
+**`getBaseUrl()`** - Gets the app base URL for constructing absolute URLs:
+
+```typescript
+const baseUrl = getBaseUrl();
+// Returns: "http://localhost:3000" or production URL
+```
+
+### Response Parsing
+
+Use `parseApiResponse()` to validate API responses follow the expected discriminated union format:
+
+```typescript
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+
+const res = await serverFetch('/api/v1/users/me');
+const { data: user } = await parseApiResponse<User>(res);
+```
+
+**What it validates:**
+
+- Response body is an object with boolean `success` field
+- When `success: true`, `data` field is present
+- When `success: false`, `error` object is present
+
+**Error behavior:**
+
+- Throws `Error` if body is not an object
+- Throws `Error` if `success` field is missing or not boolean
+- Throws `Error` if `success: true` but `data` is missing
+- Throws `Error` if `success: false` but `error` is missing
+
+**When to use:** Always pair with `serverFetch` in server components instead of unsafe `as` casts on JSON responses.
+
+## API Route Implementation
+
+Use auth guards (`withAuth`, `withAdminAuth`) for authenticated routes. They handle session retrieval, authorization, and error handling automatically.
+
+### Basic Authenticated Route
+
+```typescript
+import { withAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { UnauthorizedError, handleAPIError } from '@/lib/api/errors';
 
-export async function GET(request: NextRequest) {
-  try {
-    // 1. Authenticate
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
-    if (!session) throw new UnauthorizedError();
+export const GET = withAuth(async (_request, session) => {
+  // session is guaranteed valid - no need for null checks or try/catch
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { id: true, name: true, email: true, role: true },
+  });
 
-    // 2. Business logic
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { id: true, name: true, email: true, role: true },
-    });
+  return successResponse(user);
+});
+```
 
-    if (!user) throw new UnauthorizedError('User not found');
+### Admin-Only Route
 
-    // 3. Return response
-    return successResponse(user);
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
+```typescript
+import { withAdminAuth } from '@/lib/auth/guards';
+import { successResponse } from '@/lib/api/responses';
+
+export const GET = withAdminAuth(async (_request, session) => {
+  // session.user.role is guaranteed to be 'ADMIN'
+  // Returns 401 if not authenticated, 403 if not admin
+  const stats = await getSystemStats();
+  return successResponse(stats);
+});
+```
+
+### Route with Dynamic Params
+
+```typescript
+import { withAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
+import { successResponse } from '@/lib/api/responses';
+import { NotFoundError } from '@/lib/api/errors';
+
+export const GET = withAuth<{ id: string }>(async (_request, session, { params }) => {
+  const { id } = await params;
+
+  const resource = await prisma.resource.findUnique({
+    where: { id, userId: session.user.id },
+  });
+
+  if (!resource) throw new NotFoundError('Resource not found');
+
+  return successResponse(resource);
+});
 ```
 
 ### With Validation
 
 ```typescript
-import { validateRequestBody, parsePaginationParams } from '@/lib/api/validation';
+import { withAuth } from '@/lib/auth/guards';
+import {
+  validateRequestBody,
+  validateQueryParams,
+  parsePaginationParams,
+} from '@/lib/api/validation';
 import { updateUserSchema } from '@/lib/validations/user';
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withAuth(async (request, session) => {
+  // Validate request body with Zod schema
+  const body = await validateRequestBody(request, updateUserSchema);
+
+  const user = await prisma.user.update({
+    where: { id: session.user.id },
+    data: body,
+  });
+
+  return successResponse(user);
+});
+```
+
+**Note:** Prefer `parsePaginationParams()` over manual `parseInt` for pagination. It handles defaults, bounds checking, and skip calculation.
+
+### Public Endpoints
+
+Public endpoints don't use guards - use manual try/catch with rate limiting.
+
+```typescript
+import { NextRequest } from 'next/server';
+import { successResponse } from '@/lib/api/responses';
+import { handleAPIError } from '@/lib/api/errors';
+import { validateRequestBody } from '@/lib/api/validation';
+import { contactSchema } from '@/lib/validations/contact';
+import {
+  contactLimiter,
+  createRateLimitResponse,
+  getRateLimitHeaders,
+} from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+
+export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) throw new UnauthorizedError();
+    // 1. Check rate limit first
+    const clientIP = getClientIP(request);
+    const rateLimitResult = contactLimiter.check(clientIP);
 
-    // Validate request body with Zod schema
-    const body = await validateRequestBody(request, updateUserSchema);
+    if (!rateLimitResult.success) {
+      return createRateLimitResponse(rateLimitResult);
+    }
 
-    const user = await prisma.user.update({
-      where: { id: session.user.id },
-      data: body,
+    // 2. Validate request body
+    const body = await validateRequestBody(request, contactSchema);
+
+    // 3. Business logic
+    await processContactForm(body);
+
+    // 4. Return success with rate limit headers
+    return successResponse({ message: 'Message sent successfully' }, undefined, {
+      headers: getRateLimitHeaders(rateLimitResult),
     });
-
-    return successResponse(user);
   } catch (error) {
     return handleAPIError(error);
   }
@@ -237,24 +348,21 @@ export async function PATCH(request: NextRequest) {
 ### Pagination
 
 ```typescript
+import { withAuth } from '@/lib/auth/guards';
 import { paginatedResponse } from '@/lib/api/responses';
 import { parsePaginationParams } from '@/lib/api/validation';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = request.nextUrl;
-    const { page, limit, skip } = parsePaginationParams(searchParams);
+export const GET = withAuth(async (request, _session) => {
+  const { searchParams } = request.nextUrl;
+  const { page, limit, skip } = parsePaginationParams(searchParams);
 
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({ skip, take: limit }),
-      prisma.user.count(),
-    ]);
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({ skip, take: limit }),
+    prisma.user.count(),
+  ]);
 
-    return paginatedResponse(users, { page, limit, total });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
+  return paginatedResponse(users, { page, limit, total });
+});
 ```
 
 ### Error Classes
@@ -272,6 +380,58 @@ import {
 if (!session) throw new UnauthorizedError();
 if (session.user.role !== 'ADMIN') throw new ForbiddenError('Admin access required');
 if (!user) throw new NotFoundError('User not found');
+```
+
+### Response Helpers
+
+**`successResponse(data, meta?, options?)`** - Standard success response:
+
+```typescript
+// Simple success
+return successResponse({ id: '123', name: 'John' });
+
+// With pagination metadata
+return successResponse(users, { page: 1, limit: 20, total: 150, totalPages: 8 });
+
+// With custom status and headers (e.g., rate limit headers)
+return successResponse({ message: 'Created' }, undefined, {
+  status: 201,
+  headers: {
+    'X-RateLimit-Remaining': '99',
+    Location: '/api/v1/users/123',
+  },
+});
+```
+
+### Query Parameter Validation
+
+Use `validateQueryParams()` for type-safe query parameter validation:
+
+```typescript
+import { withAuth } from '@/lib/auth/guards';
+import { validateQueryParams } from '@/lib/api/validation';
+import { z } from 'zod';
+
+const listUsersQuerySchema = z.object({
+  role: z.enum(['USER', 'ADMIN']).optional(),
+  search: z.string().optional(),
+  sortBy: z.enum(['name', 'createdAt']).default('createdAt'),
+});
+
+export const GET = withAuth(async (request, _session) => {
+  const { searchParams } = request.nextUrl;
+  const { role, search, sortBy } = validateQueryParams(searchParams, listUsersQuerySchema);
+
+  const users = await prisma.user.findMany({
+    where: {
+      ...(role && { role }),
+      ...(search && { name: { contains: search, mode: 'insensitive' } }),
+    },
+    orderBy: { [sortBy]: 'desc' },
+  });
+
+  return successResponse(users);
+});
 ```
 
 ## API Endpoint Constants

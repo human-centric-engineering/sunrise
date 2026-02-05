@@ -103,6 +103,30 @@ const orderBy = validSortFields.includes(sortBy) ? { [sortBy]: sortOrder } : { c
 const results = await prisma.user.findMany({ orderBy });
 ```
 
+### Reusable Validation Schemas
+
+Common validation schemas are available in `lib/validations/common.ts`:
+
+| Schema                  | Purpose                                       |
+| ----------------------- | --------------------------------------------- |
+| `paginationQuerySchema` | Validates `page` and `limit` query parameters |
+| `sortingQuerySchema`    | Validates `sortBy` and `sortOrder` parameters |
+| `searchQuerySchema`     | Validates search/filter `q` parameter         |
+| `listQuerySchema`       | Combined pagination + sorting + search        |
+| `cuidSchema`            | Validates CUID format (default Prisma ID)     |
+| `uuidSchema`            | Validates UUID format                         |
+| `paginationMetaSchema`  | Validates pagination response `meta` object   |
+
+```typescript
+import { paginationQuerySchema, cuidSchema } from '@/lib/validations/common';
+
+// Validate query params
+const { page, limit } = paginationQuerySchema.parse(searchParams);
+
+// Validate ID parameter
+const userId = cuidSchema.parse(params.id);
+```
+
 ## Error Codes
 
 | Code                     | HTTP Status | Meaning                             |

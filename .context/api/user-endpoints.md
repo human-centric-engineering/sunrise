@@ -236,6 +236,8 @@ POST /api/v1/users/me/avatar
 - Supported formats: JPEG, PNG, WebP, GIF
 - Max size: Configurable via `MAX_FILE_SIZE_MB` (default 5MB)
 
+**Validation Schemas**: See `lib/validations/storage.ts` for `imageFileSchema` and `avatarUploadSchema`
+
 **Processing**:
 
 - Resized to 500x500 max dimensions
@@ -382,6 +384,65 @@ GET /api/v1/users/:id
 - **403 Forbidden**: User is not ADMIN and not requesting own profile
 - **404 Not Found**: User ID does not exist
 
+## Update User (Admin)
+
+✅ **Implemented in:** `app/api/v1/users/[id]/route.ts` (PATCH handler)
+
+**Purpose**: Update a user's information (admin only)
+
+```
+PATCH /api/v1/users/:id
+```
+
+**Authentication**: Required (ADMIN role)
+
+**Request Body** (all fields optional, but at least one required):
+
+```json
+{
+  "name": "Jane Doe",
+  "role": "ADMIN",
+  "emailVerified": true
+}
+```
+
+**Validation**: Uses `adminUserUpdateSchema` from `lib/validations/admin.ts`
+
+- `name`: String (optional)
+- `role`: Enum `USER` | `ADMIN` (optional)
+- `emailVerified`: Boolean (optional)
+
+**Response** (200 OK):
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "clxxxx",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "role": "ADMIN",
+    "emailVerified": true,
+    "image": "https://...",
+    "createdAt": "2025-01-01T08:00:00.000Z",
+    "updatedAt": "2025-01-15T14:30:00.000Z"
+  }
+}
+```
+
+**Error Responses**:
+
+- **401 Unauthorized**: No valid session
+- **403 Forbidden**: User does not have ADMIN role
+- **404 Not Found**: User ID does not exist
+- **400 Validation Error**: Invalid input data or no fields provided
+- **400 SELF_ROLE_CHANGE**: Admin attempting to change their own role
+
+**Security Notes**:
+
+- Admins cannot change their own role (prevents accidental self-lockout)
+- All role changes are logged with admin ID and changes made
+
 ## Delete User
 
 ✅ **Implemented in:** `app/api/v1/users/[id]/route.ts` (DELETE handler)
@@ -413,9 +474,12 @@ DELETE /api/v1/users/:id
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
 - **400 Bad Request**: Attempting to delete own account
+- **400 Bad Request**: Attempting to delete another admin account
 - **404 Not Found**: User ID does not exist
 
 **Note**: Deletion cascades to related records (sessions, accounts) as configured in Prisma schema.
+
+**Admin Protection**: Admins cannot delete other admin accounts. To delete an admin, first demote them to USER role using the PATCH endpoint, then delete.
 
 ## Related Documentation
 
