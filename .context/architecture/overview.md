@@ -15,9 +15,9 @@ graph TB
 
     subgraph "Next.js Application"
         subgraph "App Router"
-            Marketing[Marketing Pages<br/>Route Group: marketing]
+            Marketing[Public Pages<br/>Route Group: public]
             Auth[Auth Pages<br/>Route Group: auth]
-            Dashboard[Dashboard Pages<br/>Route Group: dashboard]
+            Dashboard[Protected Pages<br/>Route Group: protected]
         end
 
         subgraph "API Layer"
@@ -85,6 +85,8 @@ Route groups organize pages without affecting URL structure. Each group has its 
 **`app/(auth)/`** - Authentication flows
 
 - Login, signup, password reset, email verification
+- Invitation acceptance (`accept-invite/`)
+- Email verification flow (`verify-email/`, `verify-email/callback/`)
 - Unauthenticated users only (redirect if logged in)
 - Minimal layout, centered forms
 - Form validation with Zod
@@ -93,16 +95,16 @@ Route groups organize pages without affecting URL structure. Each group has its 
 
 - Contains: `dashboard/`, `settings/`, `profile/` as subdirectories
 - No `page.tsx` at group root (subdirectories provide pages)
-- Requires authentication (protected by proxy)
+- Defense-in-depth: proxy-based protection + page-level session checks
 - Shared application layout with navigation
-- Server-side session checks
+- API routes use `withAuth()` guard for automatic session handling
 - **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
 
-**`app/admin/`** - Admin dashboard (separate route group)
+**`app/admin/`** - Admin dashboard
 
 - Contains: overview, users management, logs viewer, feature flags
 - **Not a route group** - uses `/admin` URL prefix directly
-- Requires ADMIN role (enforced via `requireAdmin()` utility)
+- Requires ADMIN role (enforced via `withAdminAuth()` guard for API routes)
 - Custom sidebar layout distinct from protected routes
 - Pages:
   - `/admin` - Dashboard overview with system statistics
@@ -111,12 +113,13 @@ Route groups organize pages without affecting URL structure. Each group has its 
   - `/admin/users/invite` - User invitation form
   - `/admin/logs` - Application log viewer with filtering
   - `/admin/features` - Feature flag management (create, toggle, edit, delete)
-- Server-side role checks on each page via `requireAdmin()`
+- Defense-in-depth: proxy checks + page-level role verification
 - Separate from `(protected)` to allow distinct layout and stricter access control
 
 **`app/(public)/`** - All public pages
 
-- Landing page (`page.tsx`), about, contact, pricing, etc.
+- Landing page (`page.tsx`), about, contact
+- Legal pages: privacy policy (`privacy/`), terms of service (`terms/`)
 - No authentication required
 - SEO-optimized
 - Shared marketing layout with header/footer
@@ -253,6 +256,21 @@ sequenceDiagram
 ```
 
 **Use Cases**: Mutations from client, external API access, client-side data fetching
+
+## Additional Systems
+
+Sunrise includes several supporting systems documented in their respective locations:
+
+| System         | Location             | Purpose                                 |
+| -------------- | -------------------- | --------------------------------------- |
+| Analytics      | `lib/analytics/`     | Page views, events, user identification |
+| Monitoring     | `lib/monitoring/`    | Error tracking, performance monitoring  |
+| Feature Flags  | `lib/feature-flags/` | Runtime feature toggles                 |
+| Cookie Consent | `lib/consent/`       | GDPR-compliant consent management       |
+| Storage        | `lib/storage/`       | File uploads (S3/Vercel Blob)           |
+| Logging        | `lib/logging/`       | Structured application logging          |
+
+See individual documentation in `.context/` for each system's integration details.
 
 ## Deployment Architecture
 
