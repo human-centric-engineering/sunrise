@@ -1,10 +1,5 @@
 # API Endpoints Overview
 
-> **Implementation Status:** December 2025
->
-> - ✅ **Implemented** - Endpoints currently available (with file references)
-> - 📋 **Planned** - Endpoints defined for future development
-
 ## Endpoint Documentation
 
 | Category        | File                                           | Description                                         |
