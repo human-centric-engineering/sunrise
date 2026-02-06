@@ -11,6 +11,7 @@
 import { put, del, list } from '@vercel/blob';
 import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
 import { logger } from '@/lib/logging';
+import { validateStorageKey } from './validate-key';
 
 /**
  * Vercel Blob Provider Configuration
@@ -36,6 +37,7 @@ export class VercelBlobProvider implements StorageProvider {
 
   async upload(file: Buffer, options: UploadOptions): Promise<UploadResult> {
     const { key, contentType } = options;
+    validateStorageKey(key);
 
     // Vercel Blob uses the filename as the key
     // It automatically adds a unique prefix to prevent collisions
@@ -61,6 +63,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   async delete(key: string): Promise<DeleteResult> {
+    validateStorageKey(key);
     try {
       // Vercel Blob delete expects a URL, so we need to construct it
       // The key stored should be the full URL for Vercel Blob
@@ -82,6 +85,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   async deletePrefix(prefix: string): Promise<DeleteResult> {
+    validateStorageKey(prefix);
     try {
       // List all blobs matching the prefix
       const { blobs } = await list({ prefix, token: this.token });

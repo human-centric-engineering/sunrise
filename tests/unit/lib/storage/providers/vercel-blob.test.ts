@@ -164,6 +164,37 @@ describe('lib/storage/providers/vercel-blob', () => {
         );
       });
     });
+
+    describe('key validation', () => {
+      it('should throw for invalid key with path traversal in upload', async () => {
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        const provider = new VercelBlobProvider({ token: 'test-token' });
+
+        await expect(
+          provider.upload(Buffer.from('test'), {
+            key: '../etc/passwd',
+            contentType: 'text/plain',
+          })
+        ).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in delete', async () => {
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        const provider = new VercelBlobProvider({ token: 'test-token' });
+
+        await expect(provider.delete('../etc/passwd')).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in deletePrefix', async () => {
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+
+        const provider = new VercelBlobProvider({ token: 'test-token' });
+
+        await expect(provider.deletePrefix('../etc/')).rejects.toThrow('must not contain ".."');
+      });
+    });
   });
 
   describe('createVercelBlobProviderFromEnv', () => {
