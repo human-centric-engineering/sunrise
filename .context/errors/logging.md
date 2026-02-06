@@ -1,6 +1,6 @@
 # Structured Logging - Best Practices
 
-**Last Updated**: 2025-12-22
+**Last Updated**: 2026-02-06
 **Related**: [Error Handling Overview](./overview.md)
 
 This document provides guidelines for effective structured logging in Sunrise.
@@ -14,6 +14,8 @@ This document provides guidelines for effective structured logging in Sunrise.
 - [Structured Metadata](#structured-metadata)
 - [Performance Considerations](#performance-considerations)
 - [Log Aggregation](#log-aggregation)
+- [Admin Log Buffer](#admin-log-buffer)
+- [Logger Methods](#logger-methods)
 - [Common Patterns](#common-patterns)
 
 ## When to Log
@@ -428,6 +430,23 @@ ERROR → Use ERROR
 
 ## Request Context
 
+Request context utilities enable distributed tracing across your application. These functions are **recommended for production tracing** to correlate logs across requests.
+
+> For implementation details on adding request context to API routes, see `.instructions/REQUEST-CONTEXT-TRACING.md`
+
+**Note:** Basic `logger.info()` is acceptable for simple cases where request tracing is not needed.
+
+### Available Context Utilities
+
+| Function                   | Description                                      | Async |
+| -------------------------- | ------------------------------------------------ | ----- |
+| `getRequestId()`           | Get or generate request ID from headers          | Yes   |
+| `getUserContext()`         | Extract userId, sessionId, email from session    | Yes   |
+| `getFullContext(request)`  | Combined request + user context                  | Yes   |
+| `getEndpointPath(request)` | Extract clean endpoint path without query params | No    |
+| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)  | No    |
+| `getClientIp()`            | Get client IP from proxy headers                 | Yes   |
+
 ### Request ID Propagation
 
 **How it works**:
@@ -715,6 +734,90 @@ message:"Login failed" AND @timestamp:[now-1h TO now]
   condition: avg(duration_ms) > 2000 in 10 minutes
   severity: warning
   notify: engineering-team
+```
+
+## Admin Log Buffer
+
+The admin log buffer provides an in-memory ring buffer for storing recent log entries. This enables the admin dashboard to display application logs without requiring external log aggregation services.
+
+**Location**: `lib/admin/logs.ts`
+
+### How It Works
+
+The logger automatically pushes entries to the admin log buffer via `lib/logging/index.ts` (lines 413-441). This happens transparently for all log calls.
+
+**Key characteristics**:
+
+- **Ring buffer**: When full, oldest entries are automatically removed
+- **Max size**: 1000 entries
+- **Persistence**: Survives hot reloads in development, resets on server restart
+- **Non-blocking**: Failures to write to buffer are silently ignored
+
+### Available Functions
+
+| Function                 | Description                                                    |
+| ------------------------ | -------------------------------------------------------------- |
+| `addLogEntry(entry)`     | Add a log entry to the buffer (called automatically by logger) |
+| `getLogEntries(options)` | Get entries with filtering (level, search) and pagination      |
+| `clearLogBuffer()`       | Clear all entries from the buffer                              |
+| `getBufferSize()`        | Get current number of entries in buffer                        |
+| `getMaxBufferSize()`     | Get maximum buffer capacity (1000)                             |
+
+### Example: Querying Logs
+
+```typescript
+import { getLogEntries } from '@/lib/admin/logs';
+
+// Get recent errors
+const { entries, total } = getLogEntries({
+  level: 'error',
+  page: 1,
+  limit: 50,
+});
+
+// Search logs
+const { entries: searchResults } = getLogEntries({
+  search: 'database',
+  level: 'warn',
+});
+```
+
+**Note**: For production environments with multiple instances or long-term retention needs, use a dedicated log aggregation service (DataDog, CloudWatch, etc.) instead of relying on the in-memory buffer.
+
+## Logger Methods
+
+### Creating Child Loggers
+
+The logger supports creating child loggers with inherited context. Both `.child()` and `.withContext()` methods are available:
+
+```typescript
+// These are equivalent - withContext() is an alias for child()
+const requestLogger = logger.child({ requestId: '123' });
+const requestLogger = logger.withContext({ requestId: '123' });
+```
+
+**Documentation preference**: Use `.withContext()` for readability as it clearly conveys intent.
+
+```typescript
+// Preferred style
+const log = logger.withContext({
+  requestId,
+  userId: user.id,
+});
+
+log.info('Processing request'); // Includes requestId and userId
+log.error('Request failed', error); // Same context attached
+```
+
+Child loggers can be nested:
+
+```typescript
+const jobLogger = logger.withContext({ jobId: 'batch_123' });
+
+for (const item of items) {
+  const itemLogger = jobLogger.withContext({ itemId: item.id });
+  itemLogger.info('Processing item'); // Has both jobId and itemId
+}
 ```
 
 ## Common Patterns
