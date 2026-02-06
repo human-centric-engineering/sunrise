@@ -192,5 +192,5 @@ Configure alerts for:
 ## Related Documentation
 
 - [Error Handling](../errors/overview.md) - Error handling patterns
-- [Logging Best Practices](../errors/logging.md) - Structured logging guide
+- [Logging Best Practices](../logging/best-practices.md) - Structured logging guide
 - [Deployment](../deployment/overview.md) - Production deployment

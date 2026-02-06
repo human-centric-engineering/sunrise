@@ -69,15 +69,7 @@ vi.mock('next/headers', () => ({
   ),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-  },
-}));
+// Mock getRouteLogger - already mocked globally in tests/setup.ts
 
 // Import mocked modules
 import { auth } from '@/lib/auth/config';

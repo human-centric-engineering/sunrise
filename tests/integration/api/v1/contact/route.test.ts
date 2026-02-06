@@ -36,15 +36,8 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock getRouteLogger - already mocked globally in tests/setup.ts
+// We'll import it to get access to the mock
 
 // Mock env module
 vi.mock('@/lib/env', () => ({
@@ -90,9 +83,23 @@ vi.mock('@/lib/security/rate-limit', () => ({
 // Import mocked modules
 import { prisma } from '@/lib/db/client';
 import { sendEmail } from '@/lib/email/send';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { contactLimiter } from '@/lib/security/rate-limit';
 import { mockEmailSuccess, mockEmailFailure } from '@/tests/helpers/email';
+
+// Get reference to the mock logger returned by getRouteLogger
+const getMockLogger = () => {
+  const mockGetRouteLogger = vi.mocked(getRouteLogger);
+  // The mock returns a promise, so we need to extract the resolved value
+  const lastCall = mockGetRouteLogger.mock.results[mockGetRouteLogger.mock.results.length - 1];
+  return lastCall?.value as Promise<{
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+    withContext: ReturnType<typeof vi.fn>;
+  }>;
+};
 
 /**
  * Helper function to create a mock NextRequest
@@ -211,7 +218,8 @@ describe('POST /api/v1/contact', () => {
       });
 
       // Assert: Success logged
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Contact form submission created',
         expect.objectContaining({
           id: mockSubmission.id,
@@ -248,7 +256,8 @@ describe('POST /api/v1/contact', () => {
       });
 
       // Assert: Email success was logged
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Contact notification email sent',
         expect.objectContaining({
           submissionId: mockSubmission.id,
@@ -319,7 +328,8 @@ describe('POST /api/v1/contact', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Assert: Warning was logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'Failed to send contact notification email',
         expect.objectContaining({
           submissionId: mockSubmission.id,
@@ -578,7 +588,8 @@ describe('POST /api/v1/contact', () => {
       expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
 
       // Assert: Warning was logged (honeypot validation error triggers special handling)
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'Contact form honeypot validation failed',
         expect.objectContaining({
           ip: '127.0.0.1',
@@ -714,7 +725,8 @@ describe('POST /api/v1/contact', () => {
       expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
 
       // Assert: Warning was logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'Contact form rate limit exceeded',
         expect.objectContaining({
           remaining: 0,
@@ -838,7 +850,8 @@ describe('POST /api/v1/contact', () => {
         expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
 
         // Assert: Warning was logged
-        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        const mockLogger = await getMockLogger();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
           'No CONTACT_EMAIL or EMAIL_FROM configured, skipping notification',
           expect.objectContaining({
             submissionId: mockSubmission.id,
@@ -875,7 +888,8 @@ describe('POST /api/v1/contact', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Assert: Error was logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await getMockLogger();
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'Error sending contact notification email',
         expect.any(Error),
         expect.objectContaining({

@@ -29,15 +29,19 @@ import type { RateLimitResult } from '@/lib/security/rate-limit';
  * Mock dependencies
  */
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 // Mock rate limiting
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -55,7 +59,6 @@ vi.mock('@/lib/security/ip', () => ({
 }));
 
 // Import mocked modules
-import { logger } from '@/lib/logging';
 import { cspReportLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 
@@ -170,7 +173,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalledWith('CSP Violation', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('CSP Violation', {
         type: 'csp-violation',
         documentUri: 'https://example.com/page',
         violatedDirective: 'script-src',
@@ -221,7 +224,7 @@ describe('POST /api/csp-report', () => {
       await POST(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'CSP Violation',
         expect.objectContaining({
           userAgent: 'Mozilla/5.0 (Custom User Agent)',
@@ -243,7 +246,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'CSP Violation',
         expect.objectContaining({
           documentUri: 'https://example.com',
@@ -261,7 +264,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('should handle report without user agent header', async () => {
@@ -276,7 +279,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'CSP Violation',
         expect.objectContaining({
           userAgent: null,
@@ -326,7 +329,7 @@ describe('POST /api/csp-report', () => {
       await POST(request);
 
       // Assert
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should check rate limit before parsing request body', async () => {
@@ -372,7 +375,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject referrer exceeding 2048 characters', async () => {
@@ -386,7 +389,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject violated-directive exceeding 500 characters', async () => {
@@ -400,7 +403,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject effective-directive exceeding 500 characters', async () => {
@@ -414,7 +417,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject original-policy exceeding 5000 characters', async () => {
@@ -428,7 +431,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject blocked-uri exceeding 2048 characters', async () => {
@@ -442,7 +445,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject source-file exceeding 2048 characters', async () => {
@@ -456,7 +459,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should accept document-uri at exactly 2048 characters', async () => {
@@ -470,7 +473,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
   });
 
@@ -485,7 +488,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject status-code below 0', async () => {
@@ -498,7 +501,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject status-code above 999', async () => {
@@ -511,7 +514,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should accept status-code at minimum boundary (0)', async () => {
@@ -524,7 +527,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('should accept status-code at maximum boundary (999)', async () => {
@@ -537,7 +540,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('should accept valid HTTP status codes (200, 404, 500)', async () => {
@@ -555,7 +558,7 @@ describe('POST /api/csp-report', () => {
         const response = await POST(request);
 
         expect(response.status).toBe(204);
-        expect(logger.warn).toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalled();
       }
     });
   });
@@ -571,7 +574,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject negative line-number', async () => {
@@ -584,7 +587,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject non-integer column-number', async () => {
@@ -597,7 +600,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should reject negative column-number', async () => {
@@ -610,7 +613,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should accept line-number and column-number at 0', async () => {
@@ -623,7 +626,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
   });
 
@@ -638,7 +641,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should return 204 silently when csp-report is null', async () => {
@@ -651,7 +654,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should return 204 silently when csp-report is undefined', async () => {
@@ -664,7 +667,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
   });
 
@@ -678,7 +681,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should not throw error when JSON parsing fails', async () => {
@@ -700,7 +703,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should return 204 for empty array body', async () => {
@@ -712,7 +715,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should return 204 for null body', async () => {
@@ -724,7 +727,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
   });
 
@@ -745,7 +748,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('should handle report with unicode characters in URIs', async () => {
@@ -761,7 +764,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'CSP Violation',
         expect.objectContaining({
           documentUri: 'https://example.com/页面',
@@ -784,7 +787,7 @@ describe('POST /api/csp-report', () => {
 
       // Assert
       expect(response.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('should handle concurrent requests from same IP', async () => {
@@ -805,7 +808,7 @@ describe('POST /api/csp-report', () => {
       // Assert
       expect(response1.status).toBe(204);
       expect(response2.status).toBe(204);
-      expect(logger.warn).toHaveBeenCalledTimes(2);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -853,7 +856,7 @@ describe('POST /api/csp-report', () => {
       // Assert
       expect(response.status).toBe(204);
       // Should log the violation (sanitization happens at log aggregation layer)
-      expect(logger.warn).toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
   });
 });

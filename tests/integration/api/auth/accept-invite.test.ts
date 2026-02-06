@@ -51,15 +51,7 @@ vi.mock('@/lib/utils/invitation-token', () => ({
   deleteInvitationToken: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Note: getRouteLogger is mocked globally in tests/setup.ts
 
 // Mock env module
 vi.mock('@/lib/env', () => ({
@@ -108,7 +100,7 @@ vi.mock('@/lib/security/ip', () => ({
 // Import mocked modules
 import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { sendEmail } from '@/lib/email/send';
 
 /**
@@ -327,7 +319,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
 
       // Assert: Success logged with stable User ID
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Invitation accepted successfully',
         expect.objectContaining({
           email: 'john@example.com',
@@ -539,7 +532,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(setCookieHeaders[1]).toContain('better-auth.state');
 
       // Assert: Cookies logged
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Session cookies forwarded to client',
         expect.objectContaining({
           userId: createdUserId,
@@ -614,7 +608,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.success).toBe(true);
 
       // Assert: No cookies logged (should not call logger.info for cookies)
-      expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
         'Session cookies forwarded to client',
         expect.anything()
       );
@@ -655,7 +650,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(vi.mocked(prisma.verification.findFirst)).not.toHaveBeenCalled();
 
       // Assert: Warning logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invalid invitation token', {
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invalid invitation token', {
         email: 'john@example.com',
       });
     });
@@ -710,7 +706,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('Invitation not found');
 
       // Assert: Warning logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invitation not found', {
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invitation not found', {
         email: 'nonexistent@example.com',
       });
 
@@ -751,7 +748,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('Invitation not found');
 
       // Assert: Warning logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invitation not found', {
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invitation not found', {
         email: 'corrupted@example.com',
       });
 
@@ -903,7 +901,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('Failed to create user account');
 
       // Assert: Error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth signup failed',
         undefined,
         expect.objectContaining({
@@ -959,7 +958,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('Failed to create user account');
 
       // Assert: Error logged with fallback error message
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth signup failed',
         undefined,
         expect.objectContaining({
@@ -1007,7 +1007,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.success).toBe(false);
 
       // Assert: Error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'Failed to accept invitation',
         expect.any(Error)
       );
@@ -1086,7 +1087,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.success).toBe(false);
 
       // Assert: Error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'Failed to accept invitation',
         expect.any(Error)
       );
@@ -1156,7 +1158,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('User created but failed to create session');
 
       // Assert: Sign-in error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth sign-in failed after invitation acceptance',
         undefined,
         expect.objectContaining({
@@ -1230,7 +1233,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('User created but failed to create session');
 
       // Assert: Error logged with fallback message
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth sign-in failed after invitation acceptance',
         undefined,
         expect.objectContaining({
@@ -1285,7 +1289,8 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.message).toBe('Failed to create user account');
 
       // Assert: Error logged
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth signup failed',
         undefined,
         expect.objectContaining({

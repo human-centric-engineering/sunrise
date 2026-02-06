@@ -15,7 +15,7 @@ import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { uploadAvatar, isStorageEnabled, getMaxFileSize } from '@/lib/storage/upload';
 import { validateImageMagicBytes, SUPPORTED_IMAGE_TYPES } from '@/lib/storage/image';
 import { withAuth } from '@/lib/auth/guards';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { uploadLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 
@@ -36,13 +36,14 @@ import { getClientIP } from '@/lib/security/ip';
  * @throws APIError for validation/upload failures
  */
 export const POST = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
   try {
     // Check upload rate limit
     const clientIP = getClientIP(request);
     const rateLimitResult = uploadLimiter.check(clientIP);
 
     if (!rateLimitResult.success) {
-      logger.warn('Avatar upload rate limit exceeded', {
+      log.warn('Avatar upload rate limit exceeded', {
         ip: clientIP,
         userId: session.user.id,
         remaining: rateLimitResult.remaining,
@@ -96,7 +97,7 @@ export const POST = withAuth(async (request, session) => {
     // Sanitize client-provided filename before logging to prevent log injection
     const sanitizedFileName = file.name.slice(0, 255).replace(/[^\w.-]/g, '_');
 
-    logger.info('Avatar upload started', {
+    log.info('Avatar upload started', {
       userId,
       fileName: sanitizedFileName,
       fileSize: file.size,
@@ -115,7 +116,7 @@ export const POST = withAuth(async (request, session) => {
       data: { image: cacheBustedUrl },
     });
 
-    logger.info('Avatar upload completed', {
+    log.info('Avatar upload completed', {
       userId,
       url: cacheBustedUrl,
       size: result.size,
@@ -133,11 +134,13 @@ export const POST = withAuth(async (request, session) => {
   } catch (error) {
     // Log upload-specific errors before re-throwing for withAuth to handle
     if (error instanceof APIError) {
-      logger.warn('Avatar upload failed', {
+      log.warn('Avatar upload failed', {
         code: error.code,
         message: error.message,
         details: error.details,
       });
+    } else {
+      log.error('Avatar upload error', error);
     }
     throw error;
   }
@@ -152,8 +155,11 @@ export const POST = withAuth(async (request, session) => {
  * @returns { success: true, message: "Avatar removed" }
  * @throws UnauthorizedError if not authenticated
  */
-export const DELETE = withAuth(async (_request, session) => {
+export const DELETE = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
   const userId = session.user.id;
+
+  log.info('Avatar deletion started', { userId });
 
   // Delete avatar and its folder from storage
   if (isStorageEnabled()) {
@@ -167,7 +173,7 @@ export const DELETE = withAuth(async (_request, session) => {
     data: { image: null },
   });
 
-  logger.info('Avatar removed', { userId });
+  log.info('Avatar removed', { userId });
 
   return successResponse({
     success: true,

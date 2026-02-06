@@ -28,7 +28,7 @@ import {
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * POST /api/auth/send-verification-email
@@ -45,13 +45,15 @@ import { logger } from '@/lib/logging';
  * @throws RateLimitError if too many requests
  */
 export async function POST(request: NextRequest) {
+  const log = await getRouteLogger(request);
+
   try {
     // 1. Check rate limit
     const clientIP = getClientIP(request);
     const rateLimitResult = verificationEmailLimiter.check(clientIP);
 
     if (!rateLimitResult.success) {
-      logger.warn('Verification email rate limit exceeded', {
+      log.warn('Verification email rate limit exceeded', {
         ip: clientIP,
         remaining: rateLimitResult.remaining,
         reset: rateLimitResult.reset,
@@ -75,14 +77,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (!user) {
-      logger.info('Verification email requested for non-existent user', { email });
+      log.info('Verification email requested for non-existent user', { email });
       return successResponse(successResponseMessage, undefined, {
         headers: getRateLimitHeaders(rateLimitResult),
       });
     }
 
     if (user.emailVerified) {
-      logger.info('Verification email requested for already verified user', {
+      log.info('Verification email requested for already verified user', {
         userId: user.id,
         email,
       });
@@ -93,16 +95,16 @@ export async function POST(request: NextRequest) {
 
     // 4. Use better-auth's API to send verification email
     // This creates a verification token and triggers our configured sendVerificationEmail callback
-    logger.info('Sending verification email', { userId: user.id, email });
+    log.info('Sending verification email', { userId: user.id, email });
 
     try {
       await auth.api.sendVerificationEmail({
         body: { email },
       });
-      logger.info('Verification email sent successfully', { userId: user.id, email });
+      log.info('Verification email sent successfully', { userId: user.id, email });
     } catch (sendError) {
       // Log the error but still return success (prevents enumeration)
-      logger.error('better-auth sendVerificationEmail failed', sendError, {
+      log.error('better-auth sendVerificationEmail failed', sendError, {
         email,
         userId: user.id,
       });
@@ -112,7 +114,7 @@ export async function POST(request: NextRequest) {
       headers: getRateLimitHeaders(rateLimitResult),
     });
   } catch (error) {
-    logger.error('Failed to process verification email request', error);
+    log.error('Failed to process verification email request', error);
     return handleAPIError(error);
   }
 }

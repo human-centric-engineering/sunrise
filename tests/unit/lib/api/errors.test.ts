@@ -23,6 +23,7 @@ import {
   UnauthorizedError,
   ForbiddenError,
   NotFoundError,
+  ConflictError,
   ErrorCodes,
   handleAPIError,
 } from '@/lib/api/errors';
@@ -216,6 +217,41 @@ describe('Custom Error Classes', () => {
       expect(error.details).toBeUndefined();
     });
   });
+
+  describe('ConflictError', () => {
+    it('should create ConflictError with default message', () => {
+      const error = new ConflictError();
+
+      expect(error).toBeInstanceOf(APIError);
+      expect(error).toBeInstanceOf(ConflictError);
+      expect(error.name).toBe('ConflictError');
+      expect(error.message).toBe('Resource already exists');
+      expect(error.code).toBe(ErrorCodes.CONFLICT);
+      expect(error.status).toBe(409);
+    });
+
+    it('should create ConflictError with custom message', () => {
+      const error = new ConflictError('Feature flag already exists');
+
+      expect(error.message).toBe('Feature flag already exists');
+      expect(error.code).toBe(ErrorCodes.CONFLICT);
+      expect(error.status).toBe(409);
+    });
+
+    it('should not have details property', () => {
+      const error = new ConflictError();
+
+      expect(error.details).toBeUndefined();
+    });
+
+    it('should use ErrorCodes.CONFLICT constant not hardcoded string', () => {
+      const error = new ConflictError();
+
+      // Verify it uses the constant from ErrorCodes
+      expect(error.code).toBe(ErrorCodes.CONFLICT);
+      expect(error.code).toBe('CONFLICT');
+    });
+  });
 });
 
 /**
@@ -329,6 +365,31 @@ describe('handleAPIError', () => {
           code: ErrorCodes.NOT_FOUND,
         },
       });
+    });
+
+    it('should handle ConflictError', async () => {
+      const error = new ConflictError('Resource already exists');
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(409);
+      expect(body).toEqual({
+        success: false,
+        error: {
+          message: 'Resource already exists',
+          code: ErrorCodes.CONFLICT,
+        },
+      });
+    });
+
+    it('should handle ConflictError with custom message', async () => {
+      const error = new ConflictError('Feature flag already exists');
+      const response = handleAPIError(error);
+      const body = await parseResponse(response);
+
+      expect(response.status).toBe(409);
+      expect(body.error.message).toBe('Feature flag already exists');
+      expect(body.error.code).toBe(ErrorCodes.CONFLICT);
     });
 
     it('should log APIError with correct context', () => {
@@ -1089,6 +1150,7 @@ describe('handleAPIError', () => {
         new UnauthorizedError(),
         new ForbiddenError(),
         new NotFoundError(),
+        new ConflictError(),
         new Error('Generic'),
       ];
 

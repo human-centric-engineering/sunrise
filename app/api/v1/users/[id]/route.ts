@@ -19,7 +19,7 @@ import { withAuth, withAdminAuth } from '@/lib/auth/guards';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { userIdSchema } from '@/lib/validations/user';
 import { adminUserUpdateSchema } from '@/lib/validations/admin';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/users/:id
@@ -35,12 +35,16 @@ import { logger } from '@/lib/logging';
  * @throws NotFoundError if user doesn't exist
  * @throws ValidationError if ID format is invalid
  */
-export const GET = withAuth<{ id: string }>(async (_request, session, { params }) => {
+export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: userId } = await params;
 
   // Validate user ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
+
+  log.info('Fetching user by ID', { targetUserId: id });
 
   // Authorization: Admin can view any user, users can view own profile
   if (session.user.id !== id && session.user.role !== 'ADMIN') {
@@ -90,11 +94,15 @@ export const GET = withAuth<{ id: string }>(async (_request, session, { params }
  * @throws ValidationError if body is invalid
  */
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: userId } = await params;
 
   // Validate user ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
+
+  log.info('Updating user by ID', { targetUserId: id });
 
   // Validate request body
   const body = await validateRequestBody(request, adminUserUpdateSchema);
@@ -141,7 +149,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     },
   });
 
-  logger.info('User updated by admin', {
+  log.info('User updated by admin', {
     userId: id,
     adminId: session.user.id,
     changes: body,
@@ -169,12 +177,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
  * @throws NotFoundError if user doesn't exist
  * @throws ValidationError if ID format is invalid
  */
-export const DELETE = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
+export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: userId } = await params;
 
   // Validate user ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
+
+  log.info('Deleting user by ID', { targetUserId: id });
 
   // Prevent self-deletion
   if (session.user.id === id) {
@@ -209,6 +221,8 @@ export const DELETE = withAdminAuth<{ id: string }>(async (_request, session, { 
   await prisma.user.delete({
     where: { id },
   });
+
+  log.info('User deleted by admin', { deletedUserId: id, adminId: session.user.id });
 
   return successResponse({ id, deleted: true });
 });

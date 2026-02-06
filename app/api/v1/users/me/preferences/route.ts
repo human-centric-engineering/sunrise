@@ -16,6 +16,7 @@ import { UnauthorizedError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updatePreferencesSchema, userPreferencesSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
+import { getRouteLogger } from '@/lib/api/context';
 import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
 import type { UserPreferences } from '@/types';
 
@@ -28,7 +29,10 @@ import type { UserPreferences } from '@/types';
  * @returns User preferences object
  * @throws UnauthorizedError if not authenticated
  */
-export const GET = withAuth(async (_request, session) => {
+export const GET = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Fetching user preferences');
+
   // Fetch user preferences
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -38,12 +42,14 @@ export const GET = withAuth(async (_request, session) => {
   });
 
   if (!user) {
+    log.warn('User not found when fetching preferences');
     throw new UnauthorizedError('User not found');
   }
 
   // Parse preferences or return defaults
   const preferences = parsePreferences(user.preferences);
 
+  log.info('User preferences retrieved');
   return successResponse(preferences);
 });
 
@@ -60,6 +66,9 @@ export const GET = withAuth(async (_request, session) => {
  * @throws ValidationError if invalid data
  */
 export const PATCH = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Updating user preferences');
+
   // Validate request body
   const body = await validateRequestBody(request, updatePreferencesSchema);
 
@@ -72,6 +81,7 @@ export const PATCH = withAuth(async (request, session) => {
   });
 
   if (!user) {
+    log.warn('User not found when updating preferences');
     throw new UnauthorizedError('User not found');
   }
 
@@ -99,6 +109,7 @@ export const PATCH = withAuth(async (request, session) => {
     },
   });
 
+  log.info('User preferences updated');
   return successResponse(updatedPreferences);
 });
 

@@ -14,7 +14,7 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { getDatabaseHealth } from '@/lib/db/utils';
 import { successResponse } from '@/lib/api/responses';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import type { SystemStats } from '@/types/admin';
 
 /**
@@ -37,8 +37,9 @@ const APP_VERSION = process.env.npm_package_version || '1.0.0';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  */
-export const GET = withAdminAuth(async (_request, session) => {
-  logger.debug('Admin stats requested', { userId: session.user.id });
+export const GET = withAdminAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.debug('Admin stats requested', { userId: session.user.id });
 
   // Get 24 hours ago timestamp
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -87,7 +88,7 @@ export const GET = withAdminAuth(async (_request, session) => {
     },
   };
 
-  logger.info('Admin stats fetched', { userId: session.user.id });
+  log.info('Admin stats fetched', { userId: session.user.id });
 
   return successResponse(stats);
 });

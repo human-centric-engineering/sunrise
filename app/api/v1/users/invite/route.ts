@@ -50,7 +50,7 @@ import {
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import InvitationEmail from '@/emails/invitation';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -76,12 +76,15 @@ import { getClientIP } from '@/lib/security/ip';
  * @throws ConflictError if user already exists
  */
 export const POST = withAdminAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Processing user invitation request');
+
   // 1. Check invite rate limit (prevents email bombing)
   const clientIP = getClientIP(request);
   const rateLimitResult = inviteLimiter.check(clientIP);
 
   if (!rateLimitResult.success) {
-    logger.warn('Invite rate limit exceeded', {
+    log.warn('Invite rate limit exceeded', {
       ip: clientIP,
       adminId: session.user.id,
       remaining: rateLimitResult.remaining,
@@ -115,7 +118,7 @@ export const POST = withAdminAuth(async (request, session) => {
   if (existingInvitation && !resend) {
     // Return existing invitation details WITHOUT a link (can't generate valid one)
     // Admin must use ?resend=true to send a new email with valid link
-    logger.info('Existing invitation found, not resending', {
+    log.info('Existing invitation found, not resending', {
       email: body.email,
       invitedAt: existingInvitation.metadata.invitedAt,
       expiresAt: existingInvitation.expiresAt.toISOString(),
@@ -153,7 +156,7 @@ export const POST = withAdminAuth(async (request, session) => {
     ? await updateInvitationToken(body.email, invitationMetadata)
     : await generateInvitationToken(body.email, invitationMetadata);
 
-  logger.info(existingInvitation ? 'Invitation resent' : 'Invitation created', {
+  log.info(existingInvitation ? 'Invitation resent' : 'Invitation created', {
     email: body.email,
     role: body.role,
     invitedBy: session.user.id,
@@ -182,13 +185,13 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // Email sending failure should NOT fail the request (just log warning)
   if (!emailResult.success) {
-    logger.warn('Failed to send invitation email', {
+    log.warn('Failed to send invitation email', {
       email: body.email,
       error: emailResult.error,
       emailStatus: emailResult.status,
     });
   } else {
-    logger.info('Invitation email sent', {
+    log.info('Invitation email sent', {
       email: body.email,
       emailId: emailResult.id,
       emailStatus: emailResult.status,

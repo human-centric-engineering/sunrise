@@ -39,7 +39,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { sendEmail } from '@/lib/email/send';
 import ContactNotificationEmail from '@/emails/contact-notification';
 import { isRecord } from '@/lib/utils';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
 
 /**
@@ -62,13 +62,15 @@ import { env } from '@/lib/env';
  * @throws RateLimitError if too many submissions
  */
 export async function POST(request: NextRequest) {
+  const log = await getRouteLogger(request);
+
   try {
     // 1. Check rate limit
     const clientIP = getClientIP(request);
     const rateLimitResult = contactLimiter.check(clientIP);
 
     if (!rateLimitResult.success) {
-      logger.warn('Contact form rate limit exceeded', {
+      log.warn('Contact form rate limit exceeded', {
         ip: clientIP,
         remaining: rateLimitResult.remaining,
         reset: rateLimitResult.reset,
@@ -81,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     // Check honeypot field - if filled, it's likely a bot
     if (body.website && body.website.length > 0) {
-      logger.warn('Contact form honeypot triggered', {
+      log.warn('Contact form honeypot triggered', {
         ip: clientIP,
         email: body.email,
       });
@@ -103,7 +105,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    logger.info('Contact form submission created', {
+    log.info('Contact form submission created', {
       id: submission.id,
       email: body.email,
       subject: body.subject,
@@ -113,7 +115,7 @@ export async function POST(request: NextRequest) {
     const adminEmail = env.CONTACT_EMAIL || env.EMAIL_FROM;
 
     if (!adminEmail) {
-      logger.warn('No CONTACT_EMAIL or EMAIL_FROM configured, skipping notification', {
+      log.warn('No CONTACT_EMAIL or EMAIL_FROM configured, skipping notification', {
         submissionId: submission.id,
       });
     } else {
@@ -131,19 +133,19 @@ export async function POST(request: NextRequest) {
       })
         .then((result) => {
           if (result.success) {
-            logger.info('Contact notification email sent', {
+            log.info('Contact notification email sent', {
               submissionId: submission.id,
               emailId: result.id,
             });
           } else {
-            logger.warn('Failed to send contact notification email', {
+            log.warn('Failed to send contact notification email', {
               submissionId: submission.id,
               error: result.error,
             });
           }
         })
         .catch((error) => {
-          logger.error('Error sending contact notification email', error, {
+          log.error('Error sending contact notification email', error, {
             submissionId: submission.id,
           });
         });
@@ -163,7 +165,7 @@ export async function POST(request: NextRequest) {
         Array.isArray(details.errors) &&
         details.errors.some((e: unknown) => isRecord(e) && e.path === 'website')
       ) {
-        logger.warn('Contact form honeypot validation failed', {
+        log.warn('Contact form honeypot validation failed', {
           ip: getClientIP(request),
         });
         return successResponse({

@@ -42,15 +42,7 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    error: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock getRouteLogger - already mocked globally in tests/setup.ts
 
 // Create mock log entries
 const mockLogEntries = [

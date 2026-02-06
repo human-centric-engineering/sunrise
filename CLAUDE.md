@@ -181,16 +181,17 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 
 **Entry point:** `.context/substrate.md` — full navigation and AI usage patterns
 
-| Domain         | Path                     | Key Content                   |
-| -------------- | ------------------------ | ----------------------------- |
-| Architecture   | `.context/architecture/` | System design, deployment     |
-| Authentication | `.context/auth/`         | better-auth, sessions, guards |
-| API            | `.context/api/`          | Endpoints, responses, client  |
-| Database       | `.context/database/`     | Prisma schema, migrations     |
-| Security       | `.context/security/`     | Rate limiting, headers, CORS  |
-| Testing        | `.context/testing/`      | Patterns, mocking, async      |
-| Email          | `.context/email/`        | Templates, sending            |
-| Workflow       | `.context/workflow.md`   | Git, commits, PR process      |
+| Domain         | Path                     | Key Content                     |
+| -------------- | ------------------------ | ------------------------------- |
+| Architecture   | `.context/architecture/` | System design, deployment       |
+| Authentication | `.context/auth/`         | better-auth, sessions, guards   |
+| API            | `.context/api/`          | Endpoints, responses, client    |
+| Database       | `.context/database/`     | Prisma schema, migrations       |
+| Security       | `.context/security/`     | Rate limiting, headers, CORS    |
+| Logging        | `.context/logging/`      | Structured logging, request ctx |
+| Testing        | `.context/testing/`      | Patterns, mocking, async        |
+| Email          | `.context/email/`        | Templates, sending              |
+| Workflow       | `.context/workflow.md`   | Git, commits, PR process        |
 
 ## Troubleshooting
 

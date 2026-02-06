@@ -9,28 +9,29 @@ Audit documentation for the specified domain to detect drift from the actual cod
 
 This specifies which documentation domain to audit. Supported domains and their mappings:
 
-| Domain         | Documentation            | Code Locations                                                               |
-| -------------- | ------------------------ | ---------------------------------------------------------------------------- |
-| `auth`         | `.context/auth/`         | `app/(auth)/`, `app/api/auth/`, `lib/auth/`, `components/auth/`              |
-| `api`          | `.context/api/`          | `app/api/`, `lib/api/`, `lib/validations/`                                   |
-| `database`     | `.context/database/`     | `prisma/`, `lib/db/`, `types/`                                               |
-| `security`     | `.context/security/`     | `lib/security/`, `middleware.ts`, `lib/env.ts`                               |
-| `admin`        | `.context/admin/`        | `app/admin/`, `app/api/v1/admin/`, `components/admin/`, `lib/admin/`         |
-| `errors`       | `.context/errors/`       | `lib/errors/`, `lib/logging/`, `app/error.tsx`, `app/global-error.tsx`       |
-| `analytics`    | `.context/analytics/`    | `lib/analytics/`, `lib/consent/`, `components/analytics/`                    |
-| `email`        | `.context/email/`        | `emails/`, `lib/email/`                                                      |
-| `storage`      | `.context/storage/`      | `lib/storage/`, `lib/validations/storage.ts`                                 |
-| `environment`  | `.context/environment/`  | `.env.example`, `lib/env.ts`, `docker-compose*.yml`                          |
-| `testing`      | `.context/testing/`      | `tests/`, `vitest.config.ts`, test utilities                                 |
-| `architecture` | `.context/architecture/` | Project structure, `app/`, `lib/`, `components/`                             |
-| `deployment`   | `.context/deployment/`   | `Dockerfile`, `docker-compose*.yml`                                          |
-| `monitoring`   | `.context/monitoring/`   | `lib/monitoring/`, Sentry config, health endpoints                           |
-| `ui`           | `.context/ui/`           | `components/ui/`, `components/layouts/`, `app/(public)/`, `app/(protected)/` |
-| `privacy`      | `.context/privacy/`      | Cookie consent, privacy-related components                                   |
-| `seo`          | `.context/seo/`          | Metadata, `app/sitemap.ts`, SEO utilities                                    |
-| `types`        | `.context/types/`        | `types/`, Prisma types, API types                                            |
-| `guidelines`   | `.context/guidelines.md` | CLAUDE.md, project conventions                                               |
-| `substrate`    | `.context/substrate.md`  | All `.context/` structure and navigation                                     |
+| Domain         | Documentation            | Code Locations                                                                          |
+| -------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `auth`         | `.context/auth/`         | `app/(auth)/`, `app/api/auth/`, `lib/auth/`, `components/auth/`                         |
+| `api`          | `.context/api/`          | `app/api/`, `lib/api/`, `lib/validations/`                                              |
+| `database`     | `.context/database/`     | `prisma/`, `lib/db/`, `types/`                                                          |
+| `security`     | `.context/security/`     | `lib/security/`, `middleware.ts`, `lib/env.ts`                                          |
+| `admin`        | `.context/admin/`        | `app/admin/`, `app/api/v1/admin/`, `components/admin/`, `lib/admin/`                    |
+| `errors`       | `.context/errors/`       | `lib/errors/`, `app/error.tsx`, `app/global-error.tsx`, `components/error-boundary.tsx` |
+| `logging`      | `.context/logging/`      | `lib/logging/`, `lib/api/context.ts`, `lib/admin/logs.ts`                               |
+| `analytics`    | `.context/analytics/`    | `lib/analytics/`, `lib/consent/`, `components/analytics/`                               |
+| `email`        | `.context/email/`        | `emails/`, `lib/email/`                                                                 |
+| `storage`      | `.context/storage/`      | `lib/storage/`, `lib/validations/storage.ts`                                            |
+| `environment`  | `.context/environment/`  | `.env.example`, `lib/env.ts`, `docker-compose*.yml`                                     |
+| `testing`      | `.context/testing/`      | `tests/`, `vitest.config.ts`, test utilities                                            |
+| `architecture` | `.context/architecture/` | Project structure, `app/`, `lib/`, `components/`                                        |
+| `deployment`   | `.context/deployment/`   | `Dockerfile`, `docker-compose*.yml`                                                     |
+| `monitoring`   | `.context/monitoring/`   | `lib/monitoring/`, Sentry config, health endpoints                                      |
+| `ui`           | `.context/ui/`           | `components/ui/`, `components/layouts/`, `app/(public)/`, `app/(protected)/`            |
+| `privacy`      | `.context/privacy/`      | Cookie consent, privacy-related components                                              |
+| `seo`          | `.context/seo/`          | Metadata, `app/sitemap.ts`, SEO utilities                                               |
+| `types`        | `.context/types/`        | `types/`, Prisma types, API types                                                       |
+| `guidelines`   | `.context/guidelines.md` | CLAUDE.md, project conventions                                                          |
+| `substrate`    | `.context/substrate.md`  | All `.context/` structure and navigation                                                |
 
 ## Goal
 

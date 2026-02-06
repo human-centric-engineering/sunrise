@@ -15,7 +15,7 @@ import { NotFoundError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { featureFlagIdSchema, updateFeatureFlagSchema } from '@/lib/validations/admin';
 import { updateFlag, deleteFlag } from '@/lib/feature-flags';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/admin/feature-flags/:id
@@ -28,9 +28,13 @@ import { logger } from '@/lib/logging';
  * @throws ForbiddenError if not admin
  * @throws NotFoundError if flag doesn't exist
  */
-export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: flagId } = await params;
+
+  log.info('Getting feature flag', { flagId });
 
   // Validate flag ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
@@ -43,6 +47,8 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
   if (!flag) {
     throw new NotFoundError('Feature flag not found');
   }
+
+  log.info('Feature flag retrieved', { flagId: id, name: flag.name });
 
   return successResponse(flag);
 });
@@ -60,8 +66,12 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
  * @throws NotFoundError if flag doesn't exist
  */
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: flagId } = await params;
+
+  log.info('Updating feature flag', { flagId });
 
   // Validate flag ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
@@ -85,7 +95,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     metadata: body.metadata,
   });
 
-  logger.info('Feature flag updated', {
+  log.info('Feature flag updated', {
     flagId: id,
     name: flag.name,
     adminId: session.user.id,
@@ -106,9 +116,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
  * @throws ForbiddenError if not admin
  * @throws NotFoundError if flag doesn't exist
  */
-export const DELETE = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
+export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Await params (Next.js 16 requirement)
   const { id: flagId } = await params;
+
+  log.info('Deleting feature flag', { flagId });
 
   // Validate flag ID parameter
   const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
@@ -125,7 +139,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (_request, session, { 
   // Delete the flag
   await deleteFlag(id);
 
-  logger.info('Feature flag deleted', {
+  log.info('Feature flag deleted', {
     flagId: id,
     name: existingFlag.name,
     adminId: session.user.id,

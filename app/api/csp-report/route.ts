@@ -17,7 +17,7 @@
 
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { cspReportLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 
@@ -54,6 +54,8 @@ const cspReportSchema = z.object({
  * @returns 204 No Content on success
  */
 export async function POST(request: NextRequest): Promise<Response> {
+  const log = await getRouteLogger(request);
+
   try {
     // Rate limit to prevent log flooding
     const clientIP = getClientIP(request);
@@ -80,7 +82,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     // Log the violation with structured data
-    logger.warn('CSP Violation', {
+    log.warn('CSP Violation', {
       type: 'csp-violation',
       documentUri: violation['document-uri'],
       violatedDirective: violation['violated-directive'],
@@ -94,12 +96,13 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     // Return 204 No Content (standard response for report endpoints)
     return new Response(null, { status: 204 });
-  } catch {
+  } catch (error) {
     // Silently accept malformed reports (don't expose internal errors)
     // Malformed reports could be from:
     // - Old browsers with different report formats
     // - Network issues corrupting the payload
     // - Attackers probing the endpoint
+    log.error('CSP report processing failed', error);
     return new Response(null, { status: 204 });
   }
 }

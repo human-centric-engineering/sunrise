@@ -47,7 +47,7 @@ import { acceptInvitationSchema } from '@/lib/validations/user';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
 import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
 import {
   acceptInviteLimiter,
@@ -85,13 +85,15 @@ const betterAuthErrorResponseSchema = z.object({
  * @throws APIError if token invalid, user not found, or invitation already accepted
  */
 export async function POST(request: NextRequest) {
+  const log = await getRouteLogger(request);
+
   try {
     // 1. Check rate limit
     const clientIP = getClientIP(request);
     const rateLimitResult = acceptInviteLimiter.check(clientIP);
 
     if (!rateLimitResult.success) {
-      logger.warn('Accept invite rate limit exceeded', {
+      log.warn('Accept invite rate limit exceeded', {
         ip: clientIP,
         remaining: rateLimitResult.remaining,
         reset: rateLimitResult.reset,
@@ -103,13 +105,13 @@ export async function POST(request: NextRequest) {
     const body = await validateRequestBody(request, acceptInvitationSchema);
     const { token, email, password } = body;
 
-    logger.info('Invitation acceptance requested', { email });
+    log.info('Invitation acceptance requested', { email });
 
     // 2. Validate invitation token
     const isValidToken = await validateInvitationToken(email, token);
 
     if (!isValidToken) {
-      logger.warn('Invalid invitation token', { email });
+      log.warn('Invalid invitation token', { email });
       return errorResponse('Invalid or expired invitation token', {
         code: ErrorCodes.VALIDATION_ERROR,
         status: 400,
@@ -122,7 +124,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!invitation || !invitation.metadata) {
-      logger.warn('Invitation not found', { email });
+      log.warn('Invitation not found', { email });
       return errorResponse('Invitation not found', {
         code: ErrorCodes.NOT_FOUND,
         status: 404,
@@ -132,14 +134,14 @@ export async function POST(request: NextRequest) {
     const metadata = parseInvitationMetadata(invitation.metadata);
 
     if (!metadata) {
-      logger.warn('Invalid invitation metadata', { email });
+      log.warn('Invalid invitation metadata', { email });
       return errorResponse('Invalid invitation data', {
         code: ErrorCodes.INTERNAL_ERROR,
         status: 500,
       });
     }
 
-    logger.info('Invitation metadata retrieved', { email, role: metadata.role });
+    log.info('Invitation metadata retrieved', { email, role: metadata.role });
 
     // 4. Create user via better-auth signup (FIRST TIME - stable ID)
     const signupResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
@@ -161,7 +163,7 @@ export async function POST(request: NextRequest) {
         .catch(() => ({ message: 'Signup failed' }));
       const parsedError = betterAuthErrorResponseSchema.safeParse(errorBody);
       const errorMessage = parsedError.success ? parsedError.data.message : 'Unknown error';
-      logger.error('better-auth signup failed', undefined, {
+      log.error('better-auth signup failed', undefined, {
         email,
         error: errorMessage,
       });
@@ -176,14 +178,14 @@ export async function POST(request: NextRequest) {
     const newUserId = parsedSignup.success ? parsedSignup.data.user.id : null;
 
     if (!newUserId) {
-      logger.error('better-auth signup returned unexpected response', undefined, { email });
+      log.error('better-auth signup returned unexpected response', undefined, { email });
       return errorResponse('Failed to create user account', {
         code: ErrorCodes.INTERNAL_ERROR,
         status: 500,
       });
     }
 
-    logger.info('User created via better-auth', { email, userId: newUserId });
+    log.info('User created via better-auth', { email, userId: newUserId });
 
     // 5. IMMEDIATELY set emailVerified=true AND role (BEFORE session check)
     // Accepting invitation proves email ownership
@@ -195,7 +197,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    logger.info('Email verified and role applied', {
+    log.info('Email verified and role applied', {
       userId: newUserId,
       role: metadata.role,
     });
@@ -203,7 +205,7 @@ export async function POST(request: NextRequest) {
     // 6. Delete invitation token
     await deleteInvitationToken(email);
 
-    logger.info('Invitation accepted successfully', { email, userId: newUserId });
+    log.info('Invitation accepted successfully', { email, userId: newUserId });
 
     // 7. Create session explicitly (better-auth will now see emailVerified=true)
     const sessionResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-in/email`, {
@@ -226,7 +228,7 @@ export async function POST(request: NextRequest) {
       const sessionErrorMessage = parsedSessionError.success
         ? parsedSessionError.data.message
         : 'Unknown error';
-      logger.error('better-auth sign-in failed after invitation acceptance', undefined, {
+      log.error('better-auth sign-in failed after invitation acceptance', undefined, {
         email,
         userId: newUserId,
         error: sessionErrorMessage,
@@ -257,7 +259,7 @@ export async function POST(request: NextRequest) {
         response.headers.append('Set-Cookie', cookie);
       });
 
-      logger.info('Session cookies forwarded to client', {
+      log.info('Session cookies forwarded to client', {
         userId: newUserId,
         cookieCount: setCookieHeaders.length,
       });
@@ -265,7 +267,7 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
-    logger.error('Failed to accept invitation', error);
+    log.error('Failed to accept invitation', error);
     return handleAPIError(error);
   }
 }

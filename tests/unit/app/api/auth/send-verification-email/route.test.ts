@@ -21,13 +21,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock dependencies BEFORE importing route
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -70,7 +77,6 @@ import { POST } from '@/app/api/auth/send-verification-email/route';
 import { prisma } from '@/lib/db/client';
 import { auth } from '@/lib/auth/config';
 import { verificationEmailLimiter } from '@/lib/security/rate-limit';
-import { logger } from '@/lib/logging';
 
 describe('POST /api/auth/send-verification-email', () => {
   // Test data
@@ -145,7 +151,7 @@ describe('POST /api/auth/send-verification-email', () => {
       });
 
       // Verify logging
-      expect(logger.info).toHaveBeenCalledWith('Sending verification email', {
+      expect(mockLogger.info).toHaveBeenCalledWith('Sending verification email', {
         userId: mockUser.id,
         email: validEmail,
       });
@@ -185,7 +191,7 @@ describe('POST /api/auth/send-verification-email', () => {
       await POST(request);
 
       // Assert
-      expect(logger.info).toHaveBeenCalledWith('Verification email sent successfully', {
+      expect(mockLogger.info).toHaveBeenCalledWith('Verification email sent successfully', {
         userId: mockUser.id,
         email: validEmail,
       });
@@ -311,7 +317,7 @@ describe('POST /api/auth/send-verification-email', () => {
       await POST(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'Verification email rate limit exceeded',
         expect.objectContaining({
           ip: '1.2.3.4',
@@ -401,7 +407,7 @@ describe('POST /api/auth/send-verification-email', () => {
       expect(auth.api.sendVerificationEmail).not.toHaveBeenCalled();
 
       // Should log the attempt
-      expect(logger.info).toHaveBeenCalledWith(
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Verification email requested for non-existent user',
         { email: 'nonexistent@example.com' }
       );
@@ -429,7 +435,7 @@ describe('POST /api/auth/send-verification-email', () => {
       expect(auth.api.sendVerificationEmail).not.toHaveBeenCalled();
 
       // Should log
-      expect(logger.info).toHaveBeenCalledWith(
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Verification email requested for already verified user',
         {
           userId: mockUser.id,
@@ -500,7 +506,7 @@ describe('POST /api/auth/send-verification-email', () => {
       expect(data.success).toBe(true);
 
       // Should log the error
-      expect(logger.error).toHaveBeenCalledWith(
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth sendVerificationEmail failed',
         expect.any(Error),
         {
@@ -544,7 +550,7 @@ describe('POST /api/auth/send-verification-email', () => {
       expect(data.error.code).toBe('INTERNAL_ERROR');
 
       // Should log error
-      expect(logger.error).toHaveBeenCalledWith(
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'Failed to process verification email request',
         expect.any(Error)
       );
@@ -633,8 +639,11 @@ describe('POST /api/auth/send-verification-email', () => {
       await POST(request);
 
       // Assert: Multiple info logs
-      expect(logger.info).toHaveBeenCalledWith('Sending verification email', expect.any(Object));
-      expect(logger.info).toHaveBeenCalledWith(
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Sending verification email',
+        expect.any(Object)
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Verification email sent successfully',
         expect.any(Object)
       );
@@ -652,9 +661,9 @@ describe('POST /api/auth/send-verification-email', () => {
 
       // Assert: Check that no sensitive data is logged
       const allLogCalls = [
-        ...vi.mocked(logger.info).mock.calls,
-        ...vi.mocked(logger.warn).mock.calls,
-        ...vi.mocked(logger.error).mock.calls,
+        ...vi.mocked(mockLogger.info).mock.calls,
+        ...vi.mocked(mockLogger.warn).mock.calls,
+        ...vi.mocked(mockLogger.error).mock.calls,
       ];
 
       allLogCalls.forEach((call) => {
