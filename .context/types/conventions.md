@@ -14,7 +14,9 @@ This document describes the type safety patterns and validation conventions used
 types/
 ├── index.ts          # Domain types (User, Auth, etc.)
 ├── api.ts            # API request/response types
-└── prisma.ts         # Prisma model re-exports
+├── admin.ts          # Admin dashboard types
+├── prisma.ts         # Prisma model re-exports
+└── storage.ts        # Storage/upload types
 ```
 
 **When to use:**
@@ -40,7 +42,10 @@ export type UserResponse = APIResponse<PublicUser>;
 lib/validations/
 ├── auth.ts           # Authentication schemas
 ├── user.ts           # User management schemas
-└── common.ts         # Reusable patterns
+├── common.ts         # Reusable patterns
+├── admin.ts          # Admin-specific validation
+├── contact.ts        # Contact form validation
+└── storage.ts        # Storage/upload validation
 ```
 
 **When to use:**
@@ -71,7 +76,10 @@ lib/api/
 ├── client.ts         # Type-safe frontend client
 ├── validation.ts     # Request validation
 ├── responses.ts      # Response formatting
-└── errors.ts         # Error handling
+├── errors.ts         # Error handling
+├── endpoints.ts      # API endpoint constants
+├── parse-response.ts # Response parsing utilities
+└── server-fetch.ts   # Server-side fetch wrapper
 ```
 
 **When to use:**
@@ -150,12 +158,12 @@ Always validate inputs with Zod utilities in API routes:
 
 ```typescript
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
-import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
+import { inviteUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
 
 export async function POST(request: NextRequest) {
   try {
     // Validate body - throws ValidationError if invalid
-    const body = validateRequestBody(request, createUserSchema);
+    const body = validateRequestBody(request, inviteUserSchema);
 
     // Use validated data (fully typed)
     const user = await prisma.user.create({ data: body });
@@ -317,16 +325,22 @@ export const userSortingSchema = z.object({
 
 ### 4. API Client for Frontend
 
-Always use `apiClient` for frontend API calls, never raw `fetch`:
+Use `apiClient` for standard API calls:
 
 ```typescript
 // ✅ Good - type-safe, error handling included
 const user = await apiClient.get<User>('/api/v1/users/me');
 
-// ❌ Bad - no type safety, manual error handling
+// ❌ Avoid for standard JSON APIs
 const response = await fetch('/api/v1/users/me');
 const data = await response.json();
 ```
+
+**Exceptions where raw `fetch()` is acceptable:**
+
+- FormData uploads (avatar, file uploads)
+- Auth endpoints that need special credential handling
+- External API calls not going through `/api/v1/`
 
 ### 5. Error Types
 
@@ -407,13 +421,10 @@ const user = await prisma.user.findUnique({
 
 ```typescript
 import { NextRequest } from 'next/server';
-import {
-  validateRequestBody,
-  validateQueryParams,
-  successResponse,
-  handleAPIError,
-} from '@/lib/api';
-import { createUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
+import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
+import { successResponse } from '@/lib/api/responses';
+import { handleAPIError } from '@/lib/api/errors';
+import { inviteUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
 import { prisma } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
@@ -450,7 +461,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = validateRequestBody(request, createUserSchema);
+    const body = validateRequestBody(request, inviteUserSchema);
 
     const user = await prisma.user.create({
       data: {

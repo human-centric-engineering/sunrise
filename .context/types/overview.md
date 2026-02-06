@@ -9,18 +9,25 @@ types/
 ├── index.ts          # Domain types (User, Auth, etc.)
 ├── api.ts            # API request/response types
 ├── admin.ts          # Admin dashboard types
-└── prisma.ts         # Prisma model exports
+├── prisma.ts         # Prisma model exports
+└── storage.ts        # Storage/upload types
 
 lib/validations/
 ├── auth.ts           # Auth validation schemas
 ├── user.ts           # User validation schemas
-└── common.ts         # Reusable schema patterns
+├── common.ts         # Reusable schema patterns
+├── admin.ts          # Admin-specific validation
+├── contact.ts        # Contact form validation
+└── storage.ts        # Storage/upload validation
 
 lib/api/
 ├── client.ts         # Type-safe API client
 ├── validation.ts     # Request validation utilities
 ├── responses.ts      # Response formatters
-└── errors.ts         # Error handling
+├── errors.ts         # Error handling
+├── endpoints.ts      # API endpoint constants
+├── parse-response.ts # Response parsing utilities
+└── server-fetch.ts   # Server-side fetch wrapper
 
 .context/types/
 ├── overview.md       # This file - quick reference
@@ -40,8 +47,11 @@ lib/api/
 - `UserListItem` - Subset for list displays
 - `UserProfile` - User's own profile data
 - `AuthSession` - Authenticated session type
-- `UserResponse` - Single user API response
-- `UserListResponse` - Paginated user list API response
+- `UserEmailPreferences` - Email notification preferences
+- `UserPreferences` - Top-level user preferences
+- `InvitationListItem` - Pending invitation for admin display
+- `InvitationListResponse` - Paginated invitation list response
+- Storage types (re-exported from `types/storage.ts`)
 
 **When to use:**
 
@@ -77,6 +87,8 @@ lib/api/
 - `Session` - Session model type
 - `Account` - Account model type
 - `Verification` - Verification model type
+- `ContactSubmission` - Contact form submission model
+- `FeatureFlag` - Feature flag model
 - `Prisma` - Prisma namespace (utility types)
 
 **When to use:**
@@ -99,11 +111,6 @@ lib/api/
 - `UpdateFeatureFlagInput` - Input for updating feature flags
 - `AdminUserUpdateInput` - Fields an admin can update on a user
 - `AdminUser` - User data as seen by admins (extended view)
-- `SystemStatsResponse` - API response for system stats
-- `LogsResponse` - Paginated API response for logs
-- `FeatureFlagResponse` - API response for single feature flag
-- `FeatureFlagsResponse` - API response for feature flag list
-- `AdminUserResponse` - API response for admin user operations
 
 **When to use:**
 
@@ -122,21 +129,35 @@ lib/api/
   - `paginationQuerySchema` - Page/limit validation
   - `sortingQuerySchema` - sortBy/sortOrder validation
   - `searchQuerySchema` - Search query validation
+  - `listQuerySchema` - Combined pagination+sorting+search
+  - `paginationMetaSchema` - API response meta validation
+  - `parsePaginationMeta()` - Safe meta parsing function
   - `cuidSchema` - CUID validation
   - `uuidSchema` - UUID validation
   - `urlSchema` - URL validation
   - `slugSchema` - Slug validation
 
 - **auth.ts:**
+  - `emailSchema` - Email validation with normalization
+  - `passwordSchema` - Password strength validation
   - `signUpSchema` - User registration
   - `signInSchema` - User login
-  - `resetPasswordSchema` - Password reset
+  - `changePasswordSchema` - Password change
+  - `resetPasswordRequestSchema` - Forgot password
+  - `resetPasswordSchema` - Password reset with token
+  - `verifyEmailSchema` - Email verification
+  - `sendVerificationEmailSchema` - Request verification email
 
 - **user.ts:**
   - `updateUserSchema` - Profile updates
   - `listUsersQuerySchema` - User list queries
-  - `createUserSchema` - Admin user creation
+  - `inviteUserSchema` - Admin user invitation
+  - `acceptInvitationSchema` - Accept invitation
   - `userIdSchema` - User ID parameter validation
+  - `emailPreferencesSchema` - Email notification preferences
+  - `userPreferencesSchema` - Full user preferences
+  - `updatePreferencesSchema` - Preferences update
+  - `deleteAccountSchema` - Account deletion confirmation
 
 **When to use:**
 
@@ -179,11 +200,13 @@ lib/api/
   - `errorResponse()` - Format error responses
 
 - **errors.ts:**
+  - `ErrorCodes` - Standard error code constants
   - `APIError` - Base error class
   - `ValidationError` - 400 validation errors
   - `UnauthorizedError` - 401 auth errors
   - `ForbiddenError` - 403 permission errors
   - `NotFoundError` - 404 not found errors
+  - `ConflictError` - 409 conflict errors
   - `handleAPIError()` - Centralized error handler
 
 **When to use:**
@@ -224,8 +247,9 @@ import { paginationQuerySchema } from '@/lib/validations/common';
 import { apiClient, APIClientError } from '@/lib/api/client';
 
 // API utilities (backend)
-import { validateRequestBody, successResponse } from '@/lib/api';
-import { NotFoundError, handleAPIError } from '@/lib/api/errors';
+import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
+import { successResponse, errorResponse } from '@/lib/api/responses';
+import { NotFoundError, ConflictError, handleAPIError } from '@/lib/api/errors';
 ```
 
 ### Common Patterns
@@ -246,7 +270,7 @@ const user = await apiClient.get<PublicUser>('/api/v1/users/me');
 **Validate request in API route:**
 
 ```typescript
-const body = validateRequestBody(request, createUserSchema);
+const body = validateRequestBody(request, inviteUserSchema);
 ```
 
 **Handle errors in API route:**
@@ -299,28 +323,39 @@ const form = useForm<UpdateUserInput>({
 - [Authentication Guide](../auth/overview.md) - Auth type usage
 - [Database Schema](../database/schema.md) - Prisma models
 
-## Migration Notes
+## Zod Patterns
 
-### Zod 4 Updates
+### Top-Level vs String Methods
 
-This project uses Zod 4.x, which has different syntax from Zod 3.x:
+Zod 4 provides both top-level validators and string methods. Choose based on whether you need transforms:
 
-**Zod 4 (Current):**
-
-```typescript
-z.cuid(); // Direct function
-z.uuid(); // Direct function
-z.url(); // Direct function
-z.email(); // Direct function
-```
-
-**Zod 3 (Deprecated):**
+**Simple validation (no transforms):**
 
 ```typescript
-z.string().cuid(); // ❌ Deprecated
-z.string().uuid(); // ❌ Deprecated
-z.string().url(); // ❌ Deprecated
-z.string().email(); // ❌ Deprecated
+z.email(); // Top-level - validates only
+z.cuid(); // Top-level - validates only
+z.uuid(); // Top-level - validates only
+z.url(); // Top-level - validates only
 ```
 
-All validation schemas in this project follow Zod 4 conventions.
+**With transforms (trim, lowercase, etc.):**
+
+```typescript
+// Apply transforms BEFORE validation
+z.string()
+  .trim() // Transform first
+  .toLowerCase() // Transform second
+  .email(); // Then validate
+
+// ❌ Wrong order - validates raw input
+z.string()
+  .email() // Validates before transforms!
+  .trim()
+  .toLowerCase();
+```
+
+### Transform Order Rule
+
+When combining transforms with validation, **transforms must come first**. Otherwise validation runs on untransformed input (e.g., email validation fails due to whitespace).
+
+See `emailSchema` in `lib/validations/auth.ts` for the canonical pattern.
