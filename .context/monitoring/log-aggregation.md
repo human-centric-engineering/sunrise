@@ -16,6 +16,293 @@ Sunrise's structured logging system outputs JSON in production, making it compat
 }
 ```
 
+## Request Context Utilities
+
+Utilities in `lib/logging/context.ts` for request tracing and context propagation.
+
+### Quick Reference
+
+| Function              | Purpose                                    | Async |
+| --------------------- | ------------------------------------------ | ----- |
+| `generateRequestId()` | Creates unique 16-char request ID          | No    |
+| `getRequestId()`      | Gets ID from headers or generates new one  | Yes   |
+| `getRequestContext()` | Gets request ID, method, URL, user agent   | Yes   |
+| `getUserContext()`    | Gets userId, sessionId, email from session | Yes   |
+| `getFullContext()`    | Combines request + user context            | Yes   |
+| `getEndpointPath()`   | Extracts pathname without query params     | No    |
+| `getClientIp()`       | Gets client IP from proxy headers          | Yes   |
+
+### Request ID Generation
+
+```typescript
+import { generateRequestId, getRequestId } from '@/lib/logging/context';
+
+// Generate a new request ID (synchronous)
+const newId = generateRequestId();
+// Returns: 'v1StGXR8_Z5jdHi6' (16-char nanoid)
+
+// Get request ID from headers, or generate if missing (async)
+const requestId = await getRequestId();
+// Checks 'x-request-id' header first, generates new ID if not found
+```
+
+### Request Context
+
+```typescript
+import { getRequestContext, getFullContext } from '@/lib/logging/context';
+
+export async function POST(request: NextRequest) {
+  // Get request metadata only
+  const context = await getRequestContext(request);
+  // Returns: { requestId, method, url, userAgent }
+
+  // Get combined request + user context
+  const fullContext = await getFullContext(request);
+  // Returns: { requestId, method, url, userAgent, userId, sessionId, email }
+
+  const logger = createLogger(fullContext);
+  logger.info('User action logged');
+}
+```
+
+### User Context
+
+```typescript
+import { getUserContext } from '@/lib/logging/context';
+
+// Get authenticated user context from better-auth session
+const userContext = await getUserContext();
+// Returns: { userId, sessionId, email } or {} if not authenticated
+
+// Fails silently - won't throw if auth unavailable
+```
+
+### Endpoint Path Extraction
+
+```typescript
+import { getEndpointPath } from '@/lib/logging/context';
+
+// Extract clean pathname without query parameters
+const path = getEndpointPath(request);
+// Input:  '/api/v1/users?page=1&limit=10'
+// Output: '/api/v1/users'
+```
+
+### Client IP Detection
+
+```typescript
+import { getClientIp } from '@/lib/logging/context';
+
+const ip = await getClientIp();
+// Checks headers in order: x-forwarded-for, x-real-ip, cf-connecting-ip,
+// x-client-ip, x-cluster-client-ip
+// Returns first IP from comma-separated list (for x-forwarded-for)
+
+logger.warn('Rate limit exceeded', { ip, endpoint: '/api/auth/login' });
+```
+
+## Advanced Logger Usage
+
+The `Logger` class in `lib/logging/index.ts` provides advanced features for context propagation and dynamic configuration.
+
+### Child Loggers and Context Propagation
+
+Use `child()` or `withContext()` to create loggers with additional context that's automatically included in all log entries:
+
+```typescript
+import { logger, createLogger } from '@/lib/logging';
+
+// Method 1: Using withContext() on existing logger
+const requestLogger = logger.withContext({ requestId: 'abc123' });
+requestLogger.info('Processing started');
+// Logs: { ..., context: { requestId: 'abc123' }, message: 'Processing started' }
+
+// Method 2: Using child() (alias for withContext)
+const userLogger = requestLogger.child({ userId: 'user_456' });
+userLogger.info('User action');
+// Logs: { ..., context: { requestId: 'abc123', userId: 'user_456' }, ... }
+
+// Method 3: createLogger() factory with initial context
+const apiLogger = createLogger({ module: 'api', version: 'v1' });
+apiLogger.info('API initialized');
+```
+
+### Context Chaining Pattern
+
+```typescript
+export async function POST(request: NextRequest) {
+  const context = await getFullContext(request);
+  const log = createLogger(context);
+
+  log.info('Request received');
+
+  // Pass logger to nested functions for consistent tracing
+  const result = await processOrder(orderId, log);
+
+  log.info('Request completed', { result });
+}
+
+async function processOrder(orderId: string, log: Logger) {
+  const orderLog = log.child({ orderId });
+  orderLog.info('Processing order');
+  // All logs include requestId, userId, AND orderId
+}
+```
+
+### Dynamic Log Level Control
+
+```typescript
+import { logger, LogLevel } from '@/lib/logging';
+
+// Get current log level
+const currentLevel = logger.getLevel();
+// Returns: LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, or LogLevel.ERROR
+
+// Set log level dynamically (useful for debugging in production)
+logger.setLevel(LogLevel.DEBUG);
+logger.debug('Now visible'); // Would be hidden with default INFO level
+
+// Reset to production level
+logger.setLevel(LogLevel.INFO);
+```
+
+### Log Level Configuration
+
+| Environment       | Default Level | Override                        |
+| ----------------- | ------------- | ------------------------------- |
+| Development       | `debug`       | `LOG_LEVEL=info` (less verbose) |
+| Production        | `info`        | `LOG_LEVEL=debug` (more detail) |
+| Invalid LOG_LEVEL | Uses default  | Silently ignored                |
+
+```bash
+# Environment variable options
+LOG_LEVEL=debug  # All logs
+LOG_LEVEL=info   # Info, warn, error only
+LOG_LEVEL=warn   # Warn and error only
+LOG_LEVEL=error  # Errors only
+```
+
+### createLogger() Factory
+
+```typescript
+import { createLogger } from '@/lib/logging';
+
+// Create module-scoped loggers
+const dbLogger = createLogger({ module: 'database' });
+const authLogger = createLogger({ module: 'auth' });
+const emailLogger = createLogger({ module: 'email' });
+
+// Use throughout the module
+dbLogger.info('Query executed', { query: 'SELECT ...', duration: 45 });
+```
+
+## PII Sanitization
+
+The logging system automatically sanitizes sensitive data to prevent credential leaks and ensure GDPR/CCPA compliance.
+
+### Sanitization Categories
+
+**Secret Fields (ALWAYS redacted):**
+
+Fields matching these patterns are replaced with `[REDACTED]` in all environments:
+
+- `password`, `token`, `apikey`, `api_key`, `secret`
+- `creditcard`, `credit_card`, `ssn`
+- `authorization`, `bearer`, `credential`
+- `private_key`, `privatekey`
+
+**PII Fields (environment-dependent):**
+
+Fields matching these patterns are replaced with `[PII REDACTED]` based on configuration:
+
+- `email`, `phone`, `mobile`
+- `firstname`, `first_name`, `lastname`, `last_name`, `fullname`, `full_name`
+- `address`, `street`, `postcode`, `zipcode`, `zip_code`
+- `ip`, `ipaddress`, `ip_address`, `useragent`, `user_agent`
+
+### Environment Behavior
+
+| Environment | Secrets         | PII                   |
+| ----------- | --------------- | --------------------- |
+| Production  | Always redacted | Redacted by default   |
+| Development | Always redacted | Shown (for debugging) |
+
+### LOG_SANITIZE_PII Variable
+
+Override default PII behavior with the `LOG_SANITIZE_PII` environment variable:
+
+```bash
+# Not set (default): Auto-detect based on NODE_ENV
+# Production: sanitize PII
+# Development: show PII
+
+LOG_SANITIZE_PII=true   # Always sanitize PII (both environments)
+LOG_SANITIZE_PII=false  # Never sanitize PII (use with caution!)
+```
+
+### Sanitization Examples
+
+```typescript
+logger.info('User registered', {
+  email: 'user@example.com',
+  password: 'secret123',
+  userId: 'usr_abc',
+});
+
+// Development output (PII shown, secrets always hidden):
+// { email: 'user@example.com', password: '[REDACTED]', userId: 'usr_abc' }
+
+// Production output (both hidden):
+// { email: '[PII REDACTED]', password: '[REDACTED]', userId: 'usr_abc' }
+```
+
+### Pattern Matching
+
+Field names are matched using word boundaries to avoid false positives:
+
+```typescript
+// Matches (will be sanitized)
+'password'; // exact match
+'userPassword'; // camelCase boundary
+'user_password'; // underscore boundary
+'PASSWORD'; // case-insensitive
+
+// Does NOT match (safe)
+'recipients'; // 'ip' is part of word, not a boundary
+'shipping'; // 'ip' embedded in word
+```
+
+### Anti-Patterns
+
+**Don't:** Rely on sanitization for highly sensitive data
+
+```typescript
+// Bad: Logging raw credit card data
+logger.info('Payment received', { cardNumber: '4111111111111111' });
+```
+
+**Do:** Mask sensitive data before logging
+
+```typescript
+// Good: Only log last 4 digits
+logger.info('Payment received', { cardLast4: card.number.slice(-4) });
+```
+
+**Don't:** Log authentication tokens in URLs
+
+```typescript
+// Bad: Token in URL
+logger.info('Webhook received', { url: `/webhook?token=${secret}` });
+```
+
+**Do:** Redact tokens from URLs before logging
+
+```typescript
+// Good: Redact sensitive query params
+const safeUrl = url.replace(/token=[^&]+/, 'token=[REDACTED]');
+logger.info('Webhook received', { url: safeUrl });
+```
+
 ## DataDog
 
 ### Docker Integration
@@ -333,10 +620,11 @@ LOG_LEVEL = info; // Excludes debug logs
 
 ```typescript
 import { logger } from '@/lib/logging';
+import { generateRequestId } from '@/lib/logging/context';
 
 // Create request-scoped logger
 const requestLogger = logger.withContext({
-  requestId: crypto.randomUUID(),
+  requestId: generateRequestId(),
   userId: session?.user?.id,
   endpoint: request.url,
 });
@@ -362,8 +650,10 @@ logger.info(`Payment ${payment.id} of $${payment.amount} for customer ${customer
 ### 4. Include Correlation IDs
 
 ```typescript
+import { generateRequestId } from '@/lib/logging/context';
+
 // Propagate request ID through the stack
-const requestId = request.headers.get('x-request-id') || crypto.randomUUID();
+const requestId = request.headers.get('x-request-id') || generateRequestId();
 
 const log = logger.withContext({ requestId });
 

@@ -59,6 +59,6 @@ export const API = {
   PUBLIC: {
     HEALTH: '/api/health',
     CONTACT: '/api/v1/contact',
-    CSP_REPORT: '/api/v1/csp-report',
+    CSP_REPORT: '/api/csp-report',
   },
 } as const;

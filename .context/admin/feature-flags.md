@@ -53,6 +53,35 @@ interface FeatureFlagListProps {
 }
 ```
 
+### FeatureFlagsPage
+
+**Location**: `components/admin/feature-flags-page.tsx`
+
+Client-side page wrapper that serves as the main entry point for feature flag management. Used by `app/admin/features/page.tsx`.
+
+**Responsibilities**:
+
+- Fetches and manages flag state on mount
+- Coordinates between FeatureFlagList and FeatureFlagForm components
+- Handles create/edit form visibility
+- Updates local state after flag create/update operations
+
+**State Management**:
+
+```typescript
+const [flags, setFlags] = useState<FeatureFlag[]>([]);
+const [isLoading, setIsLoading] = useState(true);
+const [showForm, setShowForm] = useState(false);
+const [editingFlag, setEditingFlag] = useState<FeatureFlag | null>(null);
+```
+
+**Callbacks**:
+
+- `handleCreateClick()` — Opens form for new flag creation
+- `handleEditClick(flag)` — Opens form pre-populated with flag data
+- `handleFlagSaved(flag)` — Updates local state after API success
+- `handleFormClose(open)` — Closes form and resets editing state
+
 ### FeatureFlagForm
 
 **Location**: `components/admin/feature-flag-form.tsx`
@@ -78,6 +107,12 @@ const featureFlagSchema = z.object({
   enabled: z.boolean(),
 });
 ```
+
+**Validation Notes**:
+
+- Server-side validation uses `.transform()` to auto-convert input to uppercase
+- Name must be 1-100 characters with SCREAMING_SNAKE_CASE format
+- Client-side form sanitizes input in real-time before submission
 
 ## Utility Functions
 
@@ -181,7 +216,7 @@ model FeatureFlag {
   name        String   @unique
   description String?
   enabled     Boolean  @default(false)
-  metadata    Json     @default("{}")
+  metadata    Json?    @default("{}")
   createdBy   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

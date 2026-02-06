@@ -6,14 +6,22 @@ The storage system provides multi-provider file storage for Sunrise, following t
 
 ```
 lib/storage/
-├── client.ts              # getStorageClient(), isStorageEnabled()
-├── upload.ts              # uploadAvatar(), deleteFile(), deleteByPrefix()
-├── image.ts               # validateImageMagicBytes(), processImage()
+├── client.ts              # getStorageClient(), isStorageEnabled(), getStorageProviderName()
+├── upload.ts              # uploadAvatar(), deleteFile(), deleteAvatar(), deleteByPrefix()
+├── image.ts               # validateImageMagicBytes(), processImage(), getExtensionForMimeType(), isSupportedImageType()
+├── constants.ts           # Client-safe constants (SUPPORTED_IMAGE_TYPES, IMAGE_EXTENSIONS)
 └── providers/
-    ├── types.ts           # StorageProvider interface
-    ├── s3.ts              # AWS S3 / S3-compatible
-    ├── vercel-blob.ts     # Vercel Blob Storage
-    └── local.ts           # Local filesystem (dev only)
+    ├── types.ts           # StorageProvider interface, provider config types
+    ├── validate-key.ts    # validateStorageKey() - path traversal prevention
+    ├── s3.ts              # AWS S3 / S3-compatible (S3ProviderConfig)
+    ├── vercel-blob.ts     # Vercel Blob Storage (VercelBlobProviderConfig)
+    └── local.ts           # Local filesystem (LocalProviderConfig)
+
+lib/validations/
+└── storage.ts             # Zod schemas for file validation (size, mime types)
+
+components/forms/
+└── avatar-crop-dialog.tsx # Reusable avatar cropping dialog (react-easy-crop)
 ```
 
 ## Provider Selection
@@ -38,7 +46,7 @@ S3_SECRET_ACCESS_KEY=...
 
 ### S3 Provider
 
-Works with AWS S3 and any S3-compatible service (MinIO, DigitalOcean Spaces, Cloudflare R2).
+Works with AWS S3 and any S3-compatible service (MinIO, DigitalOcean Spaces, Cloudflare R2). Uses `S3ProviderConfig` interface for typed configuration.
 
 ```bash
 # Required
@@ -55,9 +63,21 @@ S3_USE_ACL=true                              # Enable ACL (only for legacy bucke
 
 > **Note:** Modern S3 buckets (since April 2023) have ACLs disabled by default. Only set `S3_USE_ACL=true` for legacy buckets that use ACL-based access control.
 
+**Signed URLs:**
+
+S3Provider supports generating time-limited signed URLs for private file access:
+
+```typescript
+const storage = getStorageClient();
+if (storage && storage.name === 's3') {
+  // Generate a signed URL valid for 1 hour (3600 seconds)
+  const signedUrl = await storage.getSignedUrl('documents/private-report.pdf', 3600);
+}
+```
+
 ### Vercel Blob Provider
 
-Integrated with Vercel deployments. Simple setup, CDN-backed.
+Integrated with Vercel deployments. Simple setup, CDN-backed. Uses `VercelBlobProviderConfig` interface for typed configuration.
 
 ```bash
 BLOB_READ_WRITE_TOKEN=vercel_blob_...
@@ -65,15 +85,21 @@ BLOB_READ_WRITE_TOKEN=vercel_blob_...
 
 Get token from: Vercel Dashboard → Storage → Blob
 
+> **Note:** Vercel Blob does not support signed URLs - all files are publicly accessible. Use S3 if you need private file access with time-limited URLs.
+
 ### Local Provider
 
-Development fallback. Files stored in `public/uploads/`.
+Development fallback. Files stored in `public/uploads/`. Uses `LocalProviderConfig` interface for typed configuration.
 
 - No configuration required
 - Automatically enabled in development when no cloud provider configured
 - **Not for production** - files don't persist across deploys
 
 ## API Endpoints
+
+### Rate Limiting
+
+The avatar upload endpoint (`/api/v1/users/me/avatar`) is protected by `uploadLimiter` from `lib/security/rate-limit.ts`. When the rate limit is exceeded, the endpoint returns HTTP 429 (Too Many Requests).
 
 ### Upload Avatar
 
@@ -125,14 +151,14 @@ Images are automatically processed before upload:
 
 1. **Validation**: Magic bytes check (not just MIME type)
 2. **Resize**: Max 500x500 pixels (configurable)
-3. **Optimize**: Quality compression for web
+3. **Optimize**: Quality compression for web (default JPEG quality: 85)
 4. **Format**: Avatars always output JPEG regardless of input format. When using `processImage` directly without specifying a format, the original format is preserved.
 
 Supported formats: JPEG, PNG, WebP, GIF
 
 ### Client-Side Crop
 
-The `AvatarUpload` component includes an integrated crop dialog (react-easy-crop):
+The `AvatarUpload` component includes an integrated crop dialog (react-easy-crop). The cropping functionality is also available as a standalone `AvatarCropDialog` component (`components/forms/avatar-crop-dialog.tsx`) for reuse across the app:
 
 - User can pan/zoom to select a square region
 - Client sends the pre-cropped image to the API
@@ -145,21 +171,55 @@ The `AvatarUpload` component includes an integrated crop dialog (react-easy-crop
 MAX_FILE_SIZE_MB=5  # Default: 5 MB
 ```
 
+Size and type validation schemas are available in `lib/validations/storage.ts` for consistent validation across the app. The `lib/storage/constants.ts` file exports client-safe constants (`SUPPORTED_IMAGE_TYPES`, `IMAGE_EXTENSIONS`) that can be imported in both server and client components.
+
+> **Deprecation:** File size utilities (`DEFAULT_MAX_FILE_SIZE`, `getMaxFileSize()`) in `lib/storage/upload.ts` are deprecated. Use `MAX_FILE_SIZE_BYTES` and `getMaxFileSizeBytes()` from `lib/validations/storage.ts` instead for Zod-based validation.
+
+### Validation Schemas
+
+Use Zod schemas from `lib/validations/storage.ts` for type-safe validation:
+
+```typescript
+import { avatarUploadSchema, imageFileSchema } from '@/lib/validations/storage';
+
+// Validate file metadata before upload
+const result = avatarUploadSchema.safeParse({
+  file: { name: file.name, size: file.size, type: file.type },
+});
+
+if (!result.success) {
+  return errorResponse(result.error.errors[0].message, { status: 400 });
+}
+
+// Available schemas:
+// - fileMetadataSchema: Basic file validation (name, size, type)
+// - imageFileSchema: Extends fileMetadataSchema with image MIME type check
+// - avatarUploadSchema: Full avatar validation with size limit
+// - s3ConfigSchema, vercelBlobConfigSchema: Provider config validation
+```
+
 ## Usage
 
 ### Server-Side (API Routes)
 
 ```typescript
-import { uploadAvatar, deleteByPrefix, isStorageEnabled } from '@/lib/storage/upload';
+import { uploadAvatar, deleteAvatar, deleteByPrefix, isStorageEnabled } from '@/lib/storage/upload';
+import { getStorageProviderName } from '@/lib/storage/client';
 
 // Check if storage is available
 if (!isStorageEnabled()) {
   return errorResponse('Storage not configured', { status: 503 });
 }
 
+// Get current provider name ('s3', 'vercel-blob', 'local', or null)
+const provider = getStorageProviderName();
+
 // Upload avatar
 const result = await uploadAvatar(buffer, { userId: 'user-123' });
 console.log(result.url); // Public URL
+
+// Delete avatar by URL (convenience wrapper that handles URL parsing)
+await deleteAvatar(user.image);
 
 // Delete all files under a user's avatar prefix
 await deleteByPrefix(`avatars/${userId}/`);
@@ -194,6 +254,8 @@ if (storage) {
 }
 ```
 
+> **Note:** Direct provider access bypasses magic byte validation and image processing. Use `uploadAvatar()` or call `validateImageMagicBytes()` and `processImage()` manually if uploading user-provided images.
+
 ## Error Codes
 
 | Code                     | Description                   |
@@ -203,7 +265,27 @@ if (storage) {
 | `UPLOAD_FAILED`          | Storage provider error        |
 | `STORAGE_NOT_CONFIGURED` | No storage provider available |
 
+> **Note:** These are API response error codes returned in the `error.code` field. The storage library throws plain `Error` objects with descriptive messages internally.
+
 ## Security
+
+### Key Validation
+
+All storage keys are validated before use with `validateStorageKey()`. This validation is called by **all providers** (S3, Vercel Blob, Local) before `upload`, `delete`, and `deletePrefix` operations to prevent path traversal attacks.
+
+```typescript
+import { validateStorageKey } from '@/lib/storage/providers/validate-key';
+
+// Called automatically by all providers before upload/delete/deletePrefix operations
+validateStorageKey(key); // Throws if invalid
+```
+
+**Prevents:**
+
+- Path traversal attacks (`..` in key)
+- Absolute path injection (`/etc/passwd`)
+- Null byte injection (`file\0.jpg`)
+- Backslash attacks (`uploads\..\..\etc`)
 
 ### File Validation
 
@@ -256,6 +338,22 @@ import { validateImageMagicBytes } from '@/lib/storage/image';
 const result = validateImageMagicBytes(buffer);
 expect(result.valid).toBe(true);
 expect(result.detectedType).toBe('image/jpeg');
+```
+
+### Image Utilities
+
+```typescript
+import { getExtensionForMimeType, isSupportedImageType } from '@/lib/storage/image';
+
+// Get file extension for a MIME type
+getExtensionForMimeType('image/jpeg'); // 'jpg'
+getExtensionForMimeType('image/png'); // 'png'
+getExtensionForMimeType('image/webp'); // 'webp'
+getExtensionForMimeType('image/gif'); // 'gif'
+
+// Check if a content type is supported
+isSupportedImageType('image/jpeg'); // true
+isSupportedImageType('image/svg+xml'); // false
 ```
 
 ## Extending

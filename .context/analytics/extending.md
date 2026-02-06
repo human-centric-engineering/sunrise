@@ -89,74 +89,190 @@ export function useFeatureAnalytics() {
 
 ## Adding a New Provider
 
-To add a new analytics provider (e.g., Mixpanel, Amplitude):
+To add a new analytics provider (e.g., Mixpanel), follow these four steps:
 
-### 1. Create Provider
+### 1. Add Config Detection
 
-Create `lib/analytics/providers/mixpanel.ts`:
+Update `lib/analytics/config.ts` with environment variable detection:
 
 ```typescript
-import type { AnalyticsProvider, TrackResult } from './types';
+/**
+ * Mixpanel environment variable names
+ */
+export const MIXPANEL_ENV = {
+  TOKEN: 'NEXT_PUBLIC_MIXPANEL_TOKEN',
+} as const;
 
-export class MixpanelProvider implements AnalyticsProvider {
-  readonly name = 'mixpanel';
-  readonly type = 'mixpanel';
-
-  async initialize(): Promise<void> {
-    // Load Mixpanel SDK
-  }
-
-  async track(event: string, properties?: Record<string, unknown>): Promise<TrackResult> {
-    // Implementation
-  }
-
-  async identify(userId: string, traits?: Record<string, unknown>): Promise<TrackResult> {
-    // Implementation
-  }
-
-  async page(name?: string, properties?: Record<string, unknown>): Promise<TrackResult> {
-    // Implementation
-  }
-
-  async reset(): Promise<TrackResult> {
-    // Implementation
-  }
+/**
+ * Check if Mixpanel is configured
+ */
+export function isMixpanelConfigured(): boolean {
+  return !!process.env.NEXT_PUBLIC_MIXPANEL_TOKEN;
 }
 
-export function createMixpanelProviderFromEnv(): MixpanelProvider | null {
+/**
+ * Get Mixpanel configuration from environment
+ */
+export function getMixpanelConfig(): { token: string } | null {
   const token = process.env.NEXT_PUBLIC_MIXPANEL_TOKEN;
   if (!token) return null;
-  return new MixpanelProvider(token);
+  return { token };
+}
+
+// Update detectProvider() to include Mixpanel in auto-detection:
+export function detectProvider(): AnalyticsProviderType | null {
+  // ... existing code ...
+
+  // Add Mixpanel detection (choose priority based on feature set)
+  if (isMixpanelConfigured()) {
+    return 'mixpanel';
+  }
+
+  // ... rest of detection logic ...
+}
+
+// Update getExplicitProvider() validProviders array:
+const validProviders: readonly string[] = [
+  'ga4',
+  'posthog',
+  'plausible',
+  'mixpanel', // Add new provider
+  'console',
+] satisfies AnalyticsProviderType[];
+```
+
+### 2. Add Provider Type
+
+Update `lib/analytics/types.ts`:
+
+```typescript
+export type AnalyticsProviderType = 'ga4' | 'posthog' | 'plausible' | 'mixpanel' | 'console';
+```
+
+### 3. Create Provider
+
+Create `lib/analytics/providers/mixpanel.ts` implementing the `AnalyticsProvider` interface:
+
+```typescript
+import type {
+  UserTraits,
+  EventProperties,
+  PageProperties,
+  TrackResult,
+  ProviderFeatures,
+} from '../types';
+import type { AnalyticsProvider } from './types';
+import { logger } from '@/lib/logging';
+
+export interface MixpanelProviderConfig {
+  token: string;
+  debug?: boolean;
+}
+
+export class MixpanelProvider implements AnalyticsProvider {
+  readonly name = 'Mixpanel';
+  readonly type = 'mixpanel' as const;
+
+  private ready = false;
+  private token: string;
+  private debug: boolean;
+
+  constructor(config: MixpanelProviderConfig) {
+    this.token = config.token;
+    this.debug = config.debug ?? false;
+  }
+
+  async init(): Promise<void> {
+    if (this.ready) return;
+    // Load and initialize Mixpanel SDK
+    this.ready = true;
+  }
+
+  identify(userId: string, traits?: UserTraits): Promise<TrackResult> {
+    if (!this.ready) {
+      return Promise.resolve({ success: false, error: 'Mixpanel not initialized' });
+    }
+    // Implementation
+    return Promise.resolve({ success: true });
+  }
+
+  track(event: string, properties?: EventProperties): Promise<TrackResult> {
+    if (!this.ready) {
+      return Promise.resolve({ success: false, error: 'Mixpanel not initialized' });
+    }
+    // Implementation
+    return Promise.resolve({ success: true });
+  }
+
+  page(name?: string, properties?: PageProperties): Promise<TrackResult> {
+    if (!this.ready) {
+      return Promise.resolve({ success: false, error: 'Mixpanel not initialized' });
+    }
+    // Implementation
+    return Promise.resolve({ success: true });
+  }
+
+  reset(): Promise<TrackResult> {
+    if (!this.ready) {
+      return Promise.resolve({ success: false, error: 'Mixpanel not initialized' });
+    }
+    // Implementation
+    return Promise.resolve({ success: true });
+  }
+
+  isReady(): boolean {
+    return this.ready;
+  }
+
+  getFeatures(): ProviderFeatures {
+    return {
+      supportsIdentify: true,
+      supportsServerSide: true,
+      supportsFeatureFlags: false,
+      supportsSessionReplay: false,
+      supportsCookieless: false,
+    };
+  }
+}
+
+export function createMixpanelProvider(config: MixpanelProviderConfig): MixpanelProvider {
+  return new MixpanelProvider(config);
 }
 ```
 
-### 2. Register in Client
+### 4. Register in Client
 
-Update `lib/analytics/client.ts`:
-
-```typescript
-import { createMixpanelProviderFromEnv } from './providers/mixpanel';
-
-// In createProviderFromEnv():
-case 'mixpanel':
-  return createMixpanelProviderFromEnv();
-
-// In auto-detection (add before console fallback):
-const mixpanel = createMixpanelProviderFromEnv();
-if (mixpanel) return mixpanel;
-```
-
-### 3. Add Provider Type
-
-Update `lib/analytics/providers/types.ts`:
+Update `lib/analytics/client.ts` to create and return the provider:
 
 ```typescript
-export type AnalyticsProviderType = 'console' | 'ga4' | 'posthog' | 'plausible' | 'mixpanel';
+import { createMixpanelProvider } from './providers/mixpanel';
+import { getMixpanelConfig } from './config';
+
+// Add case in createProvider() switch statement:
+function createProvider(type: AnalyticsProviderType): AnalyticsProvider | null {
+  switch (type) {
+    // ... existing cases ...
+
+    case 'mixpanel': {
+      const config = getMixpanelConfig();
+      if (!config) {
+        logger.error('Mixpanel provider requested but not configured', undefined, {
+          missingVars: ['NEXT_PUBLIC_MIXPANEL_TOKEN'],
+        });
+        return null;
+      }
+      return createMixpanelProvider({
+        ...config,
+        debug: isDevelopment(),
+      });
+    }
+
+    // ... default case ...
+  }
+}
 ```
 
-### 4. Add Script Loading (If Needed)
-
-Update `components/analytics/analytics-scripts.tsx` if the provider requires external scripts.
+**Optional:** If the provider requires external scripts, update `components/analytics/analytics-scripts.tsx`.
 
 ## Generic Form Tracking
 

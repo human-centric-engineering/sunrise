@@ -101,6 +101,57 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
 }
 ```
 
+## Analytics Components
+
+### UserIdentifier
+
+Automatically identifies authenticated users to the analytics system and tracks the initial page view. Place this in the root layout alongside `AnalyticsProvider`.
+
+**Purpose:**
+
+- Identifies users on page load (including after OAuth or page refresh)
+- Ensures the initial page view includes the correct user ID
+- Handles pending OAuth login tracking (from `sessionStorage`)
+
+```tsx
+// In root layout (app/layout.tsx)
+<AnalyticsProvider>
+  <Suspense fallback={null}>
+    <UserIdentifier />
+    <PageTracker skipInitial />
+  </Suspense>
+  {children}
+</AnalyticsProvider>
+```
+
+**How it works:**
+
+1. Waits for analytics to be ready and session to finish loading
+2. If user is logged in, identifies them via `identify(user.id)`
+3. Checks for pending OAuth login in `sessionStorage` and tracks the login event
+4. Tracks the initial page view with correct user context
+5. Resets identification tracking when user logs out
+
+### PageTracker
+
+A client component that tracks page views on route changes. Use with `skipInitial={true}` when `UserIdentifier` handles the initial page view.
+
+**Props:**
+
+- `properties?: Record<string, string | number | boolean>` - Additional properties for every page view
+- `skipInitial?: boolean` - Skip the initial page load (use when `UserIdentifier` handles it)
+
+```tsx
+// In root layout
+<PageTracker skipInitial properties={{ section: 'dashboard' }} />
+```
+
+**Why separate components?**
+
+- `UserIdentifier` handles the initial page load with proper ordering: identify user first, then track page
+- `PageTracker` handles subsequent client-side navigation via `usePathname()`
+- The root layout never remounts during navigation, so `PageTracker` reliably catches all route changes
+
 ## Files Reference
 
 | File                                         | Purpose                  |

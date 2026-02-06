@@ -191,6 +191,25 @@ export async function POST(request: Request) {
 - PostHog: Uses `NEXT_PUBLIC_POSTHOG_KEY` (project API key, same as client-side)
 - Plausible: Works with standard configuration
 
+### Server Page Views
+
+Use `serverPageView()` for tracking page views from server components:
+
+```typescript
+import { serverPageView } from '@/lib/analytics/server';
+
+// In a server component or server action
+await serverPageView('Dashboard', 'https://example.com/dashboard', userId);
+```
+
+**Parameters:**
+
+- `pageName: string` - Name of the page
+- `url: string` - Full URL of the page
+- `userId?: string` - Optional user ID
+
+This is a convenience wrapper around `serverTrack()` that sends a `pageview` event with the page name and URL as properties.
+
 ## PostHog Feature Flags
 
 When using PostHog, you can access feature flags:

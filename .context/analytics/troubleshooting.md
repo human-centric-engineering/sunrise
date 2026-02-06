@@ -54,6 +54,24 @@ Console output:
 [Analytics] page [12:34:58.456] Dashboard { path: '/dashboard' }
 ```
 
+### Resetting Analytics State
+
+Use `resetAnalyticsClient()` to reset the singleton analytics client between tests. This clears the cached provider instance, initialization promise, and warning state.
+
+```typescript
+import { resetAnalyticsClient } from '@/lib/analytics/client';
+
+beforeEach(() => {
+  resetAnalyticsClient(); // Clear singleton state between tests
+});
+```
+
+This is useful when:
+
+- Testing provider initialization behavior
+- Verifying auto-detection logic
+- Testing fallback behavior when providers are not configured
+
 ### Mocking in Tests
 
 ```typescript

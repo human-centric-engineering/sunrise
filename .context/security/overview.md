@@ -17,6 +17,7 @@ All security utilities are located in `lib/security/`:
 | `headers.ts`    | CSP and security headers utilities            |
 | `sanitize.ts`   | XSS prevention and input sanitization         |
 | `cors.ts`       | CORS configuration and utilities              |
+| `ip.ts`         | Client IP extraction with validation          |
 | `index.ts`      | Module exports                                |
 
 ## Security Headers
@@ -38,7 +39,7 @@ setSecurityHeaders(response);
 | Header                      | Value                                                   | Purpose                       |
 | --------------------------- | ------------------------------------------------------- | ----------------------------- |
 | `Content-Security-Policy`   | Environment-specific                                    | XSS prevention                |
-| `X-Frame-Options`           | `SAMEORIGIN`                                            | Clickjacking prevention       |
+| `X-Frame-Options`           | `DENY`                                                  | Clickjacking prevention       |
 | `X-Content-Type-Options`    | `nosniff`                                               | MIME type sniffing prevention |
 | `Referrer-Policy`           | `strict-origin-when-cross-origin`                       | Referrer leakage control      |
 | `Permissions-Policy`        | `geolocation=(), microphone=(), camera=()`              | Feature restriction           |
@@ -62,10 +63,10 @@ Permissive policy for HMR/Fast Refresh:
 default-src 'self';
 script-src 'self' 'unsafe-eval' 'unsafe-inline';
 style-src 'self' 'unsafe-inline';
-img-src 'self' data: https:;
+img-src 'self' data: https: blob:;
 font-src 'self' data:;
-connect-src 'self' ws://localhost:*;
-frame-ancestors 'self';
+connect-src 'self' webpack://* ws://localhost:* wss://localhost:*;
+frame-ancestors 'none';
 form-action 'self';
 base-uri 'self';
 object-src 'none';
@@ -77,12 +78,12 @@ Strict policy with violation reporting:
 
 ```
 default-src 'self';
-script-src 'self' 'unsafe-inline';
+script-src 'self';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: https:;
 font-src 'self' data:;
 connect-src 'self';
-frame-ancestors 'self';
+frame-ancestors 'none';
 form-action 'self';
 base-uri 'self';
 object-src 'none';
@@ -105,7 +106,25 @@ const extendedCSP = extendCSP({
   'img-src': ['https://cdn.example.com'],
   'connect-src': ['https://api.analytics.com'],
 });
+
+// Build CSP string from config object
+import { buildCSP } from '@/lib/security/headers';
+const csp = buildCSP(customConfig);
 ```
+
+> **Note**: `extendCSP()` is available for routes needing additional CSP permissions (e.g., embedding YouTube videos). Base CSP is applied automatically via `setSecurityHeaders()`.
+
+### Analytics CSP Auto-Configuration
+
+When analytics providers are configured via environment variables, their domains are automatically added to CSP:
+
+| Provider  | Env Variable                     | Domains Added                               |
+| --------- | -------------------------------- | ------------------------------------------- |
+| PostHog   | `NEXT_PUBLIC_POSTHOG_KEY`        | Host + assets CDN (script-src, connect-src) |
+| GA4       | `NEXT_PUBLIC_GA4_MEASUREMENT_ID` | googletagmanager.com, google-analytics.com  |
+| Plausible | `NEXT_PUBLIC_PLAUSIBLE_DOMAIN`   | Configured host (script-src, connect-src)   |
+
+This is handled by `getAnalyticsCSPDomains()` in `lib/security/headers.ts`.
 
 ### CSP Violation Reporting
 
@@ -128,11 +147,18 @@ LRU cache-based sliding window rate limiter. No Redis required for single-server
 
 ### Pre-configured Limiters
 
-| Limiter                | Limit        | Window     | Use Case           |
-| ---------------------- | ------------ | ---------- | ------------------ |
-| `authLimiter`          | 5 requests   | 1 minute   | Login, signup      |
-| `apiLimiter`           | 100 requests | 1 minute   | General API routes |
-| `passwordResetLimiter` | 3 requests   | 15 minutes | Password reset     |
+| Limiter                    | Limit        | Window     | Use Case                    |
+| -------------------------- | ------------ | ---------- | --------------------------- |
+| `authLimiter`              | 5 requests   | 1 minute   | Login, signup               |
+| `apiLimiter`               | 100 requests | 1 minute   | General API routes          |
+| `adminLimiter`             | 30 requests  | 1 minute   | Admin endpoints             |
+| `passwordResetLimiter`     | 3 requests   | 15 minutes | Password reset              |
+| `contactLimiter`           | 5 requests   | 1 hour     | Contact form submissions    |
+| `verificationEmailLimiter` | 3 requests   | 15 minutes | Email verification requests |
+| `acceptInviteLimiter`      | 5 requests   | 15 minutes | Invitation acceptance       |
+| `uploadLimiter`            | 10 requests  | 15 minutes | File uploads                |
+| `inviteLimiter`            | 10 requests  | 15 minutes | Sending invitations         |
+| `cspReportLimiter`         | 20 requests  | 1 minute   | CSP violation reports       |
 
 ### Usage
 
@@ -174,6 +200,52 @@ All rate-limited responses include:
 - **Peek without consume**: Check limits without incrementing
 - **Manual reset**: Clear limits for specific tokens
 
+```typescript
+// Check limit without consuming a request
+const status = limiter.peek(clientIP);
+if (status.remaining < 5) {
+  logger.warn('Rate limit approaching', { remaining: status.remaining });
+}
+
+// Add rate limit headers to custom response
+import { getRateLimitHeaders } from '@/lib/security/rate-limit';
+const headers = getRateLimitHeaders(result);
+return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } });
+```
+
+## Client IP Extraction
+
+**Implementation**: `lib/security/ip.ts`
+
+Extracts client IP addresses from requests for rate limiting and security logging.
+
+### Functions
+
+```typescript
+import { getClientIP, isValidIP } from '@/lib/security/ip';
+
+// Extract client IP from request (checks X-Forwarded-For, X-Real-IP)
+const clientIP = getClientIP(request);
+
+// Validate IP format (prevents arbitrary strings as rate limit keys)
+if (isValidIP(headerValue)) {
+  // Safe to use as rate limit key
+}
+```
+
+### IP Header Priority
+
+1. `X-Forwarded-For` (first IP in comma-separated list)
+2. `X-Real-IP`
+3. Fallback: `127.0.0.1`
+
+**Fallback Behavior**: When no valid IP is found in headers, returns `127.0.0.1`. This ensures rate limiting works in development and prevents errors when running without a reverse proxy.
+
+### Security Considerations
+
+- **IP Validation**: Prevents arbitrary strings from being used as rate limit keys
+- **Proxy Trust**: In production, ensure your reverse proxy (nginx, Cloudflare) strips and re-sets `X-Forwarded-For` to prevent client spoofing
+
 ## CORS Configuration
 
 **Implementation**: `lib/security/cors.ts`
@@ -183,7 +255,7 @@ Secure by default, configurable for external access.
 ### Default Behavior
 
 - **Production**: Same-origin only unless `ALLOWED_ORIGINS` is set
-- **Development**: Automatically allows localhost variants (3000, 3001, 127.0.0.1)
+- **Development**: Automatically allows `http://localhost:3000`, `http://localhost:3001`, and `http://127.0.0.1:3000`
 
 ### Configuration
 
@@ -218,6 +290,8 @@ const handlers = createCORSHandlers({
 export const { GET, POST, OPTIONS } = handlers;
 ```
 
+> **Note**: These utilities are available for routes requiring cross-origin access. Currently, most API routes use same-origin requests and don't require explicit CORS handling.
+
 ### Custom Options
 
 ```typescript
@@ -231,6 +305,13 @@ const customOptions: CORSOptions = {
 };
 
 export const POST = withCORS(handler, customOptions);
+
+// Check origin manually
+import { isOriginAllowed, setCORSHeaders } from '@/lib/security/cors';
+
+if (isOriginAllowed(origin, ['https://trusted.com'])) {
+  setCORSHeaders(response, request);
+}
 ```
 
 ## Input Sanitization
@@ -262,6 +343,7 @@ import {
 | `sanitizeRedirectUrl()` | Prevent open redirects        | External URLs → `/`            |
 | `sanitizeObject()`      | Recursive object sanitization | Escapes all string values      |
 | `sanitizeFilename()`    | Prevent path traversal        | `../etc/passwd` → `etc_passwd` |
+| `safeCallbackUrl()`     | Safe relative URL extraction  | External URLs → fallback       |
 
 ### Examples
 
@@ -324,7 +406,7 @@ export async function POST(request: Request) {
 - [x] Content-Security-Policy with environment-specific policies
 - [x] Security headers set in proxy (`lib/security/headers.ts`)
 - [x] HTTPS enforced in production (HSTS header)
-- [x] X-Frame-Options set to SAMEORIGIN
+- [x] X-Frame-Options set to DENY
 - [x] Permissions-Policy restricts browser features
 
 ### API Protection
@@ -368,15 +450,28 @@ export async function POST(request: Request) {
 
 **Trade-offs**: Slightly reduced XSS protection for styles
 
-### X-Frame-Options: SAMEORIGIN vs DENY
+### X-Frame-Options: DENY
 
-**Decision**: Use `SAMEORIGIN` instead of `DENY`
+**Decision**: Use `DENY` for maximum clickjacking protection
 **Rationale**:
 
-- Allows embedding within same-origin iframes
-- Useful for embedded content, modals, previews
+- Prevents all framing, including same-origin
+- Matches CSP `frame-ancestors: 'none'` for consistent policy
+- No legitimate use case for embedding the app in iframes
 
-**Trade-offs**: Slightly increased clickjacking surface (same-origin only)
+**Trade-offs**: Cannot embed app pages in same-origin iframes (not needed for this application)
+
+## TypeScript Types
+
+Available type exports from `@/lib/security`:
+
+| Type               | Description                             |
+| ------------------ | --------------------------------------- |
+| `RateLimitOptions` | Configuration for `createRateLimiter()` |
+| `RateLimitResult`  | Return value from `limiter.check()`     |
+| `RateLimiter`      | Rate limiter instance interface         |
+| `CSPConfig`        | CSP directive configuration object      |
+| `CORSOptions`      | CORS configuration options              |
 
 ## Related Documentation
 

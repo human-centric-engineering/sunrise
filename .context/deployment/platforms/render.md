@@ -63,6 +63,13 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 ```
 
+**Optional (for file uploads):**
+
+```
+STORAGE_PROVIDER=s3  # Options: s3, vercel-blob, local
+# See .env.example for full S3/Vercel Blob configuration
+```
+
 ### 4. Configure Build & Deploy
 
 In Web Service > Settings:
@@ -70,6 +77,8 @@ In Web Service > Settings:
 - **Docker Command:** Leave empty (uses Dockerfile CMD)
 - **Health Check Path:** `/api/health`
 - **Auto-Deploy:** Yes (deploys on push to main)
+
+Render checks for HTTP 200 OK response. The app returns 503 if the database is disconnected, which Render treats as unhealthy. Note: On the free tier, services spin down after inactivity, which affects health check reliability until the service warms up.
 
 ### 5. Run Database Migrations
 
@@ -94,7 +103,11 @@ Click "Manual Deploy" > "Deploy latest commit" or push to your main branch.
 
 ### render.yaml (Infrastructure as Code)
 
-Create `render.yaml` in project root for reproducible deployments:
+Create `render.yaml` in your project root only if you need Infrastructure as Code deployment. This file is **not included** in the starter template — create it when you need reproducible deployments or want to manage infrastructure via Git.
+
+See [Render Blueprint Spec](https://render.com/docs/blueprint-spec) for the full schema reference.
+
+**Example configuration:**
 
 ```yaml
 services:
@@ -142,11 +155,18 @@ For shared variables across services:
 ## Verifying Deployment
 
 1. Wait for deployment to complete (check Logs tab)
-2. Visit `https://sunrise.onrender.com/api/health`
+2. Visit `https://your-project.onrender.com/api/health`
 3. Expected response:
    ```json
-   { "status": "ok", "database": { "connected": true } }
+   {
+     "status": "ok",
+     "version": "1.0.0",
+     "services": {
+       "database": { "status": "operational", "connected": true }
+     }
+   }
    ```
+   **Note:** `services.database.status` is `operational`, `degraded`, or `outage`. Returns HTTP 503 on database failure.
 
 ## Common Issues
 

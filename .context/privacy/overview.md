@@ -4,6 +4,11 @@
 
 Sunrise includes a GDPR/PECR-compliant cookie consent system that gives users control over optional cookies while ensuring essential functionality remains available. The system provides a configurable banner, preferences modal, and conditional script loading.
 
+**Documentation:**
+
+- [Components](./components.md) - CookieBanner and PreferencesModal UI components
+- [API Reference](./api.md) - Hooks, functions, types, and exports
+
 ## Architecture
 
 ```
@@ -34,20 +39,33 @@ Essential cookies cannot be disabled. Optional cookies require explicit consent.
 
 ### Setup (Already Configured)
 
-The `ConsentProvider` is already wrapped in `app/layout.tsx`:
+The `ConsentProvider` and `CookieBanner` are already configured in `app/layout.tsx`:
 
 ```tsx
 import { ConsentProvider } from '@/lib/consent';
+import { CookieBanner } from '@/components/cookie-consent';
 
 export default function RootLayout({ children }) {
   return (
     <html>
       <body>
-        <ConsentProvider>{children}</ConsentProvider>
+        <ConsentProvider>
+          {children}
+          <CookieBanner />
+        </ConsentProvider>
       </body>
     </html>
   );
 }
+```
+
+**Provider Nesting:** If using analytics providers (e.g., PostHog, Google Analytics), place them inside `ConsentProvider` so they can access consent state:
+
+```tsx
+<ConsentProvider>
+  <AnalyticsProvider>{children}</AnalyticsProvider>
+  <CookieBanner />
+</ConsentProvider>
 ```
 
 ### Using the `useConsent` Hook
@@ -75,6 +93,8 @@ export function AnalyticsStatus() {
   );
 }
 ```
+
+For complete hook documentation, see [API Reference](./api.md#hooks).
 
 ### Conditional Script Loading
 
@@ -165,7 +185,7 @@ Consent state is stored in `localStorage` under the key `cookie-consent`:
 interface ConsentState {
   essential: true; // Always true
   optional: boolean; // User's choice
-  timestamp: number; // When consent was given
+  timestamp: number | null; // When consent was given, null if no consent yet
   version: number; // For future migrations
 }
 ```
@@ -211,5 +231,7 @@ window.gtag('consent', 'update', {
 
 ## Related Documentation
 
+- [Components](./components.md) - CookieBanner and PreferencesModal
+- [API Reference](./api.md) - Hooks, functions, types, and exports
 - [Security Overview](../security/overview.md) - Application security features
 - [Environment Reference](../environment/reference.md) - Environment variable configuration

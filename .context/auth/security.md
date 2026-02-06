@@ -305,6 +305,8 @@ if (
 
 ## Account Lockout (Optional)
 
+> **Note:** This is an example implementation pattern, not included in Sunrise by default. Implement if your application requires account lockout/audit logging.
+
 ```typescript
 // lib/auth/account-lockout.ts
 const MAX_FAILED_ATTEMPTS = 5;
@@ -324,6 +326,8 @@ export async function checkAccountLockout(email: string): Promise<boolean> {
 ```
 
 ## Audit Logging
+
+> **Note:** This is an example implementation pattern, not included in Sunrise by default. Implement if your application requires account lockout/audit logging.
 
 ```typescript
 // lib/auth/audit-log.ts

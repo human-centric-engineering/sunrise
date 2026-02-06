@@ -51,6 +51,13 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 ```
 
+**Optional (for file uploads):**
+
+```
+STORAGE_PROVIDER=s3  # Options: s3, vercel-blob, local
+# See .env.example for full S3/Vercel Blob configuration
+```
+
 ### 4. Run Database Migrations
 
 Option A: Via Railway CLI
@@ -98,11 +105,13 @@ Railway auto-detects:
 
 ### Health Checks
 
-Railway supports health checks. Configure in service settings:
+Railway supports custom health check configuration. Configure in service settings:
 
 - **Path:** `/api/health`
-- **Interval:** 30 seconds
+- **Interval:** 30 seconds (recommended)
 - **Timeout:** 10 seconds
+
+The app returns HTTP 200 when healthy and HTTP 503 when the database is disconnected. Railway will automatically mark the service as unhealthy on 503 responses.
 
 ### Environment Groups
 
@@ -118,8 +127,15 @@ For multiple environments (staging, production):
 2. Visit `https://<your-service>.up.railway.app/api/health`
 3. Expected response:
    ```json
-   { "status": "ok", "database": { "connected": true } }
+   {
+     "status": "ok",
+     "version": "1.0.0",
+     "services": {
+       "database": { "status": "operational", "connected": true }
+     }
+   }
    ```
+   **Note:** `services.database.status` is `operational`, `degraded`, or `outage`. Returns HTTP 503 on database failure.
 
 ## Common Issues
 

@@ -33,11 +33,11 @@ export const passwordSchema = z
  */
 export const emailSchema = z
   .string()
+  .trim()
+  .toLowerCase()
   .min(1, 'Email is required')
   .email('Invalid email address')
-  .max(255, 'Email must be less than 255 characters')
-  .toLowerCase()
-  .trim();
+  .max(255, 'Email must be less than 255 characters');
 
 /**
  * Sign-up validation schema

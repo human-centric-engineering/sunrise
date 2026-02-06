@@ -47,7 +47,7 @@ Quick guide to adapt Sunrise as your project starter. For detailed documentation
 **Logo & Favicon:**
 
 - Replace `public/favicon.ico`
-- Add logo images to `public/images/`
+- Add logo images to `public/`
 - Update `app/layout.tsx` → `metadata.icons`
 - Update landing page hero: `app/(public)/page.tsx`
 
@@ -62,7 +62,7 @@ Quick guide to adapt Sunrise as your project starter. For detailed documentation
 
 **Remove OAuth Providers:**
 
-- Edit `lib/auth/config.ts` → delete provider from `socialProviders` array
+- Edit `lib/auth/config.ts` → delete provider from `socialProviders` object
 - Remove corresponding env vars from `.env.local` and `.env.example`
 - Update login UI if needed: `app/(auth)/login/page.tsx`
 
@@ -168,11 +168,9 @@ Quick guide to adapt Sunrise as your project starter. For detailed documentation
 - [API Endpoints](./.context/api/endpoints.md) - REST API reference, request/response formats
 - [Database Schema](./.context/database/schema.md) - Prisma models, relationships, migrations
 - [Environment Variables](./.context/environment/reference.md) - Complete variable reference
-- [Build Plan](./.instructions/SUNRISE-BUILD-PLAN.md) - Full implementation details
 
 **Quick References:**
 
-- Commands: `CLAUDE.md` → Essential Commands section
-- Common tasks: `CLAUDE.md` → Common Tasks section
-- Testing: `tests/README.md`
-- Deployment: `.instructions/DEPLOYMENT.md`
+- Commands: `.context/commands.md`
+- Testing: `.context/testing/overview.md`
+- Deployment: `.context/deployment/overview.md`

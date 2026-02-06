@@ -193,6 +193,7 @@ export class S3Provider implements StorageProvider {
   }
 
   async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
+    validateStorageKey(key);
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,

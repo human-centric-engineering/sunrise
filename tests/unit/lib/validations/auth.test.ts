@@ -133,10 +133,13 @@ describe('emailSchema', () => {
       }
     });
 
-    it('should reject email with leading/trailing whitespace', () => {
-      // In Zod 4, trim() is applied after validation, so this fails email format check
-      const result = emailSchema.safeParse('  user@example.com  ');
-      expect(result.success).toBe(false);
+    it('should normalize email with leading/trailing whitespace', () => {
+      // Transforms (trim, toLowerCase) are applied before validation
+      const result = emailSchema.safeParse('  USER@EXAMPLE.COM  ');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe('user@example.com');
+      }
     });
 
     it('should accept email with subdomain', () => {
@@ -158,6 +161,15 @@ describe('emailSchema', () => {
   describe('invalid emails', () => {
     it('should reject empty string', () => {
       const result = emailSchema.safeParse('');
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain('required');
+      }
+    });
+
+    it('should reject whitespace-only input', () => {
+      // After trim(), whitespace becomes empty string and fails min(1)
+      const result = emailSchema.safeParse('   ');
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.issues[0].message).toContain('required');

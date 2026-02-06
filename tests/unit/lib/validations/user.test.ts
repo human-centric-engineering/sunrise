@@ -64,12 +64,15 @@ describe('updateUserSchema', () => {
       }
     });
 
-    it('should reject email with leading/trailing whitespace', () => {
+    it('should normalize email with leading/trailing whitespace', () => {
       const result = updateUserSchema.safeParse({
         email: '  USER@EXAMPLE.COM  ',
       });
-      // In Zod 4, trim() is applied after validation, so this fails email format check
-      expect(result.success).toBe(false);
+      // Transforms (trim, toLowerCase) are applied before validation
+      expect(result.success).toBe(true);
+      if (result.success && result.data.email) {
+        expect(result.data.email).toBe('user@example.com');
+      }
     });
 
     it('should accept name up to 100 characters', () => {
@@ -472,12 +475,16 @@ describe('inviteUserSchema', () => {
       }
     });
 
-    it('should reject email with leading/trailing whitespace', () => {
+    it('should normalize email with leading/trailing whitespace', () => {
       const result = inviteUserSchema.safeParse({
         ...validInviteData,
         email: '  JANE@EXAMPLE.COM  ',
       });
-      expect(result.success).toBe(false);
+      // Transforms (trim, toLowerCase) are applied before validation
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.email).toBe('jane@example.com');
+      }
     });
 
     it('should accept name up to 100 characters', () => {
@@ -572,12 +579,16 @@ describe('acceptInvitationSchema', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should reject email with leading/trailing whitespace', () => {
+    it('should normalize email with leading/trailing whitespace', () => {
       const result = acceptInvitationSchema.safeParse({
         ...validAcceptData,
         email: '  JANE@EXAMPLE.COM  ',
       });
-      expect(result.success).toBe(false);
+      // Transforms (trim, toLowerCase) are applied before validation
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.email).toBe('jane@example.com');
+      }
     });
 
     it('should accept strong password meeting requirements', () => {

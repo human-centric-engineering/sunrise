@@ -112,8 +112,18 @@ curl http://localhost:3000/api/health
 Expected response:
 
 ```json
-{ "status": "ok", "database": { "connected": true } }
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "uptime": 12345,
+  "timestamp": "2025-01-20T10:30:00.000Z",
+  "services": {
+    "database": { "status": "operational", "connected": true, "latency": 5 }
+  }
+}
 ```
+
+**Note:** `services.database.status` is `operational`, `degraded` (latency > 500ms), or `outage`. Returns HTTP 503 when database is disconnected.
 
 ## SSL/HTTPS with Nginx and Let's Encrypt
 
@@ -338,6 +348,289 @@ Before going live:
 | Linode        | $5-20/month | Good performance                  |
 | Vultr         | $5-20/month | Global locations                  |
 | AWS Lightsail | $5-40/month | AWS ecosystem integration         |
+
+## Dockerfile Details
+
+The multi-stage Dockerfile is optimized for minimal image size and security.
+
+### Base Image
+
+- **`node:20-alpine`**: Alpine Linux base (~150-200MB final image)
+- **`libc6-compat`**: Required for Node.js compatibility on Alpine Linux
+
+### Build Stages
+
+| Stage     | Purpose                                           |
+| --------- | ------------------------------------------------- |
+| `deps`    | Install dependencies with `.npmrc` configuration  |
+| `builder` | Build Next.js application with standalone output  |
+| `runner`  | Minimal production image with only required files |
+
+### Key Configuration
+
+**.npmrc handling:**
+
+```dockerfile
+COPY package.json package-lock.json* .npmrc ./
+```
+
+The `.npmrc` includes `legacy-peer-deps=true` for better-auth and Prisma 7 compatibility.
+
+**Non-root user:**
+
+```dockerfile
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+```
+
+Container runs as `nextjs:nodejs` (uid 1001) for security - never as root.
+
+**Standalone output:**
+
+Next.js traces dependencies and creates a minimal production server at `.next/standalone/`. Only required files are included in the final image.
+
+**Health check:**
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/api/health', ...)"
+```
+
+- Checks `/api/health` every 30 seconds
+- 10 second timeout per check
+- 40 second grace period on startup
+- 3 retries before marking unhealthy
+
+## Docker Compose Production Details
+
+### Service Configuration
+
+**Restart policy:**
+
+```yaml
+restart: unless-stopped
+```
+
+Auto-restarts on failure but not if manually stopped with `docker compose down`.
+
+**Dependency ordering:**
+
+```yaml
+depends_on:
+  db:
+    condition: service_healthy
+```
+
+Web service waits for database health check to pass before starting.
+
+**Environment variables:**
+
+| Method       | Usage                                                                    |
+| ------------ | ------------------------------------------------------------------------ |
+| `env_file`   | Runtime variables from `.env` file                                       |
+| Build `args` | Build-time variables passed to Dockerfile (DATABASE*URL, BETTER_AUTH*\*) |
+
+Build args are needed because Next.js embeds `NEXT_PUBLIC_*` variables and validates environment during build.
+
+### Database Configuration
+
+```yaml
+environment:
+  - POSTGRES_INITDB_ARGS=-E UTF8
+```
+
+Ensures UTF-8 encoding for proper character support.
+
+### Networking
+
+```yaml
+networks:
+  sunrise-network:
+    driver: bridge
+```
+
+Bridge network isolates containers while allowing inter-container communication via service names (`web`, `db`).
+
+### Volumes
+
+| Volume               | Purpose                     |
+| -------------------- | --------------------------- |
+| `postgres_prod_data` | PostgreSQL data persistence |
+| `nginx_cache`        | Nginx proxy cache           |
+
+## Nginx Security Configuration
+
+The `nginx.conf` includes security hardening for production deployments.
+
+### Rate Limiting
+
+```nginx
+limit_req_zone $binary_remote_addr zone=general:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+```
+
+| Zone      | Rate  | Burst | Applied To         |
+| --------- | ----- | ----- | ------------------ |
+| `general` | 10r/s | 50    | All non-API routes |
+| `api`     | 30r/s | 20    | `/api/*` endpoints |
+
+### Security Headers
+
+```nginx
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "no-referrer-when-downgrade" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+```
+
+| Header                    | Value                      | Purpose                                |
+| ------------------------- | -------------------------- | -------------------------------------- |
+| X-Frame-Options           | SAMEORIGIN                 | Prevents clickjacking                  |
+| X-Content-Type-Options    | nosniff                    | Prevents MIME-type sniffing            |
+| X-XSS-Protection          | 1; mode=block              | Legacy XSS filter (for older browsers) |
+| Referrer-Policy           | no-referrer-when-downgrade | Controls referrer information          |
+| Strict-Transport-Security | max-age=31536000 (1 year)  | Enforces HTTPS for all requests        |
+
+### Let's Encrypt Support
+
+```nginx
+location /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+}
+```
+
+Allows Certbot to verify domain ownership for SSL certificate issuance and renewal.
+
+### SSL/TLS Configuration
+
+```nginx
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers HIGH:!aNULL:!MD5;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 10m;
+```
+
+- Only TLS 1.2 and 1.3 (no legacy SSL or TLS 1.0/1.1)
+- Secure cipher suites, excludes weak algorithms
+- 10MB shared session cache for performance
+
+### Health Endpoint
+
+```nginx
+location /api/health {
+    proxy_pass http://nextjs;
+    access_log off;
+}
+```
+
+Health checks bypass rate limiting and access logging to reduce noise.
+
+## Nginx Performance Configuration
+
+### Gzip Compression
+
+```nginx
+gzip on;
+gzip_comp_level 6;
+gzip_types text/plain text/css text/xml text/javascript
+           application/json application/javascript application/xml+rss
+           application/rss+xml font/truetype font/opentype
+           application/vnd.ms-fontobject image/svg+xml;
+```
+
+Level 6 compression balances CPU usage and compression ratio. Applies to text, JSON, JavaScript, fonts, and SVG.
+
+### Static Asset Caching
+
+```nginx
+location /_next/static {
+    proxy_pass http://nextjs;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+
+location /_next/image {
+    proxy_pass http://nextjs;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+```
+
+| Path            | Cache Duration | Notes                              |
+| --------------- | -------------- | ---------------------------------- |
+| `/_next/static` | 1 year         | JS/CSS bundles with content hashes |
+| `/_next/image`  | 1 year         | Optimized images from Next.js      |
+
+The `immutable` directive tells browsers these files never change (Next.js uses content hashes in filenames).
+
+### Upload Limit
+
+```nginx
+client_max_body_size 10M;
+```
+
+Maximum request body size of 10MB. Increase if you need larger file uploads.
+
+### Upstream Configuration
+
+```nginx
+upstream nextjs {
+    server web:3000;
+}
+```
+
+Uses Docker service name `web` from `docker-compose.prod.yml` for container-to-container communication.
+
+## SSL/HTTPS Options
+
+Two approaches for SSL termination:
+
+### Option A: External Nginx (Recommended)
+
+Install Nginx on the host OS, use Certbot for certificate management.
+
+**Advantages:**
+
+- Easier certificate management with Certbot auto-renewal
+- Simpler debugging (Nginx outside containers)
+- Standard Linux administration patterns
+
+**Setup:**
+
+```bash
+sudo apt install nginx certbot python3-certbot-nginx -y
+sudo certbot --nginx -d yourdomain.com
+```
+
+Certbot automatically configures Nginx and sets up renewal cron job.
+
+### Option B: Containerized Nginx
+
+Use the nginx service in `docker-compose.prod.yml` with mounted certificates.
+
+**Advantages:**
+
+- Fully containerized deployment
+- Consistent across environments
+- All configuration in version control
+
+**Setup:**
+
+1. Obtain certificates (manually or via Certbot on host)
+2. Place in `./ssl/` directory:
+   - `./ssl/fullchain.pem`
+   - `./ssl/privkey.pem`
+3. Uncomment the SSL volume mount in `docker-compose.prod.yml`:
+
+```yaml
+volumes:
+  - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  - ./ssl:/etc/nginx/ssl:ro # Uncomment this line
+```
+
+4. Update `nginx.conf` with your domain name
+
+**Certificate renewal:** You must manually update certificates or set up a renewal script that copies new certs to `./ssl/` and restarts the nginx container.
 
 ## Related Documentation
 

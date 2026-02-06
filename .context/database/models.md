@@ -11,23 +11,99 @@ This document covers practical patterns for working with Prisma models in Sunris
 ```typescript
 // lib/db/client.ts
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import { env } from '@/lib/env';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  pool: Pool | undefined;
 };
 
+// Create connection pool (reuse across hot reloads in development)
+const pool = globalForPrisma.pool ?? new Pool({ connectionString: env.DATABASE_URL });
+
+if (env.NODE_ENV !== 'production') globalForPrisma.pool = pool;
+
+// Create Prisma adapter
+const adapter = new PrismaPg(pool);
+
+// Create Prisma client
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    adapter,
+    log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 ```
 
 **Why Global**: Prevents creating multiple Prisma clients during Next.js hot-reloading in development.
+
+**Prisma 7 Adapter**: Prisma 7 requires a database adapter. We use `@prisma/adapter-pg` with a `pg` connection pool for PostgreSQL.
+
+## Database Utilities
+
+Utility functions in `lib/db/utils.ts` for common database operations:
+
+| Function                    | Purpose                      | Returns                            |
+| --------------------------- | ---------------------------- | ---------------------------------- |
+| `checkDatabaseConnection()` | Verify database is reachable | `Promise<boolean>`                 |
+| `disconnectDatabase()`      | Safe shutdown                | `Promise<void>`                    |
+| `getDatabaseHealth()`       | Health check with latency    | `Promise<{ connected, latency? }>` |
+| `executeTransaction(cb)`    | Typed transaction wrapper    | `Promise<T>`                       |
+
+### Usage Examples
+
+```typescript
+import {
+  checkDatabaseConnection,
+  disconnectDatabase,
+  getDatabaseHealth,
+  executeTransaction,
+} from '@/lib/db/utils';
+
+// Health check endpoint
+const health = await getDatabaseHealth();
+// { connected: true, latency: 5 }
+
+// Transaction with typed callback
+const result = await executeTransaction(async (tx) => {
+  const user = await tx.user.create({ data: { ... } });
+  await tx.account.create({ data: { userId: user.id, ... } });
+  return user;
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  await disconnectDatabase();
+  process.exit(0);
+});
+```
+
+## Type Imports
+
+Import Prisma types from `@/types/prisma` instead of directly from `@prisma/client`:
+
+```typescript
+// ✅ Good - use centralized re-exports
+import { User, Session, Account, Prisma } from '@/types/prisma';
+
+// ❌ Avoid - direct imports scatter dependencies
+import { User, Session } from '@prisma/client';
+```
+
+**Available Types:**
+
+- **Models**: `User`, `Session`, `Account`, `Verification`, `ContactSubmission`, `FeatureFlag`
+- **Namespace**: `Prisma` for utility types (`Prisma.UserSelect`, `Prisma.UserWhereInput`, `Prisma.UserCreateInput`, etc.)
+
+**Benefits:**
+
+- Improved IDE autocomplete and type hints
+- Decouples application code from Prisma internals
+- Easier to mock types in tests
 
 ### Import Pattern
 
@@ -432,135 +508,139 @@ model User {
 
 ## Common Patterns
 
-### User Repository Pattern
+### Direct Prisma Access
+
+API routes use direct Prisma client access rather than a repository abstraction layer. This keeps the codebase simple while Prisma provides full type safety.
 
 ```typescript
-// lib/repositories/user-repository.ts
+// app/api/v1/users/[id]/route.ts
 import { prisma } from '@/lib/db/client';
-import { Prisma } from '@prisma/client';
+import { withAdminAuth } from '@/lib/auth/guards';
+import { successResponse } from '@/lib/api/responses';
 
-export class UserRepository {
-  // Safe user selection (excludes password)
-  private readonly safeSelect = {
-    id: true,
-    name: true,
-    email: true,
-    role: true,
-    emailVerified: true,
-    image: true,
-    createdAt: true,
-    updatedAt: true,
-  } as const;
+export const GET = withAdminAuth(async (request, _session, { params }) => {
+  const { id } = await params;
 
-  async findById(id: string) {
-    return prisma.user.findUnique({
-      where: { id },
-      select: this.safeSelect,
-    });
-  }
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      createdAt: true,
+    },
+  });
 
-  async findByEmail(email: string) {
-    return prisma.user.findUnique({
-      where: { email },
-      // Include password for authentication
-    });
-  }
-
-  async findByEmailSafe(email: string) {
-    return prisma.user.findUnique({
-      where: { email },
-      select: this.safeSelect,
-    });
-  }
-
-  async create(data: Prisma.UserCreateInput) {
-    return prisma.user.create({
-      data,
-      select: this.safeSelect,
-    });
-  }
-
-  async updateLastLogin(id: string) {
-    return prisma.user.update({
-      where: { id },
-      data: { lastLoginAt: new Date() },
-    });
-  }
-
-  async search(query: string, limit = 20) {
-    return prisma.user.findMany({
-      where: {
-        OR: [
-          { name: { contains: query, mode: 'insensitive' } },
-          { email: { contains: query, mode: 'insensitive' } },
-        ],
-      },
-      select: this.safeSelect,
-      take: limit,
-    });
-  }
-}
-
-export const userRepository = new UserRepository();
+  return successResponse(user);
+});
 ```
 
-### Pagination Helper
+### Safe Field Selection
+
+Use explicit `select` to avoid exposing sensitive fields. Define reusable selection objects for consistency:
 
 ```typescript
-// lib/db/pagination.ts
-export interface PaginationParams {
-  page?: number;
-  limit?: number;
-}
+// Define once, use across routes
+const USER_PUBLIC_FIELDS = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  image: true,
+  createdAt: true,
+} as const;
 
-export interface PaginatedResult<T> {
-  data: T[];
-  meta: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
+// In API routes
+const user = await prisma.user.findUnique({
+  where: { id },
+  select: USER_PUBLIC_FIELDS,
+});
 
-export async function paginate<T>(
-  model: any,
-  params: PaginationParams,
-  where?: any
-): Promise<PaginatedResult<T>> {
-  const page = params.page || 1;
-  const limit = Math.min(params.limit || 20, 100);
-  const skip = (page - 1) * limit;
+// For lists
+const users = await prisma.user.findMany({
+  select: USER_PUBLIC_FIELDS,
+  take: limit,
+  skip,
+});
+```
 
-  const [data, total] = await Promise.all([
-    model.findMany({
+**Why not repositories?** For a starter template, repositories add abstraction without clear benefit. Prisma already provides a clean query API with full type safety. Direct access is simpler to understand and maintain.
+
+### Pagination Utilities
+
+Pagination is implemented through multiple utilities working together:
+
+| Location                    | Utility                   | Purpose                                   |
+| --------------------------- | ------------------------- | ----------------------------------------- |
+| `lib/validations/common.ts` | `paginationQuerySchema`   | Zod schema for page/limit validation      |
+| `lib/validations/common.ts` | `listQuerySchema`         | Combined pagination + sorting + search    |
+| `lib/api/validation.ts`     | `parsePaginationParams()` | Extract page/limit/skip from query params |
+| `lib/api/responses.ts`      | `paginatedResponse()`     | Create standardized paginated response    |
+
+#### Validation Schemas
+
+```typescript
+// lib/validations/common.ts
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(10),
+});
+
+// Combined schema for list endpoints
+export const listQuerySchema = z.object({
+  ...paginationQuerySchema.shape,
+  ...sortingQuerySchema.shape,
+  ...searchQuerySchema.shape,
+});
+```
+
+#### Pagination Parsing
+
+```typescript
+// lib/api/validation.ts
+export function parsePaginationParams(searchParams: URLSearchParams): {
+  page: number;
+  limit: number;
+  skip: number; // Calculated: (page - 1) * limit
+};
+```
+
+#### Paginated Response
+
+```typescript
+// lib/api/responses.ts
+export function paginatedResponse<T>(
+  data: T[],
+  pagination: { page: number; limit: number; total: number },
+  options?: { status?: number; headers?: HeadersInit }
+): Response;
+```
+
+#### Usage in API Routes
+
+```typescript
+// app/api/v1/users/route.ts
+export const GET = withAdminAuth(async (request, _session) => {
+  const { searchParams } = request.nextUrl;
+  const query = validateQueryParams(searchParams, listUsersQuerySchema);
+  const { page, limit, skip } = parsePaginationParams(searchParams);
+
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
       where,
       skip,
       take: limit,
+      orderBy: { [query.sortBy]: query.sortOrder },
     }),
-    model.count({ where }),
+    prisma.user.count({ where }),
   ]);
 
-  return {
-    data,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-}
-
-// Usage
-const result = await paginate(
-  prisma.user,
-  { page: 1, limit: 20 },
-  {
-    role: 'USER',
-  }
-);
+  return paginatedResponse(users, { page, limit, total });
+});
 ```
+
+Used in: admin users (`/api/v1/users`), admin logs (`/api/v1/admin/logs`), invitations (`/api/v1/admin/invitations`).
 
 ## Performance Optimization
 

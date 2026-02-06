@@ -87,6 +87,11 @@ const message = getUserFriendlyMessage(error.code);
 - `EMAIL_TAKEN` → "This email address is already registered."
 - `RATE_LIMIT_EXCEEDED` → "Too many requests. Please try again later."
 - `INTERNAL_ERROR` → "Something went wrong. Please try again."
+- `INVITATION_EXPIRED` → "This invitation has expired. Please request a new one."
+- `FILE_TOO_LARGE` → "The file is too large. Please choose a smaller file."
+- `INVALID_FILE_TYPE` → "This file type is not supported."
+- `UPLOAD_FAILED` → "Failed to upload file. Please try again."
+- `STORAGE_NOT_CONFIGURED` → "File uploads are not available at this time."
 
 ### Layer 2: Error Handlers
 
@@ -97,7 +102,7 @@ const message = getUserFriendlyMessage(error.code);
 1. **Global Client Error Handler** (`lib/errors/handler.ts`)
    - Catches all unhandled promise rejections
    - Catches all uncaught runtime errors
-   - Normalizes errors to consistent format
+   - Normalizes errors to consistent format via `normalizeError()`
    - Automatic PII scrubbing
 
 2. **API Error Handler** (`lib/api/errors.ts`)
@@ -338,7 +343,17 @@ API Request → Route Handler Error
 ### Error Boundary Hierarchy
 
 ```
-app/error.tsx (Root)
+app/global-error.tsx (Global - catches root layout errors)
+    │
+    └─ Renders own <html>/<body> tags (replaces root layout)
+    └─ Final fallback for unhandled errors
+    └─ Logs with ErrorSeverity.Fatal
+    │
+app/error.tsx (Root - uses ErrorCard component)
+    │
+    ├─ app/admin/error.tsx
+    │   └─ Catches: Admin panel errors
+    │   └─ Special handling: "Dashboard" button to return to /dashboard
     │
     ├─ app/(protected)/error.tsx
     │   └─ Catches: Dashboard, Settings, Profile errors
@@ -348,9 +363,9 @@ app/error.tsx (Root)
     │   └─ Catches: Landing, About, Contact errors
     │   └─ Special handling: Show "Go home" button
     │
-    └─ app/(auth)/error.tsx (optional)
-        └─ Catches: Login, Signup, Reset Password errors
-        └─ Special handling: Show "Try again" or "Contact support"
+    └─ app/(auth)/error.tsx (optional - not implemented)
+        └─ Would catch: Login, Signup, Reset Password errors
+        └─ Falls back to app/error.tsx if not present
 ```
 
 **Nested boundaries catch first**:
@@ -403,6 +418,95 @@ import { ErrorBoundary } from '@/components/error-boundary';
   <ComplexFeature />
 </ErrorBoundary>
 ```
+
+### ErrorCard Component
+
+**Location**: `components/ui/error-card.tsx`
+
+A reusable UI component for displaying errors consistently across error boundaries. Used by `app/error.tsx` and `app/admin/error.tsx` for standardized error presentation.
+
+**Props**:
+
+| Prop                 | Type                          | Default             | Description                                    |
+| -------------------- | ----------------------------- | ------------------- | ---------------------------------------------- |
+| `title`              | `string`                      | (required)          | Card title                                     |
+| `description`        | `string`                      | (required)          | Card description                               |
+| `icon`               | `ReactNode`                   | `<AlertTriangle />` | Icon displayed next to the title               |
+| `iconClassName`      | `string`                      | `"text-red-500"`    | Icon color class                               |
+| `error`              | `Error & { digest?: string }` | -                   | Error object for dev-only details              |
+| `actions`            | `ErrorCardAction[]`           | -                   | Action buttons (label, onClick, variant, icon) |
+| `footer`             | `ReactNode`                   | -                   | Optional footer content (e.g., support link)   |
+| `containerClassName` | `string`                      | `"min-h-[400px]"`   | Container min-height class                     |
+
+**ErrorCardAction interface**:
+
+```typescript
+interface ErrorCardAction {
+  label: string;
+  onClick: () => void;
+  variant?: 'default' | 'outline';
+  icon?: ReactNode;
+}
+```
+
+**Example - Basic usage in error boundary**:
+
+```typescript
+import { ErrorCard } from '@/components/ui/error-card';
+
+export default function Error({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <ErrorCard
+      title="Something went wrong"
+      description="An unexpected error occurred."
+      error={error}
+      actions={[{ label: 'Try again', onClick: reset }]}
+    />
+  );
+}
+```
+
+**Example - With custom actions and footer**:
+
+```typescript
+import { Home } from 'lucide-react';
+import { ErrorCard } from '@/components/ui/error-card';
+
+<ErrorCard
+  title="Something went wrong"
+  description="An unexpected error occurred. This has been logged."
+  error={error}
+  containerClassName="min-h-screen"
+  actions={[
+    { label: 'Try again', onClick: reset },
+    {
+      label: 'Go home',
+      onClick: () => (window.location.href = '/'),
+      variant: 'outline',
+      icon: <Home className="mr-2 h-4 w-4" />,
+    },
+  ]}
+  footer={
+    <p className="text-center text-sm text-gray-600">
+      If this problem persists, please{' '}
+      <a href="/contact" className="underline">contact support</a>.
+    </p>
+  }
+/>
+```
+
+**Features**:
+
+- Consistent styling using shadcn/ui Card components
+- Dev-only error details (message and digest shown only in development)
+- Flexible action buttons with optional icons
+- Customizable container height for full-page or inline usage
 
 ## User-Friendly Messaging
 
@@ -519,12 +623,38 @@ The error handling system **extends** (not replaces) the existing API error clas
 throw new UnauthorizedError();
 throw new ValidationError('Invalid input', details);
 throw new NotFoundError('User not found');
+throw new ConflictError('Feature flag already exists');
 
 // Now also:
 // - Logged with structured logger
 // - Tracked in Sentry (if configured)
 // - Can be translated to user-friendly messages
 ```
+
+**ConflictError** (HTTP 409):
+
+Use `ConflictError` when a resource conflict occurs, such as duplicate entries or concurrent modification conflicts.
+
+```typescript
+import { ConflictError } from '@/lib/api/errors';
+
+// Duplicate resource
+throw new ConflictError('Feature flag already exists');
+
+// Unique constraint violation
+throw new ConflictError('A user with this email already exists');
+
+// Concurrent modification conflict
+throw new ConflictError('Resource was modified by another request');
+```
+
+**When to use ConflictError**:
+
+- ✅ Duplicate key/unique constraint violations
+- ✅ Attempting to create a resource that already exists
+- ✅ Optimistic locking failures (concurrent edits)
+- ❌ NOT for validation errors (use `ValidationError`)
+- ❌ NOT for missing resources (use `NotFoundError`)
 
 ### better-auth Integration
 
@@ -715,6 +845,56 @@ function SignupForm() {
 }
 ```
 
+## Utilities
+
+### normalizeError()
+
+**Location**: `lib/errors/handler.ts`
+
+**Purpose**: Converts unknown error values to a consistent format for logging and handling.
+
+The `normalizeError()` utility safely handles any thrown value (Error objects, strings, null, undefined, or arbitrary objects) and returns a standardized structure.
+
+**Signature**:
+
+```typescript
+function normalizeError(error: unknown): {
+  message: string;
+  error: Error;
+  metadata: Record<string, unknown>;
+};
+```
+
+**Return values**:
+
+- `message` - Human-readable error message extracted from the error
+- `error` - An Error object (original or wrapped)
+- `metadata` - Additional context extracted from the error (e.g., `code`, `cause`, custom properties)
+
+**Example**:
+
+```typescript
+import { normalizeError } from '@/lib/errors/handler';
+
+try {
+  await riskyOperation();
+} catch (err) {
+  const { message, error, metadata } = normalizeError(err);
+
+  logger.error(message, error, metadata);
+  // message: "Database connection failed"
+  // error: Error object with stack trace
+  // metadata: { code: "ECONNREFUSED", ... }
+}
+```
+
+**Use cases**:
+
+- Catching errors in `catch` blocks where the error type is `unknown`
+- Logging errors consistently regardless of what was thrown
+- Extracting metadata from error objects for structured logging
+- Wrapping non-Error thrown values (strings, numbers, etc.) in proper Error objects
+
 ## Related Documentation
 
 - **[Logging Best Practices](./logging.md)** - Detailed logging guidelines
@@ -731,3 +911,7 @@ function SignupForm() {
 - `lib/errors/sentry.ts` - Error tracking abstraction
 - `lib/api/errors.ts` - API error classes
 - `components/error-boundary.tsx` - Reusable error boundary
+- `components/ui/error-card.tsx` - Shared error UI component
+- `app/global-error.tsx` - Global error boundary (catches root layout errors)
+- `app/error.tsx` - Root error boundary
+- `app/admin/error.tsx` - Admin routes error boundary

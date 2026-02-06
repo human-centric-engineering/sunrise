@@ -10,12 +10,16 @@ The admin dashboard provides system administrators with tools to manage users, f
 app/admin/
 ├── layout.tsx          # Admin layout with sidebar/header, role check
 ├── page.tsx            # Redirects to /admin/overview
+├── loading.tsx         # Loading skeleton UI
+├── error.tsx           # Error boundary with recovery actions
 ├── overview/
 │   └── page.tsx        # Dashboard with stats and system status
 ├── users/
 │   ├── page.tsx        # User management tabs (users + invitations)
 │   ├── [id]/
-│   │   └── page.tsx    # Edit individual user
+│   │   ├── page.tsx    # View user profile (read-only)
+│   │   └── edit/
+│   │       └── page.tsx  # Edit individual user
 │   └── invite/
 │       └── page.tsx    # Send new invitation
 ├── features/
@@ -40,7 +44,7 @@ if (session.user.role !== 'ADMIN') {
 }
 ```
 
-All admin API endpoints (`/api/v1/admin/*`) independently verify the ADMIN role, providing defense-in-depth security.
+All admin API endpoints (`/api/v1/admin/*`) use `withAdminAuth()` from `lib/auth/guards.ts`, providing defense-in-depth security.
 
 ## Layout Components
 
@@ -56,7 +60,7 @@ graph LR
 
 Client component (`components/admin/admin-sidebar.tsx`) providing navigation:
 
-- **Collapsible**: Toggle between expanded (264px) and collapsed (64px) states
+- **Collapsible**: Toggle between expanded (256px) and collapsed (64px) states
 - **Active state**: Highlights current route based on pathname matching
 - **Sections**:
   - Overview: Dashboard
@@ -71,6 +75,15 @@ Client component (`components/admin/admin-header.tsx`) providing:
 - **Breadcrumb navigation**: Auto-generated from URL pathname
 - **Page title**: Derived from route or explicitly set
 - **User actions**: Session controls via `HeaderActions` component
+
+## Error Handling
+
+The admin section includes a dedicated error boundary (`app/admin/error.tsx`) that catches errors in admin routes:
+
+- **Logging**: Errors are logged via `logger.error()` with boundary context
+- **Sentry Integration**: Tracks errors with Sentry including digest and boundary tags
+- **Recovery Actions**: Provides "Try again" (calls `reset()`) and "Dashboard" (navigates to `/dashboard`) buttons
+- **User Experience**: Shows a user-friendly error message via the `ErrorCard` component
 
 ## Navigation Structure
 

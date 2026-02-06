@@ -208,6 +208,31 @@ describe('lib/storage/providers/local', () => {
         );
       });
     });
+
+    describe('key validation', () => {
+      it('should throw for invalid key with path traversal in upload()', async () => {
+        const provider = new LocalProvider({ baseDir: '/tmp/uploads' });
+
+        await expect(
+          provider.upload(Buffer.from('test'), {
+            key: '../etc/passwd',
+            contentType: 'text/plain',
+          })
+        ).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in delete()', async () => {
+        const provider = new LocalProvider({ baseDir: '/tmp/uploads' });
+
+        await expect(provider.delete('../etc/passwd')).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in deletePrefix()', async () => {
+        const provider = new LocalProvider({ baseDir: '/tmp/uploads' });
+
+        await expect(provider.deletePrefix('../etc/')).rejects.toThrow('must not contain ".."');
+      });
+    });
   });
 
   describe('createLocalProvider', () => {

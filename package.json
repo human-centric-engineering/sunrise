@@ -41,10 +41,10 @@
     "boilerplate",
     "prisma",
     "tailwind",
-    "nextauth"
+    "better-auth"
   ],
   "author": "Human-Centric Engineering",
-  "license": "",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/human-centric-engineering/sunrise/issues"
   },

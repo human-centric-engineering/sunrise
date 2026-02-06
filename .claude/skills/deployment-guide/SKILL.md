@@ -17,7 +17,7 @@ triggers:
 contexts:
   - 'Dockerfile'
   - 'docker-compose*.yml'
-  - '.instructions/DEPLOYMENT.md'
+  - '.context/deployment/'
   - 'next.config.js'
   - '.env.example'
 

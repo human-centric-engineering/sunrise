@@ -15,9 +15,9 @@ graph TB
 
     subgraph "Next.js Application"
         subgraph "App Router"
-            Marketing[Marketing Pages<br/>Route Group: marketing]
+            Marketing[Public Pages<br/>Route Group: public]
             Auth[Auth Pages<br/>Route Group: auth]
-            Dashboard[Dashboard Pages<br/>Route Group: dashboard]
+            Dashboard[Protected Pages<br/>Route Group: protected]
         end
 
         subgraph "API Layer"
@@ -85,6 +85,8 @@ Route groups organize pages without affecting URL structure. Each group has its 
 **`app/(auth)/`** - Authentication flows
 
 - Login, signup, password reset, email verification
+- Invitation acceptance (`accept-invite/`)
+- Email verification flow (`verify-email/`, `verify-email/callback/`)
 - Unauthenticated users only (redirect if logged in)
 - Minimal layout, centered forms
 - Form validation with Zod
@@ -93,16 +95,16 @@ Route groups organize pages without affecting URL structure. Each group has its 
 
 - Contains: `dashboard/`, `settings/`, `profile/` as subdirectories
 - No `page.tsx` at group root (subdirectories provide pages)
-- Requires authentication (protected by proxy)
+- Defense-in-depth: proxy-based protection + page-level session checks
 - Shared application layout with navigation
-- Server-side session checks
+- API routes use `withAuth()` guard for automatic session handling
 - **Extend**: Add new protected features as subdirectories (e.g., `analytics/`, `reports/`)
 
-**`app/admin/`** - Admin dashboard (separate route group)
+**`app/admin/`** - Admin dashboard
 
 - Contains: overview, users management, logs viewer, feature flags
 - **Not a route group** - uses `/admin` URL prefix directly
-- Requires ADMIN role (enforced via `requireAdmin()` utility)
+- Requires ADMIN role (enforced via `withAdminAuth()` guard for API routes)
 - Custom sidebar layout distinct from protected routes
 - Pages:
   - `/admin` - Dashboard overview with system statistics
@@ -111,12 +113,13 @@ Route groups organize pages without affecting URL structure. Each group has its 
   - `/admin/users/invite` - User invitation form
   - `/admin/logs` - Application log viewer with filtering
   - `/admin/features` - Feature flag management (create, toggle, edit, delete)
-- Server-side role checks on each page via `requireAdmin()`
+- Defense-in-depth: proxy checks + page-level role verification
 - Separate from `(protected)` to allow distinct layout and stricter access control
 
 **`app/(public)/`** - All public pages
 
-- Landing page (`page.tsx`), about, contact, pricing, etc.
+- Landing page (`page.tsx`), about, contact
+- Legal pages: privacy policy (`privacy/`), terms of service (`terms/`)
 - No authentication required
 - SEO-optimized
 - Shared marketing layout with header/footer
@@ -254,6 +257,21 @@ sequenceDiagram
 
 **Use Cases**: Mutations from client, external API access, client-side data fetching
 
+## Additional Systems
+
+Sunrise includes several supporting systems documented in their respective locations:
+
+| System         | Location             | Purpose                                 |
+| -------------- | -------------------- | --------------------------------------- |
+| Analytics      | `lib/analytics/`     | Page views, events, user identification |
+| Monitoring     | `lib/monitoring/`    | Error tracking, performance monitoring  |
+| Feature Flags  | `lib/feature-flags/` | Runtime feature toggles                 |
+| Cookie Consent | `lib/consent/`       | GDPR-compliant consent management       |
+| Storage        | `lib/storage/`       | File uploads (S3/Vercel Blob)           |
+| Logging        | `lib/logging/`       | Structured application logging          |
+
+See individual documentation in `.context/` for each system's integration details.
+
 ## Deployment Architecture
 
 ### Production Stack (Docker)
@@ -296,58 +314,6 @@ graph LR
 
 **Decision Rationale**: Start simple, scale when needed. Premature distribution adds complexity without benefits at current scale.
 
-## Decision History & Trade-offs
-
-### Monolith vs. Microservices
-
-**Decision**: Single Next.js application
-**Rationale**:
-
-- Faster development (shared code, types)
-- Simpler deployment (one container)
-- Reduced operational complexity
-- Lower latency (no network calls between services)
-
-**Trade-offs**:
-
-- Harder to scale individual components independently
-- All code in single repository (could become large)
-- Technology choices affect entire system
-
-**Mitigation**: Clear separation of concerns, modular code organization, API versioning for future extraction
-
-### Server Components as Default
-
-**Decision**: Use React Server Components by default, client components only when needed
-**Rationale**:
-
-- Reduced client-side JavaScript (faster page loads)
-- Direct database access (no API layer needed for pages)
-- Better SEO (fully rendered HTML)
-- Simplified data fetching (no useEffect waterfalls)
-
-**Trade-offs**:
-
-- Learning curve for developers used to SPA patterns
-- Some libraries incompatible with server components
-- Requires careful boundary management
-
-**Mitigation**: Clear guidelines on when to use client components, comprehensive examples
-
-### Route Groups for Organization
-
-**Decision**: Use route groups `(groupName)` vs. nested folders
-**Rationale**:
-
-- Cleaner URLs (groups don't appear in path)
-- Shared layouts per context (marketing vs. dashboard)
-- Clear separation of concerns
-- Easier to apply middleware selectively
-
-**Trade-offs**: Non-obvious to developers unfamiliar with Next.js 14+
-
-**Mitigation**: Documentation, consistent naming conventions
-
 ## Performance Considerations
 
 ### Built-in Optimizations
@@ -382,75 +348,14 @@ export default async function ProductsPage() {
 
 ## Security Architecture
 
-### Defense in Depth
+Security is implemented as defense-in-depth across multiple layers. See [Security Overview](../security/overview.md) for details on:
 
-**Layer 1 - Network**: HTTPS only, security headers (CSP, HSTS, X-Frame-Options)
-**Layer 2 - Authentication**: better-auth with secure session management
-**Layer 3 - Authorization**: Role-based access control, route protection via proxy
-**Layer 4 - Input Validation**: Zod schemas on all API inputs
-**Layer 5 - Data Access**: Prisma (parameterized queries prevent SQL injection)
-**Layer 6 - Output Encoding**: React's XSS protection, Content-Security-Policy headers
+- Security headers (CSP, HSTS, X-Frame-Options)
+- Rate limiting and CORS
+- Input sanitization
+- Proxy-based route protection
 
-### Proxy Protection
-
-```typescript
-// proxy.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-
-export function proxy(request: NextRequest) {
-  // Check for better-auth session cookie
-  const sessionToken = request.cookies.get('better-auth.session_token');
-
-  // Protect dashboard routes
-  if (request.nextUrl.pathname.startsWith('/dashboard')) {
-    if (!sessionToken) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
-  }
-
-  // Add security headers
-  const response = NextResponse.next();
-  response.headers.set('X-Frame-Options', 'DENY');
-  return response;
-}
-```
-
-## Route Organization Decision Rationale
-
-### Why Three Main Route Groups?
-
-**Decision**: Use `(auth)`, `(protected)`, and `(public)` instead of more specific groups like `(dashboard)` or `(marketing)`
-
-**Rationale**:
-
-- **Flexibility**: `(protected)` can contain any authenticated feature (dashboard, settings, analytics, admin tools)
-- **Clarity**: Clear authentication boundary - is it public or protected?
-- **Scalability**: Easy to add new features without restructuring
-- **Layout Reuse**: Most protected pages share the same navigation/layout
-- **Template-Friendly**: Users can easily extend without understanding complex organization
-
-**Trade-offs**:
-
-- Less granular than per-feature grouping
-- Requires subdirectories instead of top-level route groups
-
-**Migration Path**: If layouts diverge, extract to new group (e.g., `(protected)/admin/` → `(admin)/`)
-
-### When to Create a New Route Group
-
-Create a new route group when:
-
-1. **Different layout** needed (navigation, header, sidebar)
-2. **Different authentication model** (e.g., admin-only, customer-only)
-3. **Different page structure** (e.g., full-screen vs. contained)
-4. **Different metadata** (e.g., separate SEO strategy)
-
-**Examples**:
-
-- Admin panel with sidebar navigation: `(admin)` ✓
-- Docs site with different header: `(docs)` ✓
-- Same dashboard but different feature: `(protected)/analytics/` ✓ (subdirectory)
+For authentication security (sessions, passwords, OAuth), see [Auth Security](../auth/security.md).
 
 ## Related Documentation
 

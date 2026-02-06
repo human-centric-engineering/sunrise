@@ -567,18 +567,24 @@ describe('POST /api/auth/send-verification-email', () => {
   });
 
   describe('edge cases', () => {
-    it('should reject email with whitespace (validation fails)', async () => {
-      // Arrange: Email with whitespace fails Zod validation
+    it('should normalize email with whitespace and process request', async () => {
+      // Arrange: Email with whitespace is normalized before lookup
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(auth.api.sendVerificationEmail).mockResolvedValue(undefined as never);
       const request = createMockRequest({ email: '  USER@EXAMPLE.COM  ' });
 
       // Act
       const response = await POST(request);
       const data = await response.json();
 
-      // Assert: Should fail validation
-      expect(response.status).toBe(400);
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('VALIDATION_ERROR');
+      // Assert: Email is normalized and request proceeds
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      // Verify the normalized email was used for lookup
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'user@example.com' },
+        select: { id: true, email: true, emailVerified: true, name: true },
+      });
     });
 
     it('should handle user with null name', async () => {

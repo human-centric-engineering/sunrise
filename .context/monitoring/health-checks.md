@@ -91,6 +91,8 @@ GET /api/health
 | `degraded`    | Service is slow (latency > 500ms) | 200         |
 | `outage`      | Service is unavailable            | 503         |
 
+**Degraded threshold:** Database response time exceeding 500ms triggers degraded status. See `determineServiceStatus()` in `app/api/health/route.ts`.
+
 ## Configuration
 
 ### Environment Variables
@@ -127,6 +129,15 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health
 ```
 
 ### Docker Health Check
+
+The project's `Dockerfile` uses Node's built-in HTTP module (no curl dependency):
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+```
+
+Alternative with curl (requires curl in image):
 
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
@@ -227,6 +238,15 @@ const { data, isLoading, error, refresh } = useHealthCheck({
   pollingInterval: 60000,
 });
 ```
+
+### Formatting Utilities
+
+The status components include internal formatting functions:
+
+- **`formatUptime(seconds)`** - Converts uptime seconds to human-readable format (e.g., "2d 5h 30m 15s"). Located in `components/status/status-page.tsx`.
+- **`formatLatency(latencyMs)`** - Formats latency with appropriate units (ms or seconds). Located in `components/status/service-status-card.tsx`.
+
+These are local functions, not exported. For byte formatting, use the exported `formatBytes()` from `@/lib/monitoring`.
 
 ## Extending Health Checks
 

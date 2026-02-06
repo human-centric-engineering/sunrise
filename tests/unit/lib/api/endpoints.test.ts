@@ -336,7 +336,7 @@ describe('API Endpoints', () => {
 
     it('should have correct CSP_REPORT path', () => {
       // Assert
-      expect(API.PUBLIC.CSP_REPORT).toBe('/api/v1/csp-report');
+      expect(API.PUBLIC.CSP_REPORT).toBe('/api/csp-report');
     });
 
     it('should all start with /api/', () => {
@@ -415,14 +415,14 @@ describe('API Endpoints', () => {
 
       // PUBLIC versioned endpoints
       expect(API.PUBLIC.CONTACT).toContain('/api/v1/');
-      expect(API.PUBLIC.CSP_REPORT).toContain('/api/v1/');
     });
 
     it('should not use versioning for special endpoints', () => {
-      // Assert - AUTH endpoints and HEALTH use /api/ without version
+      // Assert - AUTH endpoints, HEALTH, and CSP_REPORT use /api/ without version
       expect(API.AUTH.BASE).toBe('/api/auth');
       expect(API.AUTH.SIGN_OUT).toBe('/api/auth/sign-out');
       expect(API.PUBLIC.HEALTH).toBe('/api/health');
+      expect(API.PUBLIC.CSP_REPORT).toBe('/api/csp-report');
     });
   });
 

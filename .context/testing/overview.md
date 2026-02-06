@@ -21,6 +21,8 @@ Comprehensive testing documentation for the Sunrise project. This guide provides
 - **Modern API**: Compatible with Jest API but faster and lighter
 - **TypeScript**: First-class TypeScript support without additional config
 
+**Environment**: Uses `happy-dom` for fast DOM testing (configured in `vitest.config.ts`). Happy-dom is a lightweight alternative to jsdom with better performance for most testing scenarios.
+
 ### React Testing Library
 
 **Chosen for**:
@@ -153,6 +155,33 @@ describe('LoginForm', () => {
 - Tests mock everything and verify nothing
 - Tests are brittle and break on refactors
 
+## Global Test Setup
+
+The global test setup file (`tests/setup.ts`) runs before all tests and configures:
+
+1. **Environment Variables**: Sets required env vars (`DATABASE_URL`, `BETTER_AUTH_SECRET`, etc.) before any imports to satisfy validation
+2. **Next.js Mocks**: Pre-mocks `next/navigation` and `next/headers` for component testing
+3. **Analytics Mocks**: Mocks analytics hooks to allow component testing without providers
+4. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
+
+**Key setup features**:
+
+```typescript
+// Environment variables set BEFORE imports (critical for lib/env.ts validation)
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
+// ... other required vars
+
+// Global mocks for Next.js
+vi.mock('next/navigation', () => ({ useRouter: vi.fn(() => ({ push: vi.fn(), ... })) }));
+vi.mock('next/headers', () => ({ cookies: vi.fn(), headers: vi.fn() }));
+
+// Cleanup after each test
+afterEach(() => { vi.restoreAllMocks(); });
+```
+
+Tests can override these mocks per-file using `vi.mock()` at the top of the test file.
+
 ## Quick Reference
 
 **See also**:
@@ -173,8 +202,8 @@ npm run validate          # Type-check + lint + format check
 
 **Directories**:
 
-- `tests/unit/` - Unit tests (545 tests currently)
-- `tests/integration/` - Integration tests (14 tests currently)
+- `tests/unit/` - Unit tests (majority of tests)
+- `tests/integration/` - Integration tests (API route tests)
 - `tests/helpers/` - Test utilities (assertions, mocks, factories)
 - `tests/types/` - Shared type definitions (MockHeaders, MockSession)
 

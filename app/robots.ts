@@ -20,7 +20,15 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/api/', '/dashboard/', '/settings/', '/profile/', '/login', '/signup'],
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/dashboard/',
+          '/settings/',
+          '/profile/',
+          '/login',
+          '/signup',
+        ],
       },
     ],
     sitemap: `${baseUrl}/sitemap.xml`,

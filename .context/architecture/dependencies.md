@@ -10,9 +10,9 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 
 ```json
 {
-  "next": "^16.0.10",
-  "react": "^19.2.3",
-  "react-dom": "^19.2.3",
+  "next": "^16.1.6",
+  "react": "^19.2.4",
+  "react-dom": "^19.2.4",
   "typescript": "^5.9.3"
 }
 ```
@@ -55,8 +55,8 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 
 ```json
 {
-  "resend": "^3.0.0",
-  "@react-email/components": "^0.0.12"
+  "resend": "^6.6.0",
+  "@react-email/components": "^1.0.3"
 }
 ```
 
@@ -64,25 +64,36 @@ Sunrise follows a **lean dependency strategy**: use battle-tested libraries for 
 
 ### Database Client Singleton
 
-Prisma client must be instantiated once and reused across the application to prevent connection pool exhaustion:
+Prisma 7 requires a database adapter. The client must be instantiated once and reused across the application to prevent connection pool exhaustion:
 
 ```typescript
 // lib/db/client.ts
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import { env } from '@/lib/env';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  pool: Pool | undefined;
 };
 
+// Create connection pool (reuse across hot reloads)
+const pool = globalForPrisma.pool ?? new Pool({ connectionString: env.DATABASE_URL });
+if (env.NODE_ENV !== 'production') globalForPrisma.pool = pool;
+
+// Create Prisma adapter
+const adapter = new PrismaPg(pool);
+
+// Create Prisma client
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    adapter,
+    log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 ```
 
 **Why Global Variable**: Next.js hot-reloading in development creates new module instances. Without global storage, each reload creates a new Prisma client, exhausting database connections.
@@ -97,7 +108,9 @@ import { prisma } from '@/lib/db/client';
 const users = await prisma.user.findMany();
 ```
 
-### Service Layer Pattern
+### Service Layer Pattern (Optional)
+
+> **Note:** This is an optional pattern for complex business logic. Most Sunrise features use direct Prisma access in API routes or server components. Consider services when you have multi-step operations that coordinate multiple database calls, external APIs, and side effects (like sending emails).
 
 For complex business logic, create service modules that encapsulate dependencies:
 
@@ -152,75 +165,41 @@ export async function POST(request: Request) {
 }
 ```
 
-### Configuration Objects
+### Environment Configuration
 
-Centralize configuration to avoid scattered magic strings:
-
-```typescript
-// lib/config.ts
-export const config = {
-  app: {
-    name: 'Sunrise',
-    url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-  },
-  auth: {
-    sessionMaxAge: 30 * 24 * 60 * 60, // 30 days in seconds
-    verificationTokenExpiry: 24 * 60 * 60 * 1000, // 24 hours in ms
-  },
-  database: {
-    url: process.env.DATABASE_URL,
-  },
-  email: {
-    from: process.env.EMAIL_FROM || 'noreply@sunrise.com',
-    apiKey: process.env.RESEND_API_KEY,
-  },
-  features: {
-    enableGoogleOAuth: !!process.env.GOOGLE_CLIENT_ID,
-    enableEmailVerification: true,
-  },
-} as const;
-
-// Type-safe access
-import { config } from '@/lib/config';
-console.log(config.auth.sessionMaxAge); // TypeScript knows this is a number
-```
-
-### Environment Variable Validation
-
-Validate environment variables at startup to fail fast:
+Sunrise uses validated environment variables via `lib/env.ts` instead of scattered `process.env` access:
 
 ```typescript
-// lib/env.ts
+// lib/env.ts - Zod-validated environment variables
 import { z } from 'zod';
 
 const envSchema = z.object({
-  // Required
   DATABASE_URL: z.string().url(),
-  NEXTAUTH_SECRET: z.string().min(32),
-  NEXTAUTH_URL: z.string().url(),
-
-  // Optional
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().email().optional(),
-
-  // Node environment
+  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_URL: z.string().url(),
+  NEXT_PUBLIC_APP_URL: z.string().url(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // ... additional variables
 });
 
 export const env = envSchema.parse(process.env);
-
-// Usage
-import { env } from '@/lib/env';
-const dbUrl = env.DATABASE_URL; // Type-safe and validated
 ```
 
-**Benefits**:
+**Usage:**
+
+```typescript
+import { env } from '@/lib/env';
+
+// Type-safe access with autocomplete
+const dbUrl = env.DATABASE_URL;
+const isDev = env.NODE_ENV === 'development';
+```
+
+**Benefits:**
 
 - Application won't start with invalid configuration
-- TypeScript autocomplete for environment variables
-- Single source of truth for required vs. optional variables
+- TypeScript autocomplete for all variables
+- Single source of truth for required vs. optional
 - Clear error messages when variables are missing
 
 ## Utility Function Organization

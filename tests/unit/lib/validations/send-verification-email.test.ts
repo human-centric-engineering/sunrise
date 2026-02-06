@@ -111,11 +111,15 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject email with surrounding whitespace', () => {
+    it('should normalize email with surrounding whitespace', () => {
       const result = sendVerificationEmailSchema.safeParse({
-        email: '  user@example.com  ',
+        email: '  USER@EXAMPLE.COM  ',
       });
-      expect(result.success).toBe(false);
+      // Transforms (trim, toLowerCase) are applied before validation
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.email).toBe('user@example.com');
+      }
     });
   });
 

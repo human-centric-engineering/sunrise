@@ -28,7 +28,14 @@ sunrise/
 │   ├── ui/               # Base UI components (shadcn/ui)
 │   ├── forms/            # Form components
 │   ├── layouts/          # Layout components
-│   └── providers/        # Context providers
+│   ├── admin/            # Admin dashboard components
+│   ├── analytics/        # Analytics tracking components
+│   ├── auth/             # Authentication UI (buttons, etc.)
+│   ├── cookie-consent/   # Cookie consent banner/modal
+│   ├── dashboard/        # Dashboard widgets
+│   ├── marketing/        # Marketing page sections
+│   ├── settings/         # Settings page components
+│   └── status/           # System status components
 ├── lib/                  # Business logic and utilities
 │   ├── db/              # Database client
 │   ├── auth/            # Authentication utilities
@@ -167,83 +174,83 @@ app/api/
 ### Centralized Error Classes
 
 ```typescript
-// lib/errors/index.ts
-export class AppError extends Error {
+// lib/api/errors.ts
+export class APIError extends Error {
   constructor(
     message: string,
-    public statusCode: number = 500,
-    public code?: string
+    public code?: string,
+    public status: number = 500,
+    public details?: Record<string, unknown>
   ) {
     super(message);
-    this.name = this.constructor.name;
-    Error.captureStackTrace(this, this.constructor);
+    this.name = 'APIError';
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
   }
 }
 
-export class ValidationError extends AppError {
-  constructor(
-    message: string,
-    public details?: any
-  ) {
-    super(message, 400, 'VALIDATION_ERROR');
+export class ValidationError extends APIError {
+  constructor(message: string = 'Validation failed', details?: Record<string, unknown>) {
+    super(message, 'VALIDATION_ERROR', 400, details);
+    this.name = 'ValidationError';
   }
 }
 
-export class UnauthorizedError extends AppError {
+export class UnauthorizedError extends APIError {
   constructor(message: string = 'Unauthorized') {
-    super(message, 401, 'UNAUTHORIZED');
+    super(message, 'UNAUTHORIZED', 401);
+    this.name = 'UnauthorizedError';
   }
 }
 
-export class NotFoundError extends AppError {
-  constructor(resource: string) {
-    super(`${resource} not found`, 404, 'NOT_FOUND');
+export class ForbiddenError extends APIError {
+  constructor(message: string = 'Forbidden') {
+    super(message, 'FORBIDDEN', 403);
+    this.name = 'ForbiddenError';
+  }
+}
+
+export class NotFoundError extends APIError {
+  constructor(message: string = 'Resource not found') {
+    super(message, 'NOT_FOUND', 404);
+    this.name = 'NotFoundError';
+  }
+}
+
+export class ConflictError extends APIError {
+  constructor(message: string = 'Resource already exists') {
+    super(message, 'CONFLICT', 409);
+    this.name = 'ConflictError';
   }
 }
 ```
 
-### API Route Error Handling
+### API Route Error Handling with Guards
+
+Use the `withAuth()` and `withAdminAuth()` higher-order functions from `lib/auth/guards.ts` to eliminate boilerplate:
 
 ```typescript
 // app/api/v1/users/[id]/route.ts
-import { NextRequest } from 'next/server';
-import { AppError, NotFoundError, UnauthorizedError } from '@/lib/errors';
-import { errorResponse } from '@/lib/api/responses';
-import { getServerSession } from '@/lib/auth/utils';
+import { withAuth } from '@/lib/auth/guards';
+import { successResponse } from '@/lib/api/responses';
+import { NotFoundError } from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    // Check authentication
-    const session = await getServerSession();
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+// Session is guaranteed, error handling is automatic
+export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
+  const { id } = await params;
 
-    // Fetch user
-    const user = await prisma.user.findUnique({
-      where: { id: params.id },
-    });
+  const user = await prisma.user.findUnique({
+    where: { id },
+  });
 
-    if (!user) {
-      throw new NotFoundError('User');
-    }
-
-    return Response.json({
-      success: true,
-      data: user,
-    });
-  } catch (error) {
-    // Handle known errors
-    if (error instanceof AppError) {
-      return Response.json(errorResponse(error.message, error.code), { status: error.statusCode });
-    }
-
-    // Handle unexpected errors
-    console.error('Unexpected error:', error);
-    return Response.json(errorResponse('Internal server error', 'INTERNAL_ERROR'), { status: 500 });
+  if (!user) {
+    throw new NotFoundError('User not found');
   }
-}
+
+  return successResponse(user);
+});
 ```
 
 ### Server Component Error Handling
@@ -348,42 +355,30 @@ export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 ### API Validation Pattern
 
+With the `withAuth` guard, validation errors are automatically handled by `handleAPIError`:
+
 ```typescript
 // app/api/v1/users/route.ts
+import { withAuth } from '@/lib/auth/guards';
 import { createUserSchema } from '@/lib/validations/user';
-import { ValidationError } from '@/lib/errors';
+import { successResponse } from '@/lib/api/responses';
+import { prisma } from '@/lib/db/client';
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = withAuth(async (request, session) => {
+  const body = await request.json();
 
-    // Validate with Zod
-    const validatedData = createUserSchema.parse(body);
+  // Validate with Zod - ZodError automatically handled by guard
+  const validatedData = createUserSchema.parse(body);
 
-    const user = await prisma.user.create({
-      data: validatedData,
-    });
+  const user = await prisma.user.create({
+    data: validatedData,
+  });
 
-    return Response.json({ success: true, data: user });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        {
-          success: false,
-          error: {
-            message: 'Validation failed',
-            code: 'VALIDATION_ERROR',
-            details: error.errors,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    throw error;
-  }
-}
+  return successResponse(user);
+});
 ```
+
+The `handleAPIError` function (called automatically by guards) transforms Zod errors into proper API responses with field-level error details.
 
 ### Form Validation (Client + Server)
 
@@ -422,6 +417,8 @@ export function SignupForm() {
 ## Data Access Patterns
 
 ### Repository Pattern (Optional)
+
+> **Note:** This is an optional pattern not currently used in Sunrise. Direct Prisma access (shown below) is the standard approach. Consider repositories only when you have complex queries with business logic that are repeated across multiple locations.
 
 For complex queries, wrap Prisma in repository functions:
 
@@ -544,7 +541,7 @@ export async function GET(request: NextRequest) {
 
 ### File Naming
 
-- **Components**: `PascalCase.tsx` → `UserProfile.tsx`
+- **Components**: `kebab-case.tsx` → `button.tsx`, `login-form.tsx`, `user-profile.tsx`
 - **Utilities**: `kebab-case.ts` → `format-date.ts`
 - **Next.js Special**: `page.tsx`, `layout.tsx`, `route.ts`, `error.tsx`, `loading.tsx`
 

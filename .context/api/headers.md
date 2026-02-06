@@ -1,623 +1,249 @@
 # API Headers & Middleware
 
-> **Implementation Status:** December 2025
->
-> - ✅ **Implemented** - Headers and patterns currently configured
-> - 📋 **Planned** - Patterns defined for future implementation
-
-## HTTP Headers Strategy
-
-Sunrise implements comprehensive HTTP header management for security, performance, and API functionality. Headers are set through Next.js proxy (middleware) and route-specific logic.
+HTTP header management for security, performance, and API functionality.
 
 ## Security Headers
 
-✅ **Implemented in:** `proxy.ts` and `next.config.js`
+**Implemented in:** `lib/security/headers.ts`, `proxy.ts`
 
-### Implementation via Next.js Proxy
+All security headers are set via `setSecurityHeaders()` in the proxy middleware:
 
 ```typescript
 // proxy.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { setSecurityHeaders } from '@/lib/security/headers';
 
-export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const authenticated = isAuthenticated(request);
-
-  // ... route protection logic ...
-
-  // Add security headers to all responses
-  const response = NextResponse.next();
-
-  // Prevent clickjacking attacks
-  response.headers.set('X-Frame-Options', 'DENY');
-
-  // Prevent MIME type sniffing
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-
-  // Enable XSS filter
-  response.headers.set('X-XSS-Protection', '1; mode=block');
-
-  // Control referrer information
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  // Permissions policy - disable unnecessary features
-  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-
-  // Force HTTPS in production
-  if (process.env.NODE_ENV === 'production') {
-    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-
-  return response;
-}
-
-/**
- * Configure which routes the proxy runs on
- */
-export const config = {
-  matcher: [
-    // Match all routes except api/auth, _next/static, _next/image, favicon, and image files
-    '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
-};
+const response = NextResponse.next();
+setSecurityHeaders(response);
 ```
 
-### Additional Headers via next.config.js
+### Headers Applied
 
-✅ **Implemented in:** `next.config.js`
+| Header                      | Value                                      | Purpose                         |
+| --------------------------- | ------------------------------------------ | ------------------------------- |
+| `Content-Security-Policy`   | Environment-specific (see below)           | XSS and injection protection    |
+| `X-Frame-Options`           | `DENY`                                     | Prevent clickjacking            |
+| `X-Content-Type-Options`    | `nosniff`                                  | Prevent MIME sniffing           |
+| `Referrer-Policy`           | `strict-origin-when-cross-origin`          | Control referrer leakage        |
+| `Permissions-Policy`        | `geolocation=(), microphone=(), camera=()` | Disable unused browser features |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains`      | Force HTTPS (production only)   |
 
-Redundant headers configured in Next.js config for added security (ensures headers are set even if proxy doesn't run):
+**Note:** `X-XSS-Protection` is intentionally NOT set. It's deprecated and can introduce XSS vulnerabilities in older browsers. CSP provides better protection.
 
-```javascript
-// next.config.js
-async headers() {
-  return [
-    {
-      source: '/(.*)',
-      headers: [
-        {
-          key: 'X-Frame-Options',
-          value: 'DENY',
-        },
-        {
-          key: 'X-Content-Type-Options',
-          value: 'nosniff',
-        },
-        {
-          key: 'Referrer-Policy',
-          value: 'strict-origin-when-cross-origin',
-        },
-      ],
-    },
-  ]
-}
-```
+## Content Security Policy (CSP)
 
-### Security Header Descriptions
+**Implemented in:** `lib/security/headers.ts`
 
-✅ **Currently Implemented**
+Environment-aware CSP with automatic analytics provider allowlisting:
 
-| Header                                   | Value                                      | Purpose                                           |
-| ---------------------------------------- | ------------------------------------------ | ------------------------------------------------- |
-| `X-Frame-Options`                        | `DENY`                                     | Prevent clickjacking by blocking iframe embedding |
-| `X-Content-Type-Options`                 | `nosniff`                                  | Prevent MIME type sniffing attacks                |
-| `X-XSS-Protection`                       | `1; mode=block`                            | Enable browser XSS filter (legacy browsers)       |
-| `Referrer-Policy`                        | `strict-origin-when-cross-origin`          | Control referrer information leakage              |
-| `Permissions-Policy`                     | `geolocation=(), microphone=(), camera=()` | Disable geolocation, microphone, camera           |
-| `Strict-Transport-Security` (production) | `max-age=31536000; includeSubDomains`      | Force HTTPS for 1 year, include subdomains        |
+### Development CSP
 
-### Content Security Policy (CSP)
+Permissive for HMR and Fast Refresh:
 
-📋 **Planned** - Not yet implemented
+- `'unsafe-eval'` for Next.js HMR
+- `'unsafe-inline'` for scripts/styles
+- WebSocket connections for HMR
 
-Content Security Policy provides defense-in-depth against XSS attacks by controlling which resources can be loaded:
+### Production CSP
+
+Strict for maximum security:
+
+- No `'unsafe-eval'`
+- `'unsafe-inline'` only for styles (required for Tailwind)
+- `frame-ancestors: 'none'` prevents clickjacking
+- CSP violation reporting to `/api/csp-report`
+
+### Analytics Provider Allowlisting
+
+CSP automatically allows configured analytics providers:
 
 ```typescript
-// Example CSP configuration for future implementation
-response.headers.set(
-  'Content-Security-Policy',
-  [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Required for Next.js and React
-    "style-src 'self' 'unsafe-inline'", // Required for Tailwind
-    "img-src 'self' data: https:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "frame-ancestors 'none'",
-  ].join('; ')
-);
+// Environment variables → CSP directives
+NEXT_PUBLIC_POSTHOG_KEY → PostHog domains in script-src, connect-src
+NEXT_PUBLIC_GA4_MEASUREMENT_ID → Google Analytics domains
+NEXT_PUBLIC_PLAUSIBLE_DOMAIN → Plausible domains
 ```
 
-**Note**: CSP implementation requires careful configuration with Next.js and Tailwind CSS due to their use of inline scripts and styles.
+### Extending CSP for Specific Routes
+
+```typescript
+import { extendCSP } from '@/lib/security/headers';
+
+// Allow YouTube embeds on a specific page
+const extendedCSP = extendCSP({
+  'frame-src': ["'self'", 'https://www.youtube.com'],
+});
+```
 
 ## CORS (Cross-Origin Resource Sharing)
 
-📋 **Planned** - Not yet implemented
+**Implemented in:** `lib/security/cors.ts`
 
-### CORS Configuration
+Opt-in CORS for API routes that need cross-origin access.
 
-Example implementation for future cross-origin API access:
-
-```typescript
-// lib/api/cors.ts (planned)
-import { NextRequest, NextResponse } from 'next/server';
-
-interface CORSOptions {
-  origin?: string | string[];
-  methods?: string[];
-  allowedHeaders?: string[];
-  exposedHeaders?: string[];
-  credentials?: boolean;
-  maxAge?: number;
-}
-
-const defaultCORSOptions: CORSOptions = {
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['X-Total-Count'],
-  credentials: true,
-  maxAge: 86400, // 24 hours
-};
-
-export function setCORSHeaders(
-  response: NextResponse,
-  request: NextRequest,
-  options: CORSOptions = defaultCORSOptions
-) {
-  const origin = request.headers.get('origin');
-
-  // Check if origin is allowed
-  if (origin && isOriginAllowed(origin, options.origin)) {
-    response.headers.set('Access-Control-Allow-Origin', origin);
-  }
-
-  if (options.credentials) {
-    response.headers.set('Access-Control-Allow-Credentials', 'true');
-  }
-
-  response.headers.set('Access-Control-Allow-Methods', options.methods?.join(', ') || '');
-
-  response.headers.set('Access-Control-Allow-Headers', options.allowedHeaders?.join(', ') || '');
-
-  if (options.exposedHeaders) {
-    response.headers.set('Access-Control-Expose-Headers', options.exposedHeaders.join(', '));
-  }
-
-  if (options.maxAge) {
-    response.headers.set('Access-Control-Max-Age', String(options.maxAge));
-  }
-}
-
-function isOriginAllowed(origin: string, allowed?: string | string[]): boolean {
-  if (!allowed) return false;
-  if (allowed === '*') return true;
-  if (typeof allowed === 'string') return origin === allowed;
-  return allowed.includes(origin);
-}
-```
-
-### OPTIONS Preflight Handler
+### Usage
 
 ```typescript
-// app/api/v1/[...route]/route.ts (example for future implementation)
+import { withCORS, handlePreflight } from '@/lib/security/cors';
+
+// Handle preflight requests
 export async function OPTIONS(request: NextRequest) {
-  const response = new NextResponse(null, { status: 204 });
-  setCORSHeaders(response, request);
-  return response;
+  return handlePreflight(request);
 }
-```
 
-### Per-Route CORS Override
-
-```typescript
-// app/api/v1/public/data/route.ts (example for future implementation)
-export async function GET(request: NextRequest) {
-  const data = await fetchPublicData();
-
-  const response = Response.json({ success: true, data });
-
-  // Allow any origin for this public endpoint
-  setCORSHeaders(response, request, {
-    origin: '*',
-    methods: ['GET'],
-    credentials: false,
-  });
-
-  return response;
-}
-```
-
-**Note**: CORS is not currently configured. All API routes are session-based and intended for same-origin requests only.
-
-## Rate Limiting Headers
-
-📋 **Planned** - Not yet implemented
-
-### Rate Limit Implementation
-
-Example implementation for future API rate limiting:
-
-```typescript
-// proxy.ts (planned addition)
-import { rateLimit } from '@/lib/security/rate-limit';
-
-const limiter = rateLimit({
-  interval: 60 * 1000, // 1 minute
-  uniqueTokenPerInterval: 500,
+// Wrap handler with CORS
+export const GET = withCORS(async (request: NextRequest) => {
+  return Response.json({ data: 'example' });
 });
+```
 
-export function proxy(request: NextRequest) {
-  // Apply rate limiting to API routes
-  if (request.nextUrl.pathname.startsWith('/api/v1/')) {
-    const ip = request.ip ?? '127.0.0.1';
-    const { success, remaining, reset } = limiter.check(100, ip);
+### Configuration
 
-    const response = success
-      ? NextResponse.next()
-      : new NextResponse('Too Many Requests', { status: 429 });
+```bash
+# Environment variable for allowed origins
+ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+```
 
-    // Add rate limit headers
-    response.headers.set('X-RateLimit-Limit', '100');
-    response.headers.set('X-RateLimit-Remaining', String(remaining));
-    response.headers.set('X-RateLimit-Reset', String(reset));
+In development, localhost variants are automatically allowed.
 
-    if (!success) {
-      response.headers.set('Retry-After', '60');
-    }
+### Default Behavior
 
-    return response;
+- **No CORS by default** - API routes are same-origin only
+- **Opt-in per route** - Use `withCORS()` wrapper
+- **Credentials supported** - Cookies work cross-origin when enabled
+
+## Rate Limiting
+
+**Implemented in:** `lib/security/rate-limit.ts`, `proxy.ts`
+
+### Proxy-Level Rate Limiting
+
+Applied automatically in middleware:
+
+| Route Pattern               | Limiter        | Limit      |
+| --------------------------- | -------------- | ---------- |
+| `/api/v1/*`                 | `apiLimiter`   | 100/minute |
+| `/api/v1/admin/*`           | `adminLimiter` | 30/minute  |
+| `/api/auth/sign-in`         | `authLimiter`  | 5/minute   |
+| `/api/auth/sign-up`         | `authLimiter`  | 5/minute   |
+| `/api/auth/forgot-password` | `authLimiter`  | 5/minute   |
+| `/api/auth/reset-password`  | `authLimiter`  | 5/minute   |
+
+### Route-Level Rate Limiting
+
+Additional limiters for specific endpoints:
+
+```typescript
+import { contactLimiter, getClientIP, createRateLimitResponse } from '@/lib/security';
+
+export async function POST(request: NextRequest) {
+  const clientIP = getClientIP(request);
+  const result = contactLimiter.check(clientIP);
+
+  if (!result.success) {
+    return createRateLimitResponse(result);
   }
 
-  return NextResponse.next();
+  // Handle request...
 }
 ```
+
+### Available Limiters
+
+| Limiter                    | Limit         | Use Case                    |
+| -------------------------- | ------------- | --------------------------- |
+| `authLimiter`              | 5/minute      | Login, signup               |
+| `apiLimiter`               | 100/minute    | General API                 |
+| `adminLimiter`             | 30/minute     | Admin endpoints             |
+| `contactLimiter`           | 5/hour        | Contact form                |
+| `verificationEmailLimiter` | 3/15 minutes  | Email verification requests |
+| `passwordResetLimiter`     | 3/15 minutes  | Password reset requests     |
+| `uploadLimiter`            | 10/15 minutes | File uploads                |
+| `inviteLimiter`            | 10/15 minutes | User invitations            |
+| `acceptInviteLimiter`      | 5/15 minutes  | Accept invite attempts      |
+| `cspReportLimiter`         | 20/minute     | CSP violation reports       |
 
 ### Rate Limit Headers
 
-| Header                  | Description                          | Example      |
-| ----------------------- | ------------------------------------ | ------------ |
-| `X-RateLimit-Limit`     | Maximum requests allowed in window   | `100`        |
-| `X-RateLimit-Remaining` | Requests remaining in current window | `42`         |
-| `X-RateLimit-Reset`     | Timestamp when limit resets          | `1640995200` |
-| `Retry-After`           | Seconds to wait before retrying      | `60`         |
-
-## Content Type Headers
-
-📋 **Guidance** - Standard content type patterns for API routes
-
-### Standard Content Types
-
-```typescript
-// API Routes automatically set correct Content-Type
-
-// JSON response (default)
-export async function GET() {
-  return Response.json({ success: true, data: {} });
-  // Content-Type: application/json; charset=utf-8
-}
-
-// Plain text
-export async function GET() {
-  return new Response('OK', {
-    headers: { 'Content-Type': 'text/plain' },
-  });
-}
-
-// Binary data (file download)
-export async function GET() {
-  const buffer = await generatePDF();
-  return new Response(buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="report.pdf"',
-    },
-  });
-}
-
-// Streaming response
-export async function GET() {
-  const stream = createReadStream('large-file.json');
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Transfer-Encoding': 'chunked',
-    },
-  });
-}
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 42
+X-RateLimit-Reset: 1640995200
+Retry-After: 60  (on 429 response)
 ```
 
-## Caching Headers
+## Request ID Tracing
 
-📋 **Guidance** - Cache control strategies for API routes
+**Implemented in:** `proxy.ts`, `lib/logging/context.ts`
 
-### Cache Control Strategies
+Every request gets a unique ID for distributed tracing:
 
 ```typescript
-// No caching (default for API routes)
-export async function GET() {
-  return Response.json(
-    { data: dynamicData },
-    {
-      headers: {
-        'Cache-Control': 'no-store, max-age=0',
-      },
-    }
-  );
-}
-
-// Private caching (user-specific data)
-export async function GET() {
-  return Response.json(
-    { data: userData },
-    {
-      headers: {
-        'Cache-Control': 'private, max-age=300', // 5 minutes
-      },
-    }
-  );
-}
-
-// Public caching with revalidation
-export async function GET() {
-  return Response.json(
-    { data: publicData },
-    {
-      headers: {
-        'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
-        // CDN cache: 1 hour
-        // Serve stale while revalidating: 24 hours
-      },
-    }
-  );
-}
-
-// Immutable resources
-export async function GET() {
-  return Response.json(
-    { data: staticData },
-    {
-      headers: {
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        // 1 year cache
-      },
-    }
-  );
-}
+// Automatically generated/propagated in proxy
+const requestId = request.headers.get('x-request-id') || generateRequestId();
+response.headers.set('x-request-id', requestId);
 ```
 
-### ETag Support
+Use in error logging:
 
 ```typescript
-// app/api/v1/resource/route.ts
-import { createHash } from 'crypto';
+import { logger } from '@/lib/logging';
 
-export async function GET(request: NextRequest) {
-  const data = await fetchData();
-
-  // Generate ETag from content
-  const content = JSON.stringify(data);
-  const etag = `"${createHash('md5').update(content).digest('hex')}"`;
-
-  // Check If-None-Match header
-  const clientETag = request.headers.get('If-None-Match');
-
-  if (clientETag === etag) {
-    return new Response(null, {
-      status: 304, // Not Modified
-      headers: { ETag: etag },
-    });
-  }
-
-  return Response.json(
-    { success: true, data },
-    {
-      headers: {
-        ETag: etag,
-        'Cache-Control': 'private, max-age=300',
-      },
-    }
-  );
-}
+const requestLogger = logger.withContext({ requestId: request.headers.get('x-request-id') });
+requestLogger.error('Request failed', error);
 ```
 
-## Custom Headers
+## Origin Validation (CSRF Protection)
 
-📋 **Planned** - Custom header patterns for future implementation
+**Implemented in:** `proxy.ts`
 
-### API Version Headers
+Additional CSRF protection for state-changing requests:
+
+- Validates `Origin` header matches `Host` for POST/PUT/PATCH/DELETE
+- Complements better-auth's CSRF token protection
+- Returns 403 for cross-origin state-changing requests
+
+## Content Type Guidelines
+
+### JSON Response (Default)
 
 ```typescript
-// proxy.ts (planned addition)
-export function proxy(request: NextRequest) {
-  const response = NextResponse.next();
-
-  // API version information
-  response.headers.set('X-API-Version', 'v1');
-  response.headers.set('X-API-Deprecation-Date', '2026-12-31');
-
-  return response;
-}
+return Response.json({ success: true, data: {} });
+// Content-Type: application/json; charset=utf-8
 ```
 
-### Request ID Tracing
+### File Download
 
 ```typescript
-// proxy.ts (planned addition)
-import { randomUUID } from 'crypto';
-
-export function proxy(request: NextRequest) {
-  const requestId = randomUUID();
-
-  // Add to request headers for logging
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set('X-Request-ID', requestId);
-
-  const response = NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
-
-  // Return in response for client tracking
-  response.headers.set('X-Request-ID', requestId);
-
-  return response;
-}
-
-// Use in error logging
-export async function GET(request: NextRequest) {
-  try {
-    // ... logic
-  } catch (error) {
-    const requestId = request.headers.get('X-Request-ID');
-    console.error(`[${requestId}] Error:`, error);
-
-    return Response.json(
-      {
-        success: false,
-        error: {
-          message: 'Internal server error',
-          requestId, // Include in error response
-        },
-      },
-      { status: 500 }
-    );
-  }
-}
+return new Response(buffer, {
+  headers: {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': 'attachment; filename="report.pdf"',
+  },
+});
 ```
 
-### Pagination Headers
+## Caching Guidelines
 
-📋 **Guidance** - Optional pagination header pattern (currently using meta in response body)
+### No Cache (Default for API Routes)
 
 ```typescript
-// app/api/v1/users/route.ts (alternative to meta field)
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
-  const page = parseInt(searchParams.get('page') || '1');
-  const limit = parseInt(searchParams.get('limit') || '20');
-
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({ skip: (page - 1) * limit, take: limit }),
-    prisma.user.count(),
-  ]);
-
-  return Response.json(
-    { success: true, data: users },
-    {
-      headers: {
-        'X-Total-Count': String(total),
-        'X-Page': String(page),
-        'X-Per-Page': String(limit),
-        'X-Total-Pages': String(Math.ceil(total / limit)),
-      },
-    }
-  );
-}
+headers: { 'Cache-Control': 'no-store, max-age=0' }
 ```
 
-## Authentication Headers
-
-📋 **Planned** - Bearer token authentication pattern
-
-### Bearer Token Pattern (Future Enhancement)
-
-Currently, authentication uses session cookies managed by better-auth. This section describes an alternative Bearer token pattern for future API key authentication:
+### Private Cache (User-Specific Data)
 
 ```typescript
-// For API key authentication (alternative to session cookies, planned)
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('Authorization');
-
-  if (!authHeader?.startsWith('Bearer ')) {
-    return Response.json(
-      { success: false, error: { message: 'Missing or invalid token' } },
-      {
-        status: 401,
-        headers: { 'WWW-Authenticate': 'Bearer realm="API"' },
-      }
-    );
-  }
-
-  const token = authHeader.substring(7);
-
-  try {
-    const decoded = await verifyJWT(token);
-    // Continue with request
-  } catch (error) {
-    return Response.json({ success: false, error: { message: 'Invalid token' } }, { status: 401 });
-  }
-}
+headers: { 'Cache-Control': 'private, max-age=300' }
 ```
 
-## Decision History & Trade-offs
-
-📋 **Guidance** - Documentation of design decisions and architectural trade-offs
-
-### Proxy vs. Route-Level Headers
-
-**Decision**: Set security headers in proxy (middleware), CORS per-route (when implemented)
-**Rationale**:
-
-- Security headers: Same for all routes (centralized)
-- CORS: May vary per endpoint (public vs. authenticated)
-- Reduces duplication while maintaining flexibility
-
-**Trade-offs**: Proxy runs on every matched request (minimal overhead)
-
-### CSP Inline Script Allowance
-
-**Decision**: Allow `unsafe-inline` for scripts/styles
-**Rationale**:
-
-- Next.js and React require inline scripts for hydration
-- Tailwind uses inline styles
-- Stricter CSP would break core functionality
-
-**Trade-offs**: Reduced XSS protection (mitigated by React's auto-escaping)
-
-### HSTS Configuration
-
-**Decision**: Enable HSTS in production without `preload` directive
-**Rationale**:
-
-- ✅ Implemented: `max-age=31536000; includeSubDomains` provides strong HTTPS enforcement
-- Omit `preload`: More flexibility during development and deployment
-- Can add `preload` later when ready for HSTS preload list submission
-
-**Trade-offs**: Without preload, first visit to site could still be vulnerable to protocol downgrade (mitigated by secure defaults)
-
-## Performance Considerations
-
-📋 **Guidance** - Performance optimization patterns for headers
-
-### Header Size
-
-Headers are sent with every request. Keep custom headers minimal:
-
-- **Good**: `X-Request-ID: uuid` (~50 bytes)
-- **Bad**: Embedding large JSON in headers (use response body instead)
-
-### Proxy Overhead
-
-The proxy (middleware) runs on every matched request:
+### Public Cache (Static Data)
 
 ```typescript
-// Efficient: Simple header setting
-response.headers.set('X-API-Version', 'v1');
-
-// Inefficient: Database queries in proxy
-const user = await prisma.user.findUnique({ where: { id } }); // Don't do this
-
-// Note: Current proxy implementation only sets headers and checks session cookies
-// No database queries or expensive operations
+headers: { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400' }
 ```
 
 ## Related Documentation
 
 - [API Endpoints](./endpoints.md) - API route implementation
-- [API Examples](./examples.md) - Client implementation with headers
-- [Auth Security](../auth/security.md) - Authentication security measures
-- [Architecture Overview](../architecture/overview.md) - Middleware architecture
+- [API Examples](./examples.md) - Client implementation patterns
+- [Security Overview](../security/overview.md) - Security architecture

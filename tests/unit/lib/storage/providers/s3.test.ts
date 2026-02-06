@@ -383,6 +383,59 @@ describe('lib/storage/providers/s3', () => {
         });
       });
     });
+
+    describe('key validation', () => {
+      it('should throw for invalid key with path traversal in upload', async () => {
+        const provider = new S3Provider({
+          bucket: 'test-bucket',
+          region: 'us-east-1',
+          accessKeyId: 'test-key',
+          secretAccessKey: 'test-secret',
+        });
+
+        await expect(
+          provider.upload(Buffer.from('test'), {
+            key: '../etc/passwd',
+            contentType: 'text/plain',
+          })
+        ).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in delete', async () => {
+        const provider = new S3Provider({
+          bucket: 'test-bucket',
+          region: 'us-east-1',
+          accessKeyId: 'test-key',
+          secretAccessKey: 'test-secret',
+        });
+
+        await expect(provider.delete('../etc/passwd')).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in deletePrefix', async () => {
+        const provider = new S3Provider({
+          bucket: 'test-bucket',
+          region: 'us-east-1',
+          accessKeyId: 'test-key',
+          secretAccessKey: 'test-secret',
+        });
+
+        await expect(provider.deletePrefix('../etc/')).rejects.toThrow('must not contain ".."');
+      });
+
+      it('should throw for invalid key with path traversal in getSignedUrl', async () => {
+        const provider = new S3Provider({
+          bucket: 'test-bucket',
+          region: 'us-east-1',
+          accessKeyId: 'test-key',
+          secretAccessKey: 'test-secret',
+        });
+
+        await expect(provider.getSignedUrl('../etc/passwd')).rejects.toThrow(
+          'must not contain ".."'
+        );
+      });
+    });
   });
 
   describe('createS3ProviderFromEnv', () => {
