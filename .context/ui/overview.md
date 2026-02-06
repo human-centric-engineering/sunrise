@@ -25,7 +25,7 @@ The `useUrlTabs` hook syncs tab state with URL query parameters, providing:
 | --------------------------------------- | --------------------------------- |
 | `lib/hooks/use-url-tabs.ts`             | Reusable hook for URL-synced tabs |
 | `lib/constants/settings.ts`             | Example tab constants (type-safe) |
-| `components/settings/settings-tabs.tsx` | Example implementation            |
+| `components/settings/settings-tabs.tsx` | Example using `useTrackedUrlTabs` |
 
 ### Usage
 
@@ -185,6 +185,112 @@ The hook and components have comprehensive tests. When implementing:
 
 See `tests/unit/lib/hooks/use-url-tabs.test.ts` for examples.
 
+## URL-Persistent Tabs with Analytics
+
+### Problem
+
+Tab interfaces often need analytics tracking to understand user behavior. Implementing tracking manually leads to common issues:
+
+- `previousTab` is undefined on the first tab change
+- Duplicate tracking events from URL sync and click handlers firing together
+- Inconsistent property naming across different tab implementations
+
+### Solution
+
+The `useTrackedUrlTabs` hook extends `useUrlTabs` with optional analytics tracking, solving these issues out of the box:
+
+- **Automatic `previousTab` initialization**: The previous tab is set on mount, so the first change always has a valid value
+- **Double-fire prevention**: Only tracks when the tab actually changes, handling the Radix + URL sync race condition
+- **Customizable event and property names**: Configure to match your analytics schema
+- **Zero-overhead when disabled**: Omit the `tracking` option for `useUrlTabs` behavior
+
+### Files
+
+| File                                    | Purpose                        |
+| --------------------------------------- | ------------------------------ |
+| `lib/hooks/use-tracked-url-tabs.ts`     | Hook with optional analytics   |
+| `lib/hooks/use-url-tabs.ts`             | Base hook (no tracking)        |
+| `components/settings/settings-tabs.tsx` | Production usage with tracking |
+
+### Usage
+
+**Without tracking (identical to `useUrlTabs`):**
+
+```typescript
+'use client';
+
+import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
+
+const { activeTab, setActiveTab } = useTrackedUrlTabs({
+  defaultTab: 'overview',
+  allowedTabs: ['overview', 'details', 'history'],
+});
+```
+
+**With analytics tracking:**
+
+```typescript
+'use client';
+
+import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
+
+const { activeTab, setActiveTab } = useTrackedUrlTabs({
+  defaultTab: 'profile',
+  allowedTabs: ['profile', 'security', 'notifications'],
+  tracking: {
+    eventName: 'settings_tab_changed',
+  },
+});
+// Tracks: { tab: 'security', previous_tab: 'profile' }
+```
+
+**With custom property names:**
+
+```typescript
+const { activeTab, setActiveTab } = useTrackedUrlTabs({
+  defaultTab: 'overview',
+  allowedTabs: ['overview', 'details'],
+  tracking: {
+    eventName: 'admin_tab_changed',
+    tabPropertyName: 'selected_tab', // default: 'tab'
+    previousPropertyName: 'from_tab', // default: 'previous_tab'
+    additionalProperties: {
+      section: 'admin',
+    },
+  },
+});
+// Tracks: { selected_tab: 'details', from_tab: 'overview', section: 'admin' }
+```
+
+### Tracking API
+
+```typescript
+interface TabTrackingOptions {
+  /** Analytics event name (e.g., 'settings_tab_changed') */
+  eventName: string;
+  /** Property name for the new tab (default: 'tab') */
+  tabPropertyName?: string;
+  /** Property name for the previous tab (default: 'previous_tab') */
+  previousPropertyName?: string;
+  /** Additional properties to include with every tab change event */
+  additionalProperties?: Record<string, unknown>;
+}
+
+interface UseTrackedUrlTabsOptions<T extends string> extends UseUrlTabsOptions<T> {
+  /** Optional tracking configuration - omit to disable tracking */
+  tracking?: TabTrackingOptions;
+}
+```
+
+### When to Use Each Hook
+
+| Hook                | Use When                                  |
+| ------------------- | ----------------------------------------- |
+| `useUrlTabs`        | URL persistence only, no analytics needed |
+| `useTrackedUrlTabs` | URL persistence with optional analytics   |
+
+Both hooks return the same interface (`activeTab`, `setActiveTab`, `isActive`), so switching between them is straightforward.
+
 ## Decision Rationale
 
 ### Query Parameters vs Hash
@@ -217,6 +323,12 @@ See `tests/unit/lib/hooks/use-url-tabs.test.ts` for examples.
 - Cleaner canonical URLs
 - Consistent with how the page naturally loads
 - Reduces URL noise
+
+## Dashboard Components
+
+### EmailStatusCard
+
+A dashboard component (`components/dashboard/email-status-card.tsx`) that displays the user's email verification status. Shows whether the user's email is verified and provides a resend verification option if needed. Used on the main dashboard to prompt users to verify their email address.
 
 ## Related Patterns
 

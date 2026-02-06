@@ -279,7 +279,7 @@ The project includes two footer components:
 | `PublicFooter`    | `components/layouts/public-footer.tsx`    | Public pages (landing, about) |
 | `ProtectedFooter` | `components/layouts/protected-footer.tsx` | Protected pages (dashboard)   |
 
-Both footers include a "Manage Cookies" link that opens the cookie preferences modal.
+Both footers include a "Cookie Preferences" link that opens the cookie preferences modal.
 
 ## Related Documentation
 
