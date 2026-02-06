@@ -75,6 +75,10 @@ describe('ErrorMessages constant', () => {
     );
   });
 
+  it('should have proper message for CONFLICT', () => {
+    expect(ErrorMessages[ErrorCodes.CONFLICT]).toBe('This resource already exists.');
+  });
+
   it('should have messages that are user-friendly', () => {
     const messages = Object.values(ErrorMessages);
 
@@ -132,6 +136,11 @@ describe('getUserFriendlyMessage', () => {
     it('should return message for INTERNAL_ERROR', () => {
       const message = getUserFriendlyMessage(ErrorCodes.INTERNAL_ERROR);
       expect(message).toBe('Something went wrong. Please try again.');
+    });
+
+    it('should return message for CONFLICT', () => {
+      const message = getUserFriendlyMessage(ErrorCodes.CONFLICT);
+      expect(message).toBe('This resource already exists.');
     });
   });
 

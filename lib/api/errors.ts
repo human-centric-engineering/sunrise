@@ -29,6 +29,8 @@ export const ErrorCodes = {
   RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',
   INVITATION_EXPIRED: 'INVITATION_EXPIRED',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // Conflict errors
+  CONFLICT: 'CONFLICT',
   // File upload errors
   FILE_TOO_LARGE: 'FILE_TOO_LARGE',
   INVALID_FILE_TYPE: 'INVALID_FILE_TYPE',
@@ -155,7 +157,7 @@ export class NotFoundError extends APIError {
  */
 export class ConflictError extends APIError {
   constructor(message: string = 'Resource already exists') {
-    super(message, 'CONFLICT', 409);
+    super(message, ErrorCodes.CONFLICT, 409);
     this.name = 'ConflictError';
   }
 }
