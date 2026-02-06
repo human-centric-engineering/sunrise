@@ -119,6 +119,8 @@ it('should hide success message after 3 seconds', async () => {
 
 ### Key Rules
 
+**Note**: These rules apply specifically to **React component tests** using React Testing Library. For unit tests without React components, fake timers can be used more freely.
+
 | Rule                                                  | Why                                                             |
 | ----------------------------------------------------- | --------------------------------------------------------------- |
 | Never use `vi.useFakeTimers()` in `beforeEach`        | Breaks userEvent and waitFor for ALL tests                      |

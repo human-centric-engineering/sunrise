@@ -252,6 +252,12 @@ describe('environment-aware behavior', () => {
 5. Set up proper mocks in `beforeEach`
 6. Use AAA pattern with comments
 
+**Shared vs Local Mocks**:
+
+- **Use shared factories** (`tests/types/mocks.ts`) for: complex types that need complete interfaces (Headers, Session, Prisma), mocks used across multiple test files
+- **Use local mocks** for: simple one-off mocks, test-file-specific response parsing, mocks that would add unnecessary abstraction
+- Both patterns are valid. The goal is maintainability, not uniformity
+
 **Related Documentation**:
 
 - [Testing Overview](./overview.md) - Testing philosophy and tech stack

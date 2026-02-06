@@ -227,28 +227,36 @@ it('should include error details', () => {
 });
 ```
 
-### parseJSON()
+### parseJSON() / parseResponse()
 
 **Purpose**: Type-safe response parsing.
 
+**Two acceptable patterns exist**:
+
+1. **Shared helper** (`parseJSON` from `tests/helpers/assertions.ts`) - for reuse across files
+2. **Local helper** (`parseResponse` defined in test file) - for self-contained tests
+
+Both patterns are valid. Use the shared helper when you need the assertion behavior, or define a local `parseResponse` when you want minimal dependencies.
+
 ```typescript
+// Pattern 1: Shared helper
 import { parseJSON } from '@/tests/helpers/assertions';
 
-interface UserResponse {
-  success: boolean;
-  data: { id: string; email: string };
+it('should return user data', async () => {
+  const response = await GET();
+  const body = await parseJSON<UserResponse>(response);
+  expect(body.success).toBe(true);
+});
+
+// Pattern 2: Local helper (equally valid)
+async function parseResponse<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
 }
 
 it('should return user data', async () => {
-  // Arrange
   const response = await GET();
-
-  // Act: Parse with type safety
-  const body = await parseJSON<UserResponse>(response);
-
-  // Assert: Type-safe access
+  const body = await parseResponse<UserResponse>(response);
   expect(body.success).toBe(true);
-  expect(body.data.id).toBeDefined();
 });
 ```
 
