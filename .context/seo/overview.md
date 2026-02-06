@@ -26,7 +26,15 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/api/', '/dashboard/', '/settings/', '/profile/', '/login', '/signup'],
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/dashboard/',
+          '/settings/',
+          '/profile/',
+          '/login',
+          '/signup',
+        ],
       },
     ],
     sitemap: `${baseUrl}/sitemap.xml`,
@@ -37,8 +45,11 @@ export default function robots(): MetadataRoute.Robots {
 **Blocked paths:**
 
 - `/api/` - All API routes
+- `/admin/` - Admin panel pages
 - `/dashboard/`, `/settings/`, `/profile/` - Protected pages
 - `/login`, `/signup` - Authentication pages
+
+> **Note:** Transactional pages like `/verify-email` and `/accept-invite` fall under the `(auth)` route group. While not explicitly listed, they are effectively blocked as non-public pages that search engines shouldn't index.
 
 ## Sitemap
 
@@ -95,7 +106,9 @@ const publicPages = [
 
 ## Page Metadata
 
-Use Next.js Metadata API for per-page SEO:
+Use Next.js Metadata API for per-page SEO.
+
+> **Note:** Auth and protected pages have metadata even though they're blocked from search engines. This ensures proper browser tab titles and social sharing when users share direct links while authenticated.
 
 ```typescript
 // app/(public)/about/page.tsx
@@ -105,9 +118,13 @@ export const metadata: Metadata = {
   title: 'About',
   description: 'Learn about Sunrise and our mission.',
   openGraph: {
-    title: 'About Sunrise',
+    title: 'About - Sunrise',
     description: 'Learn about Sunrise and our mission.',
-    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'About - Sunrise',
+    description: 'Learn about Sunrise and our mission.',
   },
 };
 
@@ -116,32 +133,65 @@ export default function AboutPage() {
 }
 ```
 
-### Base Metadata Template
+### Root Layout Metadata
 
-The root layout provides default metadata that pages inherit:
+The root layout (`app/layout.tsx`) provides simple base metadata:
 
 ```typescript
 // app/layout.tsx
 export const metadata: Metadata = {
-  title: {
-    template: '%s | Sunrise', // Page titles become "About | Sunrise"
-    default: 'Sunrise',
-  },
-  description: 'Production-ready Next.js starter template',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
-  openGraph: {
-    type: 'website',
-    siteName: 'Sunrise',
-  },
-  twitter: {
-    card: 'summary_large_image',
-  },
+  title: 'Sunrise - Next.js Starter',
+  description: 'A production-ready Next.js starter template...',
 };
 ```
 
+### Route Group Layouts
+
+Title templates are defined in route group layouts, not the root layout. Each route group sets its own template:
+
+```typescript
+// app/(public)/layout.tsx, app/(protected)/layout.tsx, app/(auth)/layout.tsx
+export const metadata: Metadata = {
+  title: {
+    template: '%s - Sunrise', // Page titles become "About - Sunrise"
+    default: 'Sunrise',
+  },
+  description: '...',
+};
+```
+
+This means page titles like `title: 'About'` become "About - Sunrise" in the browser tab.
+
+### Metadata Inheritance
+
+Metadata cascades from layouts to pages:
+
+```
+app/layout.tsx (root)
+└── Basic title and description
+    │
+    ├── app/(public)/layout.tsx
+    │   └── title.template: '%s - Sunrise'
+    │
+    ├── app/(protected)/layout.tsx
+    │   └── title.template: '%s - Sunrise'
+    │
+    ├── app/(auth)/layout.tsx
+    │   └── title.template: '%s - Sunrise'
+    │
+    └── app/admin/layout.tsx
+        └── title.template: '%s - Admin - Sunrise'
+```
+
+**How it works:**
+
+- Page sets `title: 'About'`
+- Layout template transforms to "About - Sunrise"
+- Admin pages become "Users - Admin - Sunrise"
+
 ### Twitter Cards
 
-Twitter card configuration is inherited from the root layout. For custom Twitter cards per page:
+Each page must define its own Twitter card configuration:
 
 ```typescript
 export const metadata: Metadata = {
@@ -154,6 +204,34 @@ export const metadata: Metadata = {
   },
 };
 ```
+
+### Dynamic Metadata
+
+For dynamic routes that need params in metadata, use `generateMetadata()`:
+
+```typescript
+// app/admin/users/[id]/page.tsx
+import type { Metadata } from 'next';
+
+interface PageProps {
+  params: Promise<{ id: string }>;
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { id } = await params;
+  return {
+    title: `User ${id}`,
+    description: 'View user profile',
+  };
+}
+```
+
+**When to use:**
+
+- Static `export const metadata` - Pages with fixed titles
+- `generateMetadata()` - Pages with dynamic params (user IDs, slugs, etc.)
+
+**Note:** In Next.js 16, `params` is a Promise and must be awaited.
 
 ### OpenGraph Images
 
@@ -185,6 +263,15 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 # Production
 NEXT_PUBLIC_APP_URL=https://app.example.com
 ```
+
+## Icons and Favicons
+
+Sunrise does not include favicon setup by default. To add icons:
+
+1. **Static icons**: Place `favicon.ico` in the `app/` directory
+2. **Generated icons**: Create `app/icon.tsx` for dynamic generation
+
+See [Next.js Icons documentation](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/app-icons) for details.
 
 ## Adding New Public Pages Checklist
 
