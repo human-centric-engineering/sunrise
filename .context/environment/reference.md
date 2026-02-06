@@ -148,4 +148,4 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 - [Environment Overview](./overview.md) - Setup guide and troubleshooting
 - [Database Schema](../database/schema.md) - Database configuration
 - [Authentication System](../auth/overview.md) - Auth configuration
-- [Deployment Guide](../../.instructions/DEPLOYMENT.md) - Platform-specific instructions
+- [Deployment Guide](../deployment/overview.md) - Platform-specific instructions

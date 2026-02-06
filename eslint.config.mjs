@@ -127,7 +127,6 @@ export default tseslint.config(
       // Allow 'any' type in test files
       // Reason: Type workarounds are necessary for complex mock types (Headers, Session, PrismaPromise)
       // Tests prioritize runtime behavior over strict compile-time types
-      // See: .instructions/ROOT-CAUSE-ANALYSIS-TESTING-CYCLE.md
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',

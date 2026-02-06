@@ -156,6 +156,7 @@ storybook-static/
 tmp/
 temp/
 .reviews/
+.instructions/
 
 # Production
 /build

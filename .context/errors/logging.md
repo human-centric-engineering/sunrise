@@ -432,8 +432,6 @@ ERROR → Use ERROR
 
 Request context utilities enable distributed tracing across your application. These functions are **recommended for production tracing** to correlate logs across requests.
 
-> For implementation details on adding request context to API routes, see `.instructions/REQUEST-CONTEXT-TRACING.md`
-
 **Note:** Basic `logger.info()` is acceptable for simple cases where request tracing is not needed.
 
 ### Available Context Utilities

@@ -72,4 +72,3 @@ Key decisions and rationale are documented in `architecture/decisions.md`:
 
 - `CLAUDE.md` — AI assistant rules and quick reference
 - `README.md` — Intro, overview, and getting started for humans
-- `.instructions/SUNRISE-BUILD-PLAN.md` — Build phases and implementation details

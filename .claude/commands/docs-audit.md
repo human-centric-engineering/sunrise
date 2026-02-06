@@ -23,7 +23,7 @@ This specifies which documentation domain to audit. Supported domains and their 
 | `environment`  | `.context/environment/`  | `.env.example`, `lib/env.ts`, `docker-compose*.yml`                          |
 | `testing`      | `.context/testing/`      | `tests/`, `vitest.config.ts`, test utilities                                 |
 | `architecture` | `.context/architecture/` | Project structure, `app/`, `lib/`, `components/`                             |
-| `deployment`   | `.context/deployment/`   | `Dockerfile`, `docker-compose*.yml`, `.instructions/DEPLOYMENT*.md`          |
+| `deployment`   | `.context/deployment/`   | `Dockerfile`, `docker-compose*.yml`                                          |
 | `monitoring`   | `.context/monitoring/`   | `lib/monitoring/`, Sentry config, health endpoints                           |
 | `ui`           | `.context/ui/`           | `components/ui/`, `components/layouts/`, `app/(public)/`, `app/(protected)/` |
 | `privacy`      | `.context/privacy/`      | Cookie consent, privacy-related components                                   |
