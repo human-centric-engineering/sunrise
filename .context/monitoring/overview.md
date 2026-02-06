@@ -89,8 +89,8 @@ PERF_CRITICAL_THRESHOLD_MS=5000  # Alert Sentry for operations slower than this
 HEALTH_INCLUDE_MEMORY=false      # Include memory stats in health response
 
 # Logging
-LOG_LEVEL=info                   # debug | info | warn | error
-LOG_SANITIZE_PII=true            # Sanitize PII in logs (GDPR compliance)
+LOG_LEVEL=info                   # debug | info | warn | error (default: debug in dev, info in prod)
+LOG_SANITIZE_PII=true            # Sanitize PII in logs (default: true in prod, false in dev)
 
 # Sentry (optional)
 NEXT_PUBLIC_SENTRY_DSN=          # Sentry DSN for error tracking
