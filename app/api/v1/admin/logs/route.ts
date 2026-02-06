@@ -17,6 +17,7 @@ import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams } from '@/lib/api/validation';
 import { logsQuerySchema } from '@/lib/validations/admin';
 import { getLogEntries } from '@/lib/admin/logs';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/admin/logs
@@ -27,7 +28,10 @@ import { getLogEntries } from '@/lib/admin/logs';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  */
-export const GET = withAdminAuth((request, _session) => {
+export const GET = withAdminAuth(async (request, _session) => {
+  const log = await getRouteLogger(request);
+  log.info('Fetching application logs');
+
   // Validate and parse query params
   const { searchParams } = request.nextUrl;
   const query = validateQueryParams(searchParams, logsQuerySchema);
@@ -39,6 +43,8 @@ export const GET = withAdminAuth((request, _session) => {
     page: query.page,
     limit: query.limit,
   });
+
+  log.info('Application logs retrieved', { count: entries.length, total });
 
   // Return paginated response
   return paginatedResponse(entries, {

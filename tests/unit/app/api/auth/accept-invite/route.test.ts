@@ -19,20 +19,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock dependencies BEFORE importing the route
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    withContext: vi.fn(() => ({
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    })),
-  },
-}));
+
+// Mock route logger
+const mockLogger = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -91,7 +91,6 @@ vi.mock('@/lib/security/ip', () => ({
 import { POST } from '@/app/api/auth/accept-invite/route';
 import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
 
 describe('POST /api/auth/accept-invite', () => {
   // Test data
@@ -833,7 +832,7 @@ describe('POST /api/auth/accept-invite', () => {
       await POST(request);
 
       // Assert: Logger was called
-      expect(logger.info).toHaveBeenCalledWith('Invitation acceptance requested', {
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation acceptance requested', {
         email: validInvitationData.email,
       });
     });
@@ -858,10 +857,10 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Check that important info logs were called during the flow
       // The route logs multiple events: request, metadata retrieved, user created, acceptance success
-      expect(logger.info).toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalled();
 
       // Check for specific log messages
-      const logMessages = vi.mocked(logger.info).mock.calls.map((call) => call[0]);
+      const logMessages = vi.mocked(mockLogger.info).mock.calls.map((call) => call[0]);
       expect(logMessages).toContain('Invitation acceptance requested');
       expect(logMessages).toContain('Invitation metadata retrieved');
       expect(logMessages).toContain('User created via better-auth');
@@ -877,7 +876,7 @@ describe('POST /api/auth/accept-invite', () => {
       await POST(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith('Invalid invitation token', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invalid invitation token', {
         email: validInvitationData.email,
       });
     });
@@ -892,7 +891,10 @@ describe('POST /api/auth/accept-invite', () => {
       await POST(request);
 
       // Assert
-      expect(logger.error).toHaveBeenCalledWith('Failed to accept invitation', expect.any(Error));
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to accept invitation',
+        expect.any(Error)
+      );
     });
   });
 
@@ -916,14 +918,14 @@ describe('POST /api/auth/accept-invite', () => {
       await POST(request);
 
       // Assert: Check the metadata retrieved log
-      expect(logger.info).toHaveBeenCalledWith('Invitation metadata retrieved', {
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata retrieved', {
         email: validInvitationData.email,
         role: mockInvitationMetadata.role,
       });
 
       // Verify we didn't log the full metadata object (which contains name and invitedBy - PII)
       const metadataLogCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
       expect(metadataLogCall).toBeDefined();
       const loggedData = metadataLogCall?.[1];
@@ -980,7 +982,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Metadata log should only include role, not name or invitedBy
       const metadataLogCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
       expect(metadataLogCall).toBeDefined();
       const loggedData = metadataLogCall?.[1];
@@ -1015,7 +1017,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: USER role logged without extra metadata
       const metadataLogCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Invitation metadata retrieved');
       expect(metadataLogCall?.[1]).toEqual({
         email: validInvitationData.email,

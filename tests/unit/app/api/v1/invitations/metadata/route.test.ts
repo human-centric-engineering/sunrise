@@ -28,19 +28,22 @@ vi.mock('@/lib/utils/invitation-token', () => ({
   getInvitationMetadata: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 // Import mocked modules
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
 
 /**
  * Response type interfaces
@@ -180,8 +183,8 @@ describe('GET /api/v1/invitations/metadata', () => {
       await GET(request);
 
       // Assert
-      expect(logger.info).toHaveBeenCalledWith('Invitation metadata requested', { email });
-      expect(logger.info).toHaveBeenCalledWith('Invitation metadata retrieved', { email });
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata requested', { email });
+      expect(mockLogger.info).toHaveBeenCalledWith('Invitation metadata retrieved', { email });
     });
 
     it('should return only name and role fields from metadata', async () => {
@@ -414,7 +417,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       await GET(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith('Invitation not found for metadata request', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invitation not found for metadata request', {
         email,
       });
     });
@@ -470,7 +473,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       await GET(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith('Expired invitation for metadata request', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('Expired invitation for metadata request', {
         email,
       });
     });
@@ -510,7 +513,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       await GET(request);
 
       // Assert
-      expect(logger.warn).toHaveBeenCalledWith('Invalid token for metadata request', {
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invalid token for metadata request', {
         email,
       });
     });

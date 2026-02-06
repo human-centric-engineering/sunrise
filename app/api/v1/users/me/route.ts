@@ -15,8 +15,7 @@ import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
-import { isRecord } from '@/lib/utils';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
 
@@ -30,7 +29,10 @@ import { EVENTS } from '@/lib/analytics/events';
  * @returns User profile with id, name, email, role, profile fields, etc.
  * @throws UnauthorizedError if not authenticated
  */
-export const GET = withAuth(async (_request, session) => {
+export const GET = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Fetching current user profile');
+
   // Fetch user from database with all profile fields
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -76,6 +78,9 @@ export const GET = withAuth(async (_request, session) => {
  * @throws ValidationError if invalid data
  */
 export const PATCH = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Updating current user profile');
+
   // Validate request body
   const body = await validateRequestBody(request, updateUserSchema);
 
@@ -115,6 +120,8 @@ export const PATCH = withAuth(async (request, session) => {
     },
   });
 
+  log.info('User profile updated');
+
   return successResponse(updatedUser);
 });
 
@@ -132,13 +139,14 @@ export const PATCH = withAuth(async (request, session) => {
  * @throws ValidationError if confirmation is missing or incorrect
  */
 export const DELETE = withAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+
   try {
     // Validate confirmation (ensures user typed "DELETE")
     await validateRequestBody(request, deleteAccountSchema);
 
     // Log the deletion for audit purposes
-    logger.info('User account deletion initiated', {
-      userId: session.user.id,
+    log.info('User account deletion initiated', {
       email: session.user.email,
     });
 
@@ -174,18 +182,14 @@ export const DELETE = withAuth(async (request, session) => {
       userId: session.user.id,
     });
 
-    logger.info('User account deleted successfully', {
-      userId: session.user.id,
-    });
+    log.info('User account deleted successfully');
 
     return successResponse({
       deleted: true,
       message: 'Account deleted successfully',
     });
   } catch (error) {
-    logger.error('Failed to delete user account', error, {
-      userId: isRecord(error) && typeof error.userId === 'string' ? error.userId : undefined,
-    });
+    log.error('Failed to delete user account', error);
     throw error;
   }
 });

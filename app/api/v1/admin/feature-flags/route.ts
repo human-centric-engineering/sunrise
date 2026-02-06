@@ -13,7 +13,7 @@ import { ConflictError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { createFeatureFlagSchema } from '@/lib/validations/admin';
 import { getAllFlags, createFlag, getFlag } from '@/lib/feature-flags';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/admin/feature-flags
@@ -24,8 +24,13 @@ import { logger } from '@/lib/logging';
  * @throws UnauthorizedError if not authenticated
  * @throws ForbiddenError if not admin
  */
-export const GET = withAdminAuth(async (_request, _session) => {
+export const GET = withAdminAuth(async (request, _session) => {
+  const log = await getRouteLogger(request);
+  log.info('Listing feature flags');
+
   const flags = await getAllFlags();
+
+  log.info('Feature flags retrieved', { count: flags.length });
 
   return successResponse(flags);
 });
@@ -42,6 +47,9 @@ export const GET = withAdminAuth(async (_request, _session) => {
  * @throws ConflictError if flag name already exists
  */
 export const POST = withAdminAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
+  log.info('Creating feature flag');
+
   // Validate request body
   const body = await validateRequestBody(request, createFeatureFlagSchema);
 
@@ -60,7 +68,7 @@ export const POST = withAdminAuth(async (request, session) => {
     createdBy: session.user.id,
   });
 
-  logger.info('Feature flag created', {
+  log.info('Feature flag created', {
     flagId: flag.id,
     name: flag.name,
     adminId: session.user.id,

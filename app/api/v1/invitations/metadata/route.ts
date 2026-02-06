@@ -29,7 +29,7 @@ import { z } from 'zod';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { handleAPIError, ErrorCodes } from '@/lib/api/errors';
 import { getInvitationMetadata } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * Query parameter validation schema
@@ -53,6 +53,7 @@ const querySchema = z.object({
  * @throws NotFoundError if invitation not found
  */
 export async function GET(request: NextRequest) {
+  const log = await getRouteLogger(request);
   try {
     // 1. Validate query parameters
     const url = new URL(request.url);
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
 
     const validated = querySchema.parse({ token, email });
 
-    logger.info('Invitation metadata requested', { email: validated.email });
+    log.info('Invitation metadata requested', { email: validated.email });
 
     // 2. Validate token and get metadata in one operation
     const result = await getInvitationMetadata(validated.email, validated.token);
@@ -70,14 +71,14 @@ export async function GET(request: NextRequest) {
       // Return specific error code based on failure reason
       switch (result.reason) {
         case 'expired':
-          logger.warn('Expired invitation for metadata request', { email: validated.email });
+          log.warn('Expired invitation for metadata request', { email: validated.email });
           return errorResponse('This invitation has expired', {
             code: ErrorCodes.INVITATION_EXPIRED,
             status: 410, // Gone - resource existed but is no longer available
           });
 
         case 'invalid_token':
-          logger.warn('Invalid token for metadata request', { email: validated.email });
+          log.warn('Invalid token for metadata request', { email: validated.email });
           return errorResponse('Invalid invitation token', {
             code: ErrorCodes.VALIDATION_ERROR,
             status: 400,
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest) {
 
         case 'not_found':
         default:
-          logger.warn('Invitation not found for metadata request', { email: validated.email });
+          log.warn('Invitation not found for metadata request', { email: validated.email });
           return errorResponse('Invitation not found', {
             code: ErrorCodes.NOT_FOUND,
             status: 404,
@@ -93,7 +94,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    logger.info('Invitation metadata retrieved', { email: validated.email });
+    log.info('Invitation metadata retrieved', { email: validated.email });
 
     // 3. Return metadata
     return successResponse({
@@ -102,11 +103,13 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
+      log.warn('Invalid query parameters for invitation metadata');
       return errorResponse('Invalid query parameters', {
         code: ErrorCodes.VALIDATION_ERROR,
         status: 400,
       });
     }
+    log.error('Error retrieving invitation metadata', error);
     return handleAPIError(error);
   }
 }

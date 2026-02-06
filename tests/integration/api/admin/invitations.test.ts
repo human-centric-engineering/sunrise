@@ -46,14 +46,7 @@ vi.mock('@/lib/utils/invitation-token', () => ({
   deleteInvitationToken: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+// Note: getRouteLogger is mocked globally in tests/setup.ts
 
 // Mock next/headers
 vi.mock('next/headers', () => ({
@@ -67,7 +60,7 @@ import {
   getValidInvitation,
   deleteInvitationToken,
 } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * Helper function to create a mock NextRequest
@@ -543,7 +536,8 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(deleteInvitationToken).toHaveBeenCalledWith('alice@example.com');
 
       // Assert: Should log deletion
-      expect(logger.info).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Admin deleted invitation',
         expect.objectContaining({
           email: 'alice@example.com',

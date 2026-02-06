@@ -10,7 +10,7 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { deleteInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * DELETE /api/v1/admin/invitations/:email
@@ -25,10 +25,14 @@ import { logger } from '@/lib/logging';
  * @throws ForbiddenError if not admin
  * @throws NotFoundError if invitation not found
  */
-export const DELETE = withAdminAuth<{ email: string }>(async (_request, session, { params }) => {
+export const DELETE = withAdminAuth<{ email: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
   // Get email from URL params
   const { email } = await params;
   const decodedEmail = decodeURIComponent(email);
+
+  log.info('Deleting invitation', { email: decodedEmail });
 
   // Check if invitation exists
   const invitation = await getValidInvitation(decodedEmail);
@@ -39,7 +43,7 @@ export const DELETE = withAdminAuth<{ email: string }>(async (_request, session,
   // Delete the invitation
   await deleteInvitationToken(decodedEmail);
 
-  logger.info('Admin deleted invitation', {
+  log.info('Admin deleted invitation', {
     email: decodedEmail,
     deletedBy: session.user.id,
     deletedByEmail: session.user.email,

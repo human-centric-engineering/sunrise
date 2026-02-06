@@ -120,6 +120,24 @@ vi.mock('@/lib/analytics/events', () => ({
 }));
 
 /**
+ * Mock API Context (getRouteLogger)
+ *
+ * Many API routes use getRouteLogger for request-scoped logging.
+ * This global mock returns a logger with standard methods.
+ */
+vi.mock('@/lib/api/context', () => ({
+  getRouteLogger: vi.fn(() =>
+    Promise.resolve({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      withContext: vi.fn().mockReturnThis(),
+    })
+  ),
+}));
+
+/**
  * Clean up after each test
  *
  * Restore all mocks to prevent test interference

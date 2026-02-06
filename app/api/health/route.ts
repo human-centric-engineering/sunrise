@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDatabaseHealth } from '@/lib/db/utils';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { getMemoryUsage } from '@/lib/monitoring';
 import type { HealthCheckResponse, ServiceStatus } from '@/lib/monitoring';
 
@@ -75,7 +75,9 @@ function determineServiceStatus(connected: boolean, latency?: number): ServiceSt
  * - 200: All services operational
  * - 503: One or more services unavailable
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const log = await getRouteLogger(request);
+
   try {
     const dbHealth = await getDatabaseHealth();
     const dbStatus = determineServiceStatus(dbHealth.connected, dbHealth.latency);
@@ -107,7 +109,7 @@ export async function GET() {
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Health check failed', error);
+    log.error('Health check failed', error);
 
     // Build error response with same structure
     const errorResponse: HealthCheckResponse = {

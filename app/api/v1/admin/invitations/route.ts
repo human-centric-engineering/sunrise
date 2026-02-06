@@ -18,6 +18,7 @@ import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams } from '@/lib/api/validation';
 import { listInvitationsQuerySchema } from '@/lib/validations/admin';
 import { getAllPendingInvitations } from '@/lib/utils/invitation-token';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/admin/invitations
@@ -35,6 +36,9 @@ import { getAllPendingInvitations } from '@/lib/utils/invitation-token';
  * @throws ValidationError if invalid query params
  */
 export const GET = withAdminAuth(async (request, _session) => {
+  const log = await getRouteLogger(request);
+  log.info('Listing pending invitations');
+
   // Validate and parse query params
   const { searchParams } = request.nextUrl;
   const query = validateQueryParams(searchParams, listInvitationsQuerySchema);
@@ -47,6 +51,8 @@ export const GET = withAdminAuth(async (request, _session) => {
     sortBy: query.sortBy,
     sortOrder: query.sortOrder,
   });
+
+  log.info('Pending invitations retrieved', { count: invitations.length, total });
 
   // Return paginated response
   return paginatedResponse(invitations, {

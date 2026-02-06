@@ -60,21 +60,24 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 // Import mocked modules
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { logger } from '@/lib/logging';
 
 /**
  * Response type interfaces
@@ -852,7 +855,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       });
 
       // Verify logging
-      expect(logger.info).toHaveBeenCalledWith('User updated by admin', {
+      expect(mockLogger.info).toHaveBeenCalledWith('User updated by admin', {
         userId: targetUserId,
         adminId: adminUser.user.id,
         changes: { name: 'New Name' },

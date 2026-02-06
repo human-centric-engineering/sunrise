@@ -65,15 +65,7 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Note: getRouteLogger is mocked globally in tests/setup.ts
 
 // Mock env module
 vi.mock('@/lib/env', () => ({
@@ -118,7 +110,7 @@ import {
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
-import { logger } from '@/lib/logging';
+import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 
@@ -251,7 +243,8 @@ describe('POST /api/v1/users/invite', () => {
       });
 
       // Assert: Success logged
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Invitation created',
         expect.objectContaining({
           email: 'john@example.com',
@@ -330,7 +323,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.data.invitation.email).toBe('bob@example.com');
 
       // Assert: Warning was logged
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         'Failed to send invitation email',
         expect.objectContaining({
           error: 'SMTP connection failed',
@@ -485,7 +479,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.data.invitation.link).toBeUndefined();
 
       // Assert: Logged existing invitation found
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Existing invitation found, not resending',
         expect.objectContaining({
           email: 'existing@example.com',
@@ -559,7 +554,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(vi.mocked(sendEmail)).toHaveBeenCalled();
 
       // Assert: Logged as resent
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Invitation resent',
         expect.objectContaining({
           email: 'resend@example.com',
@@ -703,7 +699,8 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.success).toBe(true);
 
       // Assert: Email success was logged with email ID and status
-      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Invitation email sent',
         expect.objectContaining({
           email: 'test@example.com',
@@ -1046,7 +1043,8 @@ describe('POST /api/v1/users/invite', () => {
       await POST(request);
 
       // Assert: Warning was logged with correct data
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Invite rate limit exceeded', {
+      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
+      expect(mockLogger.warn).toHaveBeenCalledWith('Invite rate limit exceeded', {
         ip: '192.168.1.100',
         adminId: adminSession.user.id,
         remaining: 0,

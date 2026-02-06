@@ -430,20 +430,46 @@ ERROR → Use ERROR
 
 ## Request Context
 
-Request context utilities enable distributed tracing across your application. These functions are **recommended for production tracing** to correlate logs across requests.
+Request context utilities enable distributed tracing across your application. **All API routes use request context tracing** to correlate logs across requests.
 
-**Note:** Basic `logger.info()` is acceptable for simple cases where request tracing is not needed.
+### Standard Pattern: getRouteLogger()
+
+The recommended way to add context tracing to API routes is with `getRouteLogger()`:
+
+```typescript
+import { getRouteLogger } from '@/lib/api/context';
+
+export async function POST(request: NextRequest) {
+  const log = await getRouteLogger(request);
+
+  log.info('Processing request');
+  // All log entries automatically include:
+  // - requestId (for distributed tracing)
+  // - userId, sessionId (if authenticated)
+  // - method, endpoint, userAgent
+
+  try {
+    const result = await doWork();
+    log.info('Request completed', { resultId: result.id });
+    return successResponse(result);
+  } catch (error) {
+    log.error('Request failed', error);
+    return errorResponse('FAILED', 'Operation failed');
+  }
+}
+```
 
 ### Available Context Utilities
 
-| Function                   | Description                                      | Async |
-| -------------------------- | ------------------------------------------------ | ----- |
-| `getRequestId()`           | Get or generate request ID from headers          | Yes   |
-| `getUserContext()`         | Extract userId, sessionId, email from session    | Yes   |
-| `getFullContext(request)`  | Combined request + user context                  | Yes   |
-| `getEndpointPath(request)` | Extract clean endpoint path without query params | No    |
-| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)  | No    |
-| `getClientIp()`            | Get client IP from proxy headers                 | Yes   |
+| Function                   | Description                                      | Async | Location                 |
+| -------------------------- | ------------------------------------------------ | ----- | ------------------------ |
+| `getRouteLogger(request)`  | **Standard** — Get scoped logger for API routes  | Yes   | `lib/api/context.ts`     |
+| `getRequestId()`           | Get or generate request ID from headers          | Yes   | `lib/logging/context.ts` |
+| `getUserContext()`         | Extract userId, sessionId, email from session    | Yes   | `lib/logging/context.ts` |
+| `getFullContext(request)`  | Combined request + user context                  | Yes   | `lib/logging/context.ts` |
+| `getEndpointPath(request)` | Extract clean endpoint path without query params | No    | `lib/logging/context.ts` |
+| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)  | No    | `lib/logging/context.ts` |
+| `getClientIp()`            | Get client IP from proxy headers                 | Yes   | `lib/logging/context.ts` |
 
 ### Request ID Propagation
 
@@ -823,38 +849,29 @@ for (const item of items) {
 ### Pattern 1: API Route Logging
 
 ```typescript
-import { logger } from '@/lib/logging';
-import { getFullContext } from '@/lib/logging/context';
+import { getRouteLogger } from '@/lib/api/context';
 
 export async function POST(request: NextRequest) {
-  const context = await getFullContext(request);
-  const routeLogger = logger.withContext(context);
+  const log = await getRouteLogger(request);
 
-  routeLogger.info('Request received', {
-    endpoint: '/api/v1/users',
-    method: 'POST',
-  });
+  log.info('Creating user');
 
   try {
     const data = await request.json();
 
-    routeLogger.debug('Input validated', {
+    log.debug('Input validated', {
       fields: Object.keys(data),
     });
 
     const user = await createUser(data);
 
-    routeLogger.info('User created', {
+    log.info('User created', {
       userId: user.id,
-      email: user.email,
     });
 
-    return Response.json({ success: true, data: user });
+    return successResponse(user);
   } catch (error) {
-    routeLogger.error('User creation failed', error, {
-      endpoint: '/api/v1/users',
-    });
-
+    log.error('User creation failed', error);
     return handleAPIError(error);
   }
 }
@@ -974,6 +991,7 @@ jobLogger.info('Batch job complete');
 ## See Also
 
 - `lib/logging/index.ts` - Logger implementation
-- `lib/logging/context.ts` - Context utilities
+- `lib/logging/context.ts` - Context utilities (getFullContext, getRequestId, etc.)
+- `lib/api/context.ts` - Route logger helper (getRouteLogger)
 - `proxy.ts` - Request ID generation
 - `.env.example` - LOG_LEVEL configuration

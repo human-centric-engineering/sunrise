@@ -18,6 +18,7 @@ import { prisma } from '@/lib/db/client';
 import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams, parsePaginationParams } from '@/lib/api/validation';
 import { listUsersQuerySchema } from '@/lib/validations/user';
+import { getRouteLogger } from '@/lib/api/context';
 
 /**
  * GET /api/v1/users
@@ -35,6 +36,9 @@ import { listUsersQuerySchema } from '@/lib/validations/user';
  * @throws ValidationError if invalid query params
  */
 export const GET = withAdminAuth(async (request, _session) => {
+  const log = await getRouteLogger(request);
+  log.info('Listing users');
+
   // Validate and parse query params
   const { searchParams } = request.nextUrl;
   const query = validateQueryParams(searchParams, listUsersQuerySchema);

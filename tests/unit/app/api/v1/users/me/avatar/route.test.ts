@@ -33,14 +33,19 @@ vi.mock('@/lib/storage/image', () => ({
   SUPPORTED_IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
 }));
 
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   uploadLimiter: {
@@ -282,7 +287,6 @@ describe('app/api/v1/users/me/avatar/route', () => {
         await import('@/lib/storage/upload');
       const { auth } = await import('@/lib/auth/config');
       const { validateImageMagicBytes } = await import('@/lib/storage/image');
-      const { logger } = await import('@/lib/logging');
 
       vi.mocked(isStorageEnabled).mockReturnValue(true);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
@@ -312,7 +316,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
       await POST(request);
 
       // Assert: Logger was called with sanitized filename
-      expect(logger.info).toHaveBeenCalledWith(
+      expect(mockLogger.info).toHaveBeenCalledWith(
         'Avatar upload started',
         expect.objectContaining({
           // Special characters should be replaced with underscores
@@ -323,10 +327,10 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       // Verify special characters are removed/replaced
       const logCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Avatar upload started');
       expect(logCall).toBeDefined();
-      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      const loggedFileName = (logCall?.[1] as { fileName?: string })?.fileName;
 
       // The sanitization regex /[^\w.\-]/g replaces non-word, non-dot, non-hyphen chars with _
       // So slashes, angle brackets, parentheses, newlines become underscores
@@ -349,7 +353,6 @@ describe('app/api/v1/users/me/avatar/route', () => {
         await import('@/lib/storage/upload');
       const { auth } = await import('@/lib/auth/config');
       const { validateImageMagicBytes } = await import('@/lib/storage/image');
-      const { logger } = await import('@/lib/logging');
 
       vi.mocked(isStorageEnabled).mockReturnValue(true);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
@@ -377,10 +380,11 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       // Assert: Filename truncated to 255 characters
       const logCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Avatar upload started');
-      const loggedFileName = (logCall?.[1] as any)?.fileName;
-      expect(loggedFileName.length).toBeLessThanOrEqual(255);
+      const loggedFileName = (logCall?.[1] as { fileName?: string })?.fileName;
+      expect(loggedFileName).toBeDefined();
+      expect(loggedFileName!.length).toBeLessThanOrEqual(255);
     });
 
     it('should sanitize control characters in filename', async () => {
@@ -388,7 +392,6 @@ describe('app/api/v1/users/me/avatar/route', () => {
         await import('@/lib/storage/upload');
       const { auth } = await import('@/lib/auth/config');
       const { validateImageMagicBytes } = await import('@/lib/storage/image');
-      const { logger } = await import('@/lib/logging');
 
       vi.mocked(isStorageEnabled).mockReturnValue(true);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
@@ -419,9 +422,9 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       // Assert: Control characters removed/replaced
       const logCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Avatar upload started');
-      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      const loggedFileName = (logCall?.[1] as { fileName?: string })?.fileName;
       expect(loggedFileName).not.toContain('\r');
       expect(loggedFileName).not.toContain('\n');
       expect(loggedFileName).not.toContain('\t');
@@ -433,7 +436,6 @@ describe('app/api/v1/users/me/avatar/route', () => {
         await import('@/lib/storage/upload');
       const { auth } = await import('@/lib/auth/config');
       const { validateImageMagicBytes } = await import('@/lib/storage/image');
-      const { logger } = await import('@/lib/logging');
 
       vi.mocked(isStorageEnabled).mockReturnValue(true);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
@@ -464,9 +466,9 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       // Assert: Valid characters preserved
       const logCall = vi
-        .mocked(logger.info)
+        .mocked(mockLogger.info)
         .mock.calls.find((call) => call[0] === 'Avatar upload started');
-      const loggedFileName = (logCall?.[1] as any)?.fileName;
+      const loggedFileName = (logCall?.[1] as { fileName?: string })?.fileName;
       expect(loggedFileName).toBe('my-avatar_2024.profile.jpg');
     });
   });

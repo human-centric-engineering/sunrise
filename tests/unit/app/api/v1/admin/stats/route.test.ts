@@ -64,22 +64,25 @@ vi.mock('@/lib/db/utils', () => ({
   getDatabaseHealth: vi.fn(),
 }));
 
-// Mock logger
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+// Mock route logger
+const mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+};
+
+vi.mock('@/lib/api/context', async () => {
+  return {
+    getRouteLogger: vi.fn(async () => mockLogger),
+  };
+});
 
 // Import mocked modules
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getDatabaseHealth } from '@/lib/db/utils';
-import { logger } from '@/lib/logging';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -239,7 +242,7 @@ describe('GET /api/v1/admin/stats', () => {
       await GET(dummyRequest);
 
       // Assert
-      expect(logger.debug).toHaveBeenCalledWith('Admin stats requested', {
+      expect(mockLogger.debug).toHaveBeenCalledWith('Admin stats requested', {
         userId: adminSession.user.id,
       });
     });
@@ -386,7 +389,7 @@ describe('GET /api/v1/admin/stats', () => {
       await GET(dummyRequest);
 
       // Assert
-      expect(logger.info).toHaveBeenCalledWith('Admin stats fetched', {
+      expect(mockLogger.info).toHaveBeenCalledWith('Admin stats fetched', {
         userId: adminSession.user.id,
       });
     });

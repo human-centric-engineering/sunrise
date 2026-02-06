@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/health/route';
 
 /**
@@ -23,13 +24,21 @@ vi.mock('@/lib/db/utils', () => ({
 }));
 
 // Mock logger to verify error logging
+const mockLoggerWithContext = {
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  debug: vi.fn(),
+  withContext: vi.fn().mockReturnThis(),
+};
+
 vi.mock('@/lib/logging', () => ({
-  logger: {
-    error: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    debug: vi.fn(),
-  },
+  logger: mockLoggerWithContext,
+}));
+
+// Mock getRouteLogger to return scoped logger
+vi.mock('@/lib/api/context', () => ({
+  getRouteLogger: vi.fn(() => Promise.resolve(mockLoggerWithContext)),
 }));
 
 // Mock monitoring utilities
@@ -44,8 +53,14 @@ vi.mock('@/lib/monitoring', () => ({
 
 // Import mocked modules
 import { getDatabaseHealth } from '@/lib/db/utils';
-import { logger } from '@/lib/logging';
 import { getMemoryUsage } from '@/lib/monitoring';
+
+/**
+ * Create a mock NextRequest for testing
+ */
+function createMockRequest(): NextRequest {
+  return new NextRequest('http://localhost:3000/api/health', { method: 'GET' });
+}
 
 /**
  * Helper function to parse JSON response
@@ -104,7 +119,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -123,7 +138,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -139,7 +154,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -156,7 +171,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -172,7 +187,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -188,7 +203,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -207,7 +222,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -230,7 +245,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -245,7 +260,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -261,7 +276,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -282,7 +297,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -298,7 +313,7 @@ describe('GET /api/health', () => {
       vi.mocked(getDatabaseHealth).mockRejectedValue(dbError);
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -307,7 +322,7 @@ describe('GET /api/health', () => {
       expect(body.services.database.connected).toBe(false);
       expect(body.services.database.status).toBe('outage');
       expect(body.error).toBe('Database connection timeout');
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Health check failed', dbError);
+      expect(mockLoggerWithContext.error).toHaveBeenCalledWith('Health check failed', dbError);
     });
 
     it('should handle non-Error exceptions gracefully', async () => {
@@ -315,7 +330,7 @@ describe('GET /api/health', () => {
       vi.mocked(getDatabaseHealth).mockRejectedValue('String error');
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -330,7 +345,7 @@ describe('GET /api/health', () => {
       vi.mocked(getDatabaseHealth).mockRejectedValue(new Error('DB error'));
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -351,7 +366,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -370,7 +385,7 @@ describe('GET /api/health', () => {
       vi.mocked(getDatabaseHealth).mockRejectedValue(new Error('Test error'));
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -385,7 +400,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -405,7 +420,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -423,7 +438,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert
@@ -440,7 +455,11 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const responses = await Promise.all([GET(), GET(), GET()]);
+      const responses = await Promise.all([
+        GET(createMockRequest()),
+        GET(createMockRequest()),
+        GET(createMockRequest()),
+      ]);
 
       // Assert
       expect(responses).toHaveLength(3);
@@ -460,7 +479,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert: 500ms is not > 500, so still operational
@@ -475,7 +494,7 @@ describe('GET /api/health', () => {
       });
 
       // Act
-      const response = await GET();
+      const response = await GET(createMockRequest());
       const body = await parseResponse<HealthResponse>(response);
 
       // Assert: 501ms is > 500, so degraded
