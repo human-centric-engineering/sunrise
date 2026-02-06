@@ -4,7 +4,7 @@ Entry point for the `.context/` documentation system. Load specific domains base
 
 **Project:** Sunrise — Next.js 16 starter template
 **Stack:** Next.js 16, React 19, Prisma 7, Tailwind 4, better-auth
-**Updated:** 2026-02-05
+**Updated:** 2026-02-06
 
 ## How to Use
 
@@ -32,28 +32,32 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Storage**          | `storage/`      | File uploads, S3/Vercel Blob                    |
 | **Analytics**        | `analytics/`    | Event tracking, providers                       |
 | **SEO**              | `seo/`          | Sitemap, robots.txt, metadata                   |
+| **Email**            | `email/`        | React Email templates, sending                  |
+| **Types**            | `types/`        | TypeScript patterns, conventions                |
 | **Commands**         | `commands.md`   | All CLI commands reference                      |
 | **Workflow**         | `workflow.md`   | Git, commits, PR process                        |
 
 ## Task Lookup
 
-| Task                     | Start Here                    | Also See                   |
-| ------------------------ | ----------------------------- | -------------------------- |
-| **Add API endpoint**     | `api/endpoints.md`            | `api/headers.md`           |
-| **Add protected page**   | `architecture/overview.md`    | `auth/integration.md`      |
-| **Add database model**   | `database/schema.md`          | `database/migrations.md`   |
-| **Add OAuth provider**   | `auth/oauth.md`               | `auth/security.md`         |
-| **Protect a route**      | `auth/integration.md`         | `auth/sessions.md`         |
-| **Add environment var**  | `environment/overview.md`     | `environment/reference.md` |
-| **Deploy to production** | `deployment/overview.md`      | `environment/overview.md`  |
-| **Add error handling**   | `errors/overview.md`          | `errors/logging.md`        |
-| **Add rate limiting**    | `security/overview.md`        | `auth/security.md`         |
-| **Write tests**          | `testing/patterns.md`         | `testing/mocking.md`       |
-| **Mock dependencies**    | `testing/mocking.md`          | `testing/async-testing.md` |
-| **Add file uploads**     | `storage/overview.md`         | `security/overview.md`     |
-| **Add analytics**        | `analytics/overview.md`       | `privacy/overview.md`      |
-| **Build admin feature**  | `admin/overview.md`           | `api/admin-endpoints.md`   |
-| **Add health checks**    | `monitoring/health-checks.md` | `monitoring/overview.md`   |
+| Task                      | Start Here                    | Also See                   |
+| ------------------------- | ----------------------------- | -------------------------- |
+| **Add API endpoint**      | `api/endpoints.md`            | `api/headers.md`           |
+| **Add protected page**    | `architecture/overview.md`    | `auth/integration.md`      |
+| **Add database model**    | `database/schema.md`          | `database/migrations.md`   |
+| **Add OAuth provider**    | `auth/oauth.md`               | `auth/security.md`         |
+| **Protect a route**       | `auth/integration.md`         | `auth/sessions.md`         |
+| **Add environment var**   | `environment/overview.md`     | `environment/reference.md` |
+| **Deploy to production**  | `deployment/overview.md`      | `environment/overview.md`  |
+| **Add error handling**    | `errors/overview.md`          | `errors/logging.md`        |
+| **Add rate limiting**     | `security/overview.md`        | `auth/security.md`         |
+| **Write tests**           | `testing/patterns.md`         | `testing/mocking.md`       |
+| **Mock dependencies**     | `testing/mocking.md`          | `testing/async-testing.md` |
+| **Add file uploads**      | `storage/overview.md`         | `security/overview.md`     |
+| **Add analytics**         | `analytics/overview.md`       | `privacy/overview.md`      |
+| **Build admin feature**   | `admin/overview.md`           | `api/admin-endpoints.md`   |
+| **Add health checks**     | `monitoring/health-checks.md` | `monitoring/overview.md`   |
+| **Create email template** | `email/overview.md`           | `ui/forms.md`              |
+| **Add type patterns**     | `types/overview.md`           | `types/conventions.md`     |
 
 ## Architecture Decisions
 
