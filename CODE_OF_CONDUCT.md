@@ -47,7 +47,6 @@ This Code of Conduct applies to all project spaces, including:
 If you experience or witness unacceptable behavior, please report it by:
 
 - Opening a private report via GitHub
-- Emailing: conduct@human-centric.engineering
 
 All reports will be handled with discretion and confidentiality.
 
