@@ -18,14 +18,10 @@ We take security vulnerabilities seriously. If you discover a security issue in 
 
 Instead, report security issues privately:
 
-1. **GitHub Security Advisories** (preferred):
+1. **GitHub Security Advisories**:
    - Go to the [Security tab](https://github.com/human-centric-engineering/sunrise/security/advisories)
    - Click "Report a vulnerability"
    - Provide detailed information about the vulnerability
-
-2. **Email**:
-   - Send details to: security@human-centric.engineering
-   - Include "SECURITY" in the subject line
 
 ### What to Include
 
@@ -90,7 +86,3 @@ Sunrise includes these security features out of the box:
 ### Acknowledgments
 
 We appreciate security researchers who responsibly disclose vulnerabilities. With your permission, we'll acknowledge your contribution in our release notes.
-
-## Questions?
-
-If you have questions about this policy, open a discussion on GitHub or email security@human-centric.engineering.
