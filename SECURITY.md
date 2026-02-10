@@ -90,7 +90,3 @@ Sunrise includes these security features out of the box:
 ### Acknowledgments
 
 We appreciate security researchers who responsibly disclose vulnerabilities. With your permission, we'll acknowledge your contribution in our release notes.
-
-## Questions?
-
-If you have questions about this policy, open a discussion on GitHub or email security@human-centric.engineering.

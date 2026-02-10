@@ -47,7 +47,6 @@ This Code of Conduct applies to all project spaces, including:
 If you experience or witness unacceptable behavior, please report it by:
 
 - Opening a private report via GitHub
-- Emailing: conduct@human-centric.engineering
 
 All reports will be handled with discretion and confidentiality.
 
@@ -72,7 +71,3 @@ Project maintainers have the right and responsibility to remove, edit, or reject
 ## Attribution
 
 This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/), version 2.1.
-
-## Questions?
-
-If you have questions about this Code of Conduct, open a discussion on GitHub or email conduct@human-centric.engineering.
