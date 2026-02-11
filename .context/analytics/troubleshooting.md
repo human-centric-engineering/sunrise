@@ -8,7 +8,7 @@
 
 1. **Check consent:** User must accept optional cookies
 2. **Check provider:** Verify environment variables are set
-3. **Check scripts:** Ensure `AnalyticsScripts` is in layout
+3. **Check scripts:** Ensure `AnalyticsScripts` is in layout with the `nonce` prop passed from `(await headers()).get('x-nonce')` — without it, inline scripts are blocked by CSP
 4. **Check console:** Look for initialization errors
 
 ### Ad Blocker Blocking Scripts
