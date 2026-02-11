@@ -6,6 +6,10 @@ const nextConfig = {
   // Strict mode for React
   reactStrictMode: true,
 
+  // Prevent Next.js from bundling Prisma's WASM query compiler.
+  // Without this, Turbopack/webpack breaks the WASM module loading.
+  serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg'],
+
   // Security headers
   async headers() {
     return [
