@@ -39,7 +39,7 @@ import {
  * </ConsentProvider>
  * ```
  */
-export function AnalyticsScripts() {
+export function AnalyticsScripts({ nonce }: { nonce?: string }) {
   const hasConsent = useHasOptionalConsent();
   const provider = detectProvider();
 
@@ -56,11 +56,11 @@ export function AnalyticsScripts() {
   // Load provider-specific scripts
   switch (provider) {
     case 'ga4':
-      return <GA4Scripts />;
+      return <GA4Scripts nonce={nonce} />;
     case 'posthog':
-      return <PostHogScripts />;
+      return <PostHogScripts nonce={nonce} />;
     case 'plausible':
-      return <PlausibleScripts />;
+      return <PlausibleScripts nonce={nonce} />;
     default:
       return null;
   }
@@ -69,7 +69,7 @@ export function AnalyticsScripts() {
 /**
  * Google Analytics 4 Scripts
  */
-function GA4Scripts() {
+function GA4Scripts({ nonce }: { nonce?: string }) {
   const config = getGA4Config();
 
   if (!config) {
@@ -85,7 +85,7 @@ function GA4Scripts() {
         src={`https://www.googletagmanager.com/gtag/js?id=${measurementId}`}
         strategy="afterInteractive"
       />
-      <Script id="gtag-init" strategy="afterInteractive">
+      <Script id="gtag-init" strategy="afterInteractive" nonce={nonce}>
         {`
           window.dataLayer = window.dataLayer || [];
           function gtag(){dataLayer.push(arguments);}
@@ -100,7 +100,7 @@ function GA4Scripts() {
 /**
  * PostHog Scripts
  */
-function PostHogScripts() {
+function PostHogScripts({ nonce }: { nonce?: string }) {
   const config = getPostHogConfig();
 
   if (!config) {
@@ -112,7 +112,7 @@ function PostHogScripts() {
   // with the full config (capture_pageview, session recording, etc.).
   // The stub's init() also loads the actual library (array.js) when called.
   return (
-    <Script id="posthog-stub" strategy="afterInteractive">
+    <Script id="posthog-stub" strategy="afterInteractive" nonce={nonce}>
       {`
         !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onFeatureFlags".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
       `}
@@ -123,7 +123,7 @@ function PostHogScripts() {
 /**
  * Plausible Scripts
  */
-function PlausibleScripts() {
+function PlausibleScripts({ nonce }: { nonce?: string }) {
   const config = getPlausibleConfig();
 
   if (!config) {
@@ -139,7 +139,7 @@ function PlausibleScripts() {
   return (
     <>
       <Script data-domain={domain} src={scriptUrl} strategy="afterInteractive" />
-      <Script id="plausible-init" strategy="afterInteractive">
+      <Script id="plausible-init" strategy="afterInteractive" nonce={nonce}>
         {`
           window.plausible = window.plausible || function() { (window.plausible.q = window.plausible.q || []).push(arguments) };
         `}

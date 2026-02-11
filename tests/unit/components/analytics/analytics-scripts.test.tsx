@@ -11,6 +11,9 @@
  * - Renders PostHog stub/bootstrap script
  * - Renders Plausible script with domain attribute
  * - Script tags have correct src attributes and data attributes
+ * - Inline scripts receive nonce prop when provided
+ * - External scripts do not receive nonce prop
+ * - Nonce is optional (existing behaviour preserved when omitted)
  *
  * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/analytics/analytics-scripts.tsx
  */
@@ -407,6 +410,147 @@ describe('components/analytics/analytics-scripts', () => {
 
       // Assert
       expect(container.firstChild).toBeNull();
+    });
+  });
+
+  describe('nonce prop', () => {
+    describe('without nonce (optional behaviour preserved)', () => {
+      it('should render GA4 inline script without nonce attribute when nonce is not provided', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('ga4');
+        mockGetGA4Config.mockReturnValue({ measurementId: 'G-TEST123' });
+
+        // Act
+        render(<AnalyticsScripts />);
+
+        // Assert — nonce attribute should be absent (null) when not supplied
+        const initScript = screen.getByTestId('gtag-init');
+        expect(initScript.getAttribute('nonce')).toBeNull();
+      });
+
+      it('should render PostHog inline script without nonce attribute when nonce is not provided', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('posthog');
+        mockGetPostHogConfig.mockReturnValue({
+          apiKey: 'phc_test123',
+          host: 'https://us.i.posthog.com',
+        });
+
+        // Act
+        render(<AnalyticsScripts />);
+
+        // Assert
+        const stubScript = screen.getByTestId('posthog-stub');
+        expect(stubScript.getAttribute('nonce')).toBeNull();
+      });
+
+      it('should render Plausible inline script without nonce attribute when nonce is not provided', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('plausible');
+        mockGetPlausibleConfig.mockReturnValue({
+          domain: 'example.com',
+          host: 'https://plausible.io',
+        });
+
+        // Act
+        render(<AnalyticsScripts />);
+
+        // Assert
+        const initScript = screen.getByTestId('plausible-init');
+        expect(initScript.getAttribute('nonce')).toBeNull();
+      });
+    });
+
+    describe('with nonce provided', () => {
+      it('should pass nonce to GA4 inline gtag-init script', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('ga4');
+        mockGetGA4Config.mockReturnValue({ measurementId: 'G-TEST123' });
+
+        // Act
+        render(<AnalyticsScripts nonce="test-nonce-abc" />);
+
+        // Assert — inline script receives the nonce
+        const initScript = screen.getByTestId('gtag-init');
+        expect(initScript.getAttribute('nonce')).toBe('test-nonce-abc');
+      });
+
+      it('should NOT pass nonce to GA4 external gtag.js script', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('ga4');
+        mockGetGA4Config.mockReturnValue({ measurementId: 'G-ABCD1234' });
+
+        // Act
+        render(<AnalyticsScripts nonce="test-nonce-abc" />);
+
+        // Assert — external script (no id) does NOT get a nonce
+        const externalScript = screen
+          .getAllByTestId('script')
+          .find((el) => el.getAttribute('data-src')?.includes('googletagmanager.com'));
+
+        expect(externalScript).toBeDefined();
+        expect(externalScript?.getAttribute('nonce')).toBeNull();
+      });
+
+      it('should pass nonce to PostHog inline posthog-stub script', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('posthog');
+        mockGetPostHogConfig.mockReturnValue({
+          apiKey: 'phc_test123',
+          host: 'https://us.i.posthog.com',
+        });
+
+        // Act
+        render(<AnalyticsScripts nonce="test-nonce-xyz" />);
+
+        // Assert — inline stub script receives the nonce
+        const stubScript = screen.getByTestId('posthog-stub');
+        expect(stubScript.getAttribute('nonce')).toBe('test-nonce-xyz');
+      });
+
+      it('should pass nonce to Plausible inline plausible-init script', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('plausible');
+        mockGetPlausibleConfig.mockReturnValue({
+          domain: 'example.com',
+          host: 'https://plausible.io',
+        });
+
+        // Act
+        render(<AnalyticsScripts nonce="test-nonce-pla" />);
+
+        // Assert — inline init script receives the nonce
+        const initScript = screen.getByTestId('plausible-init');
+        expect(initScript.getAttribute('nonce')).toBe('test-nonce-pla');
+      });
+
+      it('should NOT pass nonce to Plausible external script.js script', () => {
+        // Arrange
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('plausible');
+        mockGetPlausibleConfig.mockReturnValue({
+          domain: 'example.com',
+          host: 'https://plausible.io',
+        });
+
+        // Act
+        render(<AnalyticsScripts nonce="test-nonce-pla" />);
+
+        // Assert — external script (no id) does NOT get a nonce
+        const externalScript = screen
+          .getAllByTestId('script')
+          .find((el) => el.getAttribute('data-src')?.includes('plausible.io'));
+
+        expect(externalScript).toBeDefined();
+        expect(externalScript?.getAttribute('nonce')).toBeNull();
+      });
     });
   });
 

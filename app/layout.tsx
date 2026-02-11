@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
+import { headers } from 'next/headers';
 import './globals.css';
 import { ThemeProvider } from '@/hooks/use-theme';
 import { ErrorHandlingProvider } from './error-handling-provider';
@@ -14,15 +15,20 @@ export const metadata: Metadata = {
     'A production-ready Next.js starter template designed for rapid application development',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const headersList = await headers();
+  const nonce = headersList.get('x-nonce') ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <script
+          nonce={nonce}
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
@@ -54,7 +60,7 @@ export default function RootLayout({
                 <UserIdentifier />
                 <PageTracker skipInitial />
               </Suspense>
-              <AnalyticsScripts />
+              <AnalyticsScripts nonce={nonce} />
             </AnalyticsProvider>
           </ConsentProvider>
         </ErrorHandlingProvider>

@@ -104,6 +104,30 @@ describe('Security Headers', () => {
       // Production should have report-uri
       expect(config['report-uri']).toBe('/api/csp-report');
     });
+
+    it('should include nonce in script-src in production when nonce is provided', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const testNonce = 'abc123nonce';
+      const config = getCSPConfig(testNonce);
+
+      expect(config['script-src']).toContain(`'nonce-${testNonce}'`);
+    });
+
+    it('should NOT include nonce in script-src in production when no nonce is provided', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const config = getCSPConfig();
+
+      expect(config['script-src'].join(' ')).not.toContain("'nonce-");
+    });
+
+    it('should NOT include nonce in script-src in development even when nonce is provided', () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const testNonce = 'abc123nonce';
+      const config = getCSPConfig(testNonce);
+
+      // Development already has 'unsafe-inline', so nonce is skipped
+      expect(config['script-src'].join(' ')).not.toContain("'nonce-");
+    });
   });
 
   describe('getCSP', () => {
@@ -112,6 +136,14 @@ describe('Security Headers', () => {
 
       expect(typeof csp).toBe('string');
       expect(csp).toContain("default-src 'self'");
+    });
+
+    it('should include nonce in CSP string in production when nonce is provided', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const testNonce = 'xyz789nonce';
+      const csp = getCSP(testNonce);
+
+      expect(csp).toContain(`nonce-${testNonce}`);
     });
   });
 
@@ -147,6 +179,16 @@ describe('Security Headers', () => {
       const prodResponse = NextResponse.next();
       setSecurityHeaders(prodResponse);
       expect(prodResponse.headers.get('Strict-Transport-Security')).toContain('max-age=31536000');
+    });
+
+    it('should include nonce in Content-Security-Policy header in production when nonce is provided', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const testNonce = 'header-test-nonce';
+      const response = NextResponse.next();
+      setSecurityHeaders(response, testNonce);
+
+      const csp = response.headers.get('Content-Security-Policy');
+      expect(csp).toContain(`nonce-${testNonce}`);
     });
   });
 

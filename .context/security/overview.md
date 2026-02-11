@@ -30,8 +30,11 @@ All security headers are managed through the `setSecurityHeaders()` function, ca
 import { setSecurityHeaders } from '@/lib/security/headers';
 
 // In proxy.ts
-const response = NextResponse.next();
-setSecurityHeaders(response);
+const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+const requestHeaders = new Headers(request.headers);
+requestHeaders.set('x-nonce', nonce);
+const response = NextResponse.next({ request: { headers: requestHeaders } });
+setSecurityHeaders(response, nonce);
 ```
 
 **Headers Applied**:
@@ -74,11 +77,11 @@ object-src 'none';
 
 ### Production CSP
 
-Strict policy with violation reporting:
+Strict policy with violation reporting. `script-src` is extended per-request with a nonce:
 
 ```
 default-src 'self';
-script-src 'self';
+script-src 'self' 'nonce-{per-request-nonce}';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: https:;
 font-src 'self' data:;
@@ -90,16 +93,18 @@ object-src 'none';
 report-uri /api/csp-report;
 ```
 
+The nonce is generated in `proxy.ts` per request and forwarded via the `x-nonce` request header. The base `PRODUCTION_CSP` config defines `script-src 'self'`; `getCSPConfig(nonce)` appends `'nonce-{nonce}'` at runtime.
+
 ### CSP Usage
 
 ```typescript
-import { getCSP, getCSPConfig, extendCSP } from '@/lib/security/headers';
+import { getCSP, getCSPConfig, extendCSP, buildCSP } from '@/lib/security/headers';
 
-// Get CSP string for current environment
-const csp = getCSP();
+// Get CSP string with nonce (used by proxy middleware)
+const csp = getCSP(nonce);
 
-// Get raw CSP config object
-const config = getCSPConfig();
+// Get raw CSP config with nonce
+const config = getCSPConfig(nonce);
 
 // Extend base CSP with additional directives
 const extendedCSP = extendCSP({
@@ -108,7 +113,6 @@ const extendedCSP = extendCSP({
 });
 
 // Build CSP string from config object
-import { buildCSP } from '@/lib/security/headers';
 const csp = buildCSP(customConfig);
 ```
 
@@ -449,6 +453,20 @@ export async function POST(request: Request) {
 - Next.js injects inline styles for certain features
 
 **Trade-offs**: Slightly reduced XSS protection for styles
+
+### CSP: Per-Request Nonce for script-src
+
+**Decision**: Generate a per-request nonce in `proxy.ts` and add `'nonce-{nonce}'` to `script-src` in production
+**Rationale**:
+
+- Eliminates the need for `'unsafe-inline'` in `script-src`
+- Next.js injects inline hydration scripts that must be allowed; a nonce permits them without opening the door to all inline scripts
+- Nonce approach is more secure than `'unsafe-inline'` or hash-based allowlisting (hashes must be recomputed on every build)
+
+**Trade-offs**:
+
+- Root layout must be an `async` server component to read the `x-nonce` request header via `headers()`
+- `suppressHydrationWarning` is required on nonced `<script>` tags — browsers remove the `nonce` attribute from the DOM after reading it, causing a React hydration mismatch if not suppressed
 
 ### X-Frame-Options: DENY
 

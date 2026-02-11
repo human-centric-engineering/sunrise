@@ -103,6 +103,22 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
 
 ## Analytics Components
 
+### AnalyticsScripts
+
+Loads provider-specific scripts after consent is given. Place in the root layout and pass the CSP nonce from the `x-nonce` request header.
+
+```tsx
+// In app/layout.tsx (server component)
+import { headers } from 'next/headers';
+
+const nonce = (await headers()).get('x-nonce') ?? undefined;
+
+// ...
+<AnalyticsScripts nonce={nonce} />;
+```
+
+The `nonce` prop is required for CSP nonce-based script allowlisting in production. Without it, inline analytics scripts will be blocked by the Content Security Policy.
+
 ### UserIdentifier
 
 Automatically identifies authenticated users to the analytics system and tracks the initial page view. Place this in the root layout alongside `AnalyticsProvider`.
