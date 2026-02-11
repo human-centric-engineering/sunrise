@@ -6,14 +6,17 @@ HTTP header management for security, performance, and API functionality.
 
 **Implemented in:** `lib/security/headers.ts`, `proxy.ts`
 
-All security headers are set via `setSecurityHeaders()` in the proxy middleware:
+All security headers are set via `setSecurityHeaders()` in the proxy middleware. A per-request nonce is generated and forwarded to server components via the `x-nonce` request header:
 
 ```typescript
 // proxy.ts
 import { setSecurityHeaders } from '@/lib/security/headers';
 
-const response = NextResponse.next();
-setSecurityHeaders(response);
+const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+const requestHeaders = new Headers(request.headers);
+requestHeaders.set('x-nonce', nonce);
+const response = NextResponse.next({ request: { headers: requestHeaders } });
+setSecurityHeaders(response, nonce);
 ```
 
 ### Headers Applied
@@ -49,8 +52,31 @@ Strict for maximum security:
 
 - No `'unsafe-eval'`
 - `'unsafe-inline'` only for styles (required for Tailwind)
+- Per-request nonce in `script-src` (`'nonce-{nonce}'`) — allows Next.js hydration scripts without `'unsafe-inline'`
 - `frame-ancestors: 'none'` prevents clickjacking
 - CSP violation reporting to `/api/csp-report`
+
+### Nonce-Based Script Allowlisting
+
+Middleware generates a cryptographic nonce on every request and embeds it in `script-src`. This allows specific inline `<script>` tags to execute without requiring `'unsafe-inline'`.
+
+**How it works:**
+
+1. `proxy.ts` generates a base64-encoded UUID nonce and sets it on the outbound request as `x-nonce`
+2. Server components read the nonce via `headers().get('x-nonce')` and apply it to inline `<script>` tags
+3. The same nonce is passed to `setSecurityHeaders()`, which inserts `'nonce-{nonce}'` into `script-src`
+
+**Reading the nonce in a server component:**
+
+```typescript
+import { headers } from 'next/headers';
+
+const headersList = await headers();
+const nonce = headersList.get('x-nonce') ?? undefined;
+// <script nonce={nonce} suppressHydrationWarning ...>
+```
+
+**`suppressHydrationWarning` is required** on nonced `<script>` tags. Browsers remove `nonce` attributes from the DOM after applying CSP, so React hydration would see a mismatch between server-rendered HTML (with nonce) and the stripped DOM (without nonce). `suppressHydrationWarning` prevents the hydration error.
 
 ### Analytics Provider Allowlisting
 
