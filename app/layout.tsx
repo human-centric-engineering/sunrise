@@ -60,7 +60,7 @@ export default async function RootLayout({
                 <UserIdentifier />
                 <PageTracker skipInitial />
               </Suspense>
-              <AnalyticsScripts />
+              <AnalyticsScripts nonce={nonce} />
             </AnalyticsProvider>
           </ConsentProvider>
         </ErrorHandlingProvider>
