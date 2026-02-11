@@ -179,11 +179,17 @@ function getAnalyticsCSPDomains(): { scriptSrc: string[]; connectSrc: string[] }
  *
  * Automatically includes analytics provider domains when configured.
  *
+ * @param nonce - Optional per-request nonce for inline script allowlisting
  * @returns CSP configuration object
  */
-export function getCSPConfig(): CSPConfig {
+export function getCSPConfig(nonce?: string): CSPConfig {
   const base =
     process.env.NODE_ENV === 'production' ? { ...PRODUCTION_CSP } : { ...DEVELOPMENT_CSP };
+
+  // Add per-request nonce to script-src (production only — dev already has 'unsafe-inline')
+  if (nonce && process.env.NODE_ENV === 'production') {
+    base['script-src'] = [...base['script-src'], `'nonce-${nonce}'`];
+  }
 
   // Add analytics provider domains
   const analytics = getAnalyticsCSPDomains();
@@ -200,23 +206,24 @@ export function getCSPConfig(): CSPConfig {
 /**
  * Get CSP header value for current environment
  *
+ * @param nonce - Optional per-request nonce for inline script allowlisting
  * @returns CSP header string
  *
  * @example
  * ```typescript
- * const csp = getCSP();
+ * const csp = getCSP(nonce);
  * response.headers.set('Content-Security-Policy', csp);
  * ```
  */
-export function getCSP(): string {
-  return buildCSP(getCSPConfig());
+export function getCSP(nonce?: string): string {
+  return buildCSP(getCSPConfig(nonce));
 }
 
 /**
  * Set all security headers on a NextResponse
  *
  * Headers set:
- * - Content-Security-Policy (environment-specific)
+ * - Content-Security-Policy (environment-specific, nonce-based in production)
  * - X-Frame-Options: SAMEORIGIN
  * - X-Content-Type-Options: nosniff
  * - Referrer-Policy: strict-origin-when-cross-origin
@@ -228,18 +235,20 @@ export function getCSP(): string {
  * Modern browsers ignore it when CSP is present.
  *
  * @param response - NextResponse to add headers to
+ * @param nonce - Per-request nonce to include in script-src
  *
  * @example
  * ```typescript
  * // In proxy.ts middleware
+ * const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
  * const response = NextResponse.next();
- * setSecurityHeaders(response);
+ * setSecurityHeaders(response, nonce);
  * return response;
  * ```
  */
-export function setSecurityHeaders(response: NextResponse): void {
-  // Content Security Policy - environment-specific
-  response.headers.set('Content-Security-Policy', getCSP());
+export function setSecurityHeaders(response: NextResponse, nonce?: string): void {
+  // Content Security Policy - environment-specific, nonce-based in production
+  response.headers.set('Content-Security-Policy', getCSP(nonce));
 
   // Prevent clickjacking - DENY matches CSP frame-ancestors: 'none'
   // Note: CSP frame-ancestors supersedes this in modern browsers

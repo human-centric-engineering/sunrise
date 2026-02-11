@@ -33,7 +33,7 @@ vi.mock('@/lib/logging/context', () => ({
 
 // Mock security headers
 vi.mock('@/lib/security/headers', () => ({
-  setSecurityHeaders: vi.fn((response) => response),
+  setSecurityHeaders: vi.fn(),
 }));
 
 // Mock rate limiting
@@ -508,7 +508,7 @@ describe('proxy middleware', () => {
       const response = proxy(request);
 
       // Assert - security headers are set (proxy no longer excludes /api/auth/*)
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response);
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -525,7 +525,7 @@ describe('proxy middleware', () => {
       const response = proxy(request);
 
       // Assert
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response);
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -542,7 +542,7 @@ describe('proxy middleware', () => {
       const response = proxy(request);
 
       // Assert
-      expect(setSecurityHeaders).toHaveBeenCalledWith(response);
+      expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -960,6 +960,42 @@ describe('proxy middleware', () => {
         // Assert - each call checks auth limiter with same IP
         expect(authLimiter.check).toHaveBeenCalledWith('192.168.1.100');
       });
+    });
+  });
+
+  describe('nonce generation', () => {
+    it('should call setSecurityHeaders with a nonce string on normal requests', async () => {
+      // Import mocked module
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+
+      // Arrange
+      const request = createMockRequest('/', { cookies: {} });
+
+      // Act
+      proxy(request);
+
+      // Assert - setSecurityHeaders is called with the response and a nonce string
+      expect(setSecurityHeaders).toHaveBeenCalledTimes(1);
+      expect(setSecurityHeaders).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    });
+
+    it('should forward a non-empty nonce string as the second argument to setSecurityHeaders', async () => {
+      // Import mocked module
+      const { setSecurityHeaders } = await import('@/lib/security/headers');
+
+      // Arrange
+      const request = createMockRequest('/dashboard', {
+        cookies: { 'better-auth.session_token': 'valid-token' },
+      });
+
+      // Act
+      proxy(request);
+
+      // Assert - the nonce argument is a non-empty string
+      expect(setSecurityHeaders).toHaveBeenCalledTimes(1);
+      const [, nonceArg] = vi.mocked(setSecurityHeaders).mock.calls[0];
+      expect(typeof nonceArg).toBe('string');
+      expect((nonceArg as string).length).toBeGreaterThan(0);
     });
   });
 });

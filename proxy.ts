@@ -99,6 +99,11 @@ export function proxy(request: NextRequest): NextResponse | Response {
   // Check if request already has an ID (from client propagation)
   const requestId = request.headers.get('x-request-id') || generateRequestId();
 
+  // Generate a per-request nonce for CSP inline script allowlisting.
+  // Forwarded to layouts via x-nonce request header so server components
+  // can add it to any inline <script> tags they render.
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+
   // ==========================================================================
   // Security: Origin validation (CSRF protection for state-changing requests)
   // ==========================================================================
@@ -214,7 +219,15 @@ export function proxy(request: NextRequest): NextResponse | Response {
   // ==========================================================================
   // Response: Add security headers and request ID
   // ==========================================================================
-  const response = NextResponse.next();
+
+  // Forward nonce to server components via request header so layouts can
+  // add it to inline <script> tags (e.g. theme detection script in root layout).
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
 
   // Add request ID to response headers for tracing
   // This allows clients to:
@@ -224,8 +237,9 @@ export function proxy(request: NextRequest): NextResponse | Response {
   response.headers.set('x-request-id', requestId);
 
   // Set all security headers (CSP, X-Frame-Options, etc.)
+  // Nonce is included in script-src so Next.js hydration scripts are allowed.
   // NOTE: X-XSS-Protection is intentionally NOT set (deprecated, can cause issues)
-  setSecurityHeaders(response);
+  setSecurityHeaders(response, nonce);
 
   // Add rate limit headers for API routes (informational)
   // Reuse the result from check() above — no separate peek() needed.
