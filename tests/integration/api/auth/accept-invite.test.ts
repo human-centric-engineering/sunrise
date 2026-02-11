@@ -53,11 +53,13 @@ vi.mock('@/lib/utils/invitation-token', () => ({
 
 // Note: getRouteLogger is mocked globally in tests/setup.ts
 
-// Mock env module
-vi.mock('@/lib/env', () => ({
-  env: {
-    BETTER_AUTH_URL: 'http://localhost:3000',
-    NODE_ENV: 'test',
+// Mock auth config - use auth.api directly instead of global.fetch
+vi.mock('@/lib/auth/config', () => ({
+  auth: {
+    api: {
+      signUpEmail: vi.fn(),
+      signInEmail: vi.fn(),
+    },
   },
 }));
 
@@ -102,6 +104,7 @@ import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
 import { getRouteLogger } from '@/lib/api/context';
 import { sendEmail } from '@/lib/email/send';
+import { auth } from '@/lib/auth/config';
 
 /**
  * Helper function to create a mock NextRequest
@@ -142,12 +145,6 @@ interface ErrorResponse {
     details?: Record<string, unknown>;
   };
 }
-
-/**
- * Mock global fetch for better-auth signup endpoint
- */
-const mockFetch = vi.fn();
-global.fetch = mockFetch as any;
 
 /**
  * Test Suite: POST /api/auth/accept-invite
@@ -197,43 +194,26 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock better-auth signup and sign-in responses
       const createdUserId = 'user-id-123';
-      mockFetch
-        // First call: signup (creates user for the FIRST TIME)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: {
-              id: createdUserId,
-              name: 'John Doe',
-              email: 'john@example.com',
-              emailVerified: false, // Not verified yet by better-auth
-            },
-          }),
-          headers: {
-            getSetCookie: () => [], // No cookies from signup (verification required)
-          },
-        })
-        // Second call: sign-in (after emailVerified is set)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: {
-              id: createdUserId,
-              name: 'John Doe',
-              email: 'john@example.com',
-              emailVerified: true,
-            },
-            session: {
-              token: 'session-token-123',
-            },
-          }),
-          headers: {
-            getSetCookie: () => [
-              'better-auth.session_token=session-token-123; Path=/; HttpOnly; Secure; SameSite=Lax',
-              'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
-            ],
-          },
-        });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: {
+          id: createdUserId,
+          name: 'John Doe',
+          email: 'john@example.com',
+          emailVerified: false, // Not verified yet by better-auth
+        },
+        token: null,
+      } as any);
+
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          getSetCookie: () => [
+            'better-auth.session_token=session-token-123; Path=/; HttpOnly; Secure; SameSite=Lax',
+            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+          ],
+        },
+      } as any);
 
       // Mock user update (emailVerified set immediately after signup)
       vi.mocked(prisma.user.update).mockResolvedValue({
@@ -286,21 +266,13 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: User was created via better-auth signup (FIRST TIME)
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/auth/sign-up/email',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-            'X-Better-Auth': 'true',
-          }),
-          body: JSON.stringify({
-            name: 'John Doe',
-            email: 'john@example.com',
-            password: 'SecurePassword123!',
-          }),
-        })
-      );
+      expect(vi.mocked(auth.api.signUpEmail)).toHaveBeenCalledWith({
+        body: {
+          name: 'John Doe',
+          email: 'john@example.com',
+          password: 'SecurePassword123!',
+        },
+      });
 
       // Assert: Email was marked as verified (same User ID used)
       // For USER role (default), role is undefined in the update
@@ -352,43 +324,26 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock better-auth signup response (creates USER by default)
       const createdUserId = 'admin-id-123';
-      mockFetch
-        // First call: signup
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: {
-              id: createdUserId,
-              name: 'Admin User',
-              email: 'admin@example.com',
-              emailVerified: false,
-            },
-          }),
-          headers: {
-            getSetCookie: () => [], // No cookies from signup (verification required)
-          },
-        })
-        // Second call: sign-in (after emailVerified is set)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: {
-              id: createdUserId,
-              name: 'Admin User',
-              email: 'admin@example.com',
-              emailVerified: true,
-            },
-            session: {
-              token: 'session-token-456',
-            },
-          }),
-          headers: {
-            getSetCookie: () => [
-              'better-auth.session_token=session-token-456; Path=/; HttpOnly; Secure; SameSite=Lax',
-              'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
-            ],
-          },
-        });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: {
+          id: createdUserId,
+          name: 'Admin User',
+          email: 'admin@example.com',
+          emailVerified: false,
+        },
+        token: null,
+      } as any);
+
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          getSetCookie: () => [
+            'better-auth.session_token=session-token-456; Path=/; HttpOnly; Secure; SameSite=Lax',
+            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
+          ],
+        },
+      } as any);
 
       // Mock user update (role and emailVerified set together)
       vi.mocked(prisma.user.update).mockResolvedValue({
@@ -424,21 +379,13 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: Sign-in endpoint was called AFTER user update
-      expect(mockFetch).toHaveBeenNthCalledWith(
-        2,
-        'http://localhost:3000/api/auth/sign-in/email',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-            'X-Better-Auth': 'true',
-          }),
-          body: JSON.stringify({
-            email: 'admin@example.com',
-            password: 'SecurePassword456!',
-          }),
-        })
-      );
+      expect(vi.mocked(auth.api.signInEmail)).toHaveBeenCalledWith({
+        body: {
+          email: 'admin@example.com',
+          password: 'SecurePassword456!',
+        },
+        asResponse: true,
+      });
     });
 
     it.skip('REMOVED: Welcome email now sent by database hook, not by accept-invite endpoint', async () => {
@@ -475,33 +422,18 @@ describe('POST /api/auth/accept-invite', () => {
         'better-auth.state=xyz789; Path=/; HttpOnly; Secure; SameSite=Lax',
       ];
 
-      mockFetch
-        // First call: signup
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: { id: createdUserId, name: 'Cookie User', email: 'cookies@example.com' },
-          }),
-          headers: {
-            getSetCookie: () => [],
-          },
-        })
-        // Second call: sign-in (returns session cookies)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: {
-              id: createdUserId,
-              name: 'Cookie User',
-              email: 'cookies@example.com',
-              emailVerified: true,
-            },
-            session: { token: 'session-token-abc' },
-          }),
-          headers: {
-            getSetCookie: () => sessionCookies,
-          },
-        });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: { id: createdUserId, name: 'Cookie User', email: 'cookies@example.com' },
+        token: null,
+      } as any);
+
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          getSetCookie: () => sessionCookies,
+        },
+      } as any);
 
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
@@ -563,28 +495,18 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       const createdUserId = 'user-id-no-cookies';
-      mockFetch
-        // First call: signup
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: { id: createdUserId },
-          }),
-          headers: {
-            getSetCookie: () => [],
-          },
-        })
-        // Second call: sign-in (no cookies returned)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: { id: createdUserId, emailVerified: true },
-            session: { token: 'session-token' },
-          }),
-          headers: {
-            getSetCookie: () => [],
-          },
-        });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: { id: createdUserId },
+        token: null,
+      } as any);
+
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          getSetCookie: () => [],
+        },
+      } as any);
 
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
@@ -712,7 +634,7 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: No signup attempt was made
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled();
     });
 
     it('should return 404 when invitation has no metadata', async () => {
@@ -754,7 +676,7 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: No signup attempt was made
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled();
     });
   });
 
@@ -876,13 +798,8 @@ describe('POST /api/auth/accept-invite', () => {
       };
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
-      // Mock better-auth signup failure
-      mockFetch.mockResolvedValue({
-        ok: false,
-        json: async () => ({
-          message: 'Email already exists',
-        }),
-      });
+      // Mock better-auth signup failure - auth.api throws on error
+      vi.mocked(auth.api.signUpEmail).mockRejectedValue(new Error('Email already exists'));
 
       // Act: Call the accept-invite endpoint
       const request = createMockRequest({
@@ -900,11 +817,11 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.code).toBe('INTERNAL_ERROR');
       expect(body.error.message).toBe('Failed to create user account');
 
-      // Assert: Error logged
+      // Assert: Error logged - second arg is the actual Error object (not undefined)
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
       expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth signup failed',
-        undefined,
+        expect.any(Error),
         expect.objectContaining({
           email: 'error@example.com',
           error: 'Email already exists',
@@ -912,61 +829,10 @@ describe('POST /api/auth/accept-invite', () => {
       );
     });
 
-    it('should handle better-auth signup response JSON parsing failure', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      // Mock invitation metadata
-      const mockInvitation = {
-        id: 'invitation-id-json-error',
-        identifier: 'invitation:jsonerror@example.com',
-        value: 'valid-token',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'JSON Error User',
-          role: 'USER',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      // Mock better-auth signup failure with JSON parsing error
-      mockFetch.mockResolvedValue({
-        ok: false,
-        json: async () => {
-          throw new Error('Invalid JSON');
-        },
-      });
-
-      // Act: Call the accept-invite endpoint
-      const request = createMockRequest({
-        token: 'valid-token',
-        email: 'jsonerror@example.com',
-        password: 'SecurePassword123!',
-        confirmPassword: 'SecurePassword123!',
-      });
-      const response = await POST(request);
-      const body = await parseResponse<ErrorResponse>(response);
-
-      // Assert: Error response with fallback message
-      expect(response.status).toBe(500);
-      expect(body.success).toBe(false);
-      expect(body.error.code).toBe('INTERNAL_ERROR');
-      expect(body.error.message).toBe('Failed to create user account');
-
-      // Assert: Error logged with fallback error message
-      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'better-auth signup failed',
-        undefined,
-        expect.objectContaining({
-          email: 'jsonerror@example.com',
-          error: 'Signup failed',
-        })
-      );
+    it.skip('REMOVED: auth.api throws on failure, no JSON parsing', async () => {
+      // This test is no longer applicable because auth.api throws on failure
+      // rather than returning a response with ok: false, so there is no JSON
+      // parsing step that can fail independently.
     });
 
     it.skip('REMOVED: Session is now kept for auto-login, not deleted', async () => {
@@ -1037,26 +903,15 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Mock better-auth signup response
       const createdUserId = 'user-role-error';
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          user: {
-            id: createdUserId,
-            name: 'Role Error User',
-            email: 'roleerror@example.com',
-            emailVerified: false,
-          },
-          session: {
-            token: 'session-token-role',
-          },
-        }),
-        headers: {
-          getSetCookie: () => [
-            'better-auth.session_token=session-token-role; Path=/; HttpOnly; Secure; SameSite=Lax',
-            'better-auth.state=some-state; Path=/; HttpOnly; Secure; SameSite=Lax',
-          ],
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: {
+          id: createdUserId,
+          name: 'Role Error User',
+          email: 'roleerror@example.com',
+          emailVerified: false,
         },
-      });
+        token: null,
+      } as any);
 
       // Mock role update failure
       vi.mocked(prisma.user.update)
@@ -1115,24 +970,18 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       const createdUserId = 'user-signin-error';
-      mockFetch
-        // First call: signup (succeeds)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: { id: createdUserId, email: 'signinerror@example.com' },
-          }),
-          headers: {
-            getSetCookie: () => [],
-          },
-        })
-        // Second call: sign-in (fails)
-        .mockResolvedValueOnce({
-          ok: false,
-          json: async () => ({
-            message: 'Email verification required',
-          }),
-        });
+      // Signup succeeds
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: { id: createdUserId, email: 'signinerror@example.com' },
+        token: null,
+      } as any);
+
+      // Sign-in fails
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: { getSetCookie: () => [] },
+      } as any);
 
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
@@ -1157,7 +1006,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.code).toBe('INTERNAL_ERROR');
       expect(body.error.message).toBe('User created but failed to create session');
 
-      // Assert: Sign-in error logged
+      // Assert: Sign-in error logged with status (not error message string)
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
       expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth sign-in failed after invitation acceptance',
@@ -1165,83 +1014,15 @@ describe('POST /api/auth/accept-invite', () => {
         expect.objectContaining({
           email: 'signinerror@example.com',
           userId: createdUserId,
-          error: 'Email verification required',
+          status: 403,
         })
       );
     });
 
-    it('should handle sign-in response JSON parsing failure', async () => {
-      // Arrange: Mock valid token validation
-      vi.mocked(validateInvitationToken).mockResolvedValue(true);
-
-      const mockInvitation = {
-        id: 'invitation-id-signin-json',
-        identifier: 'invitation:signinjson@example.com',
-        value: 'valid-token',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        metadata: {
-          name: 'Sign-in JSON Error',
-          role: 'USER',
-          invitedBy: 'admin@example.com',
-          invitedAt: '2024-01-01T00:00:00.000Z',
-        },
-      };
-      vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
-
-      const createdUserId = 'user-signin-json';
-      mockFetch
-        // First call: signup (succeeds)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            user: { id: createdUserId },
-          }),
-          headers: {
-            getSetCookie: () => [],
-          },
-        })
-        // Second call: sign-in (JSON parsing fails)
-        .mockResolvedValueOnce({
-          ok: false,
-          json: async () => {
-            throw new Error('Invalid JSON');
-          },
-        });
-
-      vi.mocked(prisma.user.update).mockResolvedValue({
-        id: createdUserId,
-        emailVerified: true,
-      } as any);
-
-      vi.mocked(deleteInvitationToken).mockResolvedValue();
-
-      // Act
-      const request = createMockRequest({
-        token: 'valid-token',
-        email: 'signinjson@example.com',
-        password: 'SecurePassword123!',
-        confirmPassword: 'SecurePassword123!',
-      });
-      const response = await POST(request);
-      const body = await parseResponse<ErrorResponse>(response);
-
-      // Assert: Error response with fallback message
-      expect(response.status).toBe(500);
-      expect(body.success).toBe(false);
-      expect(body.error.message).toBe('User created but failed to create session');
-
-      // Assert: Error logged with fallback message
-      const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'better-auth sign-in failed after invitation acceptance',
-        undefined,
-        expect.objectContaining({
-          email: 'signinjson@example.com',
-          error: 'Sign-in failed',
-        })
-      );
+    it.skip('REMOVED: auth.api returns Response, no JSON parsing needed', async () => {
+      // This test is no longer applicable because auth.api.signInEmail with
+      // asResponse: true returns a Response object directly, not raw JSON.
+      // There is no separate JSON parsing step that can fail independently.
     });
 
     it('should return 500 when user already exists (duplicate email)', async () => {
@@ -1264,13 +1045,10 @@ describe('POST /api/auth/accept-invite', () => {
       };
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
-      // Mock better-auth signup failure (email exists)
-      mockFetch.mockResolvedValue({
-        ok: false,
-        json: async () => ({
-          message: 'User with this email already exists',
-        }),
-      });
+      // Mock better-auth signup failure (email exists) - auth.api throws on error
+      vi.mocked(auth.api.signUpEmail).mockRejectedValue(
+        new Error('User with this email already exists')
+      );
 
       // Act
       const request = createMockRequest({
@@ -1288,11 +1066,11 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.code).toBe('INTERNAL_ERROR');
       expect(body.error.message).toBe('Failed to create user account');
 
-      // Assert: Error logged
+      // Assert: Error logged - second arg is the actual Error object (not undefined)
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
       expect(mockLogger.error).toHaveBeenCalledWith(
         'better-auth signup failed',
-        undefined,
+        expect.any(Error),
         expect.objectContaining({
           email: 'duplicate@example.com',
           error: 'User with this email already exists',
@@ -1327,17 +1105,16 @@ describe('POST /api/auth/accept-invite', () => {
       vi.mocked(prisma.verification.findFirst).mockResolvedValue(mockInvitation as any);
 
       const createdUserId = 'user-deletion-test';
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: { id: createdUserId } }),
-          headers: { getSetCookie: () => [] },
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: { id: createdUserId }, session: { token: 'token' } }),
-          headers: { getSetCookie: () => [] },
-        });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({
+        user: { id: createdUserId },
+        token: null,
+      } as any);
+
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { getSetCookie: () => [] },
+      } as any);
 
       vi.mocked(prisma.user.update).mockResolvedValue({
         id: createdUserId,
@@ -1367,7 +1144,7 @@ describe('POST /api/auth/accept-invite', () => {
       // Assert: Verify call order (update, delete, sign-in)
       const updateCallOrder = vi.mocked(prisma.user.update).mock.invocationCallOrder[0];
       const deleteCallOrder = vi.mocked(deleteInvitationToken).mock.invocationCallOrder[0];
-      const signInCallOrder = mockFetch.mock.invocationCallOrder[1]; // Second fetch is sign-in
+      const signInCallOrder = vi.mocked(auth.api.signInEmail).mock.invocationCallOrder[0];
 
       expect(updateCallOrder).toBeLessThan(deleteCallOrder);
       expect(deleteCallOrder).toBeLessThan(signInCallOrder);
