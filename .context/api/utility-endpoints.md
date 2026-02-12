@@ -167,6 +167,8 @@ POST /api/v1/contact
 - Uses `ContactNotificationEmail` template
 - Includes sender's email in `Reply-To` header
 
+The email is **awaited** but non-fatal — failures are caught and logged without affecting the 200 response. This ensures the Resend HTTP request completes before the serverless function terminates. See [Non-Blocking Async Side Effects](./endpoints.md#non-blocking-async-side-effects) for the pattern.
+
 **Note**: Submissions are always stored in the database regardless of email configuration.
 
 ## Related Documentation

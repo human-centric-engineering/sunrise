@@ -111,7 +111,9 @@ export async function POST(request: NextRequest) {
       subject: body.subject,
     });
 
-    // 4. Send email notification to admin (non-blocking)
+    // 4. Send email notification to admin (awaited, non-fatal)
+    //    Awaited so the Resend HTTP request completes before the serverless function exits.
+    //    Email failure is caught and logged without affecting the 200 response.
     const adminEmail = env.CONTACT_EMAIL || env.EMAIL_FROM;
 
     if (!adminEmail) {
@@ -119,36 +121,36 @@ export async function POST(request: NextRequest) {
         submissionId: submission.id,
       });
     } else {
-      sendEmail({
-        to: adminEmail,
-        subject: `[Sunrise Contact] ${body.subject}`,
-        react: ContactNotificationEmail({
-          name: body.name,
-          email: body.email,
-          subject: body.subject,
-          message: body.message,
-          submittedAt: submission.createdAt,
-        }),
-        replyTo: body.email,
-      })
-        .then((result) => {
-          if (result.success) {
-            log.info('Contact notification email sent', {
-              submissionId: submission.id,
-              emailId: result.id,
-            });
-          } else {
-            log.warn('Failed to send contact notification email', {
-              submissionId: submission.id,
-              error: result.error,
-            });
-          }
-        })
-        .catch((error) => {
-          log.error('Error sending contact notification email', error, {
-            submissionId: submission.id,
-          });
+      try {
+        const emailResult = await sendEmail({
+          to: adminEmail,
+          subject: `[Sunrise Contact] ${body.subject}`,
+          react: ContactNotificationEmail({
+            name: body.name,
+            email: body.email,
+            subject: body.subject,
+            message: body.message,
+            submittedAt: submission.createdAt,
+          }),
+          replyTo: body.email,
         });
+
+        if (emailResult.success) {
+          log.info('Contact notification email sent', {
+            submissionId: submission.id,
+            emailId: emailResult.id,
+          });
+        } else {
+          log.warn('Failed to send contact notification email', {
+            submissionId: submission.id,
+            error: emailResult.error,
+          });
+        }
+      } catch (emailError) {
+        log.error('Error sending contact notification email', emailError, {
+          submissionId: submission.id,
+        });
+      }
     }
 
     // 5. Return success response
