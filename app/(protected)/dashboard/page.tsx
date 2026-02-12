@@ -84,7 +84,7 @@ export default async function DashboardPage() {
               <AvatarFallback className="text-lg">{initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <h2 className="text-2xl font-bold">Welcome back, {user.name.split(' ')[0]}!</h2>
+              <h2 className="text-2xl font-bold">Hello, {user.name.split(' ')[0]}!</h2>
               <p className="text-muted-foreground">{user.email}</p>
             </div>
           </div>
