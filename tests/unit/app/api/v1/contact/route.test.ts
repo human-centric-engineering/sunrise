@@ -246,26 +246,22 @@ describe('POST /api/v1/contact', () => {
       // Act: start the handler but do NOT await it yet
       const handlerPromise = POST(request);
 
-      // Assert: give other microtasks a turn; the handler should still be pending
-      // because sendEmail has not resolved yet
+      // Track whether the handler has resolved
       let settled = false;
       void handlerPromise.then(() => {
         settled = true;
       });
 
-      // Flush microtask queue without resolving sendEmail
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(settled).toBe(false); // handler is blocked waiting for sendEmail
+      // Wait until sendEmail has actually been called (drains however many microtasks
+      // the handler needs to reach that point), then assert the handler is still pending.
+      // This avoids a false pass from checking too early, before sendEmail is reached.
+      await vi.waitFor(() => expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(1));
+      expect(settled).toBe(false); // handler is suspended waiting for sendEmail to resolve
 
       // Now resolve sendEmail and let the handler finish
       resolveSendEmail({ success: true, status: 'sent', id: 'email-reg-001' });
       await handlerPromise;
 
-      // Assert: sendEmail was called exactly once and the handler resolved
-      expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(1);
       expect(settled).toBe(true);
     });
   });

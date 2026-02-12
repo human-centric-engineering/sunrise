@@ -111,7 +111,9 @@ export async function POST(request: NextRequest) {
       subject: body.subject,
     });
 
-    // 4. Send email notification to admin (non-blocking)
+    // 4. Send email notification to admin (awaited, non-fatal)
+    //    Awaited so the Resend HTTP request completes before the serverless function exits.
+    //    Email failure is caught and logged without affecting the 200 response.
     const adminEmail = env.CONTACT_EMAIL || env.EMAIL_FROM;
 
     if (!adminEmail) {
