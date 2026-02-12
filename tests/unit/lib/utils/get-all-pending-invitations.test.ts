@@ -253,18 +253,33 @@ describe('getAllPendingInvitations()', () => {
 
     it('should paginate correctly (page 2)', async () => {
       // Arrange
-      const mockVerifications = Array.from({ length: 25 }, (_, i) =>
-        createMockVerification(`user${i}@example.com`, `User ${i}`, 'USER', 'admin-1', 7)
-      );
+      // Each item gets a distinct invitedAt (i * 1000ms apart) so the default
+      // invitedAt-desc sort is deterministic and pagination slices correctly.
+      const now = Date.now();
+      const mockVerifications = Array.from({ length: 25 }, (_, i) => ({
+        ...createMockVerification(`user${i}@example.com`, `User ${i}`, 'USER', 'admin-1', 7),
+        createdAt: new Date(now + i * 1000),
+        metadata: {
+          name: `User ${i}`,
+          role: 'USER',
+          invitedBy: 'admin-1',
+          invitedAt: new Date(now + i * 1000).toISOString(),
+        },
+      }));
 
       vi.mocked(prisma.verification.findMany).mockResolvedValue(mockVerifications);
       vi.mocked(prisma.verification.count).mockResolvedValue(25);
       vi.mocked(prisma.user.findUnique).mockResolvedValue(createMockUser('admin-1', 'Admin'));
 
-      // Act
-      const result = await getAllPendingInvitations({ page: 2, limit: 10 });
+      // Act: sort by invitedAt asc so order matches creation index (user0=oldest, user24=newest)
+      const result = await getAllPendingInvitations({
+        page: 2,
+        limit: 10,
+        sortBy: 'invitedAt',
+        sortOrder: 'asc',
+      });
 
-      // Assert: Should return items 11-20
+      // Assert: page 2 (skip=10) returns items at indices 10–19, i.e. user10–user19
       expect(result.invitations).toHaveLength(10);
       expect(result.invitations[0].email).toBe('user10@example.com');
       expect(result.invitations[9].email).toBe('user19@example.com');
