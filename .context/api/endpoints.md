@@ -127,6 +127,38 @@ const { page, limit } = paginationQuerySchema.parse(searchParams);
 const userId = cuidSchema.parse(params.id);
 ```
 
+### Non-Blocking Async Side Effects
+
+For operations like email notifications that must not fail the request but **must complete** before the function returns (e.g. on Vercel serverless), use `await` inside a dedicated `try-catch` — not fire-and-forget.
+
+**Don't:**
+
+```typescript
+// Fire-and-forget — killed mid-flight on Vercel before Resend receives the request
+sendEmail({ to, subject, react }).catch((error) => {
+  log.error('Failed to send email', error);
+});
+```
+
+**Do:**
+
+```typescript
+// Awaited but non-fatal — function stays alive until the network call completes
+try {
+  const result = await sendEmail({ to, subject, react });
+  if (result.success) {
+    log.info('Email sent', { id: result.id });
+  } else {
+    log.warn('Email failed', { error: result.error });
+  }
+} catch (error) {
+  log.error('Email error', error);
+}
+// Handler continues to return 200 — email failure is never surfaced to the caller
+```
+
+The outer route `try-catch` is reserved for fatal errors that return 4xx/5xx. The inner `try-catch` isolates the side effect so its failure is swallowed after logging. See `app/api/v1/contact/route.ts` for the canonical example.
+
 ## Error Codes
 
 | Code                     | HTTP Status | Meaning                             |
