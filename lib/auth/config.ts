@@ -276,6 +276,11 @@ export const auth = betterAuth({
                 if (isValidToken) {
                   const invitation = await getValidInvitation(invitationEmail);
 
+                  // Delete token NOW to prevent race: token must be consumed before user
+                  // creation, so a concurrent OAuth signup cannot reuse the same single-use token.
+                  await deleteInvitationToken(invitationEmail);
+                  logger.info('OAuth invitation token consumed', { email: invitationEmail });
+
                   if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
                     logger.info('Applying invitation role to OAuth user before creation', {
                       email: user.email,
@@ -313,7 +318,7 @@ export const auth = betterAuth({
          * For OAuth invitation flow:
          * 1. Check if OAuth state contains invitation data (invitationToken, invitationEmail)
          * 2. Validate invitation token and email match
-         * 3. Delete invitation token (single-use) — role was applied in before hook
+         * 3. Token was already deleted in before hook (single-use, prevents race conditions)
          * 4. Send welcome email (email already verified by OAuth provider)
          *
          * Note: Role assignment happens in the before hook so the user is created
@@ -352,59 +357,7 @@ export const auth = betterAuth({
           let isPasswordInvitation = false;
 
           try {
-            // Handle OAuth invitation flow
-            if (isOAuthSignup) {
-              // Get OAuth state (contains additionalData from client)
-              const oauthState = await getOAuthState();
-              const parsedState = oauthInvitationStateSchema.safeParse(oauthState);
-
-              // Check if invitation data is present in OAuth state additionalData
-              const invitationToken = parsedState.success
-                ? (parsedState.data.invitationToken ?? null)
-                : null;
-              const invitationEmail = parsedState.success
-                ? (parsedState.data.invitationEmail ?? null)
-                : null;
-
-              if (invitationToken && invitationEmail && user.email === invitationEmail) {
-                logger.info('Processing OAuth invitation', {
-                  userId: user.id,
-                  email: user.email,
-                });
-
-                // Validate invitation token
-                const isValidToken = await validateInvitationToken(
-                  invitationEmail,
-                  invitationToken
-                );
-
-                if (isValidToken) {
-                  // Role was already applied in the before hook (before user creation),
-                  // so the session has the correct role immediately. No update needed here.
-
-                  // Delete invitation token LAST (after using metadata)
-                  // Single-use token - must be deleted regardless of role application
-                  try {
-                    await deleteInvitationToken(invitationEmail);
-                    logger.info('OAuth invitation token deleted successfully', {
-                      userId: user.id,
-                      email: invitationEmail,
-                    });
-                  } catch (deleteError) {
-                    // Log deletion failure explicitly but don't fail user creation
-                    logger.error('Failed to delete OAuth invitation token', deleteError, {
-                      userId: user.id,
-                      email: invitationEmail,
-                    });
-                  }
-
-                  logger.info('OAuth invitation accepted successfully', {
-                    userId: user.id,
-                    email: user.email,
-                  });
-                }
-              }
-            } else {
+            if (!isOAuthSignup) {
               // Check for password invitation acceptance (non-expired invitation)
               const invitation = await getValidInvitation(user.email);
 

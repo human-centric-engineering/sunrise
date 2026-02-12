@@ -4,8 +4,8 @@
  * Tests the better-auth database hooks that handle:
  * - OAuth invitation email validation BEFORE user creation (before hook)
  * - Role assignment BEFORE user creation via return value (before hook)
+ * - OAuth invitation token deletion in before hook (prevents race conditions)
  * - Default user preferences setting for all new users (after hook)
- * - OAuth invitation token deletion after acceptance (after hook)
  * - Welcome email sending for all new users (after hook)
  * - Non-blocking error handling
  *
@@ -23,13 +23,11 @@
  * - Default preferences set for OAuth signup
  * - Default preferences set for email/password signup
  * - Non-blocking error handling (preferences failures don't break signup)
- * - OAuth invitation with valid token (token deleted, welcome email sent)
- * - OAuth invitation with invalid token (no token deletion)
+ * - OAuth signup: no invitation processing (token already deleted in before hook)
  * - Welcome email sent for OAuth signup
  * - Welcome email sent for email/password signup
  * - Non-blocking error handling (email failures don't break signup)
  * - Non-blocking error handling (invitation failures don't break signup)
- * - Invitation token deletion after successful acceptance
  *
  * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 232-468)
  */
@@ -171,6 +169,12 @@ async function simulateBeforeHook(
             invitationEmail
           )) as InvitationRecord | null;
 
+          // Delete token NOW to prevent race condition
+          // @ts-expect-error - vi.mocked types don't infer callability properly
+          await mocks.deleteInvitationToken(invitationEmail);
+          // @ts-expect-error - vi.mocked types don't infer callability properly
+          mocks.logger.info('OAuth invitation token consumed', { email: invitationEmail });
+
           if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
             // @ts-expect-error - vi.mocked types don't infer callability properly
             mocks.logger.info('Applying invitation role to OAuth user before creation', {
@@ -238,61 +242,7 @@ async function simulateDatabaseHook(
   let isPasswordInvitation = false;
 
   try {
-    // Handle OAuth invitation flow
-    if (isOAuthSignup) {
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      const oauthState = await mocks.getOAuthState();
-
-      const parsed =
-        oauthState && typeof oauthState === 'object'
-          ? { success: true as const, data: oauthState }
-          : { success: false as const };
-
-      const invitationToken = parsed.success ? (parsed.data.invitationToken ?? null) : null;
-      const invitationEmail = parsed.success ? (parsed.data.invitationEmail ?? null) : null;
-
-      if (invitationToken && invitationEmail && user.email === invitationEmail) {
-        // @ts-expect-error - vi.mocked types don't infer callability properly
-        mocks.logger.info('Processing OAuth invitation', {
-          userId: user.id,
-          email: user.email,
-        });
-
-        // Validate invitation token
-        // @ts-expect-error - vi.mocked types don't infer callability properly
-        const isValidToken = await mocks.validateInvitationToken(
-          invitationEmail,
-          invitationToken as string
-        );
-
-        if (isValidToken) {
-          // Role was already applied in the before hook — no prisma.user.update here.
-
-          // Delete invitation token (single-use)
-          try {
-            // @ts-expect-error - vi.mocked types don't infer callability properly
-            await mocks.deleteInvitationToken(invitationEmail);
-            // @ts-expect-error - vi.mocked types don't infer callability properly
-            mocks.logger.info('OAuth invitation token deleted successfully', {
-              userId: user.id,
-              email: invitationEmail,
-            });
-          } catch (deleteError) {
-            // @ts-expect-error - vi.mocked types don't infer callability properly
-            mocks.logger.error('Failed to delete OAuth invitation token', deleteError, {
-              userId: user.id,
-              email: invitationEmail,
-            });
-          }
-
-          // @ts-expect-error - vi.mocked types don't infer callability properly
-          mocks.logger.info('OAuth invitation accepted successfully', {
-            userId: user.id,
-            email: user.email,
-          });
-        }
-      }
-    } else {
+    if (!isOAuthSignup) {
       // Check for password invitation acceptance
       // @ts-expect-error - vi.mocked types don't infer callability properly
       const invitation = await mocks.getValidInvitation(user.email);
@@ -431,6 +381,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
       mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+      mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
       const ctx = { path: '/api/auth/callback/google' };
 
@@ -446,6 +397,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         'valid-token-admin'
       );
       expect(mocks.getValidInvitation).toHaveBeenCalledWith('admin@example.com');
+      // Token consumed immediately in before hook to prevent race conditions
+      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('admin@example.com');
+      expect(mocks.logger.info).toHaveBeenCalledWith('OAuth invitation token consumed', {
+        email: 'admin@example.com',
+      });
       expect(mocks.logger.info).toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',
         { email: mockUser.email, role: 'ADMIN' }
@@ -478,6 +434,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       });
       mocks.validateInvitationToken.mockResolvedValue(true);
       mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+      mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
       const ctx = { path: '/api/auth/callback/google' };
 
@@ -487,6 +444,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // Assert: user returned unchanged (USER is default, no role override needed)
       expect(result.data).toEqual(mockUser);
       expect(result.data.role).toBe('USER');
+
+      // Token is still consumed even for USER-role invitations (prevent reuse)
+      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
 
       // Role-apply log should NOT have been called
       expect(mocks.logger.info).not.toHaveBeenCalledWith(
@@ -560,6 +520,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // Assert: user returned unchanged (invalid token means no role change)
       expect(result.data).toEqual(mockUser);
       expect(mocks.getValidInvitation).not.toHaveBeenCalled();
+      // Token not consumed — validation failed so we never reached deleteInvitationToken
+      expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
       expect(mocks.logger.info).not.toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',
         expect.any(Object)
@@ -613,23 +575,13 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
   describe('databaseHooks.user.create.after', () => {
     describe('OAuth invitation flow', () => {
-      it('should process OAuth invitation with valid token, delete token, and send welcome email', async () => {
-        // Arrange: Create OAuth user and invitation context
+      it('should set preferences and send welcome email for OAuth invitation user (token already deleted in before hook)', async () => {
+        // Arrange: Create OAuth user — role and token deletion were handled in the before hook
         const mockUser = createMockUser({
           id: 'oauth-user-123',
           email: 'invited@example.com',
           role: 'ADMIN', // Role was already set by the before hook
         });
-
-        // Mock OAuth state with invitation data
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'valid-token-123',
-          invitationEmail: 'invited@example.com',
-        });
-
-        // Mock valid token
-        mocks.validateInvitationToken.mockResolvedValue(true);
-        mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
         // Mock preferences update (the only update call in after hook)
         mocks.prisma.user.update.mockResolvedValueOnce({
@@ -658,27 +610,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           },
         });
 
-        // Assert: Token was deleted
-        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('invited@example.com');
-
-        // Assert: Invitation accepted log
-        expect(mocks.logger.info).toHaveBeenCalledWith(
-          'OAuth invitation token deleted successfully',
-          {
-            userId: mockUser.id,
-            email: 'invited@example.com',
-          }
-        );
-        expect(mocks.logger.info).toHaveBeenCalledWith('OAuth invitation accepted successfully', {
-          userId: mockUser.id,
-          email: mockUser.email,
-        });
-
-        // Assert: No role-update log (role was applied in before hook)
-        expect(mocks.logger.info).not.toHaveBeenCalledWith(
-          'Applied invitation role to OAuth user',
-          expect.any(Object)
-        );
+        // Assert: Token deletion and validation do NOT happen in after hook
+        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
 
         // Assert: Welcome email was sent
         expect(mocks.sendEmail).toHaveBeenCalledWith(
@@ -689,21 +623,13 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
-      it('should not apply role for USER role (default role) — only preferences and token deletion', async () => {
-        // Arrange: OAuth user with USER role in invitation
+      it('should only set preferences for OAuth signup — no invitation processing in after hook', async () => {
+        // Arrange: OAuth user with USER role — token was already deleted in the before hook
         const mockUser = createMockUser({
           id: 'oauth-user-456',
           email: 'user@example.com',
           role: 'USER',
         });
-
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'valid-token-456',
-          invitationEmail: 'user@example.com',
-        });
-
-        mocks.validateInvitationToken.mockResolvedValue(true);
-        mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
         mocks.prisma.user.update.mockResolvedValue({
           ...mockUser,
@@ -715,7 +641,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         // Act
         await simulateDatabaseHook(mocks, mockUser, ctx);
 
-        // Assert: Only ONE update call (preferences only — USER role needs no update)
+        // Assert: Only ONE update call (preferences only)
         const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
         expect(updateCalls.length).toBe(1);
         expect(updateCalls[0][0]).toEqual({
@@ -731,59 +657,32 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           },
         });
 
-        // Assert: Token was still deleted
-        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
-
-        // Assert: No role-related log
-        expect(mocks.logger.info).not.toHaveBeenCalledWith(
-          'Applied invitation role to OAuth user',
-          expect.any(Object)
-        );
+        // Assert: No invitation processing in after hook
+        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
       });
 
-      it('should gracefully handle invalid invitation token', async () => {
-        // Arrange
+      it('should complete OAuth signup without invitation processing in after hook', async () => {
+        // Token validation and deletion now happen in the before hook.
+        // The after hook does not inspect OAuth invitation state at all.
         const mockUser = createMockUser({
           id: 'oauth-user-789',
           email: 'invalid@example.com',
         });
-
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'invalid-token-789',
-          invitationEmail: 'invalid@example.com',
-        });
-
-        mocks.validateInvitationToken.mockResolvedValue(false);
 
         const ctx = { path: '/api/auth/callback/google' };
 
         // Act
         await simulateDatabaseHook(mocks, mockUser, ctx);
 
-        // Assert: Validation was attempted
-        expect(mocks.validateInvitationToken).toHaveBeenCalledWith(
-          'invalid@example.com',
-          'invalid-token-789'
-        );
-
-        // Assert: No token deletion (invalid token)
+        // Assert: No invitation processing in after hook
+        expect(mocks.getOAuthState).not.toHaveBeenCalled();
+        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
         expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
 
-        // Assert: Only preferences update (no role update)
+        // Assert: Only preferences update
         const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
         expect(updateCalls.length).toBe(1);
-        expect(updateCalls[0][0]).toEqual({
-          where: { id: mockUser.id },
-          data: {
-            preferences: {
-              email: {
-                marketing: false,
-                productUpdates: true,
-                securityAlerts: true,
-              },
-            },
-          },
-        });
 
         // Assert: User creation continued (welcome email sent)
         expect(mocks.sendEmail).toHaveBeenCalledWith(
@@ -794,24 +693,20 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
-      it('should gracefully handle mismatched invitation email in after hook', async () => {
-        // Arrange: OAuth user email doesn't match invitation email
+      it('should gracefully handle OAuth signup — after hook does not process invitation state', async () => {
+        // After hook no longer reads OAuth state at all; before hook handles all invitation logic
         const mockUser = createMockUser({
           id: 'oauth-user-999',
           email: 'actual@example.com',
         });
 
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'token-999',
-          invitationEmail: 'different@example.com', // Mismatch!
-        });
-
         const ctx = { path: '/api/auth/callback/google' };
 
-        // Act: after hook does NOT throw on mismatch (before hook handles rejection)
+        // Act: after hook does not touch invitation state
         await simulateDatabaseHook(mocks, mockUser, ctx);
 
         // Assert: No invitation processing
+        expect(mocks.getOAuthState).not.toHaveBeenCalled();
         expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
         expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
 
@@ -839,21 +734,20 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
-      it('should handle missing OAuth state gracefully', async () => {
-        // Arrange
+      it('should set preferences and send welcome email for OAuth signup without invitation', async () => {
+        // After hook no longer reads OAuth state — it skips all invitation processing for OAuth
         const mockUser = createMockUser({
           id: 'oauth-user-000',
           email: 'nostate@example.com',
         });
-
-        mocks.getOAuthState.mockResolvedValue(null);
 
         const ctx = { path: '/api/auth/callback/google' };
 
         // Act
         await simulateDatabaseHook(mocks, mockUser, ctx);
 
-        // Assert: No invitation processing
+        // Assert: No invitation processing at all
+        expect(mocks.getOAuthState).not.toHaveBeenCalled();
         expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
         expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
 
@@ -865,19 +759,14 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
-      it('should not block user creation if invitation processing fails', async () => {
-        // Arrange
+      it('should not block user creation if preferences update fails for OAuth signup', async () => {
+        // After hook no longer processes invitations for OAuth — only preferences + welcome email
         const mockUser = createMockUser({
           id: 'oauth-user-error',
           email: 'error@example.com',
         });
 
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'token-error',
-          invitationEmail: 'error@example.com',
-        });
-
-        mocks.validateInvitationToken.mockRejectedValue(new Error('Database connection failed'));
+        mocks.prisma.user.update.mockRejectedValueOnce(new Error('Database connection failed'));
 
         const ctx = { path: '/api/auth/callback/google' };
 
@@ -886,12 +775,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         // Assert: Error was logged
         expect(mocks.logger.error).toHaveBeenCalledWith(
-          'Error processing invitation in database hook',
+          'Failed to set default preferences',
           expect.any(Error),
-          {
-            userId: mockUser.id,
-            email: mockUser.email,
-          }
+          { userId: mockUser.id }
         );
 
         // Assert: Welcome email still sent
@@ -990,16 +876,17 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         });
       });
 
-      it('should send welcome email even when invitation processing fails', async () => {
-        // Arrange
+      it('should send welcome email even when invitation processing fails (password signup)', async () => {
+        // Invitation processing for password signups calls getValidInvitation — verify
+        // a failure there doesn't block the welcome email.
         const mockUser = createMockUser({
           id: 'invitation-fail-user',
           email: 'invfail@example.com',
         });
 
-        mocks.getOAuthState.mockRejectedValue(new Error('OAuth state error'));
+        mocks.getValidInvitation.mockRejectedValue(new Error('Database error'));
 
-        const ctx = { path: '/api/auth/callback/google' };
+        const ctx = { path: '/api/auth/signup' };
 
         // Act
         await simulateDatabaseHook(mocks, mockUser, ctx);
@@ -1132,21 +1019,14 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
-      it('should set preferences before invitation token deletion (preferences first)', async () => {
-        // Arrange: OAuth user with valid invitation
+      it('should set preferences only in after hook — token deletion is in before hook', async () => {
+        // Token deletion happens in the before hook now, not the after hook.
+        // After hook only sets preferences and sends welcome email.
         const mockUser = createMockUser({
           id: 'oauth-user-role-prefs',
           email: 'roleprefs@example.com',
           role: 'ADMIN', // Role was set by the before hook
         });
-
-        mocks.getOAuthState.mockResolvedValue({
-          invitationToken: 'valid-token-role',
-          invitationEmail: 'roleprefs@example.com',
-        });
-
-        mocks.validateInvitationToken.mockResolvedValue(true);
-        mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
         mocks.prisma.user.update.mockResolvedValueOnce({
           ...mockUser,
@@ -1175,8 +1055,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           },
         });
 
-        // Assert: Token was deleted after preferences
-        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('roleprefs@example.com');
+        // Assert: No token deletion in after hook — it was done in the before hook
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
       });
     });
 

@@ -300,53 +300,81 @@ export default function AcceptInvitePage({ searchParams }) {
 }
 ```
 
-**OAuth invitation flow is handled automatically:**
+**OAuth invitation flow is handled automatically in the `before` hook:**
 
 ```typescript
-// lib/auth/config.ts - Database hook (automatic)
+// lib/auth/config.ts - Database hooks (automatic)
 databaseHooks: {
   user: {
     create: {
-      after: async (user, ctx) => {
-        // Detect OAuth signup
-        if (ctx?.path?.includes('/callback/')) {
-          const oauthState = await getOAuthState();
+      // before hook: validates email match, applies role, deletes token — all BEFORE user creation
+      before: async (user, ctx) => {
+        const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
 
-          // Check for invitation data in OAuth state
-          if (oauthState.invitationToken && oauthState.invitationEmail) {
-            // Validate token
-            const isValid = await validateInvitationToken(
-              oauthState.invitationEmail,
-              oauthState.invitationToken
-            );
+        if (isOAuthSignup) {
+          const oauthState = await getOAuthState();
+          const invitationEmail = oauthState?.invitationEmail;
+          const invitationToken = oauthState?.invitationToken;
+
+          // Reject if OAuth email doesn't match invitation email
+          if (invitationEmail && user.email !== invitationEmail) {
+            throw new APIError('BAD_REQUEST', {
+              message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
+            });
+          }
+
+          // Validate token, delete it immediately, apply role to user before creation
+          if (invitationToken && invitationEmail && user.email === invitationEmail) {
+            const isValid = await validateInvitationToken(invitationEmail, invitationToken);
 
             if (isValid) {
-              // Get invitation metadata
-              const invitation = await prisma.verification.findFirst({
-                where: { identifier: `invitation:${oauthState.invitationEmail}` },
-              });
+              const invitation = await getValidInvitation(invitationEmail);
 
-              // Apply role from invitation
-              if (invitation?.metadata?.role) {
-                await prisma.user.update({
-                  where: { id: user.id },
-                  data: { role: invitation.metadata.role },
-                });
+              // Token deleted BEFORE user creation to close concurrent-signup race condition
+              await deleteInvitationToken(invitationEmail);
+              logger.info('OAuth invitation token consumed', { email: invitationEmail });
+
+              if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
+                // Return merged user data — user is created with the correct role immediately
+                return { data: { ...user, role: invitation.metadata.role } };
               }
-
-              // Delete invitation token (single-use)
-              await deleteInvitationToken(oauthState.invitationEmail);
             }
           }
         }
 
-        // Send welcome email (all signups)
-        await sendEmail({
-          to: user.email,
-          subject: 'Welcome to Sunrise',
-          react: WelcomeEmail({ userName: user.name, userEmail: user.email }),
+        return { data: user };
+      },
+
+      // after hook: sets preferences, detects password invitations, sends welcome email
+      // Does NOT handle OAuth invitation tokens — those are fully processed in the before hook.
+      after: async (user, ctx) => {
+        const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+
+        // Set default preferences for all new users
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { preferences: DEFAULT_USER_PREFERENCES },
         });
-      };
+
+        // Detect password invitation acceptance
+        let isPasswordInvitation = false;
+        if (!isOAuthSignup) {
+          const invitation = await getValidInvitation(user.email);
+          if (invitation) isPasswordInvitation = true;
+        }
+
+        // Send welcome email (OAuth and password-invitation users: immediately;
+        // password signup with verification enabled: after email verification)
+        const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
+        if (shouldSendWelcomeNow) {
+          await sendEmail({
+            to: user.email,
+            subject: 'Welcome to Sunrise',
+            react: WelcomeEmail({ userName: user.name, userEmail: user.email }),
+          });
+        }
+      },
     }
   }
 }
@@ -573,8 +601,9 @@ curl -X POST http://localhost:3000/api/auth/sign-in/email \
 
 - OAuth button added to accept-invite page with `mode="invitation"`
 - Invitation token/email passed through OAuth state
-- Database hook detects OAuth invitation in state and applies role automatically
-- Non-blocking: Invitation processing failures don't prevent OAuth signup
+- `before` database hook validates email match, deletes the token (before user creation to prevent race conditions), and returns the user data with the invitation role merged in — so the user is created with the correct role and the session reflects it immediately
+- `after` hook does NOT process OAuth invitations; it only detects password invitations
+- Non-blocking: Invitation processing failures (other than email mismatch) don't prevent OAuth signup
 
 **Trade-offs**:
 
