@@ -19,9 +19,14 @@ If either command fails, report the failures and stop. Do not proceed to the ant
 
 ### Step 2: Identify changed files
 
-Run `git diff --name-only main...HEAD -- '*.ts' '*.tsx'` to get the list of files changed on this branch. If no files changed, report "No changes to scan" and stop.
+Run `git diff --name-only main...HEAD` (no file filter) to get the complete list of all files changed on this branch.
 
-Filter out test files (`*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`) for the anti-pattern scan. Test files have different rules and are not subject to these checks.
+From that list, build two separate sets:
+
+- **TypeScript files** (`*.ts`, `*.tsx`) excluding test files (`*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`) — used for the anti-pattern scan in Step 3
+- **Documentation files** (any path starting with `.context/`) — used for the documentation check in Step 4
+
+If there are no TypeScript files and no documentation files, report "No changes to scan" and stop.
 
 ### Step 3: Scan for anti-patterns
 
@@ -44,12 +49,19 @@ For any new `page.tsx` files added under `app/`, check that the same route segme
 
 ### Step 4: Check .context/ documentation
 
-If any files under `.context/` were modified, read them and check for:
+If any `.context/` files were identified in Step 2, read them and perform two checks:
 
-- References to `NextAuth` (the project uses `better-auth`)
-- References to `next-auth` (the project uses `better-auth`)
+**4a. Stale content check** — flag any of the following:
+
+- References to `NextAuth` or `next-auth` (the project uses `better-auth`)
 - References to Tailwind v3 patterns like `@apply` with `dark:` (the project uses Tailwind v4)
-- Outdated file paths that no longer exist
+- File paths referenced in the docs that no longer exist in the repository
+
+**4b. Accuracy against code changes** — cross-reference the documentation against the TypeScript files changed on this branch:
+
+- Read the changed `.context/` files and the changed TypeScript source files together
+- Check that code examples, function signatures, configuration values, and described behaviours in the docs still match the actual code
+- Flag any documentation that describes something different from what the code now does (e.g. a CSP directive listed in the docs but absent from the implementation, a function signature that no longer matches, a config option that was renamed or removed)
 
 ### Step 5: Output summary
 

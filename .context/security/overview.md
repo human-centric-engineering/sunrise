@@ -67,8 +67,11 @@ default-src 'self';
 script-src 'self' 'unsafe-eval' 'unsafe-inline';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: https: blob:;
+media-src 'self' blob:;
 font-src 'self' data:;
 connect-src 'self' webpack://* ws://localhost:* wss://localhost:*;
+worker-src 'self' blob:;
+frame-src 'self';
 frame-ancestors 'none';
 form-action 'self';
 base-uri 'self';
@@ -83,13 +86,17 @@ Strict policy with violation reporting. `script-src` is extended per-request wit
 default-src 'self';
 script-src 'self' 'nonce-{per-request-nonce}';
 style-src 'self' 'unsafe-inline';
-img-src 'self' data: https:;
+img-src 'self' data: https: blob:;
+media-src 'self' blob:;
 font-src 'self' data:;
 connect-src 'self';
+worker-src 'self' blob:;
+frame-src 'self';
 frame-ancestors 'none';
 form-action 'self';
 base-uri 'self';
 object-src 'none';
+upgrade-insecure-requests;
 report-uri /api/csp-report;
 ```
 

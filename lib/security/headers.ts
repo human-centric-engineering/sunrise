@@ -30,12 +30,16 @@ export interface CSPConfig {
   'script-src': string[];
   'style-src': string[];
   'img-src': string[];
+  'media-src': string[];
   'font-src': string[];
   'connect-src': string[];
+  'worker-src': string[];
+  'frame-src': string[];
   'frame-ancestors': string[];
   'form-action': string[];
   'base-uri': string[];
   'object-src': string[];
+  'upgrade-insecure-requests'?: boolean;
   'report-uri'?: string;
 }
 
@@ -53,8 +57,11 @@ const DEVELOPMENT_CSP: CSPConfig = {
   'script-src': ["'self'", "'unsafe-eval'", "'unsafe-inline'"],
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'https:', 'blob:'],
+  'media-src': ["'self'", 'blob:'],
   'font-src': ["'self'", 'data:'],
   'connect-src': ["'self'", 'webpack://*', 'ws://localhost:*', 'wss://localhost:*'],
+  'worker-src': ["'self'", 'blob:'],
+  'frame-src': ["'self'"],
   'frame-ancestors': ["'none'"],
   'form-action': ["'self'"],
   'base-uri': ["'self'"],
@@ -77,14 +84,20 @@ const PRODUCTION_CSP: CSPConfig = {
   'default-src': ["'self'"],
   'script-src': ["'self'"],
   'style-src': ["'self'", "'unsafe-inline'"], // Required for Tailwind
-  'img-src': ["'self'", 'data:', 'https:'],
+  'img-src': ["'self'", 'data:', 'https:', 'blob:'],
+  'media-src': ["'self'", 'blob:'],
   'font-src': ["'self'", 'data:'],
+  // External fetch/XHR must be proxied through server-side API routes — client-side
+  // calls to external URLs are intentionally blocked here to prevent data exfiltration.
   'connect-src': ["'self'"],
+  'worker-src': ["'self'", 'blob:'],
+  'frame-src': ["'self'"],
   'frame-ancestors': ["'none'"],
   'form-action': ["'self'"],
   'base-uri': ["'self'"],
   'object-src': ["'none'"],
-  'report-uri': '/api/csp-report', // Optional: enable violation reporting
+  'upgrade-insecure-requests': true,
+  'report-uri': '/api/csp-report',
 };
 
 /**
@@ -107,12 +120,20 @@ export function buildCSP(config: CSPConfig): string {
   directives.push(`script-src ${config['script-src'].join(' ')}`);
   directives.push(`style-src ${config['style-src'].join(' ')}`);
   directives.push(`img-src ${config['img-src'].join(' ')}`);
+  directives.push(`media-src ${config['media-src'].join(' ')}`);
   directives.push(`font-src ${config['font-src'].join(' ')}`);
   directives.push(`connect-src ${config['connect-src'].join(' ')}`);
+  directives.push(`worker-src ${config['worker-src'].join(' ')}`);
+  directives.push(`frame-src ${config['frame-src'].join(' ')}`);
   directives.push(`frame-ancestors ${config['frame-ancestors'].join(' ')}`);
   directives.push(`form-action ${config['form-action'].join(' ')}`);
   directives.push(`base-uri ${config['base-uri'].join(' ')}`);
   directives.push(`object-src ${config['object-src'].join(' ')}`);
+
+  // upgrade-insecure-requests is a value-less directive
+  if (config['upgrade-insecure-requests']) {
+    directives.push('upgrade-insecure-requests');
+  }
 
   // Optional report-uri (production only, for monitoring CSP violations)
   if (config['report-uri']) {
@@ -294,14 +315,17 @@ export function extendCSP(additions: Partial<CSPConfig>): string {
   const base = getCSPConfig();
   const extended: CSPConfig = { ...base };
 
-  // Array directive keys (excluding report-uri which is a string)
-  const arrayDirectives: (keyof Omit<CSPConfig, 'report-uri'>)[] = [
+  // Array directive keys (excluding value-less and string directives)
+  const arrayDirectives: (keyof Omit<CSPConfig, 'report-uri' | 'upgrade-insecure-requests'>)[] = [
     'default-src',
     'script-src',
     'style-src',
     'img-src',
+    'media-src',
     'font-src',
     'connect-src',
+    'worker-src',
+    'frame-src',
     'frame-ancestors',
     'form-action',
     'base-uri',

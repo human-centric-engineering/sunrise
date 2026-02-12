@@ -142,27 +142,48 @@ databaseHooks: {
   user: {
     create: {
       /**
-       * before hook - Validates OAuth invitation email matching
+       * before hook - Validates OAuth invitation email match, applies role, deletes token
        *
-       * For OAuth invitation flow, the user's OAuth email MUST match the
-       * invitation email. This prevents users from accepting an invitation
-       * sent to one email address using a different OAuth account.
+       * For OAuth invitation flow:
+       * 1. Validates the user's OAuth email matches the invitation email.
+       * 2. Validates the invitation token and retrieves invitation metadata.
+       * 3. Deletes the token immediately (before user creation) to close a race
+       *    condition where two concurrent OAuth signups could both pass validation.
+       * 4. Returns the user data with the invitation role merged in, so the user
+       *    is created with the correct role and the session reflects it immediately.
        *
-       * Throws APIError if validation fails, preventing user creation.
+       * Throws APIError if email validation fails, preventing user creation.
        */
       before: async (user, ctx) => {
         const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
 
         if (isOAuthSignup) {
-          // Get OAuth state containing invitation data
           const oauthState = await getOAuthState();
           const invitationEmail = oauthState?.invitationEmail;
+          const invitationToken = oauthState?.invitationToken;
 
           // If invitation data is present, email MUST match
           if (invitationEmail && user.email !== invitationEmail) {
             throw new APIError('BAD_REQUEST', {
-              message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address.`,
+              message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
             });
+          }
+
+          // Validate token, consume it, and apply role before user creation
+          if (invitationToken && invitationEmail && user.email === invitationEmail) {
+            const isValidToken = await validateInvitationToken(invitationEmail, invitationToken);
+
+            if (isValidToken) {
+              const invitation = await getValidInvitation(invitationEmail);
+
+              // Delete token NOW — prevents concurrent OAuth signups from reusing it
+              await deleteInvitationToken(invitationEmail);
+              logger.info('OAuth invitation token consumed', { email: invitationEmail });
+
+              if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
+                return { data: { ...user, role: invitation.metadata.role } };
+              }
+            }
           }
         }
 
@@ -170,7 +191,7 @@ databaseHooks: {
       },
 
       /**
-       * after hook - Sets preferences, processes invitations, sends welcome email
+       * after hook - Sets preferences, detects password invitations, sends welcome email
        *
        * Triggered after a new user is created via:
        * - Email/password signup
@@ -178,35 +199,38 @@ databaseHooks: {
        *
        * Responsibilities:
        * 1. Set default user preferences
-       * 2. Process invitation acceptance (apply role, delete token)
-       * 3. Send welcome email (timing depends on verification requirement)
+       * 2. Detect password invitation acceptance (to send welcome email immediately)
+       * 3. Send welcome email (timing depends on signup method and verification config)
+       *
+       * Note: OAuth invitation token deletion and role assignment both happen in the
+       * before hook. The after hook does NOT process OAuth invitations.
        *
        * Non-blocking - logs errors but doesn't prevent signup completion.
        */
       after: async (user, ctx) => {
+        const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+
         // 1. Set default preferences
         await prisma.user.update({
           where: { id: user.id },
           data: { preferences: DEFAULT_USER_PREFERENCES }
         });
 
-        // 2. Process invitation acceptance
-        // For OAuth: read invitation data from OAuth state
-        // For password: check for valid invitation by email
-        const invitation = await getValidInvitation(user.email);
-        if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { role: invitation.metadata.role }
-          });
-          await deleteInvitationToken(user.email);
+        // 2. Detect password invitation acceptance
+        let isPasswordInvitation = false;
+        if (!isOAuthSignup) {
+          const invitation = await getValidInvitation(user.email);
+          if (invitation) {
+            isPasswordInvitation = true;
+          }
         }
 
         // 3. Send welcome email
         // - OAuth users: email auto-verified by provider, send immediately
         // - Password users: send after email verification (via emailVerification.afterEmailVerification)
-        // - Invitation users: send immediately (email verified by accept-invite route)
-        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isInvitation;
+        // - Password invitation users: send immediately (email verified by accept-invite route)
+        const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+        const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
         if (shouldSendWelcomeNow) {
           await sendEmail({
             to: user.email,
@@ -222,10 +246,10 @@ databaseHooks: {
 
 **Key behaviors:**
 
-- `before` hook: Validates data and can reject user creation by throwing an error
-- `after` hook: Non-blocking operations (errors logged, not thrown)
+- `before` hook: Validates data, applies invitation role, deletes invitation token — can reject user creation by throwing an error
+- `after` hook: Non-blocking operations (errors logged, not thrown); does NOT handle OAuth invitation tokens
 - OAuth state: Passed via `additionalData` parameter in OAuth flow
-- Invitation processing: Single-use tokens deleted after successful application
+- Invitation token deletion: Happens in the `before` hook (before user creation) to prevent race conditions from concurrent OAuth signups
 
 ### API Route Handler
 

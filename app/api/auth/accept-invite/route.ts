@@ -38,7 +38,6 @@
  * - Session is preserved for auto-login (user redirected to dashboard, not login)
  */
 
-import { z } from 'zod';
 import { NextRequest } from 'next/server';
 import { validateRequestBody } from '@/lib/api/validation';
 import { successResponse, errorResponse } from '@/lib/api/responses';
@@ -48,23 +47,13 @@ import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invi
 import { parseInvitationMetadata } from '@/lib/validations/admin';
 import { prisma } from '@/lib/db/client';
 import { getRouteLogger } from '@/lib/api/context';
-import { env } from '@/lib/env';
+import { auth } from '@/lib/auth/config';
 import {
   acceptInviteLimiter,
   createRateLimitResponse,
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-
-/** Schema for better-auth signup success response */
-const betterAuthSignupResponseSchema = z.object({
-  user: z.object({ id: z.string() }),
-});
-
-/** Schema for better-auth error response */
-const betterAuthErrorResponseSchema = z.object({
-  message: z.string(),
-});
 
 /**
  * POST /api/auth/accept-invite
@@ -144,41 +133,23 @@ export async function POST(request: NextRequest) {
     log.info('Invitation metadata retrieved', { email, role: metadata.role });
 
     // 4. Create user via better-auth signup (FIRST TIME - stable ID)
-    const signupResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-up/email`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Better-Auth': 'true',
-      },
-      body: JSON.stringify({
-        name: metadata.name,
-        email,
-        password,
-      }),
-    });
-
-    if (!signupResponse.ok) {
-      const errorBody: unknown = await signupResponse
-        .json()
-        .catch(() => ({ message: 'Signup failed' }));
-      const parsedError = betterAuthErrorResponseSchema.safeParse(errorBody);
-      const errorMessage = parsedError.success ? parsedError.data.message : 'Unknown error';
-      log.error('better-auth signup failed', undefined, {
+    // Using auth.api directly to avoid HTTP round-trip and CSRF origin checks
+    let newUserId: string;
+    try {
+      const signupResult = await auth.api.signUpEmail({
+        body: {
+          name: metadata.name,
+          email,
+          password,
+        },
+      });
+      newUserId = signupResult.user.id;
+    } catch (signupError) {
+      const errorMessage = signupError instanceof Error ? signupError.message : 'Unknown error';
+      log.error('better-auth signup failed', signupError, {
         email,
         error: errorMessage,
       });
-      return errorResponse('Failed to create user account', {
-        code: ErrorCodes.INTERNAL_ERROR,
-        status: 500,
-      });
-    }
-
-    const signupData: unknown = await signupResponse.json();
-    const parsedSignup = betterAuthSignupResponseSchema.safeParse(signupData);
-    const newUserId = parsedSignup.success ? parsedSignup.data.user.id : null;
-
-    if (!newUserId) {
-      log.error('better-auth signup returned unexpected response', undefined, { email });
       return errorResponse('Failed to create user account', {
         code: ErrorCodes.INTERNAL_ERROR,
         status: 500,
@@ -208,30 +179,17 @@ export async function POST(request: NextRequest) {
     log.info('Invitation accepted successfully', { email, userId: newUserId });
 
     // 7. Create session explicitly (better-auth will now see emailVerified=true)
-    const sessionResponse = await fetch(`${env.BETTER_AUTH_URL}/api/auth/sign-in/email`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Better-Auth': 'true',
-      },
-      body: JSON.stringify({
-        email,
-        password,
-      }),
+    // Using auth.api directly with asResponse:true to capture Set-Cookie headers
+    const sessionResponse = await auth.api.signInEmail({
+      body: { email, password },
+      asResponse: true,
     });
 
     if (!sessionResponse.ok) {
-      const sessionErrorBody: unknown = await sessionResponse
-        .json()
-        .catch(() => ({ message: 'Sign-in failed' }));
-      const parsedSessionError = betterAuthErrorResponseSchema.safeParse(sessionErrorBody);
-      const sessionErrorMessage = parsedSessionError.success
-        ? parsedSessionError.data.message
-        : 'Unknown error';
       log.error('better-auth sign-in failed after invitation acceptance', undefined, {
         email,
         userId: newUserId,
-        error: sessionErrorMessage,
+        status: sessionResponse.status,
       });
       return errorResponse('User created but failed to create session', {
         code: ErrorCodes.INTERNAL_ERROR,
