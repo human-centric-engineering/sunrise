@@ -1,38 +1,59 @@
 /**
  * Auth Config Database Hook Tests
  *
- * Tests the better-auth database hook that handles:
- * - Default user preferences setting for all new users
- * - OAuth invitation flow (token validation, role application, token deletion)
- * - Welcome email sending for all new users
+ * Tests the better-auth database hooks that handle:
+ * - OAuth invitation email validation BEFORE user creation (before hook)
+ * - Role assignment BEFORE user creation via return value (before hook)
+ * - Default user preferences setting for all new users (after hook)
+ * - OAuth invitation token deletion after acceptance (after hook)
+ * - Welcome email sending for all new users (after hook)
  * - Non-blocking error handling
  *
  * Test Coverage:
+ * Before hook:
+ * - Apply admin role when valid invitation token and matching email
+ * - Do not apply role when role is 'USER' (default)
+ * - Reject when invitation email doesn't match OAuth email (throws APIError)
+ * - Return unmodified user when no invitation state
+ * - Return unmodified user when token is invalid
+ * - Not block signup if getOAuthState throws (non-APIError)
+ * - Not apply role for non-OAuth paths
+ *
+ * After hook:
  * - Default preferences set for OAuth signup
  * - Default preferences set for email/password signup
- * - Preferences setting before role application
  * - Non-blocking error handling (preferences failures don't break signup)
- * - OAuth invitation with valid token
- * - OAuth invitation with invalid token
- * - OAuth invitation with mismatched email
+ * - OAuth invitation with valid token (token deleted, welcome email sent)
+ * - OAuth invitation with invalid token (no token deletion)
  * - Welcome email sent for OAuth signup
  * - Welcome email sent for email/password signup
  * - Non-blocking error handling (email failures don't break signup)
  * - Non-blocking error handling (invitation failures don't break signup)
- * - Role application from invitation metadata
  * - Invitation token deletion after successful acceptance
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 292-451)
+ * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 232-468)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as React from 'react';
 import { createMockUser } from '@/tests/types/mocks';
-import type { InvitationMetadata } from '@/lib/utils/invitation-token';
+import type { InvitationRecord } from '@/lib/utils/invitation-token';
 
 // Mock dependencies
 vi.mock('better-auth/api', () => ({
   getOAuthState: vi.fn(),
+  APIError: class APIError extends Error {
+    status: string;
+    body: { code?: string; message?: string };
+    statusCode: number;
+    constructor(status: string, body: { code?: string; message?: string } = {}) {
+      super(body.message ?? status);
+      this.name = 'APIError';
+      this.status = status;
+      this.body = body;
+      this.statusCode = 400;
+    }
+  },
 }));
 
 vi.mock('@/lib/email/send', () => ({
@@ -42,6 +63,7 @@ vi.mock('@/lib/email/send', () => ({
 vi.mock('@/lib/utils/invitation-token', () => ({
   validateInvitationToken: vi.fn(),
   deleteInvitationToken: vi.fn(),
+  getValidInvitation: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({
@@ -68,28 +90,267 @@ vi.mock('@/emails/welcome', () => ({
   WelcomeEmail: vi.fn(() => React.createElement('div', {}, 'Welcome Email')),
 }));
 
-/**
- * Test Suite: Auth Config Database Hook
- *
- * Tests the user.create.after hook that processes OAuth invitations
- * and sends welcome emails.
- */
-describe('lib/auth/config - databaseHooks.user.create.after', () => {
-  // Import types and functions after mocks are set up
-  let getOAuthState: ReturnType<typeof vi.fn>;
-  let sendEmail: ReturnType<typeof vi.fn>;
-  let validateInvitationToken: ReturnType<typeof vi.fn>;
-  let deleteInvitationToken: ReturnType<typeof vi.fn>;
-  let prisma: {
-    user: { update: ReturnType<typeof vi.fn> };
-    verification: { findFirst: ReturnType<typeof vi.fn> };
+// ---------------------------------------------------------------------------
+// Shared mock references (populated in beforeEach)
+// ---------------------------------------------------------------------------
+
+type MockedFn = ReturnType<typeof vi.fn>;
+
+interface SharedMocks {
+  getOAuthState: MockedFn;
+  sendEmail: MockedFn;
+  validateInvitationToken: MockedFn;
+  deleteInvitationToken: MockedFn;
+  getValidInvitation: MockedFn;
+  APIError: new (
+    status: string,
+    body?: { code?: string; message?: string }
+  ) => Error & {
+    status: string;
   };
-  let logger: {
-    info: ReturnType<typeof vi.fn>;
-    warn: ReturnType<typeof vi.fn>;
-    debug: ReturnType<typeof vi.fn>;
-    error: ReturnType<typeof vi.fn>;
+  prisma: {
+    user: { update: MockedFn };
+    verification: { findFirst: MockedFn };
   };
+  logger: {
+    info: MockedFn;
+    warn: MockedFn;
+    debug: MockedFn;
+    error: MockedFn;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: simulate databaseHooks.user.create.before
+//
+// Mirrors the logic from lib/auth/config.ts lines 245-297.
+// Returns { data: user } (possibly with modified role) or throws APIError.
+// ---------------------------------------------------------------------------
+
+async function simulateBeforeHook(
+  mocks: SharedMocks,
+  user: ReturnType<typeof createMockUser>,
+  ctx: { path?: string } = {}
+): Promise<{ data: ReturnType<typeof createMockUser> }> {
+  const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+
+  if (isOAuthSignup) {
+    try {
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      const oauthState = await mocks.getOAuthState();
+
+      // Parse via simple property access (mirrors oauthInvitationStateSchema.safeParse)
+      const parsed =
+        oauthState && typeof oauthState === 'object'
+          ? { success: true as const, data: oauthState }
+          : { success: false as const };
+
+      const invitationEmail = parsed.success ? (parsed.data.invitationEmail ?? null) : null;
+      const invitationToken = parsed.success ? (parsed.data.invitationToken ?? null) : null;
+
+      // If invitation data is present, email MUST match
+      if (invitationEmail && user.email !== invitationEmail) {
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        mocks.logger.warn('OAuth invitation email mismatch - rejecting signup', {
+          invitationEmail,
+          oauthEmail: user.email,
+        });
+        throw new mocks.APIError('BAD_REQUEST', {
+          message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
+        });
+      }
+
+      // Apply role BEFORE user is created so the session gets the correct role immediately.
+      if (invitationToken && invitationEmail && user.email === invitationEmail) {
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        const isValidToken = await mocks.validateInvitationToken(invitationEmail, invitationToken);
+
+        if (isValidToken) {
+          // @ts-expect-error - vi.mocked types don't infer callability properly
+          const invitation = (await mocks.getValidInvitation(
+            invitationEmail
+          )) as InvitationRecord | null;
+
+          if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
+            // @ts-expect-error - vi.mocked types don't infer callability properly
+            mocks.logger.info('Applying invitation role to OAuth user before creation', {
+              email: user.email,
+              role: invitation.metadata.role,
+            });
+
+            return { data: { ...user, role: invitation.metadata.role } };
+          }
+        }
+      }
+    } catch (error) {
+      // Re-throw APIError (our validation error)
+      if (error instanceof mocks.APIError) {
+        throw error;
+      }
+      // Log but don't block for other errors
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      mocks.logger.error('Error checking OAuth invitation in before hook', error);
+    }
+  }
+
+  return { data: user };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: simulate databaseHooks.user.create.after
+//
+// Mirrors the logic from lib/auth/config.ts lines 326-468.
+// Role is NOT applied here — it was applied in the before hook.
+// ---------------------------------------------------------------------------
+
+async function simulateDatabaseHook(
+  mocks: SharedMocks,
+  user: ReturnType<typeof createMockUser>,
+  ctx: { path?: string } = {}
+) {
+  // Detect signup method for logging purposes
+  const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+  const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+  // Set default preferences for all new users
+  try {
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    await mocks.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+      },
+    });
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    mocks.logger.info('Default preferences set for new user', {
+      userId: user.id,
+      signupMethod,
+    });
+  } catch (prefsError) {
+    // Log but don't fail user creation
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    mocks.logger.error('Failed to set default preferences', prefsError, {
+      userId: user.id,
+    });
+  }
+
+  // Check for password invitation acceptance (non-OAuth flow)
+  let isPasswordInvitation = false;
+
+  try {
+    // Handle OAuth invitation flow
+    if (isOAuthSignup) {
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      const oauthState = await mocks.getOAuthState();
+
+      const parsed =
+        oauthState && typeof oauthState === 'object'
+          ? { success: true as const, data: oauthState }
+          : { success: false as const };
+
+      const invitationToken = parsed.success ? (parsed.data.invitationToken ?? null) : null;
+      const invitationEmail = parsed.success ? (parsed.data.invitationEmail ?? null) : null;
+
+      if (invitationToken && invitationEmail && user.email === invitationEmail) {
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        mocks.logger.info('Processing OAuth invitation', {
+          userId: user.id,
+          email: user.email,
+        });
+
+        // Validate invitation token
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        const isValidToken = await mocks.validateInvitationToken(
+          invitationEmail,
+          invitationToken as string
+        );
+
+        if (isValidToken) {
+          // Role was already applied in the before hook — no prisma.user.update here.
+
+          // Delete invitation token (single-use)
+          try {
+            // @ts-expect-error - vi.mocked types don't infer callability properly
+            await mocks.deleteInvitationToken(invitationEmail);
+            // @ts-expect-error - vi.mocked types don't infer callability properly
+            mocks.logger.info('OAuth invitation token deleted successfully', {
+              userId: user.id,
+              email: invitationEmail,
+            });
+          } catch (deleteError) {
+            // @ts-expect-error - vi.mocked types don't infer callability properly
+            mocks.logger.error('Failed to delete OAuth invitation token', deleteError, {
+              userId: user.id,
+              email: invitationEmail,
+            });
+          }
+
+          // @ts-expect-error - vi.mocked types don't infer callability properly
+          mocks.logger.info('OAuth invitation accepted successfully', {
+            userId: user.id,
+            email: user.email,
+          });
+        }
+      }
+    } else {
+      // Check for password invitation acceptance
+      // @ts-expect-error - vi.mocked types don't infer callability properly
+      const invitation = await mocks.getValidInvitation(user.email);
+      if (invitation) {
+        isPasswordInvitation = true;
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        mocks.logger.info('Detected password invitation acceptance', {
+          userId: user.id,
+          email: user.email,
+        });
+      }
+    }
+  } catch (error) {
+    // Log but don't fail user creation
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    mocks.logger.error('Error processing invitation in database hook', error, {
+      userId: user.id,
+      email: user.email,
+    });
+  }
+
+  // Send welcome email — in tests we treat REQUIRE_EMAIL_VERIFICATION as false (dev mode),
+  // so the welcome email is always sent immediately (mirrors production behaviour when
+  // verification is disabled or for OAuth / password invitation signups).
+  {
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    mocks.logger.info('Sending welcome email to new user', {
+      userId: user.id,
+      userEmail: user.email,
+      signupMethod,
+      isInvitation: isPasswordInvitation,
+    });
+
+    // @ts-expect-error - vi.mocked types don't infer callability properly
+    await mocks
+      .sendEmail({
+        to: user.email,
+        subject: 'Welcome to Sunrise',
+        react: React.createElement('div', {}, 'Welcome Email'),
+      })
+      .catch((error: unknown) => {
+        // @ts-expect-error - vi.mocked types don't infer callability properly
+        mocks.logger.warn('Failed to send welcome email', {
+          userId: user.id,
+          userEmail: user.email,
+          signupMethod,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+}
+
+// ===========================================================================
+// Test Suites
+// ===========================================================================
+
+describe('lib/auth/config - databaseHooks.user.create', () => {
+  let mocks: SharedMocks;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -101,907 +362,878 @@ describe('lib/auth/config - databaseHooks.user.create.after', () => {
     const db = await import('@/lib/db/client');
     const logging = await import('@/lib/logging');
 
-    getOAuthState = vi.mocked(oauthApi.getOAuthState);
-    sendEmail = vi.mocked(emailSend.sendEmail);
-    validateInvitationToken = vi.mocked(invitationToken.validateInvitationToken);
-    deleteInvitationToken = vi.mocked(invitationToken.deleteInvitationToken);
-    prisma = {
-      user: {
-        update: vi.mocked(db.prisma.user.update),
+    mocks = {
+      getOAuthState: vi.mocked(oauthApi.getOAuthState),
+      // @ts-expect-error - APIError mock class assigned for instanceof checks in helper
+      APIError: oauthApi.APIError,
+      sendEmail: vi.mocked(emailSend.sendEmail),
+      validateInvitationToken: vi.mocked(invitationToken.validateInvitationToken),
+      deleteInvitationToken: vi.mocked(invitationToken.deleteInvitationToken),
+      getValidInvitation: vi.mocked(invitationToken.getValidInvitation),
+      prisma: {
+        user: {
+          update: vi.mocked(db.prisma.user.update),
+        },
+        verification: {
+          findFirst: vi.mocked(db.prisma.verification.findFirst),
+        },
       },
-      verification: {
-        findFirst: vi.mocked(db.prisma.verification.findFirst),
+      logger: {
+        info: vi.mocked(logging.logger.info),
+        warn: vi.mocked(logging.logger.warn),
+        debug: vi.mocked(logging.logger.debug),
+        error: vi.mocked(logging.logger.error),
       },
-    };
-    logger = {
-      info: vi.mocked(logging.logger.info),
-      warn: vi.mocked(logging.logger.warn),
-      debug: vi.mocked(logging.logger.debug),
-      error: vi.mocked(logging.logger.error),
     };
 
     // Default mock behavior: email sending succeeds
-    sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
+    mocks.sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
 
     // Default mock behavior: preferences update succeeds
-    prisma.user.update.mockResolvedValue(createMockUser());
+    mocks.prisma.user.update.mockResolvedValue(createMockUser());
+
+    // Default mock behavior: no valid invitation
+    mocks.getValidInvitation.mockResolvedValue(null);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  /**
-   * Helper function to simulate the database hook
-   * This mimics the logic from lib/auth/config.ts lines 292-451
-   */
-  const simulateDatabaseHook = async (
-    user: ReturnType<typeof createMockUser>,
-    ctx: { path?: string } = {}
-  ) => {
-    // Detect signup method for logging purposes
-    const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
-    const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+  // =========================================================================
+  // before hook
+  // =========================================================================
 
-    // Set default preferences for all new users
-    try {
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
-        },
-      });
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      logger.info('Default preferences set for new user', {
-        userId: user.id,
-        signupMethod,
-      });
-    } catch (prefsError) {
-      // Log but don't fail user creation
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      logger.error('Failed to set default preferences', prefsError, {
-        userId: user.id,
-      });
-    }
-
-    try {
-      // Handle OAuth invitation flow
-      if (isOAuthSignup) {
-        // @ts-expect-error - vi.mocked types don't infer callability properly
-        const oauthState = await getOAuthState();
-
-        // Check if invitation data is present in OAuth state
-        const invitationToken =
-          oauthState && typeof oauthState === 'object' ? oauthState.invitationToken : null;
-        const invitationEmail =
-          oauthState && typeof oauthState === 'object' ? oauthState.invitationEmail : null;
-
-        if (invitationToken && invitationEmail && user.email === invitationEmail) {
-          // @ts-expect-error - vi.mocked types don't infer callability properly
-          logger.info('Processing OAuth invitation', {
-            userId: user.id,
-            email: user.email,
-          });
-
-          // Validate invitation token
-          // @ts-expect-error - vi.mocked types don't infer callability properly
-          const isValidToken = await validateInvitationToken(
-            invitationEmail,
-            invitationToken as string
-          );
-
-          if (isValidToken) {
-            // Get invitation metadata
-            // @ts-expect-error - vi.mocked types don't infer callability properly
-            const invitation = await prisma.verification.findFirst({
-              where: { identifier: `invitation:${invitationEmail}` },
-            });
-
-            if (invitation?.metadata) {
-              const metadata = invitation.metadata as InvitationMetadata;
-
-              // Apply role if non-default
-              if (metadata.role && metadata.role !== 'USER') {
-                // Return modified user data to set role
-                // @ts-expect-error - vi.mocked types don't infer callability properly
-                await prisma.user.update({
-                  where: { id: user.id },
-                  data: { role: metadata.role },
-                });
-
-                // @ts-expect-error - vi.mocked types don't infer callability properly
-                logger.info('Applied invitation role to OAuth user', {
-                  userId: user.id,
-                  role: metadata.role,
-                });
-              }
-
-              // Delete invitation token (single-use)
-              // @ts-expect-error - vi.mocked types don't infer callability properly
-              await deleteInvitationToken(invitationEmail);
-
-              // @ts-expect-error - vi.mocked types don't infer callability properly
-              logger.info('OAuth invitation accepted successfully', {
-                userId: user.id,
-                email: user.email,
-              });
-            }
-          }
-        }
-      }
-    } catch (error) {
-      // Log but don't fail user creation
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      logger.error('Error processing OAuth invitation in database hook', error, {
-        userId: user.id,
-        email: user.email,
-      });
-    }
-
-    // Send welcome email for all new users (OAuth and email/password)
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    logger.info('Sending welcome email to new user', {
-      userId: user.id,
-      userEmail: user.email,
-      signupMethod,
-    });
-
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    await sendEmail({
-      to: user.email,
-      subject: 'Welcome to Sunrise',
-      react: React.createElement('div', {}, 'Welcome Email'),
-    }).catch((error: unknown) => {
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      logger.warn('Failed to send welcome email', {
-        userId: user.id,
-        userEmail: user.email,
-        signupMethod,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  };
-
-  describe('OAuth invitation flow', () => {
-    it('should process OAuth invitation with valid token and apply role', async () => {
-      // Arrange: Create OAuth user and invitation context
+  describe('databaseHooks.user.create.before', () => {
+    it('should apply admin role when valid invitation token and matching email', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-123',
-        email: 'invited@example.com',
-        role: 'USER', // Default role before invitation processing
+        id: 'oauth-before-admin',
+        email: 'admin@example.com',
+        role: 'USER',
       });
 
-      const invitationMetadata: InvitationMetadata = {
-        name: 'Invited User',
-        role: 'ADMIN',
-        invitedBy: 'admin-user-id',
-        invitedAt: new Date().toISOString(),
+      const mockInvitation: InvitationRecord = {
+        email: 'admin@example.com',
+        metadata: {
+          name: 'Admin User',
+          role: 'ADMIN',
+          invitedBy: 'super-admin-id',
+          invitedAt: new Date().toISOString(),
+        },
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
       };
 
-      // Mock OAuth state with invitation data
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'valid-token-123',
-        invitationEmail: 'invited@example.com',
+      mocks.getOAuthState.mockResolvedValue({
+        invitationToken: 'valid-token-admin',
+        invitationEmail: 'admin@example.com',
       });
-
-      // Mock valid token
-      validateInvitationToken.mockResolvedValue(true);
-
-      // Mock invitation record with metadata
-      prisma.verification.findFirst.mockResolvedValue({
-        id: 'verification-123',
-        identifier: 'invitation:invited@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date(Date.now() + 86400000), // 1 day from now
-        metadata: invitationMetadata,
-      });
-
-      // Mock two update calls: 1) preferences, 2) role
-      prisma.user.update
-        .mockResolvedValueOnce({
-          ...mockUser,
-          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
-        })
-        .mockResolvedValueOnce({
-          ...mockUser,
-          role: 'ADMIN', // Updated role
-        });
-
-      deleteInvitationToken.mockResolvedValue(undefined);
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook for OAuth signup
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify invitation processing flow
-      expect(getOAuthState).toHaveBeenCalledTimes(1);
-      expect(logger.info).toHaveBeenCalledWith('Processing OAuth invitation', {
-        userId: mockUser.id,
-        email: mockUser.email,
-      });
-      expect(validateInvitationToken).toHaveBeenCalledWith(
-        'invited@example.com',
-        'valid-token-123'
+      // Assert: role should be applied in returned data
+      expect(result.data.role).toBe('ADMIN');
+      expect(result.data).toEqual({ ...mockUser, role: 'ADMIN' });
+
+      expect(mocks.validateInvitationToken).toHaveBeenCalledWith(
+        'admin@example.com',
+        'valid-token-admin'
       );
-      expect(prisma.verification.findFirst).toHaveBeenCalledWith({
-        where: { identifier: 'invitation:invited@example.com' },
-      });
-
-      // Assert: Verify preferences were set first
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(2);
-
-      // First call: preferences
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Second call: role
-      expect(updateCalls[1][0]).toEqual({
-        where: { id: mockUser.id },
-        data: { role: 'ADMIN' },
-      });
-
-      expect(logger.info).toHaveBeenCalledWith('Applied invitation role to OAuth user', {
-        userId: mockUser.id,
-        role: 'ADMIN',
-      });
-
-      // Assert: Verify invitation token was deleted
-      expect(deleteInvitationToken).toHaveBeenCalledWith('invited@example.com');
-      expect(logger.info).toHaveBeenCalledWith('OAuth invitation accepted successfully', {
-        userId: mockUser.id,
-        email: mockUser.email,
-      });
+      expect(mocks.getValidInvitation).toHaveBeenCalledWith('admin@example.com');
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
+        { email: mockUser.email, role: 'ADMIN' }
+      );
     });
 
-    it('should not apply role for USER role (default role)', async () => {
-      // Arrange: Create OAuth user with USER role in invitation
+    it('should NOT apply role when invitation role is USER (default role)', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-456',
+        id: 'oauth-before-user',
         email: 'user@example.com',
         role: 'USER',
       });
 
-      const invitationMetadata: InvitationMetadata = {
-        name: 'Regular User',
-        role: 'USER', // Default role - should not update
-        invitedBy: 'admin-user-id',
-        invitedAt: new Date().toISOString(),
+      const mockInvitation: InvitationRecord = {
+        email: 'user@example.com',
+        metadata: {
+          name: 'Regular User',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+        },
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
       };
 
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'valid-token-456',
+      mocks.getOAuthState.mockResolvedValue({
+        invitationToken: 'valid-token-user',
         invitationEmail: 'user@example.com',
       });
-
-      validateInvitationToken.mockResolvedValue(true);
-
-      prisma.verification.findFirst.mockResolvedValue({
-        id: 'verification-456',
-        identifier: 'invitation:user@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date(Date.now() + 86400000),
-        metadata: invitationMetadata,
-      });
-
-      deleteInvitationToken.mockResolvedValue(undefined);
-
-      // Mock preferences update
-      prisma.user.update.mockResolvedValue({
-        ...mockUser,
-        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
-      });
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify preferences were set but role was NOT updated (USER is default)
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(1); // Only preferences, no role update
+      // Assert: user returned unchanged (USER is default, no role override needed)
+      expect(result.data).toEqual(mockUser);
+      expect(result.data.role).toBe('USER');
 
-      // Only call should be setting preferences
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-      expect(logger.info).not.toHaveBeenCalledWith(
-        'Applied invitation role to OAuth user',
+      // Role-apply log should NOT have been called
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
         expect.any(Object)
       );
-
-      // Assert: Verify token was still deleted (invitation accepted)
-      expect(deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
     });
 
-    it('should gracefully handle invalid invitation token', async () => {
-      // Arrange: Create OAuth user with invalid token
+    it('should throw APIError when invitation email does not match OAuth email', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-789',
-        email: 'invalid@example.com',
-      });
-
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'invalid-token-789',
-        invitationEmail: 'invalid@example.com',
-      });
-
-      // Mock invalid token
-      validateInvitationToken.mockResolvedValue(false);
-
-      const ctx = { path: '/api/auth/callback/google' };
-
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify validation was attempted
-      expect(validateInvitationToken).toHaveBeenCalledWith(
-        'invalid@example.com',
-        'invalid-token-789'
-      );
-
-      // Assert: Verify no invitation processing occurred (beyond preferences)
-      expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
-
-      // Assert: Verify preferences were still set (only one update call)
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(1);
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Assert: Verify user creation still succeeded (non-blocking)
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-          subject: 'Welcome to Sunrise',
-        })
-      );
-    });
-
-    it('should gracefully handle mismatched invitation email', async () => {
-      // Arrange: OAuth user email doesn't match invitation email
-      const mockUser = createMockUser({
-        id: 'oauth-user-999',
+        id: 'oauth-before-mismatch',
         email: 'actual@example.com',
       });
 
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'token-999',
-        invitationEmail: 'different@example.com', // Mismatch!
+      mocks.getOAuthState.mockResolvedValue({
+        invitationToken: 'token-mismatch',
+        invitationEmail: 'different@example.com', // mismatch!
       });
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify no invitation processing occurred (email mismatch)
-      expect(validateInvitationToken).not.toHaveBeenCalled();
-      expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-
-      // Assert: Verify preferences were still set (only one update call)
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(1);
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Assert: Verify user creation still succeeded
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-        })
+      // Act & Assert: should throw
+      await expect(simulateBeforeHook(mocks, mockUser, ctx)).rejects.toThrow(
+        'This invitation was sent to different@example.com'
       );
+
+      // Token validation should not have been called
+      expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
     });
 
-    it('should handle missing OAuth state gracefully', async () => {
-      // Arrange: OAuth signup with no state
+    it('should return unmodified user when there is no OAuth invitation state', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-000',
+        id: 'oauth-before-nostate',
         email: 'nostate@example.com',
       });
 
-      getOAuthState.mockResolvedValue(null);
+      mocks.getOAuthState.mockResolvedValue(null);
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify no invitation processing occurred
-      expect(validateInvitationToken).not.toHaveBeenCalled();
-      expect(prisma.verification.findFirst).not.toHaveBeenCalled();
-
-      // Assert: Verify user creation still succeeded
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-        })
-      );
+      // Assert: user returned unchanged
+      expect(result.data).toEqual(mockUser);
+      expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
     });
 
-    it('should handle missing invitation metadata gracefully', async () => {
-      // Arrange: Valid token but no metadata in verification record
+    it('should return unmodified user when invitation token is invalid', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-111',
-        email: 'nometa@example.com',
+        id: 'oauth-before-invalid',
+        email: 'invalid@example.com',
       });
 
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'token-111',
-        invitationEmail: 'nometa@example.com',
+      mocks.getOAuthState.mockResolvedValue({
+        invitationToken: 'invalid-token',
+        invitationEmail: 'invalid@example.com',
       });
-
-      validateInvitationToken.mockResolvedValue(true);
-
-      // Mock verification record WITHOUT metadata
-      prisma.verification.findFirst.mockResolvedValue({
-        id: 'verification-111',
-        identifier: 'invitation:nometa@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date(Date.now() + 86400000),
-        metadata: null, // No metadata!
-      });
+      mocks.validateInvitationToken.mockResolvedValue(false);
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify only preferences were set (no role update, no metadata)
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(1);
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Assert: Verify token deletion was NOT attempted (no metadata means incomplete invitation)
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
-    });
-
-    it('should not block user creation if invitation processing fails', async () => {
-      // Arrange: OAuth user with invitation that throws error during processing
-      const mockUser = createMockUser({
-        id: 'oauth-user-error',
-        email: 'error@example.com',
-      });
-
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'token-error',
-        invitationEmail: 'error@example.com',
-      });
-
-      // Mock error during validation
-      validateInvitationToken.mockRejectedValue(new Error('Database connection failed'));
-
-      const ctx = { path: '/api/auth/callback/google' };
-
-      // Act: Simulate database hook (should not throw)
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify error was logged
-      expect(logger.error).toHaveBeenCalledWith(
-        'Error processing OAuth invitation in database hook',
-        expect.any(Error),
-        {
-          userId: mockUser.id,
-          email: mockUser.email,
-        }
-      );
-
-      // Assert: Verify user creation continued (welcome email sent)
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-        })
-      );
-    });
-  });
-
-  describe('Welcome email sending', () => {
-    it('should send welcome email for OAuth signup', async () => {
-      // Arrange: OAuth user without invitation
-      const mockUser = createMockUser({
-        id: 'oauth-user-welcome',
-        email: 'oauth@example.com',
-        name: 'OAuth User',
-      });
-
-      getOAuthState.mockResolvedValue(null); // No invitation
-
-      const ctx = { path: '/api/auth/callback/google' };
-
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify welcome email was sent
-      expect(logger.info).toHaveBeenCalledWith('Sending welcome email to new user', {
-        userId: mockUser.id,
-        userEmail: mockUser.email,
-        signupMethod: 'OAuth',
-      });
-      expect(sendEmail).toHaveBeenCalledWith({
-        to: mockUser.email,
-        subject: 'Welcome to Sunrise',
-        react: expect.any(Object),
-      });
-    });
-
-    it('should send welcome email for email/password signup', async () => {
-      // Arrange: Email/password user
-      const mockUser = createMockUser({
-        id: 'email-user-welcome',
-        email: 'email@example.com',
-        name: 'Email User',
-      });
-
-      const ctx = { path: '/api/auth/signup' }; // Not a callback path
-
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify welcome email was sent
-      expect(logger.info).toHaveBeenCalledWith('Sending welcome email to new user', {
-        userId: mockUser.id,
-        userEmail: mockUser.email,
-        signupMethod: 'email/password',
-      });
-      expect(sendEmail).toHaveBeenCalledWith({
-        to: mockUser.email,
-        subject: 'Welcome to Sunrise',
-        react: expect.any(Object),
-      });
-    });
-
-    it('should not block user creation if welcome email fails', async () => {
-      // Arrange: User with email sending failure
-      const mockUser = createMockUser({
-        id: 'email-fail-user',
-        email: 'emailfail@example.com',
-      });
-
-      // Mock email sending failure
-      sendEmail.mockRejectedValue(new Error('SMTP server unavailable'));
-
-      const ctx = { path: '/api/auth/signup' };
-
-      // Act: Simulate database hook (should not throw)
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify email send was attempted
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-        })
-      );
-
-      // Assert: Verify failure was logged but didn't block signup
-      expect(logger.warn).toHaveBeenCalledWith('Failed to send welcome email', {
-        userId: mockUser.id,
-        userEmail: mockUser.email,
-        signupMethod: 'email/password',
-        error: 'SMTP server unavailable',
-      });
-    });
-
-    it('should send welcome email even when invitation processing fails', async () => {
-      // Arrange: OAuth user with failing invitation but successful email
-      const mockUser = createMockUser({
-        id: 'invitation-fail-user',
-        email: 'invfail@example.com',
-      });
-
-      getOAuthState.mockRejectedValue(new Error('OAuth state error'));
-
-      const ctx = { path: '/api/auth/callback/google' };
-
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify invitation error was logged
-      expect(logger.error).toHaveBeenCalledWith(
-        'Error processing OAuth invitation in database hook',
-        expect.any(Error),
+      // Assert: user returned unchanged (invalid token means no role change)
+      expect(result.data).toEqual(mockUser);
+      expect(mocks.getValidInvitation).not.toHaveBeenCalled();
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
         expect.any(Object)
       );
-
-      // Assert: Verify welcome email was still sent
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-          subject: 'Welcome to Sunrise',
-        })
-      );
     });
-  });
 
-  describe('Default preferences setting', () => {
-    it('should set default preferences for OAuth signup', async () => {
-      // Arrange: OAuth user without invitation
+    it('should not block signup if getOAuthState throws a non-APIError', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'oauth-user-prefs',
-        email: 'prefs@example.com',
+        id: 'oauth-before-stateerror',
+        email: 'stateerror@example.com',
       });
 
-      getOAuthState.mockResolvedValue(null); // No invitation
-      prisma.user.update.mockResolvedValue({
-        ...mockUser,
-        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
-      });
+      mocks.getOAuthState.mockRejectedValue(new Error('OAuth state service unavailable'));
 
       const ctx = { path: '/api/auth/callback/google' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act: should not throw
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify preferences were set FIRST (before any other operations)
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBeGreaterThan(0);
-
-      // First call should be setting preferences
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Verify logging
-      expect(logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
-        userId: mockUser.id,
-        signupMethod: 'OAuth',
-      });
+      // Assert: user returned unchanged, error logged
+      expect(result.data).toEqual(mockUser);
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'Error checking OAuth invitation in before hook',
+        expect.any(Error)
+      );
     });
 
-    it('should set default preferences for email/password signup', async () => {
-      // Arrange: Email/password user
+    it('should return unmodified user for non-OAuth paths (email/password signup)', async () => {
+      // Arrange
       const mockUser = createMockUser({
-        id: 'email-user-prefs',
-        email: 'emailprefs@example.com',
-      });
-
-      prisma.user.update.mockResolvedValue({
-        ...mockUser,
-        preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        id: 'email-before-user',
+        email: 'emailsignup@example.com',
       });
 
       const ctx = { path: '/api/auth/signup' };
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+      // Act
+      const result = await simulateBeforeHook(mocks, mockUser, ctx);
 
-      // Assert: Verify preferences were set
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
-            },
-          },
-        },
-      });
-
-      // Verify logging with correct signup method
-      expect(logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
-        userId: mockUser.id,
-        signupMethod: 'email/password',
-      });
+      // Assert: user returned unchanged, getOAuthState not called for non-OAuth path
+      expect(result.data).toEqual(mockUser);
+      expect(mocks.getOAuthState).not.toHaveBeenCalled();
+      expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
     });
+  });
 
-    it('should not block user creation if preferences setting fails', async () => {
-      // Arrange: User with preferences update failure
-      const mockUser = createMockUser({
-        id: 'prefs-fail-user',
-        email: 'prefsfail@example.com',
-      });
+  // =========================================================================
+  // after hook
+  // =========================================================================
 
-      // Mock preferences update to fail
-      prisma.user.update
-        .mockRejectedValueOnce(new Error('Database write failed'))
-        .mockResolvedValue(mockUser); // Subsequent calls succeed
-
-      const ctx = { path: '/api/auth/signup' };
-
-      // Act: Simulate database hook (should not throw)
-      await simulateDatabaseHook(mockUser, ctx);
-
-      // Assert: Verify error was logged
-      expect(logger.error).toHaveBeenCalledWith(
-        'Failed to set default preferences',
-        expect.any(Error),
-        {
-          userId: mockUser.id,
-        }
-      );
-
-      // Assert: Verify user creation continued (welcome email sent)
-      expect(sendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: mockUser.email,
-        })
-      );
-    });
-
-    it('should set preferences before applying invitation role', async () => {
-      // Arrange: OAuth user with invitation
-      const mockUser = createMockUser({
-        id: 'oauth-user-role-prefs',
-        email: 'roleprefs@example.com',
-        role: 'USER',
-      });
-
-      const invitationMetadata: InvitationMetadata = {
-        name: 'Role User',
-        role: 'ADMIN',
-        invitedBy: 'admin-user-id',
-        invitedAt: new Date().toISOString(),
-      };
-
-      getOAuthState.mockResolvedValue({
-        invitationToken: 'valid-token-role',
-        invitationEmail: 'roleprefs@example.com',
-      });
-
-      validateInvitationToken.mockResolvedValue(true);
-
-      prisma.verification.findFirst.mockResolvedValue({
-        id: 'verification-role',
-        identifier: 'invitation:roleprefs@example.com',
-        value: 'hashed-token',
-        expiresAt: new Date(Date.now() + 86400000),
-        metadata: invitationMetadata,
-      });
-
-      prisma.user.update
-        .mockResolvedValueOnce({
-          ...mockUser,
-          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
-        })
-        .mockResolvedValueOnce({
-          ...mockUser,
-          role: 'ADMIN',
+  describe('databaseHooks.user.create.after', () => {
+    describe('OAuth invitation flow', () => {
+      it('should process OAuth invitation with valid token, delete token, and send welcome email', async () => {
+        // Arrange: Create OAuth user and invitation context
+        const mockUser = createMockUser({
+          id: 'oauth-user-123',
+          email: 'invited@example.com',
+          role: 'ADMIN', // Role was already set by the before hook
         });
 
-      deleteInvitationToken.mockResolvedValue(undefined);
+        // Mock OAuth state with invitation data
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'valid-token-123',
+          invitationEmail: 'invited@example.com',
+        });
 
-      const ctx = { path: '/api/auth/callback/google' };
+        // Mock valid token
+        mocks.validateInvitationToken.mockResolvedValue(true);
+        mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
-      // Act: Simulate database hook
-      await simulateDatabaseHook(mockUser, ctx);
+        // Mock preferences update (the only update call in after hook)
+        mocks.prisma.user.update.mockResolvedValueOnce({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        });
 
-      // Assert: Verify call order - preferences FIRST, then role
-      const updateCalls = vi.mocked(prisma.user.update).mock.calls;
-      expect(updateCalls.length).toBe(2);
+        const ctx = { path: '/api/auth/callback/google' };
 
-      // First call: set preferences
-      expect(updateCalls[0][0]).toEqual({
-        where: { id: mockUser.id },
-        data: {
-          preferences: {
-            email: {
-              marketing: false,
-              productUpdates: true,
-              securityAlerts: true,
+        // Act: Simulate after hook
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Only ONE prisma.user.update call (preferences only, no role update)
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBe(1);
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
             },
           },
-        },
-      });
+        });
 
-      // Second call: set role
-      expect(updateCalls[1][0]).toEqual({
-        where: { id: mockUser.id },
-        data: { role: 'ADMIN' },
-      });
-    });
-  });
+        // Assert: Token was deleted
+        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('invited@example.com');
 
-  describe('Signup method detection', () => {
-    it('should detect OAuth signup from callback path', async () => {
-      // Arrange: OAuth callback path variants
-      const mockUser = createMockUser({ email: 'test@example.com' });
+        // Assert: Invitation accepted log
+        expect(mocks.logger.info).toHaveBeenCalledWith(
+          'OAuth invitation token deleted successfully',
+          {
+            userId: mockUser.id,
+            email: 'invited@example.com',
+          }
+        );
+        expect(mocks.logger.info).toHaveBeenCalledWith('OAuth invitation accepted successfully', {
+          userId: mockUser.id,
+          email: mockUser.email,
+        });
 
-      const oauthPaths = [
-        '/api/auth/callback/google',
-        '/api/auth/callback/github',
-        '/auth/callback/facebook',
-      ];
+        // Assert: No role-update log (role was applied in before hook)
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'Applied invitation role to OAuth user',
+          expect.any(Object)
+        );
 
-      for (const path of oauthPaths) {
-        vi.clearAllMocks();
-        getOAuthState.mockResolvedValue(null);
-
-        // Act: Simulate hook with OAuth path
-        await simulateDatabaseHook(mockUser, { path });
-
-        // Assert: Verify OAuth method detected
-        expect(logger.info).toHaveBeenCalledWith(
-          'Sending welcome email to new user',
+        // Assert: Welcome email was sent
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
-            signupMethod: 'OAuth',
+            to: mockUser.email,
+            subject: 'Welcome to Sunrise',
           })
         );
-      }
-    });
+      });
 
-    it('should detect email/password signup from non-callback path', async () => {
-      // Arrange: Email/password signup paths
-      const mockUser = createMockUser({ email: 'test@example.com' });
+      it('should not apply role for USER role (default role) — only preferences and token deletion', async () => {
+        // Arrange: OAuth user with USER role in invitation
+        const mockUser = createMockUser({
+          id: 'oauth-user-456',
+          email: 'user@example.com',
+          role: 'USER',
+        });
 
-      const emailPaths = ['/api/auth/signup', '/auth/register', undefined];
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'valid-token-456',
+          invitationEmail: 'user@example.com',
+        });
 
-      for (const path of emailPaths) {
-        vi.clearAllMocks();
+        mocks.validateInvitationToken.mockResolvedValue(true);
+        mocks.deleteInvitationToken.mockResolvedValue(undefined);
 
-        // Act: Simulate hook with email/password path
-        await simulateDatabaseHook(mockUser, { path });
+        mocks.prisma.user.update.mockResolvedValue({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        });
 
-        // Assert: Verify email/password method detected
-        expect(logger.info).toHaveBeenCalledWith(
-          'Sending welcome email to new user',
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Only ONE update call (preferences only — USER role needs no update)
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBe(1);
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        // Assert: Token was still deleted
+        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
+
+        // Assert: No role-related log
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'Applied invitation role to OAuth user',
+          expect.any(Object)
+        );
+      });
+
+      it('should gracefully handle invalid invitation token', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'oauth-user-789',
+          email: 'invalid@example.com',
+        });
+
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'invalid-token-789',
+          invitationEmail: 'invalid@example.com',
+        });
+
+        mocks.validateInvitationToken.mockResolvedValue(false);
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Validation was attempted
+        expect(mocks.validateInvitationToken).toHaveBeenCalledWith(
+          'invalid@example.com',
+          'invalid-token-789'
+        );
+
+        // Assert: No token deletion (invalid token)
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+
+        // Assert: Only preferences update (no role update)
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBe(1);
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        // Assert: User creation continued (welcome email sent)
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
-            signupMethod: 'email/password',
+            to: mockUser.email,
+            subject: 'Welcome to Sunrise',
           })
         );
-      }
+      });
+
+      it('should gracefully handle mismatched invitation email in after hook', async () => {
+        // Arrange: OAuth user email doesn't match invitation email
+        const mockUser = createMockUser({
+          id: 'oauth-user-999',
+          email: 'actual@example.com',
+        });
+
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'token-999',
+          invitationEmail: 'different@example.com', // Mismatch!
+        });
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act: after hook does NOT throw on mismatch (before hook handles rejection)
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: No invitation processing
+        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+
+        // Assert: Preferences were still set
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBe(1);
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        // Assert: Welcome email still sent
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+          })
+        );
+      });
+
+      it('should handle missing OAuth state gracefully', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'oauth-user-000',
+          email: 'nostate@example.com',
+        });
+
+        mocks.getOAuthState.mockResolvedValue(null);
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: No invitation processing
+        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
+
+        // Assert: User creation succeeded
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+          })
+        );
+      });
+
+      it('should not block user creation if invitation processing fails', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'oauth-user-error',
+          email: 'error@example.com',
+        });
+
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'token-error',
+          invitationEmail: 'error@example.com',
+        });
+
+        mocks.validateInvitationToken.mockRejectedValue(new Error('Database connection failed'));
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act: should not throw
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Error was logged
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Error processing invitation in database hook',
+          expect.any(Error),
+          {
+            userId: mockUser.id,
+            email: mockUser.email,
+          }
+        );
+
+        // Assert: Welcome email still sent
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+          })
+        );
+      });
+    });
+
+    describe('Welcome email sending', () => {
+      it('should send welcome email for OAuth signup', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'oauth-user-welcome',
+          email: 'oauth@example.com',
+          name: 'OAuth User',
+        });
+
+        mocks.getOAuthState.mockResolvedValue(null);
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert
+        expect(mocks.logger.info).toHaveBeenCalledWith('Sending welcome email to new user', {
+          userId: mockUser.id,
+          userEmail: mockUser.email,
+          signupMethod: 'OAuth',
+          isInvitation: false,
+        });
+        expect(mocks.sendEmail).toHaveBeenCalledWith({
+          to: mockUser.email,
+          subject: 'Welcome to Sunrise',
+          react: expect.any(Object),
+        });
+      });
+
+      it('should send welcome email for email/password signup', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'email-user-welcome',
+          email: 'email@example.com',
+          name: 'Email User',
+        });
+
+        const ctx = { path: '/api/auth/signup' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert
+        expect(mocks.logger.info).toHaveBeenCalledWith('Sending welcome email to new user', {
+          userId: mockUser.id,
+          userEmail: mockUser.email,
+          signupMethod: 'email/password',
+          isInvitation: false,
+        });
+        expect(mocks.sendEmail).toHaveBeenCalledWith({
+          to: mockUser.email,
+          subject: 'Welcome to Sunrise',
+          react: expect.any(Object),
+        });
+      });
+
+      it('should not block user creation if welcome email fails', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'email-fail-user',
+          email: 'emailfail@example.com',
+        });
+
+        mocks.sendEmail.mockRejectedValue(new Error('SMTP server unavailable'));
+
+        const ctx = { path: '/api/auth/signup' };
+
+        // Act: should not throw
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Send was attempted
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+          })
+        );
+
+        // Assert: Failure logged, signup not blocked
+        expect(mocks.logger.warn).toHaveBeenCalledWith('Failed to send welcome email', {
+          userId: mockUser.id,
+          userEmail: mockUser.email,
+          signupMethod: 'email/password',
+          error: 'SMTP server unavailable',
+        });
+      });
+
+      it('should send welcome email even when invitation processing fails', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'invitation-fail-user',
+          email: 'invfail@example.com',
+        });
+
+        mocks.getOAuthState.mockRejectedValue(new Error('OAuth state error'));
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: invitation error was logged
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Error processing invitation in database hook',
+          expect.any(Error),
+          expect.any(Object)
+        );
+
+        // Assert: welcome email still sent
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+            subject: 'Welcome to Sunrise',
+          })
+        );
+      });
+    });
+
+    describe('Default preferences setting', () => {
+      it('should set default preferences for OAuth signup', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'oauth-user-prefs',
+          email: 'prefs@example.com',
+        });
+
+        mocks.getOAuthState.mockResolvedValue(null);
+        mocks.prisma.user.update.mockResolvedValue({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        });
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: preferences update was first (and only) update call
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBeGreaterThan(0);
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        expect(mocks.logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
+          userId: mockUser.id,
+          signupMethod: 'OAuth',
+        });
+      });
+
+      it('should set default preferences for email/password signup', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'email-user-prefs',
+          email: 'emailprefs@example.com',
+        });
+
+        mocks.prisma.user.update.mockResolvedValue({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        });
+
+        const ctx = { path: '/api/auth/signup' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert
+        expect(mocks.prisma.user.update).toHaveBeenCalledWith({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        expect(mocks.logger.info).toHaveBeenCalledWith('Default preferences set for new user', {
+          userId: mockUser.id,
+          signupMethod: 'email/password',
+        });
+      });
+
+      it('should not block user creation if preferences setting fails', async () => {
+        // Arrange
+        const mockUser = createMockUser({
+          id: 'prefs-fail-user',
+          email: 'prefsfail@example.com',
+        });
+
+        mocks.prisma.user.update
+          .mockRejectedValueOnce(new Error('Database write failed'))
+          .mockResolvedValue(mockUser);
+
+        const ctx = { path: '/api/auth/signup' };
+
+        // Act: should not throw
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Error was logged
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to set default preferences',
+          expect.any(Error),
+          {
+            userId: mockUser.id,
+          }
+        );
+
+        // Assert: User creation continued
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+          })
+        );
+      });
+
+      it('should set preferences before invitation token deletion (preferences first)', async () => {
+        // Arrange: OAuth user with valid invitation
+        const mockUser = createMockUser({
+          id: 'oauth-user-role-prefs',
+          email: 'roleprefs@example.com',
+          role: 'ADMIN', // Role was set by the before hook
+        });
+
+        mocks.getOAuthState.mockResolvedValue({
+          invitationToken: 'valid-token-role',
+          invitationEmail: 'roleprefs@example.com',
+        });
+
+        mocks.validateInvitationToken.mockResolvedValue(true);
+        mocks.deleteInvitationToken.mockResolvedValue(undefined);
+
+        mocks.prisma.user.update.mockResolvedValueOnce({
+          ...mockUser,
+          preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
+        });
+
+        const ctx = { path: '/api/auth/callback/google' };
+
+        // Act
+        await simulateDatabaseHook(mocks, mockUser, ctx);
+
+        // Assert: Exactly ONE prisma.user.update (preferences only — no role update)
+        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        expect(updateCalls.length).toBe(1);
+
+        expect(updateCalls[0][0]).toEqual({
+          where: { id: mockUser.id },
+          data: {
+            preferences: {
+              email: {
+                marketing: false,
+                productUpdates: true,
+                securityAlerts: true,
+              },
+            },
+          },
+        });
+
+        // Assert: Token was deleted after preferences
+        expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('roleprefs@example.com');
+      });
+    });
+
+    describe('Signup method detection', () => {
+      it('should detect OAuth signup from callback path', async () => {
+        // Arrange
+        const mockUser = createMockUser({ email: 'test@example.com' });
+
+        const oauthPaths = [
+          '/api/auth/callback/google',
+          '/api/auth/callback/github',
+          '/auth/callback/facebook',
+        ];
+
+        for (const path of oauthPaths) {
+          vi.clearAllMocks();
+          mocks.getOAuthState.mockResolvedValue(null);
+          mocks.sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
+          mocks.prisma.user.update.mockResolvedValue(createMockUser());
+
+          // Act
+          await simulateDatabaseHook(mocks, mockUser, { path });
+
+          // Assert
+          expect(mocks.logger.info).toHaveBeenCalledWith(
+            'Sending welcome email to new user',
+            expect.objectContaining({
+              signupMethod: 'OAuth',
+            })
+          );
+        }
+      });
+
+      it('should detect email/password signup from non-callback path', async () => {
+        // Arrange
+        const mockUser = createMockUser({ email: 'test@example.com' });
+
+        const emailPaths = ['/api/auth/signup', '/auth/register', undefined];
+
+        for (const path of emailPaths) {
+          vi.clearAllMocks();
+          mocks.sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
+          mocks.prisma.user.update.mockResolvedValue(createMockUser());
+          mocks.getValidInvitation.mockResolvedValue(null);
+
+          // Act
+          await simulateDatabaseHook(mocks, mockUser, { path });
+
+          // Assert
+          expect(mocks.logger.info).toHaveBeenCalledWith(
+            'Sending welcome email to new user',
+            expect.objectContaining({
+              signupMethod: 'email/password',
+            })
+          );
+        }
+      });
     });
   });
 });
