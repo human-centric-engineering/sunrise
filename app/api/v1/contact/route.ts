@@ -119,36 +119,36 @@ export async function POST(request: NextRequest) {
         submissionId: submission.id,
       });
     } else {
-      sendEmail({
-        to: adminEmail,
-        subject: `[Sunrise Contact] ${body.subject}`,
-        react: ContactNotificationEmail({
-          name: body.name,
-          email: body.email,
-          subject: body.subject,
-          message: body.message,
-          submittedAt: submission.createdAt,
-        }),
-        replyTo: body.email,
-      })
-        .then((result) => {
-          if (result.success) {
-            log.info('Contact notification email sent', {
-              submissionId: submission.id,
-              emailId: result.id,
-            });
-          } else {
-            log.warn('Failed to send contact notification email', {
-              submissionId: submission.id,
-              error: result.error,
-            });
-          }
-        })
-        .catch((error) => {
-          log.error('Error sending contact notification email', error, {
-            submissionId: submission.id,
-          });
+      try {
+        const emailResult = await sendEmail({
+          to: adminEmail,
+          subject: `[Sunrise Contact] ${body.subject}`,
+          react: ContactNotificationEmail({
+            name: body.name,
+            email: body.email,
+            subject: body.subject,
+            message: body.message,
+            submittedAt: submission.createdAt,
+          }),
+          replyTo: body.email,
         });
+
+        if (emailResult.success) {
+          log.info('Contact notification email sent', {
+            submissionId: submission.id,
+            emailId: emailResult.id,
+          });
+        } else {
+          log.warn('Failed to send contact notification email', {
+            submissionId: submission.id,
+            error: emailResult.error,
+          });
+        }
+      } catch (emailError) {
+        log.error('Error sending contact notification email', emailError, {
+          submissionId: submission.id,
+        });
+      }
     }
 
     // 5. Return success response
