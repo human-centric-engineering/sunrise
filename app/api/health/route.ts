@@ -11,11 +11,6 @@ import type { HealthCheckResponse, ServiceStatus } from '@/lib/monitoring';
 const APP_VERSION = process.env.npm_package_version || '1.0.0';
 
 /**
- * Track the process start time for uptime calculation
- */
-const PROCESS_START_TIME = Date.now();
-
-/**
  * Check if memory should be included in health response
  * Default: false (security consideration in production)
  */
@@ -86,7 +81,7 @@ export async function GET(request: NextRequest) {
     const response: HealthCheckResponse = {
       status: dbHealth.connected ? 'ok' : 'error',
       version: APP_VERSION,
-      uptime: Math.floor((Date.now() - PROCESS_START_TIME) / 1000),
+      uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       services: {
         database: {
@@ -115,7 +110,7 @@ export async function GET(request: NextRequest) {
     const errorResponse: HealthCheckResponse = {
       status: 'error',
       version: APP_VERSION,
-      uptime: Math.floor((Date.now() - PROCESS_START_TIME) / 1000),
+      uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       services: {
         database: {
