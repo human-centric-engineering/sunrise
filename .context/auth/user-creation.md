@@ -517,10 +517,10 @@ model Verification {
 **Welcome Email** (`emails/welcome.tsx`):
 
 - Sent: After **all user signups** (email/password, OAuth, and invitation acceptance)
-- Trigger: Database hook after user creation (`lib/auth/config.ts`)
+- Trigger: Database hook after user creation, or `afterEmailVerification` when verification is required
 - Contains: Personalized greeting, dashboard link, getting started tips
 - Non-blocking: Email failure doesn't prevent signup/acceptance
-- Sent only once: Only for new user creation, not existing OAuth user logins
+- Sent only once: If verification is not required, the email is sent at signup; `afterEmailVerification` skips it to avoid a duplicate when the user later verifies voluntarily from their profile
 
 ## Testing
 
@@ -624,10 +624,10 @@ curl -X POST http://localhost:3000/api/auth/sign-in/email \
 
 **Implementation**:
 
-- Database hook `databaseHooks.user.create.after` sends welcome email
-- Triggers automatically after any user creation (OAuth, email/password, invitation)
+- `databaseHooks.user.create.after` sends welcome email immediately for OAuth, invitation, and email/password signups when verification is not required
+- `emailVerification.afterEmailVerification` sends welcome email for email/password signups when verification **is** required — but only if `requiresVerification` is true; if it is not, the email was already sent at signup and the hook returns early to avoid sending a duplicate
 - Non-blocking: Email failures logged but don't prevent signup
-- Sent only once: Only for new user creation, not existing OAuth user logins
+- Sent only once: Guards in both hooks ensure the email is never sent twice, including when a user voluntarily verifies their email from their profile/settings
 
 **Trade-offs**:
 

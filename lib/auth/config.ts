@@ -164,6 +164,19 @@ export const auth = betterAuth({
         email: user.email,
       });
 
+      // Only send welcome email here if verification was required at signup.
+      // When verification is not required, the welcome email is sent immediately
+      // on account creation (databaseHooks.user.create.after). If the user later
+      // verifies voluntarily from their profile/settings, we must not send it again.
+      const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+
+      if (!requiresVerification) {
+        logger.info('Skipping welcome email after verification (already sent at signup)', {
+          userId: user.id,
+        });
+        return;
+      }
+
       // Send welcome email AFTER verification completes
       await sendEmail({
         to: user.email,
