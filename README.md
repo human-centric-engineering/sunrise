@@ -8,6 +8,7 @@ A production-ready Next.js 16 starter template designed for rapid application de
 - **Just ask Claude** — Documentation written as AI context; ask questions, get answers, start building
 - **Balanced** — Comprehensive yet customizable; not too minimal, not too opinionated
 - **Fork-friendly** — Take what you need, customize what you want
+- **API-first** — Actions accessible via versioned API endpoints, ready for agents and integrations
 
 ## Tech Stack
 

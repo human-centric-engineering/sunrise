@@ -28,7 +28,7 @@ export default defineConfig({
         'node_modules/',
         'tests/',
         '**/*.d.ts',
-        '**/*.config.{js,ts}',
+        '*.config.{js,ts,mjs,cjs}', // root-level tool configs only (next.config.ts, tailwind.config.ts, etc.)
         '**/types/**',
         '.next/',
         'coverage/',
