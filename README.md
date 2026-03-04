@@ -35,11 +35,19 @@ A production-ready Next.js 16 starter template designed for rapid application de
 # Clone and install
 git clone https://github.com/human-centric-engineering/sunrise.git
 cd sunrise
-npm install
 
-# Configure environment
+# Create environment file
 cp .env.example .env.local
-# Edit .env.local with your DATABASE_URL and BETTER_AUTH_SECRET
+
+## Generate BETTER_AUTH_SECRET
+openssl rand -base64 32
+
+# Edit .env.local with:
+#  - your DATABASE_URL
+#  - your BETTER_AUTH_SECRET
+
+# Install dependencies (will error if the database url isn't valid)
+npm install
 
 # Set up database
 npm run db:migrate
