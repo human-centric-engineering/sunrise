@@ -47,7 +47,7 @@ services:
 
   # PostgreSQL database
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: sunrise-db
     restart: unless-stopped
     environment:

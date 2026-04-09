@@ -157,6 +157,7 @@ tmp/
 temp/
 .reviews/
 .instructions/
+.mcp.json
 
 # Production
 /build
