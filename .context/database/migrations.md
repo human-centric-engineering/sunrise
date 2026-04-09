@@ -644,6 +644,34 @@ npx prisma generate
 
 **Trade-offs**: Must maintain seed script as schema evolves; `deleteMany` pattern requires correct deletion order for foreign key constraints
 
+## PostgreSQL Extensions
+
+Some features require PostgreSQL extensions to be installed on the server before migrations can run. These are enabled via migrations using `CREATE EXTENSION IF NOT EXISTS`, but the extension must be available on the PostgreSQL instance itself.
+
+### pgvector
+
+**Required for:** AI Agent Orchestration Layer — used to store and query vector embeddings for knowledge bases, enabling semantic search and retrieval-augmented generation (RAG) workflows.
+
+**Migration:** `20260409153925_enable_pgvector` runs `CREATE EXTENSION IF NOT EXISTS vector;` automatically.
+
+**Server requirement:** pgvector must be installed on your PostgreSQL instance. It is not bundled with PostgreSQL by default.
+
+| Environment                 | How to install                                      |
+| --------------------------- | --------------------------------------------------- |
+| Local (Homebrew)            | `brew install pgvector`                             |
+| Local (apt)                 | `apt install postgresql-<version>-pgvector`         |
+| Docker                      | Use `ankane/pgvector` image instead of `postgres`   |
+| Render / Railway / Supabase | Available as a one-click extension in the dashboard |
+| AWS RDS / Aurora            | Enable via parameter groups or the RDS console      |
+
+**Verify it's available:**
+
+```sql
+SELECT * FROM pg_available_extensions WHERE name = 'vector';
+```
+
+If the migration fails with `extension "vector" is not available`, install pgvector on the server and re-run `npm run db:migrate`.
+
 ## Related Documentation
 
 - [Database Schema](./schema.md) - Prisma schema design
