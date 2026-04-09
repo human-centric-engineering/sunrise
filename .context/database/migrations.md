@@ -656,13 +656,13 @@ Some features require PostgreSQL extensions to be installed on the server before
 
 **Server requirement:** pgvector must be installed on your PostgreSQL instance. It is not bundled with PostgreSQL by default.
 
-| Environment                 | How to install                                      |
-| --------------------------- | --------------------------------------------------- |
-| Local (Homebrew)            | `brew install pgvector`                             |
-| Local (apt)                 | `apt install postgresql-<version>-pgvector`         |
-| Docker                      | Use `ankane/pgvector` image instead of `postgres`   |
-| Render / Railway / Supabase | Available as a one-click extension in the dashboard |
-| AWS RDS / Aurora            | Enable via parameter groups or the RDS console      |
+| Environment                 | How to install                                                     |
+| --------------------------- | ------------------------------------------------------------------ |
+| Local (Homebrew)            | `brew install pgvector`                                            |
+| Local (apt)                 | `apt install postgresql-<version>-pgvector`                        |
+| Docker                      | Use `pgvector/pgvector:pg15` image instead of `postgres:15-alpine` |
+| Render / Railway / Supabase | Available as a one-click extension in the dashboard                |
+| AWS RDS / Aurora            | Enable via parameter groups or the RDS console                     |
 
 **Verify it's available:**
 
