@@ -37,7 +37,7 @@ services:
 
   # PostgreSQL database
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: sunrise-db-dev
     ports:
       - '5432:5432'
