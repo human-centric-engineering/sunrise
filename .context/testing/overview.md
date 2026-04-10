@@ -106,6 +106,31 @@ describe('GET /api/health', () => {
 });
 ```
 
+### Smoke Scripts (`scripts/smoke/`)
+
+Standalone `tsx` scripts that exercise a production code path end-to-end against the **real dev Postgres database**, with external services (LLM APIs, email, third-party SDKs) stubbed in-process. They sit between unit tests (everything mocked) and manual QA (everything real), catching plumbing failures that slip past vitest — stale module caches, import paths, fire-and-forget side effects, Prisma FK chains.
+
+**When to write one**:
+
+- After landing a slice that crosses service → Prisma → external SDK layers
+- When the live wire-up (module cache, import bindings) is hard to cover inside vitest
+- When you need to demonstrate persistence actually lands in Postgres, not just that `prisma.foo.create` was called
+
+**Safety rules** (non-negotiable — the dev DB has data the user cares about):
+
+- Scope every row by a `smoke-test-*` prefix
+- Clean up stale rows before seeding AND after running
+- Never use `deleteMany({})`, `TRUNCATE`, or `prisma migrate reset`
+- Stub external services via an in-process injection seam (e.g. `registerProviderInstance`)
+
+**Example** — see `scripts/smoke/chat.ts` for the streaming chat handler smoke. Run with:
+
+```bash
+npm run smoke:chat
+```
+
+Full guide and template: [`scripts/smoke/README.md`](../../scripts/smoke/README.md).
+
 ### Component Tests (`tests/components/` - future)
 
 Tests for React components using React Testing Library. Verify user interactions, rendering, and accessibility.

@@ -1,0 +1,279 @@
+# Streaming Chat Handler
+
+Platform-agnostic runtime that runs a single chat turn against an agent — load the agent, build the message array, stream from the LLM, dispatch any tool calls mid-stream, persist everything, and emit a typed `AsyncIterable<ChatEvent>`. Implemented in `lib/orchestration/chat/`.
+
+The handler is the consumer of every prior orchestration slice: it calls `providerManager.getProvider`, `capabilityDispatcher.dispatch`, and `costTracker.logCost` around a persisted `AiConversation` + `AiMessage` record. **SSE framing happens in the API route layer** (Session 3.3), never here — the handler only yields plain events.
+
+## Quick Start
+
+```typescript
+import { streamChat } from '@/lib/orchestration/chat';
+
+for await (const event of streamChat({
+  message: 'Explain the ReAct pattern',
+  agentSlug: 'pattern-coach',
+  userId: 'user-1',
+  contextType: 'pattern',
+  contextId: '1',
+})) {
+  switch (event.type) {
+    case 'start':
+      console.log('conversation', event.conversationId);
+      break;
+    case 'content':
+      process.stdout.write(event.delta);
+      break;
+    case 'status':
+      console.log('\n[status]', event.message);
+      break;
+    case 'capability_result':
+      console.log('\n[tool]', event.capabilitySlug, event.result);
+      break;
+    case 'done':
+      console.log('\n[done]', event.tokenUsage, event.costUsd);
+      break;
+    case 'error':
+      console.error('\n[error]', event.code, event.message);
+      break;
+  }
+}
+```
+
+`streamChat` is a thin wrapper around `new StreamingChatHandler().run(request)`. The iterator **always terminates cleanly** — every error path yields a final `{ type: 'error' }` event before returning, so consumers don't need try/catch around the loop.
+
+## Public Surface
+
+Everything is exported from `@/lib/orchestration/chat`:
+
+| Export                 | Kind     | Purpose                                                                     |
+| ---------------------- | -------- | --------------------------------------------------------------------------- |
+| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                       |
+| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations |
+| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try          |
+| `ChatRequest`          | type     | Input shape (see below)                                                     |
+| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
+| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
+| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
+| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
+| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
+| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
+
+`buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
+
+## `ChatRequest`
+
+```typescript
+interface ChatRequest {
+  message: string;
+  agentSlug: string;
+  userId: string;
+  conversationId?: string;
+  contextType?: string;
+  contextId?: string;
+  entityContext?: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+```
+
+- Omit `conversationId` to create a new `AiConversation` — `contextType` and `contextId` are persisted on the row at creation time only.
+- Supply `conversationId` to continue an existing conversation. Mismatched `userId` / `agentId` → `conversation_not_found`.
+- `entityContext` is opaque to the handler — it's passed straight through to `CapabilityContext.entityContext` so capabilities can read it.
+- `signal` is forwarded into every `provider.chatStream` call.
+
+## `ChatEvent` Lifecycle
+
+All events are defined in `types/orchestration.ts`. Every turn produces this ordered sequence (zero or more `content` in place of `content*`):
+
+```
+start → content* → [status → capability_result → (content* | done)]* → (done | error)
+```
+
+Concretely:
+
+1. **`start`** — always emitted first, once the user message has been persisted and the conversation resolved. Carries `conversationId` and the persisted user `messageId`.
+2. **`content`** — zero or more. One per `text` chunk from the provider. The `delta` is the incremental text; concatenate for the full assistant message.
+3. **`status`** — emitted before dispatching a tool call. Carries a human-readable `message` such as `Executing search_knowledge_base`.
+4. **`capability_result`** — emitted after the dispatcher resolves. Carries `capabilitySlug` and the raw `CapabilityResult` object (including any `success: false` gates like `requires_approval`).
+5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
+6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn) and `costUsd` (final turn cost only — the chat handler logs per-turn `CostOperation.CHAT` rows fire-and-forget).
+7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
+
+## Tool Loop Semantics
+
+The tool loop is a bounded while-loop (`MAX_TOOL_ITERATIONS = 5`). Each iteration:
+
+1. Calls `provider.chatStream(messages, options)` with `tools` populated from `getCapabilityDefinitions(agentId)`.
+2. Drains the entire stream, capturing `assistantText`, the first `tool_call` (if any), and the trailing `usage` from the `done` chunk.
+3. Persists the assistant row (skipped when the turn was pure tool-use with no text).
+4. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
+5. If no tool call: yields `done` and returns.
+6. If a tool call: yields `status`, dispatches via `capabilityDispatcher.dispatch`, yields `capability_result`, persists a `role: 'tool'` row with `capabilitySlug` and `toolCallId`, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
+
+Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
+
+Multiple tool calls in a single turn are not yet supported — the handler captures the first `tool_call` and suppresses any further text/tool chunks for that turn. Multi-tool fan-out is a later slice.
+
+## Context Builder
+
+`buildContext(type, id)` returns a `LOCKED CONTEXT` text block that gets spliced in as a second `system` message after the agent's stable instructions (KV-cache friendly — the instructions prefix is invariant across turns).
+
+```
+=== LOCKED CONTEXT ===
+type: pattern
+id: 1
+
+Pattern #1: ReAct
+
+## overview
+Reasoning plus acting is a reflex loop.
+
+## details
+...
+
+=== END LOCKED CONTEXT ===
+```
+
+**Supported types:** only `pattern` in Phase 2c (delegates to `getPatternDetail`). Other types log a warn and return a benign "no loader" placeholder so the model doesn't hallucinate. Adding types is a ~10-line change — add a `case` in the switch.
+
+**Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id)` pair. Matches the dispatcher's pattern — no shared TTL utility is introduced.
+
+**Invalidation:** `invalidateContext(type, id)` drops a single entry. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
+
+## Error Codes
+
+Every terminal `error` event carries one of these stable `code` values:
+
+| Code                     | Source                                                          | Meaning                                                          |
+| ------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                | Resolve the slug or activate the agent                           |
+| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                |
+| `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month |
+| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                |
+| `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` carries the detail   |
+
+Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
+
+## How the Future SSE Route Will Consume It
+
+Session 3.3 will add `app/api/v1/admin/orchestration/chat/route.ts`:
+
+```typescript
+import { streamChat } from '@/lib/orchestration/chat';
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  const user = await requireUser(request);
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const event of streamChat({ ...body, userId: user.id })) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+}
+```
+
+The handler itself knows nothing about SSE, Next.js, or HTTP — it just yields `ChatEvent`s.
+
+## Anti-Patterns
+
+**Don't** wrap the handler in SSE framing inside `lib/orchestration/chat/`. That's the route layer's job:
+
+```typescript
+// Bad — couples the handler to Next.js
+import { NextResponse } from 'next/server';
+export async function* badHandler() {
+  yield new NextResponse('data: ...\n\n');
+}
+```
+
+**Don't** call `providerManager.getProvider` or `capabilityDispatcher.dispatch` from agent-facing code paths. Use `streamChat` — it wires budgets, cost logging, and message persistence correctly.
+
+**Don't** skip `registerBuiltInCapabilities()`. `streamChat` calls it at the top of every turn (idempotent), so new test harnesses and CLI callers get the right handler map without thinking about it.
+
+**Don't** emit your own `CostOperation.CHAT` log rows from capability code. The chat handler owns per-turn chat costs; capabilities log their own `tool_call` rows via the dispatcher.
+
+**Don't** import `next/*` anywhere under `lib/orchestration/chat/`:
+
+```typescript
+// Will break the platform-agnostic contract
+import { NextRequest } from 'next/server';
+import { cookies } from 'next/headers';
+```
+
+**Don't** persist custom message shapes — stick with the four `AiMessage.role` values (`user`, `assistant`, `system`, `tool`). `buildMessages` normalises unknown roles to `user` with a warn so a corrupt row can't crash the provider, but that's a safety net, not a design pattern.
+
+## Testing
+
+Unit tests live in `tests/unit/lib/orchestration/chat/`. Mocking style matches the rest of the orchestration domain:
+
+```typescript
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiAgent: { findFirst: vi.fn() },
+    aiConversation: { findFirst: vi.fn(), create: vi.fn() },
+    aiMessage: { findMany: vi.fn(), create: vi.fn() },
+  },
+}));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({ getProvider: vi.fn() }));
+vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
+  checkBudget: vi.fn(),
+  calculateCost: vi.fn(() => ({ totalCostUsd: 0.03 /* ... */ })),
+  logCost: vi.fn().mockResolvedValue(null),
+}));
+vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
+  capabilityDispatcher: { dispatch: vi.fn() },
+}));
+vi.mock('@/lib/orchestration/capabilities/registry', () => ({
+  registerBuiltInCapabilities: vi.fn(),
+  getCapabilityDefinitions: vi.fn().mockResolvedValue([]),
+}));
+
+const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
+```
+
+Notes:
+
+- Build a mock `LlmProvider` whose `chatStream` yields a different scripted `StreamChunk[]` per turn (see `tests/unit/lib/orchestration/chat/streaming-handler.test.ts`). This lets a single test script a full tool round-trip.
+- For assertions on the fire-and-forget `logCost`, flush microtasks (`await Promise.resolve(); await Promise.resolve();`) before inspecting the mock.
+- Drain each stream with a tiny `collect()` helper rather than manual `for await` — it makes assertions on the full event sequence much cleaner.
+- Don't mock `@/lib/orchestration/chat/message-builder` — it's pure and fast.
+
+Run the suite:
+
+```bash
+npx vitest run tests/unit/lib/orchestration/chat
+```
+
+## Smoke Testing
+
+`scripts/smoke/chat.ts` exercises `streamChat` end-to-end against the real dev Postgres database, with a fake `LlmProvider` injected via `registerProviderInstance` (no API key, no SDK, no network). It verifies the full event sequence, the persisted `AiMessage` rows, and the fire-and-forget `AiCostLog` row actually land.
+
+```bash
+npm run smoke:chat
+```
+
+Run this whenever you touch `streaming-handler.ts`, `provider-manager.ts`, or the `AiConversation`/`AiMessage`/`AiCostLog` schema — unit tests mock Prisma, so a broken FK chain or import binding can slip through vitest but not the smoke script. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for safety rules and the template to follow when adding more smoke scripts.
+
+## Related Documentation
+
+- [Orchestration Overview](./overview.md) — domain entry point
+- [LLM Providers](./llm-providers.md) — the Phase 2a provider abstraction the handler streams from
+- [Capabilities](./capabilities.md) — the Phase 2b dispatcher the handler invokes on tool calls
+- `.claude/docs/agent-orchestration.md` — architectural brief
+- `types/orchestration.ts` — `ChatEvent`, `TokenUsage`, `CostOperation`, `AgentWithCapabilities`
+- `prisma/schema.prisma` — `AiAgent`, `AiConversation`, `AiMessage`
