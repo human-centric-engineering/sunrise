@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema, slugSchema } from './common';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 
 // ============================================================================
 // Shared Schemas
@@ -690,34 +691,158 @@ const providerTypeSchema = z.enum(['anthropic', 'openai-compatible']);
 /**
  * Provider config schema (POST /api/v1/admin/orchestration/providers)
  */
-export const providerConfigSchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+/** Workflow status enum for listExecutionsQuerySchema filters. */
+const workflowStatusSchema = z.enum([
+  'pending',
+  'running',
+  'paused_for_approval',
+  'completed',
+  'failed',
+  'cancelled',
+]);
 
-  slug: slugSchema.pipe(z.string().max(50, 'Slug must be less than 50 characters')),
+/**
+ * Shared SSRF guard applied to provider `baseUrl` values on create and
+ * update. The check depends on `isLocal` — loopback targets are only
+ * allowed for rows explicitly flagged `isLocal: true`. Cloud metadata,
+ * RFC1918, link-local, and IPv6 unique-local ranges are rejected for
+ * every row regardless of flag.
+ *
+ * The full allow/deny logic lives in `lib/security/safe-url.ts`; this
+ * helper just adapts it to Zod's `superRefine` callback.
+ */
+function refineProviderBaseUrl(
+  data: { baseUrl?: string | null; isLocal?: boolean },
+  ctx: z.RefinementCtx
+): void {
+  if (!data.baseUrl) return;
+  const result = checkSafeProviderUrl(data.baseUrl, { allowLoopback: data.isLocal === true });
+  if (!result.ok) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['baseUrl'],
+      message: result.message ?? 'Base URL is not allowed',
+    });
+  }
+}
 
-  providerType: providerTypeSchema,
+export const providerConfigSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .max(100, 'Name must be less than 100 characters')
+      .trim(),
 
-  baseUrl: z
-    .string()
-    .url('Base URL must be a valid URL')
-    .max(500, 'Base URL must be less than 500 characters')
+    slug: slugSchema.pipe(z.string().max(50, 'Slug must be less than 50 characters')),
+
+    providerType: providerTypeSchema,
+
+    baseUrl: z
+      .string()
+      .url('Base URL must be a valid URL')
+      .max(500, 'Base URL must be less than 500 characters')
+      .optional(),
+
+    apiKeyEnvVar: z
+      .string()
+      .max(100, 'Environment variable name must be less than 100 characters')
+      .regex(/^[A-Z][A-Z0-9_]*$/, 'Environment variable must be SCREAMING_SNAKE_CASE')
+      .optional(),
+
+    isLocal: z.boolean().default(false),
+
+    isActive: z.boolean().default(true),
+
+    metadata: metadataSchema,
+  })
+  .superRefine(refineProviderBaseUrl);
+
+/**
+ * Update provider config schema (PATCH /api/v1/admin/orchestration/providers/[id])
+ *
+ * All fields optional. Same env-var regex as `providerConfigSchema` so the
+ * `apiKeyEnvVar` contract can never be loosened on update.
+ */
+export const updateProviderConfigSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name cannot be empty')
+      .max(100, 'Name must be less than 100 characters')
+      .trim()
+      .optional(),
+
+    slug: slugSchema.pipe(z.string().max(50, 'Slug must be less than 50 characters')).optional(),
+
+    providerType: providerTypeSchema.optional(),
+
+    baseUrl: z
+      .string()
+      .url('Base URL must be a valid URL')
+      .max(500, 'Base URL must be less than 500 characters')
+      .nullable()
+      .optional(),
+
+    apiKeyEnvVar: z
+      .string()
+      .max(100, 'Environment variable name must be less than 100 characters')
+      .regex(/^[A-Z][A-Z0-9_]*$/, 'Environment variable must be SCREAMING_SNAKE_CASE')
+      .nullable()
+      .optional(),
+
+    isLocal: z.boolean().optional(),
+
+    isActive: z.boolean().optional(),
+
+    metadata: metadataSchema,
+  })
+  .superRefine(refineProviderBaseUrl);
+
+/** List providers query schema — GET /api/v1/admin/orchestration/providers */
+export const listProvidersQuerySchema = paginationQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+  providerType: providerTypeSchema.optional(),
+  isLocal: z.coerce.boolean().optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+/** List workflows query schema — GET /api/v1/admin/orchestration/workflows */
+export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+  isTemplate: z.coerce.boolean().optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+/** List executions query schema — used by future engine GET endpoints. */
+export const listExecutionsQuerySchema = paginationQuerySchema.extend({
+  workflowId: cuidSchema.optional(),
+  userId: z.string().trim().max(100).optional(),
+  status: workflowStatusSchema.optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+});
+
+/**
+ * Execute workflow request body (POST /workflows/[id]/execute).
+ *
+ * Distinct from `workflowExecutionSchema` which also carries `workflowId`;
+ * this schema is body-only because the route takes the workflow id from
+ * the URL.
+ */
+export const executeWorkflowBodySchema = z.object({
+  inputData: z.record(z.string(), z.unknown()),
+  budgetLimitUsd: z
+    .number()
+    .positive('Budget limit must be positive')
+    .max(1000, 'Budget limit must be at most $1,000')
     .optional(),
+});
 
-  apiKeyEnvVar: z
-    .string()
-    .max(100, 'Environment variable name must be less than 100 characters')
-    .regex(/^[A-Z][A-Z0-9_]*$/, 'Environment variable must be SCREAMING_SNAKE_CASE')
-    .optional(),
-
-  isLocal: z.boolean().default(false),
-
-  isActive: z.boolean().default(true),
-
-  metadata: metadataSchema,
+/** Approve execution request body (POST /executions/[id]/approve). */
+export const approveExecutionBodySchema = z.object({
+  approvalPayload: z.record(z.string(), z.unknown()).optional(),
+  notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
 // ============================================================================
@@ -746,3 +871,9 @@ export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchSchema>;
 export type DocumentUploadInput = z.infer<typeof documentUploadSchema>;
 export type CostQueryInput = z.infer<typeof costQuerySchema>;
 export type ProviderConfigInput = z.infer<typeof providerConfigSchema>;
+export type UpdateProviderConfigInput = z.infer<typeof updateProviderConfigSchema>;
+export type ListProvidersQuery = z.infer<typeof listProvidersQuerySchema>;
+export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
+export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
+export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
+export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;

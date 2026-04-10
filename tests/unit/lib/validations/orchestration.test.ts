@@ -42,6 +42,12 @@ import {
   exportAgentsSchema,
   agentBundleSchema,
   importAgentsSchema,
+  updateProviderConfigSchema,
+  listProvidersQuerySchema,
+  listWorkflowsQuerySchema,
+  listExecutionsQuerySchema,
+  executeWorkflowBodySchema,
+  approveExecutionBodySchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -700,6 +706,54 @@ describe('providerConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it.each([
+    'http://169.254.169.254/latest/meta-data/',
+    'http://metadata.google.internal/',
+    'http://10.0.0.1/',
+    'http://192.168.1.1/',
+    'http://172.16.0.1/',
+    'http://127.0.0.1:11434/v1',
+    'http://localhost:11434/v1',
+    'http://[::1]/',
+    'http://0.0.0.0/',
+    'file:///etc/passwd',
+    'gopher://evil/',
+  ])('should reject SSRF-unsafe baseUrl %s', (baseUrl) => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: false,
+      baseUrl,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts loopback baseUrl when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://localhost:11434/v1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects private IPs when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://10.0.0.1/v1',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects cloud metadata when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://169.254.169.254/',
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('should accept a SCREAMING_SNAKE_CASE apiKeyEnvVar', () => {
     const result = providerConfigSchema.safeParse({
       ...VALID_PROVIDER,
@@ -995,5 +1049,173 @@ describe('importAgentsSchema', () => {
 
   it('should reject a missing bundle', () => {
     expect(importAgentsSchema.safeParse({ conflictMode: 'skip' }).success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// updateProviderConfigSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('updateProviderConfigSchema', () => {
+  it('accepts a partial update with just name', () => {
+    const result = updateProviderConfigSchema.safeParse({ name: 'New Name' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts nullable apiKeyEnvVar and baseUrl', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      apiKeyEnvVar: null,
+      baseUrl: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects apiKeyEnvVar that is not SCREAMING_SNAKE_CASE', () => {
+    const result = updateProviderConfigSchema.safeParse({ apiKeyEnvVar: 'lowercase_key' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an SSRF-unsafe baseUrl on update', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://169.254.169.254/',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects loopback baseUrl on update without isLocal', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://localhost:11434/v1',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts loopback baseUrl on update when isLocal=true is also set', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://localhost:11434/v1',
+      isLocal: true,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listProvidersQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listProvidersQuerySchema', () => {
+  it('accepts an empty query (pagination defaults)', () => {
+    const result = listProvidersQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces isActive string to boolean and accepts providerType', () => {
+    const result = listProvidersQuerySchema.safeParse({
+      isActive: 'true',
+      providerType: 'anthropic',
+      q: 'claude',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown providerType', () => {
+    const result = listProvidersQuerySchema.safeParse({ providerType: 'not-a-provider' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listWorkflowsQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listWorkflowsQuerySchema', () => {
+  it('accepts filters for isActive, isTemplate, and q', () => {
+    const result = listWorkflowsQuerySchema.safeParse({
+      isActive: 'true',
+      isTemplate: 'false',
+      q: 'onboarding',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects q longer than 200 characters', () => {
+    const result = listWorkflowsQuerySchema.safeParse({ q: 'a'.repeat(201) });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listExecutionsQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listExecutionsQuerySchema', () => {
+  it('accepts workflowId, status, and ISO date strings', () => {
+    const result = listExecutionsQuerySchema.safeParse({
+      workflowId: VALID_CUID,
+      status: 'running',
+      startDate: '2025-01-01',
+      endDate: '2025-12-31',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown status', () => {
+    const result = listExecutionsQuerySchema.safeParse({ status: 'exploded' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// executeWorkflowBodySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('executeWorkflowBodySchema', () => {
+  it('accepts inputData alone', () => {
+    const result = executeWorkflowBodySchema.safeParse({ inputData: { topic: 'test' } });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts inputData with a positive budgetLimitUsd', () => {
+    const result = executeWorkflowBodySchema.safeParse({
+      inputData: {},
+      budgetLimitUsd: 5.5,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a negative budgetLimitUsd', () => {
+    const result = executeWorkflowBodySchema.safeParse({
+      inputData: {},
+      budgetLimitUsd: -1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing inputData', () => {
+    const result = executeWorkflowBodySchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// approveExecutionBodySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('approveExecutionBodySchema', () => {
+  it('accepts an empty body', () => {
+    const result = approveExecutionBodySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an approvalPayload and notes', () => {
+    const result = approveExecutionBodySchema.safeParse({
+      approvalPayload: { decision: 'approved' },
+      notes: 'Looks good',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects notes longer than 5000 characters', () => {
+    const result = approveExecutionBodySchema.safeParse({ notes: 'x'.repeat(5001) });
+    expect(result.success).toBe(false);
   });
 });

@@ -6,14 +6,15 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 
 ## Module Layout
 
-| Module                            | Purpose                                                                | Status      |
-| --------------------------------- | ---------------------------------------------------------------------- | ----------- |
-| `lib/orchestration/knowledge/`    | Document ingestion, chunking, embeddings, vector search                | Phase 1 ✓   |
-| `lib/orchestration/llm/`          | Provider abstraction, model registry, cost tracking                    | Phase 2a ✓  |
-| `lib/orchestration/capabilities/` | Tool dispatcher, built-in capabilities, rate limiting, approval gating | Phase 2b ✓  |
-| `lib/orchestration/chat/`         | Streaming chat handler, context builder, message composition           | Phase 2c ✓  |
-| `lib/orchestration/seed/`         | Dev seed data for providers / agents                                   | Phase 1 ✓   |
-| `app/api/v1/admin/orchestration/` | Admin CRUD surface for agents and capabilities (see `admin-api.md`)    | Phase 3.1 ✓ |
+| Module                            | Purpose                                                                                                       | Status                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `lib/orchestration/knowledge/`    | Document ingestion, chunking, embeddings, vector search                                                       | Phase 1 ✓                    |
+| `lib/orchestration/llm/`          | Provider abstraction, model registry, cost tracking                                                           | Phase 2a ✓                   |
+| `lib/orchestration/capabilities/` | Tool dispatcher, built-in capabilities, rate limiting, approval gating                                        | Phase 2b ✓                   |
+| `lib/orchestration/chat/`         | Streaming chat handler, context builder, message composition                                                  | Phase 2c ✓                   |
+| `lib/orchestration/workflows/`    | DAG validator (executor + step runners arrive in Session 5.2)                                                 | Phase 3.2 ✓ (validator only) |
+| `lib/orchestration/seed/`         | Dev seed data for providers / agents                                                                          | Phase 1 ✓                    |
+| `app/api/v1/admin/orchestration/` | Admin CRUD for agents, capabilities, providers, workflows; execution routes are 501 stubs pending Session 5.2 | Phase 3.2 ✓                  |
 
 ## Documentation
 
@@ -22,7 +23,8 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | LLM Providers | [`llm-providers.md`](./llm-providers.md) | Chat, streaming, embeddings, cost tracking, model registry      |
 | Capabilities  | [`capabilities.md`](./capabilities.md)   | Dispatcher, built-in capabilities, rate limits, approval gating |
 | Chat          | [`chat.md`](./chat.md)                   | Streaming chat handler, tool loop, context builder, error codes |
-| Admin API     | [`admin-api.md`](./admin-api.md)         | Agent + capability CRUD, history/revert, export/import bundles  |
+| Workflows     | [`workflows.md`](./workflows.md)         | DAG validator, error codes, Phase 5.2 engine roadmap            |
+| Admin API     | [`admin-api.md`](./admin-api.md)         | Agent / capability / provider / workflow CRUD + execution stubs |
 
 ## Architecture Decisions
 

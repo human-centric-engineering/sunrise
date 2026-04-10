@@ -47,6 +47,8 @@ const {
   getProvider,
   clearCache,
   listProviders,
+  listProvidersWithStatus,
+  isApiKeyEnvVarSet,
   registerProvider,
   registerProviderInstance,
   testProvider,
@@ -359,5 +361,61 @@ describe('resolveApiKey warn path', () => {
 
     // Cleanup
     delete process.env.EMPTY_KEY_VAR;
+  });
+});
+
+describe('isApiKeyEnvVarSet', () => {
+  it('returns false when the env var name is null', () => {
+    expect(isApiKeyEnvVarSet(null)).toBe(false);
+  });
+
+  it('returns false when the env var is unset', () => {
+    delete process.env.SOME_UNSET_KEY;
+    expect(isApiKeyEnvVarSet('SOME_UNSET_KEY')).toBe(false);
+  });
+
+  it('returns false when the env var is empty', () => {
+    process.env.EMPTY_KEY = '';
+    expect(isApiKeyEnvVarSet('EMPTY_KEY')).toBe(false);
+  });
+
+  it('returns true when the env var is set to a non-empty string', () => {
+    process.env.FILLED_KEY = 'some-secret-value';
+    expect(isApiKeyEnvVarSet('FILLED_KEY')).toBe(true);
+  });
+});
+
+describe('listProvidersWithStatus', () => {
+  it('hydrates each row with apiKeyPresent and status=unknown', async () => {
+    process.env.ANTHROPIC_API_KEY = 'real-key';
+    delete process.env.OLLAMA_API_KEY;
+    (prisma.aiProviderConfig.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeRow({ slug: 'anthropic', apiKeyEnvVar: 'ANTHROPIC_API_KEY' }),
+      makeRow({
+        id: 'p2',
+        slug: 'ollama',
+        providerType: 'openai-compatible',
+        apiKeyEnvVar: 'OLLAMA_API_KEY',
+        baseUrl: 'http://localhost:11434/v1',
+      }),
+      makeRow({ id: 'p3', slug: 'local', apiKeyEnvVar: null }),
+    ]);
+
+    const rows = await listProvidersWithStatus();
+    expect(rows).toHaveLength(3);
+    expect(rows[0]?.apiKeyPresent).toBe(true);
+    expect(rows[0]?.status).toBe('unknown');
+    expect(rows[1]?.apiKeyPresent).toBe(false);
+    expect(rows[2]?.apiKeyPresent).toBe(false);
+  });
+
+  it('never exposes the env var value on the returned rows', async () => {
+    process.env.SECRET_THING = 'super-secret-value-do-not-leak';
+    (prisma.aiProviderConfig.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeRow({ apiKeyEnvVar: 'SECRET_THING' }),
+    ]);
+    const rows = await listProvidersWithStatus();
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toContain('super-secret-value-do-not-leak');
   });
 });
