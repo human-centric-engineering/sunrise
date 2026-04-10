@@ -34,6 +34,19 @@ export async function uploadDocument(
 
   logger.info('Uploading document', { fileName, fileHash, userId });
 
+  // Deduplicate: return an existing 'ready' document with the same content hash.
+  // Previously-failed uploads are intentionally not returned so the caller can retry.
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { fileHash, status: 'ready' },
+  });
+  if (existing) {
+    logger.info('Document already uploaded, returning existing', {
+      documentId: existing.id,
+      fileHash,
+    });
+    return existing;
+  }
+
   // Create document record with processing status
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
@@ -148,6 +161,14 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     where: { id: documentId },
     include: { chunks: { orderBy: { chunkKey: 'asc' } } },
   });
+
+  if (document.chunks.length === 0) {
+    logger.warn('Rechunk skipped: document has no existing chunks to reconstruct from', {
+      documentId,
+    });
+    const { chunks: _chunks, ...rest } = document;
+    return rest;
+  }
 
   // Reconstruct content from existing chunks
   const content = document.chunks.map((c) => c.content).join('\n\n---\n\n');

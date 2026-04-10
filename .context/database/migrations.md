@@ -652,7 +652,16 @@ Some features require PostgreSQL extensions to be installed on the server before
 
 **Required for:** AI Agent Orchestration Layer — used to store and query vector embeddings for knowledge bases, enabling semantic search and retrieval-augmented generation (RAG) workflows.
 
-**Migration:** `20260409153925_enable_pgvector` runs `CREATE EXTENSION IF NOT EXISTS vector;` automatically.
+**Prisma declaration:** The schema enables the `postgresqlExtensions` preview feature and declares `extensions = [vector]` on the datasource, so Prisma is aware of the extension when diffing schemas.
+
+**Related migrations (applied in order):**
+
+| Migration                                         | Purpose                                                                                                                                                                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20260409153925_enable_pgvector`                  | Runs `CREATE EXTENSION IF NOT EXISTS vector;`                                                                                                                                                                                                     |
+| `20260409204535_add_agent_orchestration_models`   | Creates the 13 `ai_*` tables. Includes the `embedding vector(1536)` column on `ai_knowledge_chunk`.                                                                                                                                               |
+| `20260409214649_add_hnsw_vector_index`            | Creates `idx_knowledge_embedding` — an HNSW index on `ai_knowledge_chunk.embedding` using `vector_cosine_ops` (m=16, ef_construction=64) for approximate nearest-neighbour cosine search.                                                         |
+| `20260410120000_dedupe_ready_knowledge_documents` | Creates `idx_knowledge_doc_file_hash_ready` — a partial unique index on `ai_knowledge_document("fileHash") WHERE status = 'ready'`, preventing concurrent duplicate uploads of the same content hash while still allowing retries after failures. |
 
 **Server requirement:** pgvector must be installed on your PostgreSQL instance. It is not bundled with PostgreSQL by default.
 

@@ -375,7 +375,7 @@ model AiKnowledgeChunk {
 model AiEvaluationSession {
   id                     String    @id @default(cuid())
   userId                 String
-  agentId                String
+  agentId                String?   // nullable so SetNull can preserve history when the agent is deleted
   title                  String
   description            String?   @db.Text
   status                 String    // "draft", "in_progress", "completed", "archived"
@@ -389,7 +389,7 @@ model AiEvaluationSession {
 
   // Relations
   user User               @relation("AiEvaluationSessionUser", fields: [userId], references: [id])
-  agent AiAgent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agent AiAgent?           @relation(fields: [agentId], references: [id], onDelete: SetNull)
   logs  AiEvaluationLog[]
 
   @@index([userId])

@@ -7,6 +7,7 @@
  */
 
 import type {
+  User,
   AiAgent,
   AiCapability,
   AiConversation,
@@ -258,7 +259,8 @@ export type DocumentWithChunks = AiKnowledgeDocument & {
 /** Evaluation session with logs */
 export type EvaluationSessionWithLogs = AiEvaluationSession & {
   logs: AiEvaluationLog[];
-  agent: Pick<AiAgent, 'id' | 'name' | 'slug'>;
+  /** Null when the underlying agent has been deleted (relation is SetNull) */
+  agent: Pick<AiAgent, 'id' | 'name' | 'slug'> | null;
 };
 
 /** Cost summary for a time period */
@@ -274,7 +276,7 @@ export interface CostSummary {
 
 /** Provider config with creator info */
 export type ProviderConfigWithCreator = AiProviderConfig & {
-  creator: Pick<AiAgent, 'id' | 'name'>;
+  creator: Pick<User, 'id' | 'name'>;
 };
 
 /** Knowledge search result */

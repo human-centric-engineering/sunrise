@@ -45,20 +45,56 @@ function stripMermaidBlocks(content: string): string {
 }
 
 /**
+ * Split a metadata body on commas, ignoring commas inside double-quoted values.
+ * Used so `keywords="retry,backoff,circuit-breaker"` is treated as a single pair.
+ */
+function splitMetadataPairs(input: string): string[] {
+  const pairs: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if (ch === ',' && !inQuotes) {
+      if (current.trim()) pairs.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) pairs.push(current);
+  return pairs.map((p) => p.trim());
+}
+
+/**
  * Parse HTML comment metadata blocks.
- * Format: <!-- metadata: key=value, key2=value2 -->
+ *
+ * Format:
+ *   <!-- metadata: key=value, key2=value2 -->
+ *
+ * Values containing commas must be double-quoted:
+ *   <!-- metadata: keywords="retry,backoff,circuit-breaker" -->
+ *
+ * Surrounding double quotes are stripped from parsed values. Equals signs
+ * inside values are preserved (first `=` is the separator).
  */
 function parseMetadataComments(content: string): Record<string, string> {
   const metadata: Record<string, string> = {};
   const regex = /<!--\s*metadata:\s*(.*?)\s*-->/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
-    const pairs = match[1].split(',').map((p) => p.trim());
+    const pairs = splitMetadataPairs(match[1]);
     for (const pair of pairs) {
-      const [key, ...valueParts] = pair.split('=');
-      if (key && valueParts.length > 0) {
-        metadata[key.trim()] = valueParts.join('=').trim();
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = pair.slice(0, eqIdx).trim();
+      let value = pair.slice(eqIdx + 1).trim();
+      if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1);
       }
+      if (key) metadata[key] = value;
     }
   }
   return metadata;

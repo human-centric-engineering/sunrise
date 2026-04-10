@@ -97,6 +97,7 @@ import { User, Session } from '@prisma/client';
 **Available Types:**
 
 - **Models**: `User`, `Session`, `Account`, `Verification`, `ContactSubmission`, `FeatureFlag`
+- **Agent Orchestration models**: `AiAgent`, `AiCapability`, `AiAgentCapability`, `AiWorkflow`, `AiWorkflowExecution`, `AiConversation`, `AiMessage`, `AiKnowledgeDocument`, `AiKnowledgeChunk`, `AiEvaluationSession`, `AiEvaluationLog`, `AiCostLog`, `AiProviderConfig` — also re-exported from `@/types/orchestration` alongside their string-enum constants (`WorkflowStatus`, `DocumentStatus`, etc.)
 - **Namespace**: `Prisma` for utility types (`Prisma.UserSelect`, `Prisma.UserWhereInput`, `Prisma.UserCreateInput`, etc.)
 
 **Benefits:**
@@ -725,6 +726,98 @@ try {
 - `P2025`: Record not found
 - `P2003`: Foreign key constraint violation
 - `P2034`: Transaction conflict
+
+## Agent Orchestration Models
+
+The Agent Orchestration Layer adds 13 Prisma models under the `ai_*` table prefix. They support configurable AI agents, workflow execution, chat conversations, a vector-backed knowledge base, evaluation sessions, cost tracking, and provider configuration.
+
+**Cross-cutting conventions:**
+
+- Status/role/type fields are `String` columns, not Prisma enums. Valid values live in `types/orchestration.ts` and should be referenced via the exported constants (`WorkflowStatus.RUNNING`, `MessageRole.ASSISTANT`, etc.) rather than string literals.
+- Table names are snake_case (`ai_knowledge_chunk`), but column names stay camelCase — quote them in raw SQL: `"fileHash"`, `"chunkKey"`.
+- Every user-owned model has a `User` reverse relation for audit trails. `AiCostLog` uses `onDelete: SetNull` so cost history survives parent deletion.
+
+### AiAgent, AiCapability, AiAgentCapability
+
+**Purpose:** Define configurable agent personas and the capabilities (tools/functions) they can invoke.
+
+- **`AiAgent`** — a configured persona. Key fields: `slug` (unique), `systemInstructions` (long text), `systemInstructionsHistory` (JSON array of `{instructions, changedAt, changedBy}` entries — see `SystemInstructionsHistoryEntry`), `model`, `provider` (default `"anthropic"`), `temperature`, `maxTokens`, `monthlyBudgetUsd`.
+- **`AiCapability`** — a discrete tool. `functionDefinition` is an OpenAI-compatible function schema. `executionType` is one of `"internal" | "api" | "webhook"` (see `ExecutionType`). `requiresApproval` gates capability calls behind human approval.
+- **`AiAgentCapability`** — pivot table. Composite unique on `(agentId, capabilityId)`. Allows per-agent overrides via `customConfig` and `customRateLimit`.
+
+Use the `AgentWithCapabilities` type from `@/types/orchestration` to load an agent with its enabled capabilities.
+
+### AiWorkflow, AiWorkflowExecution
+
+**Purpose:** Reusable workflow definitions (DAGs of pattern steps) and their runtime instances.
+
+- **`AiWorkflow`** — stores the DAG in `workflowDefinition` (JSON matching `WorkflowDefinition` from `@/types/orchestration`). `patternsUsed` is an `Int[]` of pattern numbers referenced by the workflow. `isTemplate` marks workflows that seed user-created copies.
+- **`AiWorkflowExecution`** — a single run. `status` follows `WorkflowStatus` (`pending`, `running`, `paused_for_approval`, `completed`, `failed`, `cancelled`). `executionTrace` is a JSON array of per-step logs. `totalTokensUsed` and `totalCostUsd` are rolled up from cost logs; `budgetLimitUsd` enforces spending caps. Cascade deletes when the parent workflow is removed.
+
+### AiConversation, AiMessage
+
+**Purpose:** Chat sessions between a user and an agent.
+
+- **`AiConversation`** — scoped to a single `userId` + `agentId`. Optional `contextType`/`contextId` (indexed as a pair) let conversations attach to arbitrary host entities (e.g. a project, a document). `isActive` soft-archives conversations without deleting them.
+- **`AiMessage`** — one entry per turn. `role` follows `MessageRole` (`user`, `assistant`, `system`, `tool`). `metadata` stores a `MessageMetadata` JSON blob (`tokenUsage`, `modelUsed`, `latencyMs`, `costUsd`). `capabilitySlug` and `toolCallId` link tool-call messages back to the capability that produced them. Cascade deletes with the parent conversation.
+
+### AiKnowledgeDocument, AiKnowledgeChunk
+
+**Purpose:** Source documents and their vector embeddings for retrieval-augmented generation.
+
+- **`AiKnowledgeDocument`** — tracks uploaded source files. `fileHash` is a SHA-256 used for deduplication. `status` follows `DocumentStatus` (`processing`, `ready`, `failed`). A **partial unique index** (`idx_knowledge_doc_file_hash_ready`) prevents two `ready` documents from sharing a hash; failed uploads are intentionally excluded so callers can retry.
+- **`AiKnowledgeChunk`** — vector store row. **Non-obvious:**
+  - `embedding` is `Unsupported("vector(1536)")?` — it is **not selectable through the Prisma client**. All reads/writes must use `prisma.$queryRaw` with pgvector operators (`<=>` for cosine distance).
+  - An HNSW index on `embedding` (`vector_cosine_ops`, m=16, ef_construction=64) supports approximate nearest-neighbour search.
+  - `chunkKey` is a unique business key (distinct from `id`) used by the application to stably address chunks across re-ingest.
+  - `chunkType`, `patternNumber`, `patternName`, `category`, `section` are indexed for filtering; these carry forward metadata from the source document structure.
+  - Cascade deletes with the parent document.
+
+#### Vector search pattern
+
+Because the `embedding` column is `Unsupported`, semantic search uses raw SQL:
+
+```typescript
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/db/client';
+
+const results = await prisma.$queryRaw<Array<{ id: string; content: string; similarity: number }>>`
+  SELECT id, content, 1 - (embedding <=> ${queryEmbedding}::vector) AS similarity
+  FROM ai_knowledge_chunk
+  WHERE "documentId" = ${documentId}
+  ORDER BY embedding <=> ${queryEmbedding}::vector
+  LIMIT ${limit}
+`;
+```
+
+Note the quoted `"documentId"` — columns are camelCase even though the table name is snake_case.
+
+### AiEvaluationSession, AiEvaluationLog
+
+**Purpose:** Structured test sessions for evaluating an agent's behaviour turn-by-turn.
+
+- **`AiEvaluationSession`** — a single evaluation run against a specific agent. `status` follows `EvaluationStatus` (`draft`, `in_progress`, `completed`, `archived`). `improvementSuggestions` is a free-form JSON blob for reviewer notes. Cascade deletes with the parent agent.
+- **`AiEvaluationLog`** — one entry per evaluated event. `eventType` follows `EventType` (`user_input`, `ai_response`, `capability_call`, `capability_result`, `error`). Optional `messageId` links logs back to the `AiMessage` they describe, using `onDelete: SetNull` so messages can be hard-deleted without losing evaluation history. `sequenceNumber` orders events within a session.
+
+### AiCostLog
+
+**Purpose:** Per-operation cost tracking for budgets, dashboards, and chargeback.
+
+- All foreign keys (`agentId`, `conversationId`, `workflowExecutionId`) are **optional** and use `onDelete: SetNull` — cost logs outlive their parents for historical reporting.
+- `operation` follows `CostOperation` (`chat`, `tool_call`, `embedding`, `evaluation`).
+- `isLocal` flags local-model runs (e.g. Ollama) where `totalCostUsd` will be zero.
+- Indexes on `provider`, `operation`, and `createdAt` support the time-series aggregations used by cost dashboards.
+
+Use the `CostSummary` type from `@/types/orchestration` for roll-ups by provider/model/operation.
+
+### AiProviderConfig
+
+**Purpose:** Admin-configured LLM providers — lets operators add new models without code changes.
+
+- `providerType` follows `ProviderType` (`anthropic`, `openai-compatible`). `openai-compatible` requires `baseUrl`.
+- `apiKeyEnvVar` stores the **name** of the env var holding the key (e.g. `"ANTHROPIC_API_KEY"`), not the key itself — secrets stay in the environment.
+- `isLocal` flags local providers (Ollama, LM Studio) so cost logs can zero out spend.
+- `slug` and `name` are both unique.
 
 ## Decision History & Trade-offs
 
