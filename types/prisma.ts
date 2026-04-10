@@ -29,6 +29,19 @@ export type {
   Verification,
   ContactSubmission,
   FeatureFlag,
+  AiAgent,
+  AiCapability,
+  AiAgentCapability,
+  AiWorkflow,
+  AiWorkflowExecution,
+  AiConversation,
+  AiMessage,
+  AiKnowledgeDocument,
+  AiKnowledgeChunk,
+  AiEvaluationSession,
+  AiEvaluationLog,
+  AiCostLog,
+  AiProviderConfig,
 } from '@prisma/client';
 
 /**

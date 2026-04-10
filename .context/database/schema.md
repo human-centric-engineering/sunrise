@@ -85,6 +85,30 @@ erDiagram
     }
 ```
 
+## PostgreSQL Extensions
+
+Sunrise uses Prisma's `postgresqlExtensions` preview feature to declare required PostgreSQL extensions directly in the schema:
+
+```prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+```
+
+**Enabled extensions:**
+
+| Extension | Purpose                                                                                      |
+| --------- | -------------------------------------------------------------------------------------------- |
+| `vector`  | pgvector — stores embeddings for the Agent Orchestration knowledge base (`AiKnowledgeChunk`) |
+
+The extension must be available on the PostgreSQL server before migrations run. See [migrations.md](./migrations.md#pgvector) for install instructions per environment.
+
 ## Prisma 7 Configuration
 
 Prisma 7 uses a TypeScript configuration file (`prisma.config.ts`) instead of relying solely on environment variables at build time.
@@ -160,171 +184,7 @@ if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 ## Prisma Schema
 
-```prisma
-// prisma/schema.prisma
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-}
-
-// ============================================
-// User Management
-// ============================================
-
-// Better Auth User model
-//
-// ID Generation: @default(cuid()) generates 25-character CUIDs
-// better-auth is configured to delegate ID generation to Prisma
-model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String
-  emailVerified Boolean   @default(false)
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  // Custom fields for RBAC (string-based, not enum)
-  role          String    @default("USER")
-
-  // Extended Profile Fields
-  bio           String?   @db.Text        // User biography
-  phone         String?   @db.VarChar(20) // Phone number
-  timezone      String?   @default("UTC") // IANA timezone
-  location      String?   @db.VarChar(100) // Free-form location
-  preferences   Json?     @default("{}")  // Email/notification preferences
-
-  // Relations
-  sessions      Session[]
-  accounts      Account[]
-
-  @@unique([email])
-  @@index([role])
-  @@map("user")
-}
-
-// ============================================
-// better-auth Required Models
-// ============================================
-
-// Better Auth Session model
-model Session {
-  id        String   @id @default(cuid())
-  expiresAt DateTime
-  token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("session")
-}
-
-// Better Auth Account model
-model Account {
-  id                    String    @id @default(cuid())
-  accountId             String
-  providerId            String
-  userId                String
-  accessToken           String?
-  refreshToken          String?
-  idToken               String?
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
-  scope                 String?
-  password              String?   // Hashed password for email/password auth
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("account")
-}
-
-// Better Auth Verification model
-// Used for email verification, password reset, and invitation tokens
-model Verification {
-  id         String   @id @default(cuid())
-  identifier String
-  value      String
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  metadata   Json?    // Stores invitation details (name, role, invitedBy)
-
-  @@index([identifier])
-  @@index([expiresAt])
-  @@map("verification")
-}
-
-// ============================================
-// Application Models
-// ============================================
-
-// Contact Form Submissions
-model ContactSubmission {
-  id        String   @id @default(cuid())
-  name      String
-  email     String
-  subject   String
-  message   String   @db.Text
-  createdAt DateTime @default(now())
-  read      Boolean  @default(false)
-
-  @@index([read, createdAt])
-  @@map("contact_submission")
-}
-
-// ============================================
-// Feature Flags (Phase 4.4)
-// ============================================
-
-model FeatureFlag {
-  id          String   @id @default(cuid())
-  name        String   @unique           // e.g., "ENABLE_BETA_FEATURES"
-  enabled     Boolean  @default(false)
-  description String?  @db.Text
-  metadata    Json?    @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdBy   String?
-
-  @@index([name])
-  @@map("feature_flag")
-}
-
-// ============================================
-// Application Models (Examples)
-// ============================================
-
-// Add your application-specific models here
-// Example:
-
-// model Post {
-//   id        String   @id @default(cuid())
-//   title     String
-//   content   String   @db.Text
-//   published Boolean  @default(false)
-//   authorId  String
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-//
-//   author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
-//
-//   @@index([authorId])
-//   @@index([published])
-//   @@map("posts")
-// }
-```
+The canonical schema is [`prisma/schema.prisma`](../../prisma/schema.prisma). Read it directly — this document covers design decisions, conventions, and rationale, not the schema definition itself.
 
 ## Schema Design Decisions
 
@@ -531,6 +391,52 @@ await createFlag({
 ```
 
 **Error handling**: All utilities catch errors internally and log them. `isFeatureEnabled()` returns `false` on error, query functions return `null` or empty arrays.
+
+## Agent Orchestration Models
+
+The Agent Orchestration Layer adds 13 models under the `ai_*` table prefix. These are documented in detail in [models.md](./models.md#agent-orchestration-models). At a glance:
+
+| Group            | Models                                         |
+| ---------------- | ---------------------------------------------- |
+| Agents           | `AiAgent`, `AiCapability`, `AiAgentCapability` |
+| Workflows        | `AiWorkflow`, `AiWorkflowExecution`            |
+| Conversations    | `AiConversation`, `AiMessage`                  |
+| Knowledge base   | `AiKnowledgeDocument`, `AiKnowledgeChunk`      |
+| Evaluation       | `AiEvaluationSession`, `AiEvaluationLog`       |
+| Cost & providers | `AiCostLog`, `AiProviderConfig`                |
+
+**Conventions:**
+
+- **Snake-case tables, camel-case columns.** Model `AiKnowledgeChunk` maps to `ai_knowledge_chunk`, but columns like `chunkKey` and `fileHash` stay camelCase. In raw SQL, quote them: `WHERE "fileHash" = $1`.
+- **No Prisma enums.** Status/role/type fields are plain `String` columns. Valid values live in `types/orchestration.ts` (`WorkflowStatus`, `MessageRole`, `EvaluationStatus`, `EventType`, `DocumentStatus`, `CostOperation`, `ProviderType`, `ExecutionType`).
+- **CUID primary keys** — consistent with the rest of the schema.
+- **Creator relations** — `User` has seven new reverse relations (`aiAgents`, `aiWorkflows`, `aiWorkflowExecutions`, `aiConversations`, `aiKnowledgeDocuments`, `aiEvaluationSessions`, `aiProviderConfigs`) for audit trails. Cost logs use `onDelete: SetNull` on their agent/conversation/workflow references so historical cost data survives parent deletion.
+
+### Vector embeddings
+
+`AiKnowledgeChunk.embedding` uses Prisma's `Unsupported` type to store pgvector data:
+
+```prisma
+embedding Unsupported("vector(1536)")?
+```
+
+**Implications:**
+
+- The field is **not selectable through the Prisma client**. Queries against it must go through `prisma.$queryRaw` with the pgvector operators (`<=>` for cosine distance, `<->` for L2).
+- The column is indexed with an HNSW index using `vector_cosine_ops` (m=16, ef_construction=64) for approximate nearest-neighbour search.
+- Embeddings are 1536 dimensions, matching OpenAI's `text-embedding-3-small` output.
+
+### Knowledge document deduplication
+
+`ai_knowledge_document` has a **partial unique index** that prevents duplicate "ready" documents with the same content hash:
+
+```sql
+CREATE UNIQUE INDEX idx_knowledge_doc_file_hash_ready
+ON ai_knowledge_document ("fileHash")
+WHERE status = 'ready';
+```
+
+Failed uploads are excluded so callers can retry after a processing error. This is a belt-and-braces safeguard against concurrent uploads racing past the application-level dedup check.
 
 ## Table Naming Convention
 
