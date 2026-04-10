@@ -1,0 +1,140 @@
+/**
+ * LLM Provider Types
+ *
+ * Platform-agnostic TypeScript types shared across the LLM provider
+ * abstraction. No runtime code. No Next.js imports.
+ *
+ * These types are the common dialect spoken by every provider
+ * (Anthropic, OpenAI, Ollama, vLLM, Together, Fireworks, Groq, ...);
+ * each concrete provider is responsible for translating them to and
+ * from its own wire format.
+ */
+
+/** Conversation message roles understood by every provider. */
+export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/**
+ * A tool invocation the model asked us to perform. `arguments` is the
+ * parsed JSON object supplied by the model — never the raw string form.
+ */
+export interface LlmToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * A message in a chat exchange. `content` may be an empty string when
+ * the message carries only `toolCalls` (assistant) or a tool result
+ * referenced by `toolCallId` (tool role).
+ */
+export interface LlmMessage {
+  role: LlmRole;
+  content: string;
+  /** Present when `role === 'tool'` — references the call this result answers. */
+  toolCallId?: string;
+  /** Present when the assistant decided to call one or more tools. */
+  toolCalls?: LlmToolCall[];
+}
+
+/**
+ * A function/tool advertised to the model. `parameters` is JSON Schema.
+ */
+export interface LlmToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/** How the model should decide whether to call a tool. */
+export type LlmToolChoice = 'auto' | 'none' | { name: string };
+
+/** Per-call options passed to a provider. */
+export interface LlmOptions {
+  /** Model id understood by the target provider. */
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+  tools?: LlmToolDefinition[];
+  toolChoice?: LlmToolChoice;
+  /** Override the provider's default request timeout. */
+  timeoutMs?: number;
+  /** Caller-supplied cancellation signal. */
+  signal?: AbortSignal;
+}
+
+/** Why the model stopped generating. */
+export type LlmFinishReason = 'stop' | 'tool_use' | 'length' | 'error';
+
+/** A complete, non-streaming response from a provider. */
+export interface LlmResponse {
+  content: string;
+  toolCalls?: LlmToolCall[];
+  usage: { inputTokens: number; outputTokens: number };
+  /** Echo of the model id the provider actually used. */
+  model: string;
+  finishReason: LlmFinishReason;
+}
+
+/**
+ * A single chunk yielded by `LlmProvider.chatStream`.
+ *
+ * - `text` — incremental assistant text.
+ * - `tool_call` — a fully-assembled tool invocation (we buffer streaming
+ *   fragments and emit one chunk per call for consumer simplicity).
+ * - `done` — terminal chunk with usage and finish reason.
+ */
+export type StreamChunk =
+  | { type: 'text'; content: string }
+  | { type: 'tool_call'; toolCall: LlmToolCall }
+  | {
+      type: 'done';
+      usage: { inputTokens: number; outputTokens: number };
+      finishReason: LlmFinishReason;
+    };
+
+/**
+ * In-memory provider configuration consumed by concrete providers.
+ *
+ * Note: the Prisma `AiProviderConfig.providerType` enum is only
+ * `'anthropic' | 'openai-compatible'`. We keep `'openai'` as an
+ * additional in-memory alias so callers can ask for "OpenAI directly"
+ * without constructing a baseUrl; the provider manager collapses it to
+ * an `OpenAiCompatibleProvider` pointing at `https://api.openai.com/v1`.
+ */
+export interface ProviderConfig {
+  /** Human-readable label, typically `AiProviderConfig.name`. */
+  name: string;
+  type: 'anthropic' | 'openai' | 'openai-compatible';
+  /** Resolved API key value (not the env var name). */
+  apiKey?: string;
+  /** Required for `openai` / `openai-compatible`. */
+  baseUrl?: string;
+  isLocal: boolean;
+  /** Override the default request timeout (ms). */
+  timeoutMs?: number;
+  /** Override the default retry count. */
+  maxRetries?: number;
+}
+
+/** Coarse cost/capability band used for routing and display. */
+export type ModelTier = 'budget' | 'mid' | 'frontier' | 'local';
+
+/**
+ * Canonical metadata for a single model.
+ *
+ * Pricing is USD per million tokens. Local models report zero pricing.
+ * `available` is only set after a provider list-models call confirms
+ * the model is reachable through a currently-configured provider.
+ */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  tier: ModelTier;
+  inputCostPerMillion: number;
+  outputCostPerMillion: number;
+  maxContext: number;
+  supportsTools: boolean;
+  available?: boolean;
+}
