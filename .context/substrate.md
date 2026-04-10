@@ -61,6 +61,7 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Add health checks**     | `monitoring/health-checks.md`    | `monitoring/overview.md`     |
 | **Create email template** | `email/overview.md`              | `ui/forms.md`                |
 | **Call an LLM**           | `orchestration/llm-providers.md` | `orchestration/overview.md`  |
+| **Call a capability**     | `orchestration/capabilities.md`  | `orchestration/overview.md`  |
 | **Add type patterns**     | `types/overview.md`              | `types/conventions.md`       |
 
 ## Architecture Decisions

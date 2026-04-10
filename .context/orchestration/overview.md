@@ -6,17 +6,19 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 
 ## Module Layout
 
-| Module                         | Purpose                                                 | Status     |
-| ------------------------------ | ------------------------------------------------------- | ---------- |
-| `lib/orchestration/knowledge/` | Document ingestion, chunking, embeddings, vector search | Phase 1 ✓  |
-| `lib/orchestration/llm/`       | Provider abstraction, model registry, cost tracking     | Phase 2a ✓ |
-| `lib/orchestration/seed/`      | Dev seed data for providers / agents                    | Phase 1 ✓  |
+| Module                            | Purpose                                                                | Status     |
+| --------------------------------- | ---------------------------------------------------------------------- | ---------- |
+| `lib/orchestration/knowledge/`    | Document ingestion, chunking, embeddings, vector search                | Phase 1 ✓  |
+| `lib/orchestration/llm/`          | Provider abstraction, model registry, cost tracking                    | Phase 2a ✓ |
+| `lib/orchestration/capabilities/` | Tool dispatcher, built-in capabilities, rate limiting, approval gating | Phase 2b ✓ |
+| `lib/orchestration/seed/`         | Dev seed data for providers / agents                                   | Phase 1 ✓  |
 
 ## Documentation
 
-| Topic         | File                                     | Covers                                                     |
-| ------------- | ---------------------------------------- | ---------------------------------------------------------- |
-| LLM Providers | [`llm-providers.md`](./llm-providers.md) | Chat, streaming, embeddings, cost tracking, model registry |
+| Topic         | File                                     | Covers                                                          |
+| ------------- | ---------------------------------------- | --------------------------------------------------------------- |
+| LLM Providers | [`llm-providers.md`](./llm-providers.md) | Chat, streaming, embeddings, cost tracking, model registry      |
+| Capabilities  | [`capabilities.md`](./capabilities.md)   | Dispatcher, built-in capabilities, rate limits, approval gating |
 
 ## Architecture Decisions
 
