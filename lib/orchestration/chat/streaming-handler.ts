@@ -1,0 +1,356 @@
+/**
+ * Streaming chat handler
+ *
+ * Platform-agnostic runtime that wires together the LLM provider
+ * abstraction, the capability dispatcher, and conversation
+ * persistence. Returns an `AsyncIterable<ChatEvent>` — SSE framing
+ * happens in the API route layer (Session 3.3), never here.
+ *
+ * Responsibilities:
+ * - Resolve and budget-check the agent.
+ * - Load or create an `AiConversation`, hydrate message history.
+ * - Build the LLM message array (system + optional locked context +
+ *   truncated history + new user turn).
+ * - Stream from the provider, emitting `content` events.
+ * - When the model calls a tool: pause, dispatch, emit
+ *   `capability_result`, persist the result, and either short-circuit
+ *   (`skipFollowup`) or loop back into the LLM for a follow-up turn.
+ * - Persist every message, log one `CostOperation.CHAT` row per LLM
+ *   turn, and never let an exception escape the iterator — any error
+ *   is surfaced as a final `{ type: 'error' }` event.
+ */
+
+import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
+import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
+import type { ChatEvent } from '@/types/orchestration';
+import { CostOperation } from '@/types/orchestration';
+import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
+import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import {
+  getCapabilityDefinitions,
+  registerBuiltInCapabilities,
+} from '@/lib/orchestration/capabilities/registry';
+import { buildContext, invalidateContext } from './context-builder';
+import { buildMessages } from './message-builder';
+import { MAX_TOOL_ITERATIONS, type ChatRequest, type ChatStream } from './types';
+
+/** Narrow error class caught by the outer try and surfaced as an error event. */
+export class ChatError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ChatError';
+  }
+}
+
+interface PersistMessageParams {
+  conversationId: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  capabilitySlug?: string;
+  toolCallId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export class StreamingChatHandler {
+  /**
+   * Run a chat turn against the given agent, yielding ChatEvents.
+   *
+   * The outer `try/catch` guarantees a final `{ type: 'error' }` event
+   * is yielded before any unexpected exception escapes. Consumers can
+   * trust the iterator always terminates cleanly.
+   */
+  async *run(request: ChatRequest): ChatStream {
+    let conversationId: string | null = null;
+    try {
+      registerBuiltInCapabilities();
+
+      const agent = await this.loadAgent(request.agentSlug);
+
+      const budget = await checkBudget(agent.id);
+      if (!budget.withinBudget) {
+        yield errorEvent(
+          'budget_exceeded',
+          `Agent over monthly budget ($${budget.spent.toFixed(2)} / $${budget.limit ?? 0})`
+        );
+        return;
+      }
+
+      const conversation = await this.loadOrCreateConversation(agent, request);
+      conversationId = conversation.id;
+      const history = await this.loadHistory(conversation.id);
+
+      // Persist the user message up front so a mid-stream crash still
+      // leaves an audit trail.
+      const userMessage = await this.persistMessage({
+        conversationId: conversation.id,
+        role: 'user',
+        content: request.message,
+      });
+
+      yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
+
+      const contextBlock =
+        request.contextType && request.contextId
+          ? await buildContext(request.contextType, request.contextId)
+          : null;
+
+      let messages: LlmMessage[] = buildMessages({
+        systemInstructions: agent.systemInstructions,
+        contextBlock,
+        history: history.map((m) => ({
+          role: m.role,
+          content: m.content,
+          toolCallId: m.toolCallId,
+        })),
+        newUserMessage: request.message,
+      });
+
+      const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
+      const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
+        name: def.name,
+        description: def.description,
+        parameters: def.parameters,
+      }));
+
+      const provider = await getProvider(agent.provider);
+
+      let iteration = 0;
+      while (iteration < MAX_TOOL_ITERATIONS) {
+        iteration++;
+
+        let assistantText = '';
+        let toolCall: LlmToolCall | null = null;
+        let usage: { inputTokens: number; outputTokens: number } | null = null;
+
+        const stream = provider.chatStream(messages, {
+          model: agent.model,
+          ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
+          ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
+          ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
+
+        for await (const chunk of stream) {
+          if (chunk.type === 'text') {
+            // Suppress further text once we've captured a tool call —
+            // we're about to dispatch and loop, so any trailing prose
+            // from the same turn gets folded into the next turn's
+            // context via the appended assistant message.
+            if (toolCall) continue;
+            assistantText += chunk.content;
+            yield { type: 'content', delta: chunk.content };
+          } else if (chunk.type === 'tool_call') {
+            // Capture the first tool call. Multi-tool-per-turn is a
+            // later slice; for now we keep draining so the trailing
+            // `done` chunk (which carries usage) still lands.
+            if (!toolCall) toolCall = chunk.toolCall;
+          } else if (chunk.type === 'done') {
+            usage = chunk.usage;
+          }
+        }
+
+        if (assistantText.length > 0) {
+          await this.persistMessage({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: assistantText,
+            ...(usage ? { metadata: { tokenUsage: usage } } : {}),
+          });
+        }
+
+        if (usage) {
+          void logCost({
+            agentId: agent.id,
+            conversationId: conversation.id,
+            model: agent.model,
+            provider: agent.provider,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            operation: CostOperation.CHAT,
+          });
+        }
+
+        if (!toolCall) {
+          yield buildDoneEvent(agent.model, usage);
+          return;
+        }
+
+        // Tool call path.
+        yield { type: 'status', message: `Executing ${toolCall.name}` };
+
+        const result = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
+          userId: request.userId,
+          agentId: agent.id,
+          conversationId: conversation.id,
+          ...(request.entityContext ? { entityContext: request.entityContext } : {}),
+        });
+
+        yield { type: 'capability_result', capabilitySlug: toolCall.name, result };
+
+        await this.persistMessage({
+          conversationId: conversation.id,
+          role: 'tool',
+          content: JSON.stringify(result),
+          capabilitySlug: toolCall.name,
+          toolCallId: toolCall.id,
+          metadata: {
+            toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
+            result,
+          },
+        });
+
+        // If the tool could have mutated the entity the conversation
+        // is locked to, drop the cached context so the next turn
+        // re-fetches. Phase 2c has no mutating capabilities, so this
+        // is a no-op in practice — the hook is wired for future
+        // slices.
+        if (request.contextType && request.contextId) {
+          invalidateContext(request.contextType, request.contextId);
+        }
+
+        if (result.skipFollowup) {
+          yield buildDoneEvent(agent.model, usage);
+          return;
+        }
+
+        // Rebuild message array with assistant turn + tool result
+        // appended, then loop back to the LLM for its follow-up.
+        messages = [
+          ...messages,
+          {
+            role: 'assistant',
+            content: assistantText,
+            toolCalls: [toolCall],
+          },
+          {
+            role: 'tool',
+            content: JSON.stringify(result),
+            toolCallId: toolCall.id,
+          },
+        ];
+      }
+
+      logger.warn('Chat tool loop hit iteration cap', {
+        agentSlug: request.agentSlug,
+        iterations: MAX_TOOL_ITERATIONS,
+      });
+      yield errorEvent(
+        'tool_loop_cap',
+        `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
+      );
+    } catch (err) {
+      if (err instanceof ChatError) {
+        logger.warn('Chat handler surfaced known error', {
+          code: err.code,
+          message: err.message,
+          agentSlug: request.agentSlug,
+          conversationId,
+        });
+        yield errorEvent(err.code, err.message);
+        return;
+      }
+      logger.error('Streaming chat handler crashed', err as Error, {
+        agentSlug: request.agentSlug,
+        userId: request.userId,
+        conversationId,
+      });
+      yield errorEvent(
+        'internal_error',
+        err instanceof Error ? err.message : 'Chat handler failed'
+      );
+    }
+  }
+
+  private async loadAgent(slug: string): Promise<AiAgent> {
+    const agent = await prisma.aiAgent.findFirst({ where: { slug, isActive: true } });
+    if (!agent) {
+      throw new ChatError('agent_not_found', `Active agent '${slug}' not found`);
+    }
+    return agent;
+  }
+
+  private async loadOrCreateConversation(
+    agent: AiAgent,
+    request: ChatRequest
+  ): Promise<AiConversation> {
+    if (request.conversationId) {
+      const existing = await prisma.aiConversation.findFirst({
+        where: {
+          id: request.conversationId,
+          userId: request.userId,
+          agentId: agent.id,
+          isActive: true,
+        },
+      });
+      if (!existing) {
+        throw new ChatError('conversation_not_found', 'Conversation not found');
+      }
+      return existing;
+    }
+
+    const data: Prisma.AiConversationUncheckedCreateInput = {
+      userId: request.userId,
+      agentId: agent.id,
+      title: request.message.slice(0, 80),
+    };
+    if (request.contextType !== undefined) data.contextType = request.contextType;
+    if (request.contextId !== undefined) data.contextId = request.contextId;
+
+    return prisma.aiConversation.create({ data });
+  }
+
+  private async loadHistory(conversationId: string): Promise<AiMessage[]> {
+    return prisma.aiMessage.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+  }
+
+  private async persistMessage(params: PersistMessageParams): Promise<AiMessage> {
+    const data: Prisma.AiMessageUncheckedCreateInput = {
+      conversationId: params.conversationId,
+      role: params.role,
+      content: params.content,
+    };
+    if (params.capabilitySlug !== undefined) data.capabilitySlug = params.capabilitySlug;
+    if (params.toolCallId !== undefined) data.toolCallId = params.toolCallId;
+    if (params.metadata !== undefined) {
+      data.metadata = params.metadata as Prisma.InputJsonValue;
+    }
+    return prisma.aiMessage.create({ data });
+  }
+}
+
+/** Convenience wrapper — most callers will use this. */
+export function streamChat(request: ChatRequest): ChatStream {
+  return new StreamingChatHandler().run(request);
+}
+
+function errorEvent(code: string, message: string): ChatEvent {
+  return { type: 'error', code, message };
+}
+
+function buildDoneEvent(
+  model: string,
+  usage: { inputTokens: number; outputTokens: number } | null
+): ChatEvent {
+  const inputTokens = usage?.inputTokens ?? 0;
+  const outputTokens = usage?.outputTokens ?? 0;
+  const costUsd = usage ? calculateCost(model, inputTokens, outputTokens).totalCostUsd : 0;
+  return {
+    type: 'done',
+    tokenUsage: {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    },
+    costUsd,
+  };
+}
