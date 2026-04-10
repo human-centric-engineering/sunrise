@@ -846,6 +846,78 @@ export const approveExecutionBodySchema = z.object({
 });
 
 // ============================================================================
+// Session 3.3 — Chat stream, Knowledge, Conversations
+// ============================================================================
+
+/**
+ * Streaming chat request body (POST /admin/orchestration/chat/stream).
+ *
+ * Distinct from `chatMessageSchema` which takes an `agentId` (CUID). The
+ * streaming runtime takes `agentSlug` (human-readable) so the admin UI
+ * can dispatch without looking up the CUID first. New schema rather
+ * than mutating the existing one to avoid breaking current callers.
+ */
+export const chatStreamRequestSchema = z.object({
+  message: z
+    .string()
+    .min(1, 'Message is required')
+    .max(50000, 'Message must be less than 50000 characters')
+    .trim(),
+
+  agentSlug: slugSchema,
+
+  conversationId: cuidSchema.optional(),
+
+  contextType: z.string().max(50).optional(),
+
+  contextId: z.string().max(100).optional(),
+
+  entityContext: z.record(z.string().max(100), z.unknown()).optional(),
+});
+
+/** List conversations query (GET /admin/orchestration/conversations). */
+export const listConversationsQuerySchema = paginationQuerySchema.extend({
+  agentId: cuidSchema.optional(),
+  isActive: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
+    .optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+});
+
+/**
+ * Clear conversations body (POST /admin/orchestration/conversations/clear).
+ *
+ * At least one filter must be supplied — an empty body is rejected to
+ * prevent accidental "delete all my conversations" calls. `userId` is
+ * never an input; the route hardcodes `session.user.id`.
+ */
+export const clearConversationsBodySchema = z
+  .object({
+    olderThan: z.string().datetime({ offset: true }).optional(),
+    agentId: cuidSchema.optional(),
+  })
+  .refine((v) => v.olderThan !== undefined || v.agentId !== undefined, {
+    message: 'At least one of `olderThan` or `agentId` must be provided',
+  });
+
+/** List knowledge documents query (GET /admin/orchestration/knowledge/documents). */
+export const listDocumentsQuerySchema = paginationQuerySchema.extend({
+  status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+});
+
+/**
+ * Pattern URL parameter (GET /admin/orchestration/knowledge/patterns/[number]).
+ * Coerces from the string path param to a positive integer.
+ */
+export const getPatternParamSchema = z.object({
+  number: z.coerce
+    .number()
+    .int('Pattern number must be an integer')
+    .positive('Pattern number must be positive'),
+});
+
+// ============================================================================
 // Inferred Types
 // ============================================================================
 
@@ -877,3 +949,8 @@ export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
 export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
 export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
 export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;
+export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
+export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;
+export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;
+export type GetPatternParamInput = z.infer<typeof getPatternParamSchema>;

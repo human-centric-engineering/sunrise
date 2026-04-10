@@ -10,29 +10,40 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 
 ## Quick Reference
 
-| Endpoint                                                      | Methods            | Purpose                                           |
-| ------------------------------------------------------------- | ------------------ | ------------------------------------------------- |
-| `/api/v1/admin/orchestration/agents`                          | GET, POST          | List / create agents                              |
-| `/api/v1/admin/orchestration/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete an agent              |
-| `/api/v1/admin/orchestration/agents/:id/capabilities`         | POST               | Attach a capability to an agent                   |
-| `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row       |
-| `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail    |
-| `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version |
-| `/api/v1/admin/orchestration/agents/export`                   | POST               | Export selected agents as a versioned bundle      |
-| `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)         |
-| `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                        |
-| `/api/v1/admin/orchestration/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete a capability          |
-| `/api/v1/admin/orchestration/providers`                       | GET, POST          | List / create LLM provider configs                |
-| `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config     |
-| `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider     |
-| `/api/v1/admin/orchestration/providers/:id/models`            | GET                | Ask the provider directly what models it exposes  |
-| `/api/v1/admin/orchestration/models`                          | GET                | Aggregated model registry (all providers)         |
-| `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                           |
-| `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow            |
-| `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | DAG validation of the stored `workflowDefinition` |
-| `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow _(501 — stub, Session 5.2)_        |
-| `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution _(501 — stub, Session 5.2)_     |
-| `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a paused execution _(501 — stub, 5.2)_    |
+| Endpoint                                                      | Methods            | Purpose                                             |
+| ------------------------------------------------------------- | ------------------ | --------------------------------------------------- |
+| `/api/v1/admin/orchestration/agents`                          | GET, POST          | List / create agents                                |
+| `/api/v1/admin/orchestration/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete an agent                |
+| `/api/v1/admin/orchestration/agents/:id/capabilities`         | POST               | Attach a capability to an agent                     |
+| `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row         |
+| `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail      |
+| `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version   |
+| `/api/v1/admin/orchestration/agents/export`                   | POST               | Export selected agents as a versioned bundle        |
+| `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)           |
+| `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                          |
+| `/api/v1/admin/orchestration/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete a capability            |
+| `/api/v1/admin/orchestration/providers`                       | GET, POST          | List / create LLM provider configs                  |
+| `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config       |
+| `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider       |
+| `/api/v1/admin/orchestration/providers/:id/models`            | GET                | Ask the provider directly what models it exposes    |
+| `/api/v1/admin/orchestration/models`                          | GET                | Aggregated model registry (all providers)           |
+| `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                             |
+| `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow              |
+| `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | DAG validation of the stored `workflowDefinition`   |
+| `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow _(501 — stub, Session 5.2)_          |
+| `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution _(501 — stub, Session 5.2)_       |
+| `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a paused execution _(501 — stub, 5.2)_      |
+| `/api/v1/admin/orchestration/chat/stream`                     | POST               | Streaming chat turn (SSE `text/event-stream`)       |
+| `/api/v1/admin/orchestration/knowledge/search`                | POST               | Hybrid vector + keyword search over chunks          |
+| `/api/v1/admin/orchestration/knowledge/patterns/:number`      | GET                | Fetch all chunks for a single design pattern        |
+| `/api/v1/admin/orchestration/knowledge/documents`             | GET, POST          | List documents / upload a new one (multipart)       |
+| `/api/v1/admin/orchestration/knowledge/documents/:id`         | GET, DELETE        | Read / delete a document (chunks cascade)           |
+| `/api/v1/admin/orchestration/knowledge/documents/:id/rechunk` | POST               | Re-run chunking + embedding on an existing doc      |
+| `/api/v1/admin/orchestration/knowledge/seed`                  | POST               | Seed the canonical "Agentic Design Patterns" doc    |
+| `/api/v1/admin/orchestration/conversations`                   | GET                | List the caller's own conversations                 |
+| `/api/v1/admin/orchestration/conversations/:id`               | DELETE             | Delete one of the caller's conversations            |
+| `/api/v1/admin/orchestration/conversations/:id/messages`      | GET                | Read messages for one of the caller's conversations |
+| `/api/v1/admin/orchestration/conversations/clear`             | POST               | Bulk-delete the caller's conversations by filter    |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 
@@ -448,6 +459,273 @@ return successResponse(await engine.resumeApproval(id, session.user.id, body.app
 
 Everything above that line — auth, validation, lookups — stays as-is.
 
+## Chat (streaming)
+
+One SSE endpoint that pipes `StreamingChatHandler` through the `lib/api/sse.ts` bridge. The first SSE route in the repo.
+
+### Endpoint
+
+```
+POST /api/v1/admin/orchestration/chat/stream
+Content-Type: application/json
+```
+
+Request body validated by `chatStreamRequestSchema`:
+
+```json
+{
+  "message": "Explain the ReAct pattern",
+  "agentSlug": "pattern-coach",
+  "conversationId": "<cuid, optional>",
+  "contextType": "pattern",
+  "contextId": "1",
+  "entityContext": { "optional": "record" }
+}
+```
+
+- `message` — required, 1–50_000 chars, trimmed
+- `agentSlug` — required, slug of an **active** `AiAgent`
+- `conversationId` — optional. Omit to start a new conversation; supply to continue one. Mismatched `userId`/`agentId`/`isActive` → terminal `conversation_not_found` error event.
+- `contextType` + `contextId` — optional locked-context pair. Only `pattern` is loaded today.
+- `entityContext` — opaque, passed through to capability handlers
+
+### Response
+
+`200 OK` with headers:
+
+```
+Content-Type: text/event-stream; charset=utf-8
+Cache-Control: no-cache, no-transform
+Connection: keep-alive
+X-Accel-Buffering: no
+```
+
+The body is a sequence of SSE frames. Each frame:
+
+```
+event: <ChatEvent.type>
+data: <full ChatEvent JSON>
+
+```
+
+### ChatEvent types
+
+From `types/orchestration.ts:191-197`:
+
+| Type                | Payload shape                   | When                                                                                      |
+| ------------------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `start`             | `{ conversationId, messageId }` | Once, after the user message is persisted                                                 |
+| `content`           | `{ delta }`                     | Zero or more. Incremental assistant text — concatenate for the full message               |
+| `status`            | `{ message }`                   | Before dispatching a tool call (e.g. `"Executing search_knowledge_base"`)                 |
+| `capability_result` | `{ capabilitySlug, result }`    | After the capability dispatcher resolves a tool call. `result` may carry `success: false` |
+| `done`              | `{ tokenUsage, costUsd }`       | Terminal. Final turn's usage and cost only — per-turn cost logs are persisted out-of-band |
+| `error`             | `{ code, message }`             | Terminal alternative. Stable `code` values listed in [`chat.md`](./chat.md#error-codes)   |
+
+Every turn yields exactly one terminal event (`done` or `error`) — consumers should loop until they see one and then close the reader.
+
+### Error-frame sanitization (hard guarantee)
+
+The chat route never forwards raw error strings to the client. **Two** layers enforce this:
+
+1. **Domain layer** — `lib/orchestration/chat/streaming-handler.ts` catches any thrown exception in its outer try and yields `{ type: 'error', code: 'internal_error', message: 'An unexpected error occurred' }`. The detailed error is logged via `logger.error` server-side only. This catches Prisma internals, provider SDK error text, internal hostnames, and stack-trace fragments before they reach the iterator boundary.
+2. **Transport layer** — `sseResponse` in `lib/api/sse.ts` has its own last-resort catch. If the iterator itself throws (a bug in the handler, not a domain error), it emits one sanitized terminal frame:
+
+   ```
+   event: error
+   data: {"type":"error","code":"stream_error","message":"Stream terminated unexpectedly"}
+   ```
+
+   and closes. Again, the raw `err.message` is **never** forwarded.
+
+See [`../api/sse.md`](../api/sse.md) for the full bridge contract.
+
+### AbortSignal and client disconnect
+
+`request.signal` is wired into both the chat handler and the SSE bridge. When the client disconnects:
+
+1. Next.js aborts `request.signal`
+2. `sseResponse`'s abort listener stops the keepalive timer and closes the stream controller
+3. The chat handler's in-flight `provider.chatStream` call is aborted via the same signal
+4. No further frames are emitted; no orphan DB writes happen beyond the fire-and-forget cost log that was already in flight
+
+### Keepalive
+
+Every 15 s (default) the bridge emits `: keepalive\n\n` — an SSE comment frame ignored by `EventSource` but enough to keep reverse proxies from timing out an idle stream during long tool calls.
+
+### Example — `curl -N`
+
+```bash
+curl -N -X POST http://localhost:3000/api/v1/admin/orchestration/chat/stream \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{"message":"Explain the ReAct pattern","agentSlug":"pattern-coach","contextType":"pattern","contextId":"1"}'
+```
+
+`-N` disables curl's output buffering so frames print as they arrive.
+
+### Example — browser JS client
+
+```typescript
+const res = await fetch('/api/v1/admin/orchestration/chat/stream', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message, agentSlug, conversationId }),
+  signal: abortController.signal,
+});
+
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+
+  // Split complete frames on the double-newline terminator
+  const frames = buffer.split('\n\n');
+  buffer = frames.pop() ?? '';
+  for (const frame of frames) {
+    const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+    if (!dataLine) continue;
+    const event = JSON.parse(dataLine.slice(6));
+    handleChatEvent(event); // your switch on event.type
+  }
+}
+```
+
+Prefer this over `EventSource` — `EventSource` doesn't support POST bodies, custom headers, or `AbortController`.
+
+## Knowledge Base
+
+Six routes wrapping `documentManager`, `searchKnowledge`, `getPatternDetail`, and `seedFromChunksJson`. See [`knowledge.md`](./knowledge.md) for the underlying library API and document lifecycle.
+
+### Search
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/search \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "chain of thought reasoning",
+    "filters": { "chunkType": "pattern_overview" },
+    "limit": 10
+  }'
+```
+
+POST (not GET) — the filter payload can contain arbitrary text and we don't want search queries in URL logs. Rate-limited via `adminLimiter`. Validated by `knowledgeSearchSchema` (existing). Returns `{ results: [...] }`.
+
+### Pattern detail
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/patterns/1
+```
+
+Path param validated by `getPatternParamSchema` (`number` coerced positive integer). Delegates to `getPatternDetail(number)`. Returns 404 `NotFoundError` when no chunks exist for that pattern number. Non-numeric path segments → 400.
+
+### List / upload documents
+
+```bash
+# List
+curl '/api/v1/admin/orchestration/knowledge/documents?page=1&limit=20&status=ready&q=react'
+```
+
+`GET` paginates via `listDocumentsQuerySchema`. Filters: `status` (`pending` / `processing` / `ready` / `failed`), `q` (substring match on title, case-insensitive). Each row includes `_count.chunks`.
+
+```bash
+# Upload — MULTIPART, not JSON
+curl -X POST /api/v1/admin/orchestration/knowledge/documents \
+  -F 'file=@react-patterns.md'
+```
+
+**Multipart upload contract (load-bearing):**
+
+- **Field name:** `file` (form field)
+- **Max size:** 10 MB (`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in the route)
+- **Allowed extensions:** `.md`, `.markdown`, `.txt` — text only this session. PDF / HTML are future work
+- **MIME type:** advisory only. The extension check is the source of truth — browsers frequently omit `Content-Type` for `.md` files
+- **Unknown file field / missing file / wrong type** → 400 `ValidationError`
+- **Returns** 201 with `{ document: { id, title, status, ... } }`
+
+Uploaded documents are parsed synchronously via `documentManager.uploadDocument`, which handles chunking and embedding in-process.
+
+### Read / delete a document
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/documents/<id>                 # GET — 404 if missing
+curl -X DELETE /api/v1/admin/orchestration/knowledge/documents/<id>       # DELETE — cascades chunks
+```
+
+Knowledge documents are **not per-user scoped** — any admin can read or delete any document. `uploadedBy` is stored for audit only.
+
+### Rechunk
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/documents/<id>/rechunk
+```
+
+Empty body. Re-runs the chunker + embedder on an existing document — use it after improving `chunker.ts` or fixing a classification bug. 404 if the document is missing; **409 `ConflictError`** if the document is currently `status === 'processing'` (guards against double-rechunk races).
+
+### Seed
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/seed
+```
+
+Empty body. Resolves `path.join(process.cwd(), 'lib/orchestration/seed/chunks.json')` and calls `seedFromChunksJson`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
+
+## Conversations
+
+Four routes over `AiConversation` / `AiMessage`. **Every endpoint is scoped to `session.user.id`.**
+
+### Ownership model (read this)
+
+> **Loud warning:** Admins using these endpoints see only **their own** conversations. There is no cross-user admin audit view in this session — that would be a separate endpoint with its own auth model and audit logging (deliberately out of scope).
+>
+> **Cross-user access returns 404, not 403.** We do not confirm the existence of resources owned by another user. Every mutating route does the ownership check via `findFirst({ where: { id, userId: session.user.id } })` — a null result becomes `NotFoundError`. Don't "helpfully" switch this to 403: the information leak is the whole point 404 is avoiding.
+>
+> Every conversation route contains the literal `userId: session.user.id` pattern. This is enforced by a pre-PR grep check.
+
+### List conversations
+
+```bash
+curl '/api/v1/admin/orchestration/conversations?page=1&limit=20&agentId=<cuid>&isActive=true&q=support'
+```
+
+Validated by `listConversationsQuerySchema`. Filters: `agentId` (CUID), `isActive` (coerced bool), `q` (case-insensitive `contains` on `title`). Response includes `_count.messages`. Always scoped to `userId: session.user.id` — the filter is non-negotiable.
+
+### Read messages
+
+```bash
+curl /api/v1/admin/orchestration/conversations/<id>/messages
+```
+
+First runs the ownership check (`findFirst` with `userId`), then `aiMessage.findMany` ordered by `createdAt asc`. Cross-user id → 404. Malformed id → 400. No rate limit (GET).
+
+### Delete one conversation
+
+```bash
+curl -X DELETE /api/v1/admin/orchestration/conversations/<id>
+```
+
+Rate-limited. Ownership check as above, then `prisma.aiConversation.delete({ where: { id } })`. `AiMessage` cascades via the existing FK relation. Returns `{ deleted: true }`.
+
+### Clear conversations (bulk)
+
+```bash
+curl -X POST /api/v1/admin/orchestration/conversations/clear \
+  -H 'Content-Type: application/json' \
+  -d '{ "olderThan": "2025-01-01T00:00:00Z" }'
+```
+
+**This is the single most dangerous endpoint in the orchestration admin surface.** Validated by `clearConversationsBodySchema`, which uses a Zod `.refine()` to **require at least one of `olderThan` or `agentId`**:
+
+- **Empty body → 400.** This is deliberate. An empty-body "delete everything" call is a common tooling mistake; the schema makes it impossible.
+- `{ olderThan }` — deletes the caller's conversations with `createdAt < olderThan`
+- `{ agentId }` — deletes the caller's conversations bound to that agent
+- Both — AND-combined
+
+The `WHERE` clause is hardcoded to `{ userId: session.user.id, ...filters }` — `userId` is never an input. Cross-user bulk delete is impossible through this endpoint by construction. Returns `{ deletedCount }`. `AiMessage` rows cascade.
+
 ## Anti-patterns
 
 - **Don't** call `capabilityDispatcher.dispatch()` from admin routes — the dispatcher is for the runtime chat loop, not CRUD. Only `clearCache()` belongs in this layer.
@@ -460,6 +738,11 @@ Everything above that line — auth, validation, lookups — stays as-is.
 - **Don't** forward raw SDK / fetch error messages from `/providers/:id/test` or `/providers/:id/models`. They'd act as a blind-SSRF exfiltration oracle for the configured `baseUrl`. Return the generic `connection_failed` / `PROVIDER_UNAVAILABLE` responses those routes already use; log the real error server-side only.
 - **Don't** skip `checkSafeProviderUrl` when adding new `baseUrl`-accepting fields or new provider types. The validator runs at both the schema and build-time layers for a reason — bypassing either lets admin input reach an outbound fetch unchecked.
 - **Don't** flip the `501` stubs to `200` with mock data to unblock UI work. Phase 4 UI should build against real 501s until Session 5.2 lands — that's what locks the contract in place.
+- **Don't** forward `err.message` from the chat stream route. The streaming-handler catch-all sanitizes to a generic message; the SSE bridge sanitizes again as defense-in-depth. If you need a richer error taxonomy, yield a typed `{ type: 'error', code, message }` from the source iterable — those pass through verbatim because they're not thrown.
+- **Don't** return 403 on cross-user conversation access. It confirms the resource exists but belongs to someone else — information leak. Every ownership check must funnel through `NotFoundError` (404).
+- **Don't** relax the `.refine()` on `clearConversationsBodySchema` to "make empty body convenient." An empty-body bulk delete is the exact accident the refine prevents.
+- **Don't** add `application/json` document upload support without also adding a parallel security review. The multipart + extension-whitelist combo is the entire defence against uploading executable content disguised as markdown; a JSON `{ content, fileName }` endpoint would need its own content-type guards.
+- **Don't** trust `file.type` (the MIME header) as a security boundary on upload. Browsers frequently omit it for `.md` files — the extension whitelist is the source of truth.
 
 ## Related
 
@@ -468,6 +751,8 @@ Everything above that line — auth, validation, lookups — stays as-is.
 - [`llm-providers.md`](./llm-providers.md) — Provider abstraction, cost tracking, model registry
 - [`capabilities.md`](./capabilities.md) — Dispatcher internals, built-in capabilities, rate limiting
 - [`chat.md`](./chat.md) — Streaming chat handler and tool loop
+- [`knowledge.md`](./knowledge.md) — Knowledge base library API and document lifecycle
+- [`../api/sse.md`](../api/sse.md) — `sseResponse` bridge helper contract
 - [`../api/admin-endpoints.md`](../api/admin-endpoints.md) — Other admin API endpoints
 - `lib/validations/orchestration.ts` — All Zod schemas referenced above
-- `prisma/schema.prisma:145-220` — `AiAgent`, `AiCapability`, `AiAgentCapability` models
+- `prisma/schema.prisma` — `AiAgent`, `AiCapability`, `AiAgentCapability`, `AiConversation`, `AiMessage`, `AiKnowledgeDocument`, `AiKnowledgeChunk` models

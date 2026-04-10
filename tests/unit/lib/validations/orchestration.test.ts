@@ -48,6 +48,11 @@ import {
   listExecutionsQuerySchema,
   executeWorkflowBodySchema,
   approveExecutionBodySchema,
+  chatStreamRequestSchema,
+  listConversationsQuerySchema,
+  clearConversationsBodySchema,
+  listDocumentsQuerySchema,
+  getPatternParamSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1217,5 +1222,133 @@ describe('approveExecutionBodySchema', () => {
   it('rejects notes longer than 5000 characters', () => {
     const result = approveExecutionBodySchema.safeParse({ notes: 'x'.repeat(5001) });
     expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================================
+// Session 3.3 — Chat stream / Knowledge / Conversations
+// ============================================================================
+
+describe('chatStreamRequestSchema', () => {
+  it('accepts a minimal valid body', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'hello',
+      agentSlug: 'default-agent',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an optional CUID conversationId and contextType/contextId', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'hi',
+      agentSlug: 'coach',
+      conversationId: 'clh1234567890abcdefghijkl',
+      contextType: 'pattern',
+      contextId: 'pattern-1',
+      entityContext: { foo: 'bar' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an empty message', () => {
+    const result = chatStreamRequestSchema.safeParse({ message: '', agentSlug: 'x' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects messages longer than 50_000 characters', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'a'.repeat(50_001),
+      agentSlug: 'x',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires agentSlug', () => {
+    const result = chatStreamRequestSchema.safeParse({ message: 'hi' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listConversationsQuerySchema', () => {
+  it('accepts pagination defaults and no filters', () => {
+    const result = listConversationsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces string "true" / "false" into boolean for isActive', () => {
+    const result = listConversationsQuerySchema.safeParse({ isActive: 'true' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.isActive).toBe(true);
+  });
+
+  it('accepts q substring filter', () => {
+    const result = listConversationsQuerySchema.safeParse({ q: 'test search' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = listConversationsQuerySchema.safeParse({ agentId: 'not-a-cuid' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('clearConversationsBodySchema', () => {
+  it('rejects an empty body (no filters)', () => {
+    const result = clearConversationsBodySchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an ISO olderThan alone', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      olderThan: '2025-01-01T00:00:00Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an agentId alone', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      agentId: 'clh1234567890abcdefghijkl',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid ISO datetime', () => {
+    const result = clearConversationsBodySchema.safeParse({ olderThan: 'yesterday' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listDocumentsQuerySchema', () => {
+  it('accepts the default pagination with no filters', () => {
+    const result = listDocumentsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid status enum value', () => {
+    const result = listDocumentsQuerySchema.safeParse({ status: 'ready' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid status enum value', () => {
+    const result = listDocumentsQuerySchema.safeParse({ status: 'archived' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('getPatternParamSchema', () => {
+  it('coerces a numeric string into a positive integer', () => {
+    const result = getPatternParamSchema.safeParse({ number: '12' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.number).toBe(12);
+  });
+
+  it('rejects non-numeric input', () => {
+    const result = getPatternParamSchema.safeParse({ number: 'abc' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects zero and negative numbers', () => {
+    expect(getPatternParamSchema.safeParse({ number: '0' }).success).toBe(false);
+    expect(getPatternParamSchema.safeParse({ number: '-1' }).success).toBe(false);
   });
 });

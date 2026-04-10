@@ -198,8 +198,10 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | LLM Providers           | `.context/orchestration/llm-providers.md` | Provider abstraction, cost tracking           |
 | Capabilities            | `.context/orchestration/capabilities.md`  | Tool dispatcher, built-ins, rate limits       |
 | Streaming Chat          | `.context/orchestration/chat.md`          | Chat handler, tool loop, context builder      |
+| Knowledge Base          | `.context/orchestration/knowledge.md`     | Document ingestion, chunking, vector search   |
 | Workflows               | `.context/orchestration/workflows.md`     | DAG validator, error codes, Phase 5.2 roadmap |
-| Orchestration Admin API | `.context/orchestration/admin-api.md`     | Agents, capabilities, providers, workflows    |
+| Orchestration Admin API | `.context/orchestration/admin-api.md`     | Agents, capabilities, chat, knowledge, convos |
+| SSE Bridge              | `.context/api/sse.md`                     | `sseResponse` helper, framing, sanitization   |
 
 ## Troubleshooting
 
