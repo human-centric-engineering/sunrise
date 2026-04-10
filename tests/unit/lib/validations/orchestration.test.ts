@@ -32,6 +32,16 @@ import {
   documentUploadSchema,
   costQuerySchema,
   providerConfigSchema,
+  listAgentsQuerySchema,
+  listCapabilitiesQuerySchema,
+  systemInstructionsHistoryEntrySchema,
+  systemInstructionsHistorySchema,
+  instructionsRevertSchema,
+  attachAgentCapabilitySchema,
+  updateAgentCapabilitySchema,
+  exportAgentsSchema,
+  agentBundleSchema,
+  importAgentsSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -709,5 +719,281 @@ describe('providerConfigSchema', () => {
   it('should reject empty name', () => {
     const result = providerConfigSchema.safeParse({ ...VALID_PROVIDER, name: '' });
     expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 3.1 — List query / history / pivot / export-import schemas
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listAgentsQuerySchema', () => {
+  it('should accept empty query and apply pagination defaults', () => {
+    const result = listAgentsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.page).toBeGreaterThanOrEqual(1);
+      expect(result.data.limit).toBeGreaterThan(0);
+    }
+  });
+
+  it('should coerce isActive string to boolean', () => {
+    const result = listAgentsQuerySchema.safeParse({ isActive: 'true', provider: 'anthropic' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.isActive).toBe(true);
+      expect(result.data.provider).toBe('anthropic');
+    }
+  });
+
+  it('should reject q longer than 200 chars', () => {
+    const result = listAgentsQuerySchema.safeParse({ q: 'a'.repeat(201) });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listCapabilitiesQuerySchema', () => {
+  it('should accept valid executionType filter', () => {
+    const result = listCapabilitiesQuerySchema.safeParse({ executionType: 'internal' });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject unknown executionType', () => {
+    const result = listCapabilitiesQuerySchema.safeParse({ executionType: 'bogus' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('systemInstructionsHistoryEntrySchema', () => {
+  const VALID_ENTRY = {
+    instructions: 'You are a helpful assistant.',
+    changedAt: '2026-04-10T12:00:00.000Z',
+    changedBy: 'user_abc123',
+  };
+
+  it('should accept a valid history entry', () => {
+    expect(systemInstructionsHistoryEntrySchema.safeParse(VALID_ENTRY).success).toBe(true);
+  });
+
+  it('should reject empty instructions', () => {
+    const result = systemInstructionsHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      instructions: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject non-ISO changedAt', () => {
+    const result = systemInstructionsHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      changedAt: 'yesterday',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('systemInstructionsHistorySchema', () => {
+  it('should accept an empty array', () => {
+    expect(systemInstructionsHistorySchema.safeParse([]).success).toBe(true);
+  });
+
+  it('should accept an array of valid entries', () => {
+    const result = systemInstructionsHistorySchema.safeParse([
+      {
+        instructions: 'v1',
+        changedAt: '2026-04-10T12:00:00.000Z',
+        changedBy: 'user_abc123',
+      },
+      {
+        instructions: 'v2',
+        changedAt: '2026-04-10T13:00:00.000Z',
+        changedBy: 'user_abc123',
+      },
+    ]);
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject non-array input', () => {
+    expect(systemInstructionsHistorySchema.safeParse({ nope: true }).success).toBe(false);
+  });
+});
+
+describe('instructionsRevertSchema', () => {
+  it('should accept a valid non-negative integer', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 0 }).success).toBe(true);
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 7 }).success).toBe(true);
+  });
+
+  it('should reject negative index', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: -1 }).success).toBe(false);
+  });
+
+  it('should reject non-integer index', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 1.5 }).success).toBe(false);
+  });
+});
+
+describe('attachAgentCapabilitySchema', () => {
+  it('should accept a minimal valid attach body', () => {
+    const result = attachAgentCapabilitySchema.safeParse({ capabilityId: VALID_CUID });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.isEnabled).toBe(true);
+  });
+
+  it('should reject an invalid capabilityId', () => {
+    expect(attachAgentCapabilitySchema.safeParse({ capabilityId: 'not-a-cuid' }).success).toBe(
+      false
+    );
+  });
+
+  it('should accept customConfig and customRateLimit', () => {
+    const result = attachAgentCapabilitySchema.safeParse({
+      capabilityId: VALID_CUID,
+      isEnabled: false,
+      customConfig: { maxItems: 10 },
+      customRateLimit: 30,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject customRateLimit above max', () => {
+    const result = attachAgentCapabilitySchema.safeParse({
+      capabilityId: VALID_CUID,
+      customRateLimit: 999999,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('updateAgentCapabilitySchema', () => {
+  it('should accept an empty object', () => {
+    expect(updateAgentCapabilitySchema.safeParse({}).success).toBe(true);
+  });
+
+  it('should accept a partial update', () => {
+    expect(
+      updateAgentCapabilitySchema.safeParse({ isEnabled: false, customRateLimit: null }).success
+    ).toBe(true);
+  });
+
+  it('should reject customRateLimit of 0', () => {
+    expect(updateAgentCapabilitySchema.safeParse({ customRateLimit: 0 }).success).toBe(false);
+  });
+});
+
+describe('exportAgentsSchema', () => {
+  it('should accept a single-id body', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: [VALID_CUID] }).success).toBe(true);
+  });
+
+  it('should reject an empty array', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: [] }).success).toBe(false);
+  });
+
+  it('should reject more than 100 ids', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: Array(101).fill(VALID_CUID) }).success).toBe(
+      false
+    );
+  });
+
+  it('should reject non-cuid ids', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: ['not-a-cuid'] }).success).toBe(false);
+  });
+});
+
+describe('agentBundleSchema', () => {
+  const VALID_BUNDLE = {
+    version: '1' as const,
+    exportedAt: '2026-04-10T12:00:00.000Z',
+    agents: [
+      {
+        name: 'Test Agent',
+        slug: 'test-agent',
+        description: 'A test agent',
+        systemInstructions: 'You are a helpful assistant.',
+        systemInstructionsHistory: [],
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        temperature: 0.7,
+        maxTokens: 4096,
+        isActive: true,
+        capabilities: [],
+      },
+    ],
+  };
+
+  it('should accept a minimal valid bundle', () => {
+    expect(agentBundleSchema.safeParse(VALID_BUNDLE).success).toBe(true);
+  });
+
+  it('should reject an unsupported version', () => {
+    expect(agentBundleSchema.safeParse({ ...VALID_BUNDLE, version: '2' }).success).toBe(false);
+  });
+
+  it('should reject an empty agents array', () => {
+    expect(agentBundleSchema.safeParse({ ...VALID_BUNDLE, agents: [] }).success).toBe(false);
+  });
+
+  it('should accept an agent with capabilities by slug', () => {
+    const result = agentBundleSchema.safeParse({
+      ...VALID_BUNDLE,
+      agents: [
+        {
+          ...VALID_BUNDLE.agents[0],
+          capabilities: [
+            { slug: 'search-web', isEnabled: true },
+            { slug: 'read-file', isEnabled: false, customRateLimit: 10 },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('importAgentsSchema', () => {
+  const MINIMAL_BUNDLE = {
+    version: '1' as const,
+    exportedAt: '2026-04-10T12:00:00.000Z',
+    agents: [
+      {
+        name: 'Test Agent',
+        slug: 'test-agent',
+        description: 'A test agent',
+        systemInstructions: 'You are a helpful assistant.',
+        systemInstructionsHistory: [],
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        temperature: 0.7,
+        maxTokens: 4096,
+        isActive: true,
+        capabilities: [],
+      },
+    ],
+  };
+
+  it('should default conflictMode to skip', () => {
+    const result = importAgentsSchema.safeParse({ bundle: MINIMAL_BUNDLE });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.conflictMode).toBe('skip');
+  });
+
+  it('should accept conflictMode overwrite', () => {
+    const result = importAgentsSchema.safeParse({
+      bundle: MINIMAL_BUNDLE,
+      conflictMode: 'overwrite',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject unknown conflictMode', () => {
+    const result = importAgentsSchema.safeParse({
+      bundle: MINIMAL_BUNDLE,
+      conflictMode: 'merge',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject a missing bundle', () => {
+    expect(importAgentsSchema.safeParse({ conflictMode: 'skip' }).success).toBe(false);
   });
 });

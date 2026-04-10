@@ -159,6 +159,44 @@ export const updateAgentSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+/**
+ * List agents query schema — GET /api/v1/admin/orchestration/agents
+ * Pagination + filters. `q` searches name/slug/description.
+ */
+export const listAgentsQuerySchema = paginationQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+  provider: z.string().trim().max(50).optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+/**
+ * A single entry in `AiAgent.systemInstructionsHistory`. Pushed on every PATCH
+ * that actually changes `systemInstructions`, and on every successful revert.
+ */
+export const systemInstructionsHistoryEntrySchema = z.object({
+  instructions: z.string().min(1),
+  changedAt: z.string().datetime(),
+  changedBy: z.string().min(1),
+});
+
+/**
+ * Runtime validator for the full `systemInstructionsHistory` JSON column.
+ * Use `safeParse` at read time (same warn-and-skip pattern we use for
+ * `capabilityFunctionDefinitionSchema`) so a malformed row can't crash
+ * the admin routes.
+ */
+export const systemInstructionsHistorySchema = z.array(systemInstructionsHistoryEntrySchema);
+
+/**
+ * Revert request — `versionIndex` is an index into the history array
+ * (oldest = 0, newest = length - 1). The route pushes the *current*
+ * instructions onto history before overwriting them, so the forward
+ * value is never lost.
+ */
+export const instructionsRevertSchema = z.object({
+  versionIndex: z.number().int().min(0),
+});
+
 // ============================================================================
 // Capability Schemas
 // ============================================================================
@@ -280,6 +318,120 @@ export const updateCapabilitySchema = z.object({
   isActive: z.boolean().optional(),
 
   metadata: metadataSchema,
+});
+
+/**
+ * List capabilities query schema — GET /api/v1/admin/orchestration/capabilities
+ */
+export const listCapabilitiesQuerySchema = paginationQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+  category: z.string().trim().max(50).optional(),
+  executionType: executionTypeSchema.optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+// ============================================================================
+// Agent → Capability Pivot Schemas
+// ============================================================================
+
+/**
+ * Attach a capability to an agent — POST /agents/[id]/capabilities
+ * The `capabilityId` identifies the `AiCapability` row to link. The pivot
+ * row (`AiAgentCapability`) is keyed by the compound `(agentId, capabilityId)`.
+ */
+export const attachAgentCapabilitySchema = z.object({
+  capabilityId: cuidSchema,
+  isEnabled: z.boolean().default(true),
+  customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+  customRateLimit: z
+    .number()
+    .int('Custom rate limit must be an integer')
+    .min(1, 'Custom rate limit must be at least 1')
+    .max(10000, 'Custom rate limit must be at most 10000')
+    .nullable()
+    .optional(),
+});
+
+/**
+ * Update an agent↔capability link — PATCH /agents/[id]/capabilities/[capId]
+ * All fields optional. The pivot is identified by the URL params, not the body.
+ */
+export const updateAgentCapabilitySchema = z.object({
+  isEnabled: z.boolean().optional(),
+  customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+  customRateLimit: z
+    .number()
+    .int('Custom rate limit must be an integer')
+    .min(1, 'Custom rate limit must be at least 1')
+    .max(10000, 'Custom rate limit must be at most 10000')
+    .nullable()
+    .optional(),
+});
+
+// ============================================================================
+// Agent Export / Import Schemas
+// ============================================================================
+
+/**
+ * Export request — POST /agents/export
+ * Bulk-exports the selected agents into a versioned bundle suitable for
+ * version control or migrating between environments.
+ */
+export const exportAgentsSchema = z.object({
+  agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
+});
+
+/**
+ * One agent inside an export bundle. Strips server-owned fields
+ * (`id`, `createdAt`, `updatedAt`, `createdBy`) and embeds attached
+ * capabilities by slug so the bundle is portable across environments.
+ */
+const bundledAgentSchema = z.object({
+  name: z.string().min(1).max(100),
+  slug: z.string().min(1).max(100),
+  description: z.string().min(1).max(5000),
+  systemInstructions: z.string().min(1).max(50000),
+  systemInstructionsHistory: systemInstructionsHistorySchema.default([]),
+  model: z.string().min(1).max(100),
+  provider: z.string().min(1).max(50),
+  providerConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+  temperature: z.number().min(0).max(2),
+  maxTokens: z.number().int().min(1).max(200000),
+  monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  isActive: z.boolean(),
+  capabilities: z
+    .array(
+      z.object({
+        slug: z.string().min(1).max(100),
+        isEnabled: z.boolean().default(true),
+        customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+        customRateLimit: z.number().int().min(1).max(10000).nullable().optional(),
+      })
+    )
+    .default([]),
+});
+
+/**
+ * Full export bundle shape. Both the export route (produces) and the
+ * import route (consumes) reference this schema, so round-tripping is
+ * type-safe.
+ */
+export const agentBundleSchema = z.object({
+  version: z.literal('1'),
+  exportedAt: z.string().datetime(),
+  agents: z.array(bundledAgentSchema).min(1).max(100),
+});
+
+/**
+ * Import request — POST /agents/import
+ * `conflictMode` defaults to `skip` so re-importing an existing bundle
+ * can't accidentally overwrite production data. Callers must explicitly
+ * opt-in to `overwrite`.
+ */
+export const importAgentsSchema = z.object({
+  bundle: agentBundleSchema,
+  conflictMode: z.enum(['skip', 'overwrite']).default('skip'),
 });
 
 // ============================================================================
@@ -574,8 +726,17 @@ export const providerConfigSchema = z.object({
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 export type UpdateAgentInput = z.infer<typeof updateAgentSchema>;
+export type ListAgentsQuery = z.infer<typeof listAgentsQuerySchema>;
+export type SystemInstructionsHistoryEntry = z.infer<typeof systemInstructionsHistoryEntrySchema>;
+export type InstructionsRevertInput = z.infer<typeof instructionsRevertSchema>;
 export type CreateCapabilityInput = z.infer<typeof createCapabilitySchema>;
 export type UpdateCapabilityInput = z.infer<typeof updateCapabilitySchema>;
+export type ListCapabilitiesQuery = z.infer<typeof listCapabilitiesQuerySchema>;
+export type AttachAgentCapabilityInput = z.infer<typeof attachAgentCapabilitySchema>;
+export type UpdateAgentCapabilityInput = z.infer<typeof updateAgentCapabilitySchema>;
+export type ExportAgentsInput = z.infer<typeof exportAgentsSchema>;
+export type AgentBundle = z.infer<typeof agentBundleSchema>;
+export type ImportAgentsInput = z.infer<typeof importAgentsSchema>;
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;
 export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
