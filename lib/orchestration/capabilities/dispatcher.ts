@@ -25,6 +25,7 @@ import { logger } from '@/lib/logging';
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';
 import { CostOperation } from '@/types/orchestration';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
 import { BaseCapability, CapabilityValidationError } from './base-capability';
 import type {
   AgentCapabilityBinding,
@@ -33,6 +34,27 @@ import type {
   CapabilityRegistryEntry,
   CapabilityResult,
 } from './types';
+
+/**
+ * Parse a Prisma `Json` value from `AiCapability.functionDefinition` into a
+ * trusted `CapabilityFunctionDefinition`. Returns `null` (with a warn log)
+ * if the row's JSON shape doesn't match — the caller is expected to skip
+ * the row entirely so a malformed registry entry can't reach a dispatch.
+ */
+function parseFunctionDefinition(
+  value: unknown,
+  context: { slug: string; agentId?: string }
+): CapabilityFunctionDefinition | null {
+  const parsed = capabilityFunctionDefinitionSchema.safeParse(value);
+  if (!parsed.success) {
+    logger.warn('Capability registry: malformed functionDefinition JSON, skipping row', {
+      ...context,
+      issues: parsed.error.issues,
+    });
+    return null;
+  }
+  return parsed.data;
+}
 
 /** Cache lifetime for both the registry and per-agent bindings. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -96,7 +118,8 @@ class CapabilityDispatcher {
         const rows = await prisma.aiCapability.findMany({ where: { isActive: true } });
         const next = new Map<string, CapabilityRegistryEntry>();
         for (const row of rows) {
-          next.set(row.slug, mapRowToEntry(row));
+          const entry = mapRowToEntry(row);
+          if (entry) next.set(row.slug, entry);
         }
         this.registry = next;
         this.registryFetchedAt = Date.now();
@@ -300,12 +323,16 @@ class CapabilityDispatcher {
             const map = new Map<string, AgentCapabilityBinding>();
             for (const row of rows) {
               if (!row.capability) continue;
+              const functionDefinition = parseFunctionDefinition(
+                row.capability.functionDefinition,
+                { slug: row.capability.slug, agentId }
+              );
+              if (!functionDefinition) continue;
               map.set(row.capability.slug, {
                 slug: row.capability.slug,
                 isEnabled: row.isEnabled,
                 effectiveRateLimit: row.customRateLimit ?? row.capability.rateLimit ?? null,
-                functionDefinition: row.capability
-                  .functionDefinition as unknown as CapabilityFunctionDefinition,
+                functionDefinition,
                 requiresApproval: row.capability.requiresApproval,
               });
             }
@@ -358,13 +385,15 @@ interface AiCapabilityRow {
   isActive: boolean;
 }
 
-function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry {
+function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
+  const functionDefinition = parseFunctionDefinition(row.functionDefinition, { slug: row.slug });
+  if (!functionDefinition) return null;
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     category: row.category,
-    functionDefinition: row.functionDefinition as CapabilityFunctionDefinition,
+    functionDefinition,
     requiresApproval: row.requiresApproval,
     rateLimit: row.rateLimit,
     isActive: row.isActive,

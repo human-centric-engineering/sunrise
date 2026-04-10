@@ -18,6 +18,8 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
+import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
 import { capabilityDispatcher } from './dispatcher';
 import { SearchKnowledgeCapability } from './built-in/search-knowledge';
 import { GetPatternDetailCapability } from './built-in/get-pattern-detail';
@@ -70,9 +72,17 @@ export async function getCapabilityDefinitions(
   const definitions: CapabilityFunctionDefinition[] = [];
   for (const row of rows) {
     if (!row.capability) continue;
-    const def = row.capability.functionDefinition as unknown as CapabilityFunctionDefinition;
-    if (def && typeof def.name === 'string' && capabilityDispatcher.has(def.name)) {
-      definitions.push(def);
+    const parsed = capabilityFunctionDefinitionSchema.safeParse(row.capability.functionDefinition);
+    if (!parsed.success) {
+      logger.warn('getCapabilityDefinitions: malformed functionDefinition JSON, skipping', {
+        agentId,
+        slug: row.capability.slug,
+        issues: parsed.error.issues,
+      });
+      continue;
+    }
+    if (capabilityDispatcher.has(parsed.data.name)) {
+      definitions.push(parsed.data);
     }
   }
   return definitions;

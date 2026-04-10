@@ -21,6 +21,18 @@ const metadataSchema = z
   })
   .optional();
 
+/**
+ * Runtime validator for `AiCapability.functionDefinition` JSON column reads.
+ * Used by the capability dispatcher / registry to parse the Prisma `Json`
+ * value into a trusted `CapabilityFunctionDefinition` rather than
+ * blind-casting. Malformed rows are logged and skipped at the call site.
+ */
+export const capabilityFunctionDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  parameters: z.record(z.string(), z.unknown()),
+});
+
 // ============================================================================
 // Agent Schemas
 // ============================================================================
