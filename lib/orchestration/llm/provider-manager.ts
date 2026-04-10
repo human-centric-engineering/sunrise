@@ -87,6 +87,17 @@ export function registerProvider(config: ProviderConfig): LlmProvider {
 }
 
 /**
+ * Inject a pre-built `LlmProvider` into the cache under `name`. Used by
+ * smoke scripts and tests that need to exercise downstream consumers
+ * (chat handler, workflow engine) without a real SDK, API key, or
+ * `AiProviderConfig` row. `getProvider(name)` will return this instance
+ * and skip the database lookup entirely.
+ */
+export function registerProviderInstance(name: string, instance: LlmProvider): void {
+  instanceCache.set(name, instance);
+}
+
+/**
  * List every configured provider row with its last-known status.
  *
  * This does NOT eagerly ping providers — `status` is `'unknown'`

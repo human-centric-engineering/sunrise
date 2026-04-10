@@ -66,6 +66,7 @@ npm run db:studio              # Open Prisma Studio
 # Testing
 npm run test                   # Run tests
 npm run test:watch             # Watch mode
+npm run smoke:chat             # Smoke: streaming chat handler vs real dev DB
 
 # Docker
 docker-compose up              # Start dev environment

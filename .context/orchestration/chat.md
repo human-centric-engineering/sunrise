@@ -259,6 +259,16 @@ Run the suite:
 npx vitest run tests/unit/lib/orchestration/chat
 ```
 
+## Smoke Testing
+
+`scripts/smoke/chat.ts` exercises `streamChat` end-to-end against the real dev Postgres database, with a fake `LlmProvider` injected via `registerProviderInstance` (no API key, no SDK, no network). It verifies the full event sequence, the persisted `AiMessage` rows, and the fire-and-forget `AiCostLog` row actually land.
+
+```bash
+npm run smoke:chat
+```
+
+Run this whenever you touch `streaming-handler.ts`, `provider-manager.ts`, or the `AiConversation`/`AiMessage`/`AiCostLog` schema — unit tests mock Prisma, so a broken FK chain or import binding can slip through vitest but not the smoke script. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for safety rules and the template to follow when adding more smoke scripts.
+
 ## Related Documentation
 
 - [Orchestration Overview](./overview.md) — domain entry point
