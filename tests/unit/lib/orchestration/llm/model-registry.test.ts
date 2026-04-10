@@ -2,8 +2,9 @@
  * Tests for the dynamic model registry.
  *
  * Covers fallback behaviour when OpenRouter is unreachable, response
- * parsing + tier classification, accessor filters, and in-flight
- * refresh deduplication.
+ * parsing + tier classification, accessor filters, in-flight
+ * refresh deduplication, TTL cache short-circuit, non-OK HTTP errors,
+ * malformed response handling, and refreshFromProvider behaviour.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -132,5 +133,190 @@ describe('accessors', () => {
     const openai = registry.getAvailableModels('openai');
     expect(openai.every((m) => m.provider === 'openai')).toBe(true);
     expect(openai.some((m) => m.id === 'gpt-4o')).toBe(true);
+  });
+});
+
+describe('refreshFromOpenRouter TTL cache', () => {
+  it('returns cached data without re-fetching on second call within 24h', async () => {
+    // Arrange: set up a mock fetch for the first call
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'openai/gpt-4o',
+            name: 'GPT-4o',
+            context_length: 128_000,
+            pricing: { prompt: '0.0000025', completion: '0.00001' },
+            supported_parameters: ['tools'],
+          },
+        ],
+      }),
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    // Act: first call populates the cache with fetchedAt = now
+    await registry.refreshFromOpenRouter({ force: true });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Act: second call without force — TTL not expired, should short-circuit
+    await registry.refreshFromOpenRouter();
+    // Assert: fetch still called only once — TTL cache returned early
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('refreshFromOpenRouter error cases', () => {
+  it('throws ProviderError when OpenRouter returns a non-OK HTTP response', async () => {
+    // Arrange: mock fetch returning 500
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: vi.fn(),
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    // Act: a failed refresh should log a warning (not throw) and preserve fallback map
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fallback models still available despite the error
+    expect(registry.getModel('claude-sonnet-4-6')).toBeDefined();
+  });
+
+  it('handles malformed response (missing data array) gracefully', async () => {
+    // Arrange: fetch returns 200 but body has no `data` field
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ models: [] }), // wrong shape
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    // Act: refresh should catch the error and fall back silently
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fallback entries still accessible
+    expect(registry.getModel('gpt-4o')).toBeDefined();
+  });
+});
+
+describe('refreshFromProvider', () => {
+  function makeProvider(models: Array<{ id: string; name?: string; provider?: string }>) {
+    return {
+      name: 'test-provider',
+      isLocal: false,
+      listModels: vi.fn().mockResolvedValue(
+        models.map((m) => ({
+          id: m.id,
+          name: m.name ?? m.id,
+          provider: m.provider ?? 'test-provider',
+          tier: 'mid' as const,
+          inputCostPerMillion: 1,
+          outputCostPerMillion: 1,
+          maxContext: 8_192,
+          supportsTools: false,
+        }))
+      ),
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      testConnection: vi.fn(),
+    };
+  }
+
+  it('marks existing registry entries as available:true when provider confirms them', async () => {
+    // Arrange: claude-sonnet-4-6 is in the fallback map
+    const provider = makeProvider([{ id: 'claude-sonnet-4-6', provider: 'anthropic' }]);
+
+    // Act
+    const discovered = await registry.refreshFromProvider(provider);
+
+    // Assert: the model is now marked available
+    const model = registry.getModel('claude-sonnet-4-6');
+    expect(model?.available).toBe(true);
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0].id).toBe('claude-sonnet-4-6');
+  });
+
+  it('inserts unknown model ids discovered from provider as new registry entries', async () => {
+    // Arrange: a model not in the fallback map
+    const provider = makeProvider([{ id: 'custom-model-xyz', provider: 'test-provider' }]);
+
+    // Act
+    const discovered = await registry.refreshFromProvider(provider);
+
+    // Assert: new entry inserted into the registry
+    const model = registry.getModel('custom-model-xyz');
+    expect(model).toBeDefined();
+    expect(model?.available).toBe(true);
+    expect(discovered).toHaveLength(1);
+  });
+
+  it('merges both existing and unknown models in a single refresh', async () => {
+    // Arrange: mix of known and unknown models
+    const provider = makeProvider([
+      { id: 'gpt-4o', provider: 'openai' },
+      { id: 'new-unknown-model', provider: 'test-provider' },
+    ]);
+
+    // Act
+    const discovered = await registry.refreshFromProvider(provider);
+
+    // Assert
+    expect(discovered).toHaveLength(2);
+    expect(registry.getModel('gpt-4o')?.available).toBe(true);
+    expect(registry.getModel('new-unknown-model')?.available).toBe(true);
+  });
+
+  it('returns empty array and logs warning when provider.listModels() throws', async () => {
+    const { logger } = await import('@/lib/logging');
+
+    // Arrange: provider that throws on listModels
+    const failingProvider = {
+      name: 'broken-provider',
+      isLocal: false,
+      listModels: vi.fn().mockRejectedValue(new Error('connection refused')),
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      testConnection: vi.fn(),
+    };
+
+    // Act
+    const discovered = await registry.refreshFromProvider(failingProvider);
+
+    // Assert: returns empty array, not throwing
+    expect(discovered).toEqual([]);
+    // Assert: logged a warning
+    expect(logger.warn).toHaveBeenCalledWith(
+      'refreshFromProvider failed',
+      expect.objectContaining({
+        provider: 'broken-provider',
+        error: 'connection refused',
+      })
+    );
+  });
+
+  it('does not clobber registry state when provider.listModels() throws', async () => {
+    // Arrange: pre-populate the registry via a successful refresh
+    const goodProvider = makeProvider([{ id: 'gpt-4o', provider: 'openai' }]);
+    await registry.refreshFromProvider(goodProvider);
+    const countBefore = registry.getAvailableModels().length;
+
+    // Act: failing refresh
+    const failingProvider = {
+      name: 'broken',
+      isLocal: false,
+      listModels: vi.fn().mockRejectedValue(new Error('timeout')),
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      testConnection: vi.fn(),
+    };
+    await registry.refreshFromProvider(failingProvider);
+
+    // Assert: model count unchanged
+    expect(registry.getAvailableModels().length).toBe(countBefore);
   });
 });

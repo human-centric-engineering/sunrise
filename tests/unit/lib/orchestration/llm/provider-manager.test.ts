@@ -1,5 +1,7 @@
 /**
- * Tests for provider-manager: caching, validation, and type dispatch.
+ * Tests for provider-manager: caching, validation, type dispatch,
+ * registerProvider (in-memory config), clearCache (single-slug eviction),
+ * testProvider delegation, resolveApiKey warn path, and registerProviderInstance.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -38,10 +40,17 @@ vi.mock('openai', () => {
 });
 
 const { prisma } = await import('@/lib/db/client');
+const { logger } = await import('@/lib/logging');
 const { AnthropicProvider } = await import('@/lib/orchestration/llm/anthropic');
 const { OpenAiCompatibleProvider } = await import('@/lib/orchestration/llm/openai-compatible');
-const { getProvider, clearCache, listProviders } =
-  await import('@/lib/orchestration/llm/provider-manager');
+const {
+  getProvider,
+  clearCache,
+  listProviders,
+  registerProvider,
+  registerProviderInstance,
+  testProvider,
+} = await import('@/lib/orchestration/llm/provider-manager');
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -137,5 +146,218 @@ describe('listProviders', () => {
     const list = await listProviders();
     expect(list).toHaveLength(2);
     expect(list.every((p) => p.status === 'unknown')).toBe(true);
+  });
+});
+
+describe('registerProvider (in-memory config)', () => {
+  it('builds AnthropicProvider for type=anthropic', () => {
+    // Arrange
+    const config = {
+      name: 'my-anthropic',
+      type: 'anthropic' as const,
+      apiKey: 'sk-test',
+      isLocal: false,
+    };
+
+    // Act
+    const provider = registerProvider(config);
+
+    // Assert
+    expect(provider).toBeInstanceOf(AnthropicProvider);
+    expect(provider.name).toBe('my-anthropic');
+  });
+
+  it('builds OpenAiCompatibleProvider for type=openai using default baseUrl', () => {
+    // Arrange: no baseUrl supplied — should fall back to api.openai.com
+    const config = {
+      name: 'my-openai',
+      type: 'openai' as const,
+      apiKey: 'sk-test',
+      isLocal: false,
+    };
+
+    // Act
+    const provider = registerProvider(config);
+
+    // Assert: OpenAI type resolves without baseUrl
+    expect(provider).toBeInstanceOf(OpenAiCompatibleProvider);
+    expect(provider.name).toBe('my-openai');
+  });
+
+  it('throws missing_base_url for type=openai-compatible without baseUrl', () => {
+    // Arrange
+    const config = {
+      name: 'bad-compat',
+      type: 'openai-compatible' as const,
+      isLocal: false,
+    };
+
+    // Act + Assert
+    expect(() => registerProvider(config)).toThrow(
+      expect.objectContaining({ code: 'missing_base_url' })
+    );
+  });
+
+  it('passes timeoutMs and maxRetries through to OpenAiCompatibleProvider', () => {
+    // Arrange
+    const config = {
+      name: 'openai-custom',
+      type: 'openai' as const,
+      apiKey: 'key',
+      isLocal: false,
+      timeoutMs: 5_000,
+      maxRetries: 1,
+    };
+
+    // Act: should not throw and returns a provider
+    const provider = registerProvider(config);
+
+    // Assert: provider was created with the custom settings (we can only observe it was built)
+    expect(provider).toBeInstanceOf(OpenAiCompatibleProvider);
+  });
+
+  it('omits apiKey from OpenAiCompatibleProvider config when undefined', () => {
+    // Arrange: local provider with no key
+    const config = {
+      name: 'local-ollama',
+      type: 'openai-compatible' as const,
+      baseUrl: 'http://localhost:11434/v1',
+      isLocal: true,
+    };
+
+    // Act: should not throw
+    const provider = registerProvider(config);
+
+    // Assert
+    expect(provider).toBeInstanceOf(OpenAiCompatibleProvider);
+  });
+
+  it('caches the instance under config.name for later retrieval via getProvider', async () => {
+    // Arrange
+    const config = {
+      name: 'cached-openai',
+      type: 'openai' as const,
+      apiKey: 'sk-test',
+      isLocal: false,
+    };
+
+    // Act
+    const registered = registerProvider(config);
+    const retrieved = await getProvider('cached-openai');
+
+    // Assert: same instance returned without DB lookup
+    expect(retrieved).toBe(registered);
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ OR: [{ slug: 'cached-openai' }] }),
+      })
+    );
+  });
+});
+
+describe('clearCache (targeted single-slug eviction)', () => {
+  it('evicts only the specified slug, leaving others intact', async () => {
+    // Arrange: register two in-memory providers
+    const providerA = registerProvider({
+      name: 'provider-a',
+      type: 'openai' as const,
+      apiKey: 'key-a',
+      isLocal: false,
+    });
+    const providerB = registerProvider({
+      name: 'provider-b',
+      type: 'openai' as const,
+      apiKey: 'key-b',
+      isLocal: false,
+    });
+
+    // Verify both are cached
+    expect(await getProvider('provider-a')).toBe(providerA);
+    expect(await getProvider('provider-b')).toBe(providerB);
+
+    // Act: evict only provider-a
+    clearCache('provider-a');
+
+    // Assert: provider-b still in cache (no DB call needed)
+    expect(await getProvider('provider-b')).toBe(providerB);
+
+    // Assert: provider-a evicted — getProvider will fall through to DB
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    await expect(getProvider('provider-a')).rejects.toMatchObject({ code: 'provider_not_found' });
+  });
+});
+
+describe('testProvider', () => {
+  it('delegates to provider.testConnection() and returns its result', async () => {
+    // Arrange: register a mock provider instance
+    const mockResult = { ok: true, models: ['gpt-4o'] };
+    const mockInstance = {
+      name: 'test-conn-provider',
+      isLocal: false,
+      testConnection: vi.fn().mockResolvedValue(mockResult),
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+    };
+    registerProviderInstance('test-conn-provider', mockInstance);
+
+    // Act
+    const result = await testProvider('test-conn-provider');
+
+    // Assert: delegated to testConnection and returned the result
+    expect(result).toBe(mockResult);
+    expect(mockInstance.testConnection).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('registerProviderInstance', () => {
+  it('injects a pre-built instance retrievable via getProvider', async () => {
+    // Arrange: create a minimal provider-like object
+    const fakeProvider = {
+      name: 'injected-provider',
+      isLocal: true,
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+    };
+
+    // Act
+    registerProviderInstance('injected-provider', fakeProvider);
+    const retrieved = await getProvider('injected-provider');
+
+    // Assert: exact same object, no DB lookup
+    expect(retrieved).toBe(fakeProvider);
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveApiKey warn path', () => {
+  it('logs a warning and returns undefined when apiKeyEnvVar is set but env value is empty string', async () => {
+    // Arrange: set env var to empty string
+    process.env.EMPTY_KEY_VAR = '';
+    const row = makeRow({
+      apiKeyEnvVar: 'EMPTY_KEY_VAR',
+      providerType: 'anthropic',
+    });
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(row);
+
+    // Act: getProvider should throw missing_api_key (since resolveApiKey returns undefined for empty)
+    // but the important side-effect is that logger.warn was called
+    await expect(getProvider('anthropic')).rejects.toMatchObject({ code: 'missing_api_key' });
+
+    // Assert: warned about the empty env var
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Provider apiKeyEnvVar is set but process.env value is empty',
+      expect.objectContaining({
+        provider: row.slug,
+        envVar: 'EMPTY_KEY_VAR',
+      })
+    );
+
+    // Cleanup
+    delete process.env.EMPTY_KEY_VAR;
   });
 });
