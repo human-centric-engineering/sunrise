@@ -42,14 +42,16 @@ class WithSchema extends BaseCapability<Args, Data> {
   }
 }
 
-class NoSchema extends BaseCapability<unknown, { echoed: unknown }> {
-  readonly slug = 'no_schema';
+class PassthroughSchema extends BaseCapability<unknown, { echoed: unknown }> {
+  readonly slug = 'passthrough_schema';
   readonly functionDefinition: CapabilityFunctionDefinition = {
-    name: 'no_schema',
+    name: 'passthrough_schema',
     description: '',
     parameters: {},
   };
-  protected readonly schema = undefined;
+  // Explicit opt-in to accepting arbitrary args — proves that even
+  // "anything goes" capabilities must declare a schema.
+  protected readonly schema = z.unknown();
 
   async execute(args: unknown) {
     return this.success({ echoed: args });
@@ -74,10 +76,10 @@ describe('BaseCapability.validate', () => {
     }
   });
 
-  it('is a no-op passthrough when no schema is set', () => {
-    const cap = new NoSchema();
+  it('accepts arbitrary args when the schema is z.unknown()', () => {
+    const cap = new PassthroughSchema();
     const raw = { anything: 123 };
-    expect(cap.validate(raw)).toBe(raw);
+    expect(cap.validate(raw)).toEqual(raw);
   });
 });
 

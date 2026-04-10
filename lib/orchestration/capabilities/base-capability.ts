@@ -26,11 +26,13 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
   abstract readonly functionDefinition: CapabilityFunctionDefinition;
 
   /**
-   * Optional Zod schema. When present, the dispatcher (via `validate`)
-   * runs it before calling `execute`. Subclasses that don't need
-   * validation can leave this `undefined`.
+   * Required Zod schema. The dispatcher (via `validate`) runs it
+   * before calling `execute`. Subclasses that want to accept arbitrary
+   * arguments MUST opt in explicitly with `z.record(z.unknown())` or
+   * similar — we never hand raw, LLM-supplied args to `execute`
+   * unchecked.
    */
-  protected abstract readonly schema?: CapabilitySchema<TArgs>;
+  protected abstract readonly schema: CapabilitySchema<TArgs>;
 
   abstract execute(args: TArgs, context: CapabilityContext): Promise<CapabilityResult<TData>>;
 
@@ -39,9 +41,6 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
    * success, throws `CapabilityValidationError` on failure.
    */
   validate(rawArgs: unknown): TArgs {
-    if (!this.schema) {
-      return rawArgs as TArgs;
-    }
     const result = this.schema.safeParse(rawArgs);
     if (!result.success) {
       throw new CapabilityValidationError(result.error.issues);

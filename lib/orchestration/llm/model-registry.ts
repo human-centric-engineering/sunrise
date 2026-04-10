@@ -21,6 +21,8 @@
  * Platform-agnostic: no Next.js imports, no Node-only APIs.
  */
 
+import { z } from 'zod';
+
 import { logger } from '@/lib/logging';
 import { fetchWithTimeout, ProviderError, type LlmProvider } from './provider';
 import type { ModelInfo, ModelTier } from './types';
@@ -68,10 +70,16 @@ export async function refreshFromOpenRouter(options: { force?: boolean } = {}): 
           retriable: response.status >= 500 || response.status === 429,
         });
       }
-      const body = (await response.json()) as OpenRouterResponse;
-      if (!body?.data || !Array.isArray(body.data)) {
-        throw new ProviderError('OpenRouter response missing data array');
+      const raw: unknown = await response.json();
+      const parsed = openRouterResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new ProviderError('OpenRouter response failed schema validation', {
+          code: 'invalid_openrouter_response',
+          retriable: false,
+          cause: parsed.error,
+        });
       }
+      const body = parsed.data;
 
       const merged = new Map<string, ModelInfo>(buildFallbackMap());
       let added = 0;
@@ -165,17 +173,33 @@ export function __resetForTests(): void {
 // OpenRouter response parsing
 // ---------------------------------------------------------------------------
 
-interface OpenRouterResponse {
-  data: OpenRouterModel[];
-}
+/**
+ * Zod schema for the OpenRouter `/api/v1/models` response. Only fields
+ * we actually consume are validated; `.passthrough()` keeps unknown
+ * fields intact but doesn't lie about their types. Everything besides
+ * `id` is optional because OpenRouter's catalogue is heterogeneous.
+ */
+const openRouterModelSchema = z
+  .object({
+    id: z.string(),
+    name: z.string().optional(),
+    context_length: z.number().optional(),
+    pricing: z
+      .object({
+        prompt: z.string().optional(),
+        completion: z.string().optional(),
+      })
+      .partial()
+      .optional(),
+    supported_parameters: z.array(z.string()).optional(),
+  })
+  .passthrough();
 
-interface OpenRouterModel {
-  id: string;
-  name?: string;
-  context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
-  supported_parameters?: string[];
-}
+const openRouterResponseSchema = z.object({
+  data: z.array(openRouterModelSchema),
+});
+
+type OpenRouterModel = z.infer<typeof openRouterModelSchema>;
 
 function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
   if (!entry || typeof entry.id !== 'string') return null;

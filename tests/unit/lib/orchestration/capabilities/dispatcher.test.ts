@@ -57,7 +57,7 @@ class ThrowingCapability extends BaseCapability<unknown, never> {
     description: '',
     parameters: {},
   };
-  protected readonly schema = undefined;
+  protected readonly schema = z.unknown();
 
   async execute(_args: unknown): Promise<never> {
     throw new Error('boom');
@@ -71,7 +71,7 @@ class RateLimitedCapability extends BaseCapability<unknown, { ok: true }> {
     description: '',
     parameters: {},
   };
-  protected readonly schema = undefined;
+  protected readonly schema = z.unknown();
 
   async execute(_args: unknown) {
     return this.success({ ok: true as const });
