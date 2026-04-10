@@ -918,6 +918,125 @@ export const getPatternParamSchema = z.object({
 });
 
 // ============================================================================
+// Session 3.4 — Costs & Evaluations
+// ============================================================================
+
+/** Maximum span for a cost breakdown query — one year. Prevents unbounded scans. */
+const COST_BREAKDOWN_MAX_SPAN_DAYS = 366;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Cost breakdown query (GET /admin/orchestration/costs).
+ *
+ * Requires an explicit date range and `groupBy` axis. The range is
+ * capped at ~1 year to prevent unbounded `AiCostLog` scans.
+ */
+export const costBreakdownQuerySchema = z
+  .object({
+    agentId: cuidSchema.optional(),
+    dateFrom: z.coerce.date({ message: 'dateFrom is required and must be a valid date' }),
+    dateTo: z.coerce.date({ message: 'dateTo is required and must be a valid date' }),
+    groupBy: z.enum(['day', 'agent', 'model']),
+  })
+  .refine((v) => v.dateTo.getTime() >= v.dateFrom.getTime(), {
+    message: 'dateTo must be on or after dateFrom',
+    path: ['dateTo'],
+  })
+  .refine(
+    (v) => v.dateTo.getTime() - v.dateFrom.getTime() <= COST_BREAKDOWN_MAX_SPAN_DAYS * MS_PER_DAY,
+    {
+      message: `Date range must be at most ${COST_BREAKDOWN_MAX_SPAN_DAYS} days`,
+      path: ['dateTo'],
+    }
+  );
+
+/** List evaluations query (GET /admin/orchestration/evaluations). */
+export const listEvaluationsQuerySchema = paginationQuerySchema.extend({
+  agentId: cuidSchema.optional(),
+  status: evaluationStatusSchema.optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+});
+
+/**
+ * Create evaluation session body (POST /admin/orchestration/evaluations).
+ *
+ * Narrower than `evaluationSessionSchema` — new sessions always start
+ * as `draft`; status transitions happen via PATCH / the `/complete`
+ * endpoint.
+ */
+export const createEvaluationSchema = z.object({
+  agentId: cuidSchema,
+
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(200, 'Title must be less than 200 characters')
+    .trim(),
+
+  description: z
+    .string()
+    .max(5000, 'Description must be less than 5000 characters')
+    .trim()
+    .optional(),
+
+  metadata: metadataSchema,
+});
+
+/**
+ * Update evaluation session body (PATCH /admin/orchestration/evaluations/:id).
+ *
+ * Cannot set `status: 'completed'` — completion goes through the
+ * `/complete` endpoint so the AI analysis and status flip are atomic.
+ * At least one field must be present (empty body rejected).
+ */
+export const updateEvaluationSchema = z
+  .object({
+    title: z
+      .string()
+      .min(1, 'Title is required')
+      .max(200, 'Title must be less than 200 characters')
+      .trim()
+      .optional(),
+    description: z
+      .string()
+      .max(5000, 'Description must be less than 5000 characters')
+      .trim()
+      .optional(),
+    status: z.enum(['draft', 'in_progress', 'archived']).optional(),
+    metadata: metadataSchema,
+  })
+  .refine(
+    (v) =>
+      v.title !== undefined ||
+      v.description !== undefined ||
+      v.status !== undefined ||
+      v.metadata !== undefined,
+    { message: 'At least one field must be provided' }
+  );
+
+/**
+ * Evaluation logs query (GET /admin/orchestration/evaluations/:id/logs).
+ *
+ * Simple cursor pagination using a `before` CUID — results come back
+ * in `sequenceNumber` ascending order, so `before` refers to a log id
+ * whose id is lexically smaller (CUIDs are monotonic enough for this
+ * use case).
+ */
+export const evaluationLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).default(100),
+  before: cuidSchema.optional(),
+});
+
+/**
+ * Complete evaluation body (POST /admin/orchestration/evaluations/:id/complete).
+ *
+ * Empty object today; kept as a schema so the route can call
+ * `validateRequestBody` consistently and so future options (e.g.
+ * `{ model?: string }`) land without breaking the route signature.
+ */
+export const completeEvaluationBodySchema = z.object({}).passthrough();
+
+// ============================================================================
 // Inferred Types
 // ============================================================================
 
@@ -954,3 +1073,9 @@ export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema
 export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;
 export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;
 export type GetPatternParamInput = z.infer<typeof getPatternParamSchema>;
+export type CostBreakdownQuery = z.infer<typeof costBreakdownQuerySchema>;
+export type ListEvaluationsQuery = z.infer<typeof listEvaluationsQuerySchema>;
+export type CreateEvaluationInput = z.infer<typeof createEvaluationSchema>;
+export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
+export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
+export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;

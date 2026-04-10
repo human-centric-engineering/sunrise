@@ -44,6 +44,14 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/conversations/:id`               | DELETE             | Delete one of the caller's conversations            |
 | `/api/v1/admin/orchestration/conversations/:id/messages`      | GET                | Read messages for one of the caller's conversations |
 | `/api/v1/admin/orchestration/conversations/clear`             | POST               | Bulk-delete the caller's conversations by filter    |
+| `/api/v1/admin/orchestration/costs`                           | GET                | Cost breakdown by day / agent / model               |
+| `/api/v1/admin/orchestration/costs/summary`                   | GET                | Today / week / month totals, per-agent, per-model   |
+| `/api/v1/admin/orchestration/costs/alerts`                    | GET                | Agents at or above 80% of their monthly budget      |
+| `/api/v1/admin/orchestration/agents/:id/budget`               | GET                | Read-only budget status (use PATCH agent to mutate) |
+| `/api/v1/admin/orchestration/evaluations`                     | GET, POST          | List the caller's evaluation sessions / create one  |
+| `/api/v1/admin/orchestration/evaluations/:id`                 | GET, PATCH         | Read / update an evaluation session                 |
+| `/api/v1/admin/orchestration/evaluations/:id/logs`            | GET                | Read log events for one of the caller's sessions    |
+| `/api/v1/admin/orchestration/evaluations/:id/complete`        | POST               | Run the AI analysis pass and flip to `completed`    |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 
@@ -725,6 +733,255 @@ curl -X POST /api/v1/admin/orchestration/conversations/clear \
 - Both — AND-combined
 
 The `WHERE` clause is hardcoded to `{ userId: session.user.id, ...filters }` — `userId` is never an input. Cross-user bulk delete is impossible through this endpoint by construction. Returns `{ deletedCount }`. `AiMessage` rows cascade.
+
+## Costs
+
+Admin-global observability over `AiCostLog`. Unlike every other user-scoped endpoint in this document, **cost endpoints are not scoped to the caller** — `AiCostLog` has no `userId` relation; it's a system-wide ledger. Every admin sees the same totals. This mirrors the knowledge base design.
+
+Validation schemas for the cost surface live in `lib/validations/orchestration.ts` (`costBreakdownQuerySchema`). Aggregation logic lives in `lib/orchestration/llm/cost-reports.ts` — a platform-agnostic query module sitting alongside the existing `cost-tracker.ts`. No new Prisma migration was introduced; `AiCostLog` and `AiAgent.monthlyBudgetUsd` already existed from Phase 2a.
+
+### Cost breakdown
+
+```bash
+curl '/api/v1/admin/orchestration/costs?dateFrom=2026-03-01&dateTo=2026-04-01&groupBy=day'
+curl '/api/v1/admin/orchestration/costs?dateFrom=2026-03-01&dateTo=2026-04-01&groupBy=agent'
+curl '/api/v1/admin/orchestration/costs?dateFrom=2026-03-01&dateTo=2026-04-01&groupBy=model&agentId=<cuid>'
+```
+
+Query params (validated by `costBreakdownQuerySchema`):
+
+| Field      | Type                    | Notes                                        |
+| ---------- | ----------------------- | -------------------------------------------- |
+| `agentId`  | CUID (optional)         | Restrict the aggregation to a single agent   |
+| `dateFrom` | ISO date                | Inclusive, interpreted at UTC midnight       |
+| `dateTo`   | ISO date                | Inclusive, interpreted for the whole UTC day |
+| `groupBy`  | `day \| agent \| model` | Required                                     |
+
+**Hard guards:**
+
+- `dateTo` must be on or after `dateFrom` (schema refine).
+- Date span must be ≤ **366 days** (schema refine). Wider windows would unbounded-scan `AiCostLog` — the limit exists to keep the query bounded, not to match a calendar.
+- `groupBy=day` runs a Postgres-native `date_trunc('day', "createdAt")` via `$queryRawUnsafe`. `agent` and `model` use `prisma.aiCostLog.groupBy`; `agent` does a single follow-up `aiAgent.findMany({ where: { id: { in: [...] } } })` to resolve names (no N+1).
+- Agents that have been deleted still show up under a `(deleted)` key when rows point at `agentId: null`.
+
+Response envelope:
+
+```json
+{
+  "success": true,
+  "data": {
+    "groupBy": "day",
+    "rows": [
+      {
+        "key": "2026-03-01",
+        "totalCostUsd": 1.5,
+        "inputTokens": 1000,
+        "outputTokens": 500,
+        "count": 3
+      }
+    ],
+    "totals": { "totalCostUsd": 1.5, "inputTokens": 1000, "outputTokens": 500, "count": 3 }
+  }
+}
+```
+
+Rows from `groupBy=agent` / `groupBy=model` also carry a `label` (agent name / model id) and are sorted by `totalCostUsd` descending. Rows from `groupBy=day` are sorted ascending.
+
+### Cost summary
+
+```bash
+curl /api/v1/admin/orchestration/costs/summary
+```
+
+No query params. Dashboard-friendly aggregation computed by `getCostSummary()` with all sub-queries running in parallel:
+
+- `totals.today` — rolling UTC day (`[todayStart, tomorrowStart)`)
+- `totals.week` — rolling 7 UTC days ending at next UTC midnight
+- `totals.month` — current UTC calendar month, matching `checkBudget`'s convention
+- `byAgent` — month-to-date spend per agent, sorted by spend desc, with `utilisation = monthSpend / monthlyBudgetUsd`. Agents without a budget return `utilisation: null`. Agents that were deleted (no row in `aiAgent`) drop out entirely.
+- `byModel` — month-to-date spend per model id, sorted desc
+- `trend` — 30 UTC days of daily totals in ascending order. Days with no spend are omitted.
+
+### Budget alerts
+
+```bash
+curl /api/v1/admin/orchestration/costs/alerts
+```
+
+Returns every agent with a `monthlyBudgetUsd` where `spent / budget >= 0.8`, classified by severity:
+
+| Utilisation | Severity   |
+| ----------- | ---------- |
+| `< 0.8`     | _omitted_  |
+| `0.8..<1.0` | `warning`  |
+| `>= 1.0`    | `critical` |
+
+Agents without a budget, and agents with `monthlyBudgetUsd <= 0`, are filtered out unconditionally. Sorted by utilisation desc.
+
+```json
+{
+  "success": true,
+  "data": {
+    "alerts": [
+      {
+        "agentId": "cmj...",
+        "name": "Support Bot",
+        "slug": "support-bot",
+        "monthlyBudgetUsd": 100,
+        "spent": 92.34,
+        "utilisation": 0.9234,
+        "severity": "warning"
+      }
+    ]
+  }
+}
+```
+
+### Agent budget status
+
+```bash
+curl /api/v1/admin/orchestration/agents/<id>/budget
+```
+
+Read-only convenience over `checkBudget()` from `lib/orchestration/llm/cost-tracker.ts`. Returns the existing `BudgetStatus` shape:
+
+```json
+{
+  "success": true,
+  "data": {
+    "withinBudget": true,
+    "spent": 42.17,
+    "limit": 100,
+    "remaining": 57.83
+  }
+}
+```
+
+Agents with no `monthlyBudgetUsd` return `{ withinBudget: true, spent, limit: null, remaining: null }`. Malformed `id` → 400. Missing agent → 404 (the handler catches the `Error('Agent ... not found')` thrown by `checkBudget` and rethrows as `NotFoundError`).
+
+**This endpoint is read-only by design.** Budget mutations go through `PATCH /api/v1/admin/orchestration/agents/:id` via `updateAgentSchema.monthlyBudgetUsd`. A second mutation path would fork the audit trail, so there is deliberately no `PATCH /agents/:id/budget`.
+
+## Evaluations
+
+Evaluation sessions drive the "review an agent's performance" flow. Each session owns an ordered list of `AiEvaluationLog` rows (user inputs, AI responses, capability calls, results, errors) and transitions through `draft → in_progress → completed` or `draft → in_progress → archived`. The `/complete` endpoint is the only path that can set `status='completed'` — by design, `PATCH` cannot.
+
+**Ownership:** every evaluation endpoint is scoped to `session.user.id`. Cross-user access returns **404, not 403** — matching the conversations convention. Do not "fix" this.
+
+The handler layer lives in `lib/orchestration/evaluations/` — platform-agnostic, no `next/*` imports. Validation schemas live in `lib/validations/orchestration.ts` (`createEvaluationSchema`, `updateEvaluationSchema`, `listEvaluationsQuerySchema`, `evaluationLogsQuerySchema`, `completeEvaluationBodySchema`).
+
+### List evaluations
+
+```
+GET /api/v1/admin/orchestration/evaluations?page=1&limit=20&agentId=<cuid>&status=in_progress&q=foo
+```
+
+Filters (`listEvaluationsQuerySchema`): `agentId`, `status` (`draft | in_progress | completed | archived`), and `q` (case-insensitive `title` contains). Every `where` clause hardcodes `userId: session.user.id`. Response includes `agent` (id/name/slug) and `_count.logs`.
+
+### Create evaluation
+
+```bash
+curl -X POST /api/v1/admin/orchestration/evaluations \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agentId": "<cuid>",
+    "title": "Support bot tone review",
+    "description": "Sample of Q1 support conversations",
+    "metadata": { "sampleSize": 50 }
+  }'
+```
+
+Validated by `createEvaluationSchema`. The route checks the agent exists (any admin can create a session against any agent — agents are shared) and creates the session in `status='draft'` with `userId = session.user.id`. Returns `201` with the created row.
+
+### Read / update one evaluation
+
+```bash
+curl /api/v1/admin/orchestration/evaluations/<id>
+curl -X PATCH /api/v1/admin/orchestration/evaluations/<id> \
+  -d '{ "status": "in_progress", "description": "Expanded to 100 conversations" }'
+```
+
+Both methods run an ownership check via `findFirst({ where: { id, userId: session.user.id } })` and throw `NotFoundError` on miss. PATCH is rate-limited.
+
+**PATCH deliberately cannot set `status='completed'`.** `updateEvaluationSchema.status` is an enum excluding `'completed'` — Zod rejects the value at the boundary. Completion must go through `/complete` so the AI analysis and the status flip happen atomically. The schema also uses a `.refine()` to reject empty update bodies.
+
+### Read evaluation logs
+
+```
+GET /api/v1/admin/orchestration/evaluations/<id>/logs?limit=100&before=<log-cuid>
+```
+
+Cursor pagination — `limit` defaults to 100, hard-capped at 500. `before` is a log id; rows are returned where `id < before`, ordered by `sequenceNumber` ascending. Ownership is checked on the parent session; cross-user → 404.
+
+### Complete evaluation
+
+```bash
+curl -X POST /api/v1/admin/orchestration/evaluations/<id>/complete
+```
+
+**Synchronous POST**, not SSE. Runs in `completeEvaluationSession()` (`lib/orchestration/evaluations/complete-session.ts`):
+
+1. Load the session `{ id, userId }` (include `agent`, `logs`) — missing → `NotFoundError`.
+2. Reject if `status === 'completed'` → `ConflictError`.
+3. Reject if `logs.length === 0` → `ValidationError('evaluation_has_no_logs')`.
+4. Fetch up to **50** logs (`MAX_LOGS_IN_PROMPT`), ordered by `sequenceNumber` ascending. The cap bounds the analysis prompt; longer sessions are summarised from the first 50 events.
+5. Resolve the provider via `getProvider(session.agent.provider)`. If the agent has been deleted (`session.agentId === null`), fall back to `process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic'` with `EVALUATION_DEFAULT_MODEL ?? 'claude-sonnet-4-6'`.
+6. Issue a single non-streaming `provider.chat()` call capped at `temperature: 0.2`, `maxTokens: 1500`, and a `10_000 ms` `AbortSignal.timeout`.
+7. Parse the response as `{ summary: string, improvementSuggestions: string[] }`. Code fences (` ```json `) are stripped. On malformed JSON, retry once with a stricter "respond only with JSON" prompt; on a second failure, throw a sanitized `Error('Failed to generate evaluation analysis')` — **the raw LLM output is never forwarded**.
+8. Fire-and-forget `logCost({ operation: CostOperation.EVALUATION, ... })`. A Prisma failure here is logged but does not abort completion.
+9. Update the session: `status='completed'`, `summary`, `improvementSuggestions`, `completedAt = new Date()`.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "session": {
+      "sessionId": "cmj...",
+      "status": "completed",
+      "summary": "...",
+      "improvementSuggestions": ["...", "..."],
+      "tokenUsage": { "input": 120, "output": 55 },
+      "costUsd": 0
+    }
+  }
+}
+```
+
+Error mapping:
+
+| Thrown            | HTTP | When                                              |
+| ----------------- | ---- | ------------------------------------------------- |
+| `NotFoundError`   | 404  | Session missing or cross-user                     |
+| `ConflictError`   | 409  | Session already `completed`                       |
+| `ValidationError` | 400  | Session has no logs                               |
+| Any other `Error` | 500  | Sanitized message — raw LLM/provider text dropped |
+
+The route is rate-limited (`adminLimiter`) because completion is both a mutation and an LLM call — the most expensive endpoint in the evaluation surface.
+
+## Smoke testing
+
+The full admin HTTP surface has an end-to-end smoke script at `scripts/smoke/orchestration.ts`. It spins up an **in-process mock** OpenAI-compatible server (`/v1/chat/completions` JSON + SSE, `/v1/embeddings`, `/v1/models`), signs up a throwaway admin via better-auth, and drives ~32 assertions across:
+
+- Providers CRUD + `/:id/test` connection
+- Agents CRUD
+- Capabilities CRUD + `/agents/:id/capabilities` pivot attach
+- Workflows CRUD + `/validate` + `/execute` 501 stub
+- `POST /chat/stream` — asserts `start` + terminal `done`/`error` frames
+- Knowledge upload (mock `.md`) + chunk + embed + `POST /search`
+- Evaluations create + log-seed + `/complete` (hits the mock LLM for the summary)
+- Conversations list + `/clear` ownership scoping (empty body rejected, filter required)
+- Costs breakdown / summary / alerts + `/agents/:id/budget`
+- Direct Prisma re-query of `AiCostLog` to prove fire-and-forget cost writes persisted
+
+All rows are scoped by a `smoke-test-orch-*` prefix and cleaned up at the end; the throwaway admin's `User` / `Session` / `Account` rows are also deleted. Run with:
+
+```bash
+npm run dev &            # dev server must be running
+npm run smoke:orchestration
+```
+
+Successive runs inside the 60-second `adminLimiter` window may hit 429s — wait out the window or let the next run pre-flight poll. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for the safety rules every smoke script must follow.
 
 ## Anti-patterns
 

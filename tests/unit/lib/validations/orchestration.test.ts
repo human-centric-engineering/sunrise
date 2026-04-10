@@ -53,6 +53,12 @@ import {
   clearConversationsBodySchema,
   listDocumentsQuerySchema,
   getPatternParamSchema,
+  costBreakdownQuerySchema,
+  listEvaluationsQuerySchema,
+  createEvaluationSchema,
+  updateEvaluationSchema,
+  evaluationLogsQuerySchema,
+  completeEvaluationBodySchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1350,5 +1356,204 @@ describe('getPatternParamSchema', () => {
   it('rejects zero and negative numbers', () => {
     expect(getPatternParamSchema.safeParse({ number: '0' }).success).toBe(false);
     expect(getPatternParamSchema.safeParse({ number: '-1' }).success).toBe(false);
+  });
+});
+
+// ============================================================================
+// Session 3.4 — Costs & Evaluations
+// ============================================================================
+
+describe('costBreakdownQuerySchema', () => {
+  it('accepts a valid request with ISO date strings', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-02-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an optional agentId filter', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      agentId: VALID_CUID,
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'model',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      agentId: 'not-a-cuid',
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'agent',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when dateFrom is after dateTo', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-02-01',
+      dateTo: '2026-01-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a span longer than 366 days', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2024-01-01',
+      dateTo: '2026-01-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unknown groupBy value', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'month',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires groupBy', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listEvaluationsQuerySchema', () => {
+  it('accepts pagination defaults with no filters', () => {
+    const result = listEvaluationsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts agentId + status + q filters', () => {
+    const result = listEvaluationsQuerySchema.safeParse({
+      agentId: VALID_CUID,
+      status: 'in_progress',
+      q: 'retention',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = listEvaluationsQuerySchema.safeParse({ agentId: 'not-a-cuid' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unknown status', () => {
+    const result = listEvaluationsQuerySchema.safeParse({ status: 'hmm' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('createEvaluationSchema', () => {
+  it('accepts a minimal valid body', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'Retention probe',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a missing agentId', () => {
+    const result = createEvaluationSchema.safeParse({ title: 'hi' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty title', () => {
+    const result = createEvaluationSchema.safeParse({ agentId: VALID_CUID, title: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a description longer than 5000 chars', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'x',
+      description: 'y'.repeat(5001),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('does not accept a status field (completion is separate)', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'x',
+      status: 'completed',
+    });
+    // status is stripped (ignored) because schema is not .strict()
+    expect(result.success).toBe(true);
+    expect(result.success && 'status' in result.data).toBe(false);
+  });
+});
+
+describe('updateEvaluationSchema', () => {
+  it('rejects an empty body (no fields provided)', () => {
+    const result = updateEvaluationSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a single title change', () => {
+    const result = updateEvaluationSchema.safeParse({ title: 'New title' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a status transition to in_progress', () => {
+    const result = updateEvaluationSchema.safeParse({ status: 'in_progress' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects status=completed (must use /complete endpoint)', () => {
+    const result = updateEvaluationSchema.safeParse({ status: 'completed' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('evaluationLogsQuerySchema', () => {
+  it('applies default limit of 100 when omitted', () => {
+    const result = evaluationLogsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.limit).toBe(100);
+  });
+
+  it('coerces a numeric string limit', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ limit: '25' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.limit).toBe(25);
+  });
+
+  it('rejects a limit above 500', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ limit: '501' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an optional before cursor (CUID)', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: VALID_CUID });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID before cursor', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: 'nope' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('completeEvaluationBodySchema', () => {
+  it('accepts an empty body', () => {
+    const result = completeEvaluationBodySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts unknown extra fields (passthrough for forward compat)', () => {
+    const result = completeEvaluationBodySchema.safeParse({ futureOption: true });
+    expect(result.success).toBe(true);
   });
 });

@@ -123,10 +123,14 @@ Standalone `tsx` scripts that exercise a production code path end-to-end against
 - Never use `deleteMany({})`, `TRUNCATE`, or `prisma migrate reset`
 - Stub external services via an in-process injection seam (e.g. `registerProviderInstance`)
 
-**Example** — see `scripts/smoke/chat.ts` for the streaming chat handler smoke. Run with:
+**Examples**:
+
+- `scripts/smoke/chat.ts` — streaming chat handler, stubs `LlmProvider` via `registerProviderInstance`. Runs in-process (no dev server required).
+- `scripts/smoke/orchestration.ts` — Phase 3 admin orchestration HTTP surface. Spins up an in-process mock OpenAI-compatible server (`/v1/chat/completions` JSON + SSE, `/v1/embeddings`), signs up a throwaway admin, exercises providers / agents / capabilities / workflows / chat stream / knowledge upload + search / evaluations / conversations / costs end-to-end against the **running dev server** and real Postgres.
 
 ```bash
-npm run smoke:chat
+npm run smoke:chat           # no dev server needed
+npm run smoke:orchestration  # requires `npm run dev` running
 ```
 
 Full guide and template: [`scripts/smoke/README.md`](../../scripts/smoke/README.md).
