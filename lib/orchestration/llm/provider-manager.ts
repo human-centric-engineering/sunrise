@@ -22,6 +22,7 @@
 import type { AiProviderConfig } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiCompatibleProvider } from './openai-compatible';
 import { ProviderError, type LlmProvider, type ProviderTestResult } from './provider';
@@ -33,6 +34,24 @@ export interface ProviderStatus {
   status: 'ok' | 'error' | 'unknown';
   models?: string[];
   error?: string;
+}
+
+/**
+ * Row shape returned by `listProvidersWithStatus`. Hydrates an
+ * `AiProviderConfig` with runtime metadata the admin API needs:
+ *
+ *   - `apiKeyPresent` — whether `process.env[row.apiKeyEnvVar]` is set to
+ *     a non-empty string. The env var *value* is never returned.
+ *   - `status` — last-known health; always `'unknown'` unless the caller
+ *     has already invoked `testProvider` for this slug in-process.
+ *
+ * This is the single place admin routes call for provider listings; it
+ * guarantees the no-secrets rule cannot be accidentally bypassed.
+ */
+export interface ProviderConfigWithStatus {
+  config: AiProviderConfig;
+  apiKeyPresent: boolean;
+  status: 'ok' | 'error' | 'unknown';
 }
 
 const instanceCache = new Map<string, LlmProvider>();
@@ -112,6 +131,36 @@ export async function listProviders(): Promise<ProviderStatus[]> {
 }
 
 /**
+ * Same as `listProviders` but also reports whether the configured
+ * `apiKeyEnvVar` is set in `process.env`. Only inspects `typeof value`
+ * and `length > 0` — never returns or logs the value itself.
+ */
+export async function listProvidersWithStatus(
+  where: Parameters<typeof prisma.aiProviderConfig.findMany>[0] = {}
+): Promise<ProviderConfigWithStatus[]> {
+  const rows = await prisma.aiProviderConfig.findMany({
+    ...where,
+    orderBy: where?.orderBy ?? { createdAt: 'asc' },
+  });
+  return rows.map((config) => ({
+    config,
+    apiKeyPresent: isApiKeyEnvVarSet(config.apiKeyEnvVar),
+    status: 'unknown' as const,
+  }));
+}
+
+/**
+ * Report whether a single row's `apiKeyEnvVar` is set in the current
+ * process. Exposed so the single-item GET route can hydrate its
+ * response the same way `listProvidersWithStatus` does.
+ */
+export function isApiKeyEnvVarSet(apiKeyEnvVar: string | null): boolean {
+  if (!apiKeyEnvVar) return false;
+  const value = process.env[apiKeyEnvVar];
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
  * Test a provider's connectivity and return the models it reports.
  */
 export async function testProvider(slugOrName: string): Promise<ProviderTestResult> {
@@ -156,6 +205,25 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
         code: 'missing_base_url',
         retriable: false,
       });
+    }
+    // Defense-in-depth SSRF guard. The Zod schema on create/update runs
+    // the same check, but this catches:
+    //   - PATCH merges where isLocal was flipped without re-validating
+    //     baseUrl against the new flag
+    //   - Direct DB writes (migrations, seed scripts, manual SQL) that
+    //     bypass the Zod layer entirely
+    // The baseUrl string ends up in an outbound fetch from the OpenAI
+    // SDK, so it must be re-checked at the point of use.
+    const urlCheck = checkSafeProviderUrl(config.baseUrl, { allowLoopback: config.isLocal });
+    if (!urlCheck.ok) {
+      logger.error('Provider baseUrl rejected by SSRF guard at build time', {
+        provider: config.slug,
+        reason: urlCheck.reason,
+      });
+      throw new ProviderError(
+        `Provider "${config.slug}" has an unsafe baseUrl (${urlCheck.reason ?? 'blocked'})`,
+        { code: 'unsafe_base_url', retriable: false }
+      );
     }
     if (!config.isLocal && !apiKey) {
       throw new ProviderError(

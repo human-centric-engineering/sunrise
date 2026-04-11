@@ -32,6 +32,33 @@ import {
   documentUploadSchema,
   costQuerySchema,
   providerConfigSchema,
+  listAgentsQuerySchema,
+  listCapabilitiesQuerySchema,
+  systemInstructionsHistoryEntrySchema,
+  systemInstructionsHistorySchema,
+  instructionsRevertSchema,
+  attachAgentCapabilitySchema,
+  updateAgentCapabilitySchema,
+  exportAgentsSchema,
+  agentBundleSchema,
+  importAgentsSchema,
+  updateProviderConfigSchema,
+  listProvidersQuerySchema,
+  listWorkflowsQuerySchema,
+  listExecutionsQuerySchema,
+  executeWorkflowBodySchema,
+  approveExecutionBodySchema,
+  chatStreamRequestSchema,
+  listConversationsQuerySchema,
+  clearConversationsBodySchema,
+  listDocumentsQuerySchema,
+  getPatternParamSchema,
+  costBreakdownQuerySchema,
+  listEvaluationsQuerySchema,
+  createEvaluationSchema,
+  updateEvaluationSchema,
+  evaluationLogsQuerySchema,
+  completeEvaluationBodySchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -690,6 +717,54 @@ describe('providerConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it.each([
+    'http://169.254.169.254/latest/meta-data/',
+    'http://metadata.google.internal/',
+    'http://10.0.0.1/',
+    'http://192.168.1.1/',
+    'http://172.16.0.1/',
+    'http://127.0.0.1:11434/v1',
+    'http://localhost:11434/v1',
+    'http://[::1]/',
+    'http://0.0.0.0/',
+    'file:///etc/passwd',
+    'gopher://evil/',
+  ])('should reject SSRF-unsafe baseUrl %s', (baseUrl) => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: false,
+      baseUrl,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts loopback baseUrl when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://localhost:11434/v1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects private IPs when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://10.0.0.1/v1',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects cloud metadata when isLocal=true', () => {
+    const result = providerConfigSchema.safeParse({
+      ...VALID_PROVIDER,
+      isLocal: true,
+      baseUrl: 'http://169.254.169.254/',
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('should accept a SCREAMING_SNAKE_CASE apiKeyEnvVar', () => {
     const result = providerConfigSchema.safeParse({
       ...VALID_PROVIDER,
@@ -709,5 +784,788 @@ describe('providerConfigSchema', () => {
   it('should reject empty name', () => {
     const result = providerConfigSchema.safeParse({ ...VALID_PROVIDER, name: '' });
     expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 3.1 — List query / history / pivot / export-import schemas
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listAgentsQuerySchema', () => {
+  it('should accept empty query and apply pagination defaults', () => {
+    const result = listAgentsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.page).toBeGreaterThanOrEqual(1);
+      expect(result.data.limit).toBeGreaterThan(0);
+    }
+  });
+
+  it('should coerce isActive string to boolean', () => {
+    const result = listAgentsQuerySchema.safeParse({ isActive: 'true', provider: 'anthropic' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.isActive).toBe(true);
+      expect(result.data.provider).toBe('anthropic');
+    }
+  });
+
+  it('should reject q longer than 200 chars', () => {
+    const result = listAgentsQuerySchema.safeParse({ q: 'a'.repeat(201) });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listCapabilitiesQuerySchema', () => {
+  it('should accept valid executionType filter', () => {
+    const result = listCapabilitiesQuerySchema.safeParse({ executionType: 'internal' });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject unknown executionType', () => {
+    const result = listCapabilitiesQuerySchema.safeParse({ executionType: 'bogus' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('systemInstructionsHistoryEntrySchema', () => {
+  const VALID_ENTRY = {
+    instructions: 'You are a helpful assistant.',
+    changedAt: '2026-04-10T12:00:00.000Z',
+    changedBy: 'user_abc123',
+  };
+
+  it('should accept a valid history entry', () => {
+    expect(systemInstructionsHistoryEntrySchema.safeParse(VALID_ENTRY).success).toBe(true);
+  });
+
+  it('should reject empty instructions', () => {
+    const result = systemInstructionsHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      instructions: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject non-ISO changedAt', () => {
+    const result = systemInstructionsHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      changedAt: 'yesterday',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('systemInstructionsHistorySchema', () => {
+  it('should accept an empty array', () => {
+    expect(systemInstructionsHistorySchema.safeParse([]).success).toBe(true);
+  });
+
+  it('should accept an array of valid entries', () => {
+    const result = systemInstructionsHistorySchema.safeParse([
+      {
+        instructions: 'v1',
+        changedAt: '2026-04-10T12:00:00.000Z',
+        changedBy: 'user_abc123',
+      },
+      {
+        instructions: 'v2',
+        changedAt: '2026-04-10T13:00:00.000Z',
+        changedBy: 'user_abc123',
+      },
+    ]);
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject non-array input', () => {
+    expect(systemInstructionsHistorySchema.safeParse({ nope: true }).success).toBe(false);
+  });
+});
+
+describe('instructionsRevertSchema', () => {
+  it('should accept a valid non-negative integer', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 0 }).success).toBe(true);
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 7 }).success).toBe(true);
+  });
+
+  it('should reject negative index', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: -1 }).success).toBe(false);
+  });
+
+  it('should reject non-integer index', () => {
+    expect(instructionsRevertSchema.safeParse({ versionIndex: 1.5 }).success).toBe(false);
+  });
+});
+
+describe('attachAgentCapabilitySchema', () => {
+  it('should accept a minimal valid attach body', () => {
+    const result = attachAgentCapabilitySchema.safeParse({ capabilityId: VALID_CUID });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.isEnabled).toBe(true);
+  });
+
+  it('should reject an invalid capabilityId', () => {
+    expect(attachAgentCapabilitySchema.safeParse({ capabilityId: 'not-a-cuid' }).success).toBe(
+      false
+    );
+  });
+
+  it('should accept customConfig and customRateLimit', () => {
+    const result = attachAgentCapabilitySchema.safeParse({
+      capabilityId: VALID_CUID,
+      isEnabled: false,
+      customConfig: { maxItems: 10 },
+      customRateLimit: 30,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject customRateLimit above max', () => {
+    const result = attachAgentCapabilitySchema.safeParse({
+      capabilityId: VALID_CUID,
+      customRateLimit: 999999,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('updateAgentCapabilitySchema', () => {
+  it('should accept an empty object', () => {
+    expect(updateAgentCapabilitySchema.safeParse({}).success).toBe(true);
+  });
+
+  it('should accept a partial update', () => {
+    expect(
+      updateAgentCapabilitySchema.safeParse({ isEnabled: false, customRateLimit: null }).success
+    ).toBe(true);
+  });
+
+  it('should reject customRateLimit of 0', () => {
+    expect(updateAgentCapabilitySchema.safeParse({ customRateLimit: 0 }).success).toBe(false);
+  });
+});
+
+describe('exportAgentsSchema', () => {
+  it('should accept a single-id body', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: [VALID_CUID] }).success).toBe(true);
+  });
+
+  it('should reject an empty array', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: [] }).success).toBe(false);
+  });
+
+  it('should reject more than 100 ids', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: Array(101).fill(VALID_CUID) }).success).toBe(
+      false
+    );
+  });
+
+  it('should reject non-cuid ids', () => {
+    expect(exportAgentsSchema.safeParse({ agentIds: ['not-a-cuid'] }).success).toBe(false);
+  });
+});
+
+describe('agentBundleSchema', () => {
+  const VALID_BUNDLE = {
+    version: '1' as const,
+    exportedAt: '2026-04-10T12:00:00.000Z',
+    agents: [
+      {
+        name: 'Test Agent',
+        slug: 'test-agent',
+        description: 'A test agent',
+        systemInstructions: 'You are a helpful assistant.',
+        systemInstructionsHistory: [],
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        temperature: 0.7,
+        maxTokens: 4096,
+        isActive: true,
+        capabilities: [],
+      },
+    ],
+  };
+
+  it('should accept a minimal valid bundle', () => {
+    expect(agentBundleSchema.safeParse(VALID_BUNDLE).success).toBe(true);
+  });
+
+  it('should reject an unsupported version', () => {
+    expect(agentBundleSchema.safeParse({ ...VALID_BUNDLE, version: '2' }).success).toBe(false);
+  });
+
+  it('should reject an empty agents array', () => {
+    expect(agentBundleSchema.safeParse({ ...VALID_BUNDLE, agents: [] }).success).toBe(false);
+  });
+
+  it('should accept an agent with capabilities by slug', () => {
+    const result = agentBundleSchema.safeParse({
+      ...VALID_BUNDLE,
+      agents: [
+        {
+          ...VALID_BUNDLE.agents[0],
+          capabilities: [
+            { slug: 'search-web', isEnabled: true },
+            { slug: 'read-file', isEnabled: false, customRateLimit: 10 },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('importAgentsSchema', () => {
+  const MINIMAL_BUNDLE = {
+    version: '1' as const,
+    exportedAt: '2026-04-10T12:00:00.000Z',
+    agents: [
+      {
+        name: 'Test Agent',
+        slug: 'test-agent',
+        description: 'A test agent',
+        systemInstructions: 'You are a helpful assistant.',
+        systemInstructionsHistory: [],
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        temperature: 0.7,
+        maxTokens: 4096,
+        isActive: true,
+        capabilities: [],
+      },
+    ],
+  };
+
+  it('should default conflictMode to skip', () => {
+    const result = importAgentsSchema.safeParse({ bundle: MINIMAL_BUNDLE });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.conflictMode).toBe('skip');
+  });
+
+  it('should accept conflictMode overwrite', () => {
+    const result = importAgentsSchema.safeParse({
+      bundle: MINIMAL_BUNDLE,
+      conflictMode: 'overwrite',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject unknown conflictMode', () => {
+    const result = importAgentsSchema.safeParse({
+      bundle: MINIMAL_BUNDLE,
+      conflictMode: 'merge',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject a missing bundle', () => {
+    expect(importAgentsSchema.safeParse({ conflictMode: 'skip' }).success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// updateProviderConfigSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('updateProviderConfigSchema', () => {
+  it('accepts a partial update with just name', () => {
+    const result = updateProviderConfigSchema.safeParse({ name: 'New Name' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts nullable apiKeyEnvVar and baseUrl', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      apiKeyEnvVar: null,
+      baseUrl: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects apiKeyEnvVar that is not SCREAMING_SNAKE_CASE', () => {
+    const result = updateProviderConfigSchema.safeParse({ apiKeyEnvVar: 'lowercase_key' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an SSRF-unsafe baseUrl on update', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://169.254.169.254/',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects loopback baseUrl on update without isLocal', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://localhost:11434/v1',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts loopback baseUrl on update when isLocal=true is also set', () => {
+    const result = updateProviderConfigSchema.safeParse({
+      baseUrl: 'http://localhost:11434/v1',
+      isLocal: true,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listProvidersQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listProvidersQuerySchema', () => {
+  it('accepts an empty query (pagination defaults)', () => {
+    const result = listProvidersQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces isActive string to boolean and accepts providerType', () => {
+    const result = listProvidersQuerySchema.safeParse({
+      isActive: 'true',
+      providerType: 'anthropic',
+      q: 'claude',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown providerType', () => {
+    const result = listProvidersQuerySchema.safeParse({ providerType: 'not-a-provider' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listWorkflowsQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listWorkflowsQuerySchema', () => {
+  it('accepts filters for isActive, isTemplate, and q', () => {
+    const result = listWorkflowsQuerySchema.safeParse({
+      isActive: 'true',
+      isTemplate: 'false',
+      q: 'onboarding',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects q longer than 200 characters', () => {
+    const result = listWorkflowsQuerySchema.safeParse({ q: 'a'.repeat(201) });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listExecutionsQuerySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('listExecutionsQuerySchema', () => {
+  it('accepts workflowId, status, and ISO date strings', () => {
+    const result = listExecutionsQuerySchema.safeParse({
+      workflowId: VALID_CUID,
+      status: 'running',
+      startDate: '2025-01-01',
+      endDate: '2025-12-31',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown status', () => {
+    const result = listExecutionsQuerySchema.safeParse({ status: 'exploded' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// executeWorkflowBodySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('executeWorkflowBodySchema', () => {
+  it('accepts inputData alone', () => {
+    const result = executeWorkflowBodySchema.safeParse({ inputData: { topic: 'test' } });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts inputData with a positive budgetLimitUsd', () => {
+    const result = executeWorkflowBodySchema.safeParse({
+      inputData: {},
+      budgetLimitUsd: 5.5,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a negative budgetLimitUsd', () => {
+    const result = executeWorkflowBodySchema.safeParse({
+      inputData: {},
+      budgetLimitUsd: -1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing inputData', () => {
+    const result = executeWorkflowBodySchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// approveExecutionBodySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('approveExecutionBodySchema', () => {
+  it('accepts an empty body', () => {
+    const result = approveExecutionBodySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an approvalPayload and notes', () => {
+    const result = approveExecutionBodySchema.safeParse({
+      approvalPayload: { decision: 'approved' },
+      notes: 'Looks good',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects notes longer than 5000 characters', () => {
+    const result = approveExecutionBodySchema.safeParse({ notes: 'x'.repeat(5001) });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================================
+// Session 3.3 — Chat stream / Knowledge / Conversations
+// ============================================================================
+
+describe('chatStreamRequestSchema', () => {
+  it('accepts a minimal valid body', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'hello',
+      agentSlug: 'default-agent',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an optional CUID conversationId and contextType/contextId', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'hi',
+      agentSlug: 'coach',
+      conversationId: 'clh1234567890abcdefghijkl',
+      contextType: 'pattern',
+      contextId: 'pattern-1',
+      entityContext: { foo: 'bar' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an empty message', () => {
+    const result = chatStreamRequestSchema.safeParse({ message: '', agentSlug: 'x' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects messages longer than 50_000 characters', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: 'a'.repeat(50_001),
+      agentSlug: 'x',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires agentSlug', () => {
+    const result = chatStreamRequestSchema.safeParse({ message: 'hi' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listConversationsQuerySchema', () => {
+  it('accepts pagination defaults and no filters', () => {
+    const result = listConversationsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces string "true" / "false" into boolean for isActive', () => {
+    const result = listConversationsQuerySchema.safeParse({ isActive: 'true' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.isActive).toBe(true);
+  });
+
+  it('accepts q substring filter', () => {
+    const result = listConversationsQuerySchema.safeParse({ q: 'test search' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = listConversationsQuerySchema.safeParse({ agentId: 'not-a-cuid' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('clearConversationsBodySchema', () => {
+  it('rejects an empty body (no filters)', () => {
+    const result = clearConversationsBodySchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an ISO olderThan alone', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      olderThan: '2025-01-01T00:00:00Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an agentId alone', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      agentId: 'clh1234567890abcdefghijkl',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid ISO datetime', () => {
+    const result = clearConversationsBodySchema.safeParse({ olderThan: 'yesterday' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listDocumentsQuerySchema', () => {
+  it('accepts the default pagination with no filters', () => {
+    const result = listDocumentsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid status enum value', () => {
+    const result = listDocumentsQuerySchema.safeParse({ status: 'ready' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid status enum value', () => {
+    const result = listDocumentsQuerySchema.safeParse({ status: 'archived' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('getPatternParamSchema', () => {
+  it('coerces a numeric string into a positive integer', () => {
+    const result = getPatternParamSchema.safeParse({ number: '12' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.number).toBe(12);
+  });
+
+  it('rejects non-numeric input', () => {
+    const result = getPatternParamSchema.safeParse({ number: 'abc' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects zero and negative numbers', () => {
+    expect(getPatternParamSchema.safeParse({ number: '0' }).success).toBe(false);
+    expect(getPatternParamSchema.safeParse({ number: '-1' }).success).toBe(false);
+  });
+});
+
+// ============================================================================
+// Session 3.4 — Costs & Evaluations
+// ============================================================================
+
+describe('costBreakdownQuerySchema', () => {
+  it('accepts a valid request with ISO date strings', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-02-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an optional agentId filter', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      agentId: VALID_CUID,
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'model',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      agentId: 'not-a-cuid',
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'agent',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when dateFrom is after dateTo', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-02-01',
+      dateTo: '2026-01-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a span longer than 366 days', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2024-01-01',
+      dateTo: '2026-01-01',
+      groupBy: 'day',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unknown groupBy value', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+      groupBy: 'month',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires groupBy', () => {
+    const result = costBreakdownQuerySchema.safeParse({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-01-02',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listEvaluationsQuerySchema', () => {
+  it('accepts pagination defaults with no filters', () => {
+    const result = listEvaluationsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts agentId + status + q filters', () => {
+    const result = listEvaluationsQuerySchema.safeParse({
+      agentId: VALID_CUID,
+      status: 'in_progress',
+      q: 'retention',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-CUID agentId', () => {
+    const result = listEvaluationsQuerySchema.safeParse({ agentId: 'not-a-cuid' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unknown status', () => {
+    const result = listEvaluationsQuerySchema.safeParse({ status: 'hmm' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('createEvaluationSchema', () => {
+  it('accepts a minimal valid body', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'Retention probe',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a missing agentId', () => {
+    const result = createEvaluationSchema.safeParse({ title: 'hi' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty title', () => {
+    const result = createEvaluationSchema.safeParse({ agentId: VALID_CUID, title: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a description longer than 5000 chars', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'x',
+      description: 'y'.repeat(5001),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('does not accept a status field (completion is separate)', () => {
+    const result = createEvaluationSchema.safeParse({
+      agentId: VALID_CUID,
+      title: 'x',
+      status: 'completed',
+    });
+    // status is stripped (ignored) because schema is not .strict()
+    expect(result.success).toBe(true);
+    expect(result.success && 'status' in result.data).toBe(false);
+  });
+});
+
+describe('updateEvaluationSchema', () => {
+  it('rejects an empty body (no fields provided)', () => {
+    const result = updateEvaluationSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a single title change', () => {
+    const result = updateEvaluationSchema.safeParse({ title: 'New title' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a status transition to in_progress', () => {
+    const result = updateEvaluationSchema.safeParse({ status: 'in_progress' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects status=completed (must use /complete endpoint)', () => {
+    const result = updateEvaluationSchema.safeParse({ status: 'completed' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('evaluationLogsQuerySchema', () => {
+  it('applies default limit of 100 when omitted', () => {
+    const result = evaluationLogsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.limit).toBe(100);
+  });
+
+  it('coerces a numeric string limit', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ limit: '25' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.limit).toBe(25);
+  });
+
+  it('rejects a limit above 500', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ limit: '501' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an optional before cursor (positive integer sequenceNumber)', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: 42 });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.before).toBe(42);
+  });
+
+  it('coerces a numeric-string before cursor', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: '7' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.before).toBe(7);
+  });
+
+  it('rejects a non-numeric before cursor', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: 'nope' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a zero or negative before cursor', () => {
+    expect(evaluationLogsQuerySchema.safeParse({ before: 0 }).success).toBe(false);
+    expect(evaluationLogsQuerySchema.safeParse({ before: -5 }).success).toBe(false);
+  });
+});
+
+describe('completeEvaluationBodySchema', () => {
+  it('accepts an empty body', () => {
+    const result = completeEvaluationBodySchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts unknown extra fields (passthrough for forward compat)', () => {
+    const result = completeEvaluationBodySchema.safeParse({ futureOption: true });
+    expect(result.success).toBe(true);
   });
 });

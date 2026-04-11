@@ -26,6 +26,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
+    "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },

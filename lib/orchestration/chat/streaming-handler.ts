@@ -260,10 +260,10 @@ export class StreamingChatHandler {
         userId: request.userId,
         conversationId,
       });
-      yield errorEvent(
-        'internal_error',
-        err instanceof Error ? err.message : 'Chat handler failed'
-      );
+      // Do NOT forward raw err.message — it can leak Prisma internals,
+      // provider SDK details, and internal hostnames to the client. The
+      // detailed error has already been logged via logger.error above.
+      yield errorEvent('internal_error', 'An unexpected error occurred');
     }
   }
 

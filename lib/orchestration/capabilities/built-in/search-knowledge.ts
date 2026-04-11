@@ -9,8 +9,12 @@
 
 import { z } from 'zod';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
-import { BaseCapability } from '../base-capability';
-import type { CapabilityContext, CapabilityFunctionDefinition, CapabilityResult } from '../types';
+import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import type {
+  CapabilityContext,
+  CapabilityFunctionDefinition,
+  CapabilityResult,
+} from '@/lib/orchestration/capabilities/types';
 
 const DEFAULT_LIMIT = 10;
 const DEFAULT_THRESHOLD = 0.7;

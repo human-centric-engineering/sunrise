@@ -143,48 +143,49 @@ Reasoning plus acting is a reflex loop.
 
 Every terminal `error` event carries one of these stable `code` values:
 
-| Code                     | Source                                                          | Meaning                                                          |
-| ------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                | Resolve the slug or activate the agent                           |
-| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                |
-| `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month |
-| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                |
-| `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` carries the detail   |
+| Code                     | Source                                                          | Meaning                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                | Resolve the slug or activate the agent                                                                                   |
+| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                                                                        |
+| `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
+| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                                                                        |
+| `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
 
-## How the Future SSE Route Will Consume It
+## HTTP Surface
 
-Session 3.3 will add `app/api/v1/admin/orchestration/chat/route.ts`:
+Session 3.3 shipped the admin SSE route at `app/api/v1/admin/orchestration/chat/stream/route.ts`. It's a thin wrapper — roughly:
 
 ```typescript
+import { sseResponse } from '@/lib/api/sse';
 import { streamChat } from '@/lib/orchestration/chat';
 
-export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const user = await requireUser(request);
-
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      for await (const event of streamChat({ ...body, userId: user.id })) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      }
-      controller.close();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    },
-  });
-}
+export const POST = withAdminAuth(async (request, session) => {
+  const body = await validateRequestBody(request, chatStreamRequestSchema);
+  const events = streamChat({ ...body, userId: session.user.id, signal: request.signal });
+  return sseResponse(events, { signal: request.signal });
+});
 ```
 
-The handler itself knows nothing about SSE, Next.js, or HTTP — it just yields `ChatEvent`s.
+Full request/response contract, curl examples, and a browser JS client example live in [`admin-api.md`](./admin-api.md#chat-streaming). The SSE bridge itself is documented in [`../api/sse.md`](../api/sse.md).
+
+### Error sanitization — hard guarantee
+
+The catch-all `internal_error` event **no longer forwards `err.message`**. Before Session 3.3 this was a live information leak: Prisma connection strings, provider SDK errors, and internal hostnames flowed straight to the client. The fix in `lib/orchestration/chat/streaming-handler.ts`:
+
+```typescript
+// Do NOT forward raw err.message — it can leak Prisma internals,
+// provider SDK details, and internal hostnames to the client. The
+// detailed error has already been logged via logger.error above.
+yield errorEvent('internal_error', 'An unexpected error occurred');
+```
+
+Detailed errors are logged server-side via `logger.error` immediately before the yield (`streaming-handler.ts` — search for the catch-all around the end of `run()`). That's the only place to debug a specific `internal_error` — the client gets the generic string, the server gets the full error context.
+
+The SSE bridge in `lib/api/sse.ts` has a second sanitization layer for the pathological case where the iterator itself throws (rather than yielding a domain `error` event): it emits a generic `{ code: 'stream_error', message: 'Stream terminated unexpectedly' }` frame and closes. Belt and braces — neither layer ever leaks raw error text.
+
+Typed domain errors (`ChatError` — `agent_not_found`, `conversation_not_found`, `budget_exceeded`, `tool_loop_cap`) still pass through with their original stable codes and messages because they're yielded as events, not thrown.
 
 ## Anti-Patterns
 

@@ -404,8 +404,15 @@ All admin endpoints return these errors for authentication/authorization failure
 }
 ```
 
+## Agent Orchestration Admin API
+
+The agent orchestration layer adds its own admin CRUD surface under `/api/v1/admin/orchestration/*` for managing `AiAgent`, `AiCapability`, and their pivot rows. It follows the same patterns documented above (`withAdminAuth`, `adminLimiter`, standard response envelope) but is documented separately because of the domain-specific concerns (systemInstructions audit trail, export/import bundles).
+
+See **[`../orchestration/admin-api.md`](../orchestration/admin-api.md)** for full endpoint reference, request/response examples, and anti-patterns.
+
 ## Related Documentation
 
 - [API Overview](./endpoints.md) - API design principles and common patterns
 - [User Endpoints](./user-endpoints.md) - User management API
 - [Auth Integration](../auth/integration.md) - Admin auth guards (`withAdminAuth`)
+- [Orchestration Admin API](../orchestration/admin-api.md) - Agent & capability CRUD

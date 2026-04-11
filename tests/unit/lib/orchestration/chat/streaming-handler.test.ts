@@ -516,7 +516,7 @@ describe('StreamingChatHandler', () => {
       listModels: vi.fn(),
       testConnection: vi.fn(),
       chatStream: vi.fn(() => {
-        throw new Error('network down');
+        throw new Error('SECRET_PROD_HOSTNAME network down');
       }),
     };
     (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
@@ -534,8 +534,14 @@ describe('StreamingChatHandler', () => {
       message: string;
     };
     expect(err.code).toBe('internal_error');
-    expect(err.message).toBe('network down');
+    // Sanitization: the catch-all must emit a generic message — NOT the
+    // raw err.message, which can leak Prisma internals, provider SDK
+    // details, or internal hostnames to the client.
+    expect(err.message).toBe('An unexpected error occurred');
+    expect(err.message).not.toContain('SECRET_PROD_HOSTNAME');
+    expect(err.message).not.toContain('network down');
 
+    // The detailed error is still captured in server logs.
     expect(logger.error).toHaveBeenCalled();
   });
 

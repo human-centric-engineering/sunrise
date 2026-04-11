@@ -11,7 +11,8 @@ Standalone scripts that exercise a production code path **end-to-end against the
 Each script has an `npm run smoke:<slice>` entry in `package.json`:
 
 ```bash
-npm run smoke:chat       # Phase 2c streaming chat handler
+npm run smoke:chat           # Phase 2c streaming chat handler
+npm run smoke:orchestration  # Phase 3 admin orchestration HTTP surface (requires dev server)
 ```
 
 Or directly:
@@ -88,9 +89,10 @@ Prefer numbered `[n] description` stdout markers over ad-hoc logging — it make
 
 ## Current scripts
 
-| Script    | Exercises                              | Stubs                                        | Notes                                                                                                                                            |
-| --------- | -------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `chat.ts` | `streamChat` → tool loop → persistence | `LlmProvider` via `registerProviderInstance` | Verifies event sequence, `AiMessage` + `AiCostLog` writes, and budget check. Doesn't exercise the tool loop live (needs seeded capability rows). |
+| Script             | Exercises                                                                                                                                                                                          | Stubs                                                                                                        | Notes                                                                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chat.ts`          | `streamChat` → tool loop → persistence                                                                                                                                                             | `LlmProvider` via `registerProviderInstance`                                                                 | Verifies event sequence, `AiMessage` + `AiCostLog` writes, and budget check. Doesn't exercise the tool loop live (needs seeded capability rows).                     |
+| `orchestration.ts` | Phase 3 admin HTTP surface: providers/agents/capabilities/workflows CRUD + validate + execute stub, chat SSE, knowledge upload + search, evaluations complete, conversations clear, costs + budget | In-process Node HTTP server stubs OpenAI-compatible `/v1/chat/completions` (JSON + SSE) and `/v1/embeddings` | Requires the dev server running (`npm run dev`, default `PORT=3001`). Hits real Postgres. Successive runs within 60s may hit admin rate limit — wait out the window. |
 
 ## Adding a new smoke script
 

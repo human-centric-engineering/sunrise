@@ -183,21 +183,26 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 
 **Entry point:** `.context/substrate.md` — full navigation and AI usage patterns
 
-| Domain           | Path                                      | Key Content                              |
-| ---------------- | ----------------------------------------- | ---------------------------------------- |
-| Architecture     | `.context/architecture/`                  | System design, deployment                |
-| Authentication   | `.context/auth/`                          | better-auth, sessions, guards            |
-| API              | `.context/api/`                           | Endpoints, responses, client             |
-| Database         | `.context/database/`                      | Prisma schema, migrations                |
-| Security         | `.context/security/`                      | Rate limiting, headers, CORS             |
-| Logging          | `.context/logging/`                       | Structured logging, request ctx          |
-| Testing          | `.context/testing/`                       | Patterns, mocking, async                 |
-| Email            | `.context/email/`                         | Templates, sending                       |
-| Workflow         | `.context/workflow.md`                    | Git, commits, PR process                 |
-| AI Orchestration | `.claude/docs/agent-orchestration.md`     | Agent system design, patterns            |
-| LLM Providers    | `.context/orchestration/llm-providers.md` | Provider abstraction, cost tracking      |
-| Capabilities     | `.context/orchestration/capabilities.md`  | Tool dispatcher, built-ins, rate limits  |
-| Streaming Chat   | `.context/orchestration/chat.md`          | Chat handler, tool loop, context builder |
+| Domain                  | Path                                      | Key Content                                   |
+| ----------------------- | ----------------------------------------- | --------------------------------------------- |
+| Architecture            | `.context/architecture/`                  | System design, deployment                     |
+| Authentication          | `.context/auth/`                          | better-auth, sessions, guards                 |
+| API                     | `.context/api/`                           | Endpoints, responses, client                  |
+| Database                | `.context/database/`                      | Prisma schema, migrations                     |
+| Security                | `.context/security/`                      | Rate limiting, headers, CORS                  |
+| Logging                 | `.context/logging/`                       | Structured logging, request ctx               |
+| Testing                 | `.context/testing/`                       | Patterns, mocking, async                      |
+| Email                   | `.context/email/`                         | Templates, sending                            |
+| Workflow                | `.context/workflow.md`                    | Git, commits, PR process                      |
+| AI Orchestration        | `.claude/docs/agent-orchestration.md`     | Agent system design, patterns                 |
+| LLM Providers           | `.context/orchestration/llm-providers.md` | Provider abstraction, cost tracking           |
+| Capabilities            | `.context/orchestration/capabilities.md`  | Tool dispatcher, built-ins, rate limits       |
+| Streaming Chat          | `.context/orchestration/chat.md`          | Chat handler, tool loop, context builder      |
+| Knowledge Base          | `.context/orchestration/knowledge.md`     | Document ingestion, chunking, vector search   |
+| Workflows               | `.context/orchestration/workflows.md`     | DAG validator, error codes, Phase 5.2 roadmap |
+| Orchestration Admin API | `.context/orchestration/admin-api.md`     | Agents, capabilities, chat, knowledge, convos |
+| Orchestration Endpoints | `.context/api/orchestration-endpoints.md` | Consumer HTTP reference for all 41 routes     |
+| SSE Bridge              | `.context/api/sse.md`                     | `sseResponse` helper, framing, sanitization   |
 
 ## Troubleshooting
 

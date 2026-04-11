@@ -1,0 +1,61 @@
+/**
+ * Admin Orchestration — Workflow DAG validation
+ *
+ * POST /api/v1/admin/orchestration/workflows/:id/validate
+ *
+ * Loads the workflow's stored `workflowDefinition`, runs the pure-logic
+ * `validateWorkflow` structural checks, and returns `{ ok, errors }`.
+ *
+ * This endpoint ships fully functional in Session 3.2 — the validator is
+ * plain code on the JSON definition, no engine required. The same
+ * `validateWorkflow` call is re-used by:
+ *   - `POST /workflows/:id/execute` (pre-flight)
+ *   - the Session 5.2 `OrchestrationEngine`
+ *   - the Session 5.1b workflow editor UI
+ *
+ * Rate-limited for consistency with other mutating-shaped admin routes.
+ *
+ * Authentication: Admin role required.
+ */
+
+import { withAdminAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
+import { successResponse } from '@/lib/api/responses';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { getRouteLogger } from '@/lib/api/context';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+import { validateWorkflow } from '@/lib/orchestration/workflows';
+import { cuidSchema } from '@/lib/validations/common';
+import type { WorkflowDefinition } from '@/types/orchestration';
+
+export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  const log = await getRouteLogger(request);
+  const { id: rawId } = await params;
+  const parsed = cuidSchema.safeParse(rawId);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+  }
+  const id = parsed.data;
+
+  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
+
+  // workflowDefinition was validated by the create/update schemas on write,
+  // so we trust its shape here. The validator is a structural pass over
+  // the DAG, not a re-run of the Zod schema.
+  const definition = workflow.workflowDefinition as unknown as WorkflowDefinition;
+  const result = validateWorkflow(definition);
+
+  log.info('Workflow validated', {
+    workflowId: id,
+    ok: result.ok,
+    errorCount: result.errors.length,
+  });
+
+  return successResponse(result);
+});

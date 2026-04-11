@@ -16,8 +16,12 @@
 import { z } from 'zod';
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModelsByTier } from '@/lib/orchestration/llm/model-registry';
-import { BaseCapability } from '../base-capability';
-import type { CapabilityContext, CapabilityFunctionDefinition, CapabilityResult } from '../types';
+import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import type {
+  CapabilityContext,
+  CapabilityFunctionDefinition,
+  CapabilityResult,
+} from '@/lib/orchestration/capabilities/types';
 
 /** Rough planning-grade assumptions — not measured from production traces. */
 const INPUT_TOKENS_PER_STEP = 1500;

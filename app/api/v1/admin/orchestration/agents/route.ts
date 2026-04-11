@@ -1,0 +1,98 @@
+/**
+ * Admin Orchestration — Agents (list + create)
+ *
+ * GET  /api/v1/admin/orchestration/agents  — paginated list with filters
+ * POST /api/v1/admin/orchestration/agents  — create a new agent
+ *
+ * Authentication: Admin role required.
+ */
+
+import { Prisma } from '@prisma/client';
+import { withAdminAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
+import { paginatedResponse, successResponse } from '@/lib/api/responses';
+import { ConflictError } from '@/lib/api/errors';
+import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
+import { getRouteLogger } from '@/lib/api/context';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
+
+export const GET = withAdminAuth(async (request, _session) => {
+  const log = await getRouteLogger(request);
+
+  const { searchParams } = new URL(request.url);
+  const { page, limit, isActive, provider, q } = validateQueryParams(
+    searchParams,
+    listAgentsQuerySchema
+  );
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.AiAgentWhereInput = {};
+  if (isActive !== undefined) where.isActive = isActive;
+  if (provider) where.provider = provider;
+  if (q) {
+    where.OR = [
+      { name: { contains: q, mode: 'insensitive' } },
+      { slug: { contains: q, mode: 'insensitive' } },
+      { description: { contains: q, mode: 'insensitive' } },
+    ];
+  }
+
+  const [agents, total] = await Promise.all([
+    prisma.aiAgent.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.aiAgent.count({ where }),
+  ]);
+
+  log.info('Agents listed', { count: agents.length, total, page, limit });
+
+  return paginatedResponse(agents, { page, limit, total });
+});
+
+export const POST = withAdminAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  const log = await getRouteLogger(request);
+  const body = await validateRequestBody(request, createAgentSchema);
+
+  try {
+    const agent = await prisma.aiAgent.create({
+      data: {
+        name: body.name,
+        slug: body.slug,
+        description: body.description,
+        systemInstructions: body.systemInstructions,
+        systemInstructionsHistory: [],
+        model: body.model,
+        provider: body.provider,
+        providerConfig: (body.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        temperature: body.temperature,
+        maxTokens: body.maxTokens,
+        monthlyBudgetUsd: body.monthlyBudgetUsd ?? null,
+        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        isActive: body.isActive,
+        createdBy: session.user.id,
+      },
+    });
+
+    log.info('Agent created', {
+      agentId: agent.id,
+      slug: agent.slug,
+      adminId: session.user.id,
+    });
+
+    return successResponse(agent, undefined, { status: 201 });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      throw new ConflictError(`Agent with slug '${body.slug}' already exists`);
+    }
+    throw err;
+  }
+});

@@ -18,6 +18,7 @@ All security utilities are located in `lib/security/`:
 | `sanitize.ts`   | XSS prevention and input sanitization         |
 | `cors.ts`       | CORS configuration and utilities              |
 | `ip.ts`         | Client IP extraction with validation          |
+| `safe-url.ts`   | SSRF guard for admin-settable outbound URLs   |
 | `index.ts`      | Module exports                                |
 
 ## Security Headers
@@ -375,6 +376,42 @@ sanitizeRedirectUrl('/dashboard', baseUrl); // Returns '/dashboard'
 // Filename sanitization
 sanitizeFilename('../../../etc/passwd'); // Returns 'etc_passwd'
 ```
+
+## SSRF Guard for Outbound URLs
+
+**Implementation**: `lib/security/safe-url.ts`
+
+Used at every point where the application accepts an outbound HTTP target from persisted data or user input — most importantly `AiProviderConfig.baseUrl`, which an admin can set and which the LLM provider factory then fetches from server-side.
+
+```typescript
+import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
+
+const result = checkSafeProviderUrl(baseUrl, { allowLoopback: isLocal });
+if (!result.ok) {
+  // result.reason: 'invalid_url' | 'disallowed_scheme' | 'blocked_host' | 'private_ip' | 'loopback_not_allowed'
+}
+```
+
+**Blocks by default:**
+
+- Non-`http(s)` schemes (`file:`, `gopher:`, `javascript:`, `data:`, etc.)
+- Cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`, `metadata.goog`, `100.100.100.200`, `fd00:ec2::254`)
+- Unspecified address (`0.0.0.0`, `::`)
+- RFC1918 (`10/8`, `172.16/12`, `192.168/16`) and CGNAT (`100.64/10`)
+- Link-local (`169.254/16`, IPv6 `fe80::/10`)
+- IPv6 unique local (`fc00::/7`)
+- Loopback (`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`) **unless** `allowLoopback: true`
+
+Private / metadata ranges stay blocked even with `allowLoopback: true` — local model servers run on loopback, not on the LAN.
+
+**Wire it at two layers** whenever a persisted URL becomes an outbound fetch:
+
+1. **Schema validation** — `.superRefine()` at the Zod layer so writes are rejected up front. See `providerConfigSchema` in `lib/validations/orchestration.ts` for the pattern.
+2. **Build-time re-check** — re-validate at the point of use (before the fetch SDK is constructed) to catch PATCH merges, seed scripts, and direct DB writes that bypassed the schema. See `buildProviderFromConfig` in `lib/orchestration/llm/provider-manager.ts`.
+
+**Error-oracle suppression.** Any route that performs an outbound fetch against an admin-settable URL and surfaces the result must strip raw SDK / fetch error messages from the response. Forwarding the verbatim error turns the endpoint into a blind-SSRF port scanner (ECONNREFUSED vs. TLS error vs. 404 vs. timeout all leak information about the target). Log the real error server-side, return a generic code to the client. See `app/api/v1/admin/orchestration/providers/[id]/test/route.ts` and `.../models/route.ts` for the canonical pattern.
+
+**Limitation — by design:** no DNS resolution. Defending against DNS rebinding would require pinning the resolved IP through the subsequent fetch, which the OpenAI / Anthropic SDKs don't expose. The build-time re-check narrows the rebinding window but does not close it.
 
 ## Input Validation
 

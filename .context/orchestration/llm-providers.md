@@ -208,6 +208,12 @@ import { headers } from 'next/headers';
 
 **Don't** skip cost logging for local models — token counts are still valuable for benchmarking and showing up in `getAgentCosts` breakdowns.
 
+## Admin surface (Phase 3.2)
+
+Admins manage `AiProviderConfig` rows through `/api/v1/admin/orchestration/providers` — full CRUD plus a live `POST /:id/test` (wraps `providerManager.testProvider`) and a per-provider `GET /:id/models` (wraps `provider.listModels()`). Every response hydrates rows with `apiKeyPresent: boolean`, derived via `isApiKeyEnvVarSet()` — the raw `process.env[apiKeyEnvVar]` value is **never** returned from a route, logged, or written to the response envelope. The aggregated `GET /models` endpoint returns the merged model registry and accepts `?refresh=true` to force an OpenRouter refresh. Full route reference lives in [`admin-api.md`](./admin-api.md#providers).
+
+**SSRF guard on `baseUrl`.** `providerConfigSchema` / `updateProviderConfigSchema` both run `checkSafeProviderUrl()` (`lib/security/safe-url.ts`) via `.superRefine()`. As a defense-in-depth layer, `buildProviderFromConfig()` re-runs the same validator before constructing `OpenAiCompatibleProvider`, throwing `ProviderError({ code: 'unsafe_base_url' })` on reject — this catches PATCH merges that flip `isLocal` without re-sending `baseUrl`, plus any direct DB writes that bypass Zod. Blocked: non-`http(s)` schemes, cloud metadata hosts, RFC1918 / CGNAT / link-local / IPv6 unique-local, and loopback unless the row is marked `isLocal: true`. The `/test` and `/models` routes also strip raw SDK error messages before responding so the fetch error can't be used as a blind-SSRF oracle — the real error is logged server-side only. See [`admin-api.md` § SSRF safety](./admin-api.md#ssrf-safety-hard-guarantee) for the full contract.
+
 ## Testing
 
 Unit tests live in `tests/unit/lib/orchestration/llm/` and mock `@anthropic-ai/sdk`, `openai`, and `@/lib/db/client`. Notable patterns:
