@@ -103,11 +103,15 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 
 ## Admin UI
 
-Session 5.1a shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
+Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
 
-**What it ships:** canvas, pattern palette (data-driven from `lib/orchestration/engine/step-registry.ts`), single `PatternNode` custom type for all 9 step types, click-to-select config panel shell, layout round-trip.
+**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 9 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
-**What it defers:** Save (POST/PATCH), Validate (wiring this validator's `/validate` route), and Execute are rendered as disabled toolbar buttons until Session 5.1b. Per-step-type config editors also land in 5.1b.
+**What it defers:** Execute remains disabled until Session 5.2 wires the engine. Chain sub-step editor, templates dropdown, and inline edge-condition editing land in 5.1c.
+
+**UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON. Session 5.2 will decide which of these the engine enforces and which stay advisory. The same goes for `step.config._layout` — UI metadata, ignored by the validator.
+
+**FE-only extra checks.** The builder also runs `runExtraChecks()` from `components/admin/orchestration/workflow-builder/extra-checks.ts` alongside `validateWorkflow()`. It adds `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, and `MISSING_REQUIRED_CONFIG` codes that duplicate or extend this validator's coverage so the red ring appears instantly on the canvas. Session 5.2 will unify this into the backend validator when the registry lives on both sides.
 
 See [`.context/admin/workflow-builder.md`](../admin/workflow-builder.md) for the full builder reference — pages, registry, node type, canvas interactions, layout persistence, and scope.
 

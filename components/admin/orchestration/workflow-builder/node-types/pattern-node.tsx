@@ -24,6 +24,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
 
   const inputs = meta?.inputs ?? 1;
   const outputs = meta?.outputs ?? 1;
+  const hasError = Boolean(data.hasError);
 
   return (
     <div
@@ -33,9 +34,11 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
         colours.bg,
         colours.border,
         colours.text,
-        selected && 'ring-primary shadow-md ring-2'
+        selected && !hasError && 'ring-primary shadow-md ring-2',
+        hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
       )}
     >
+      {hasError && <span className="sr-only">Step has validation errors</span>}
       {/* Input handles — stacked on the left side */}
       {Array.from({ length: inputs }).map((_, i) => (
         <Handle

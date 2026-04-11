@@ -65,7 +65,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 1,
     patternNumber: 1,
-    defaultConfig: { prompt: '' },
+    defaultConfig: { prompt: '', modelOverride: '', temperature: 0.7 },
   },
   {
     type: 'chain',
@@ -87,7 +87,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 2,
     patternNumber: 3,
-    defaultConfig: { routes: [] },
+    defaultConfig: { classificationPrompt: '', routes: [] },
   },
   {
     type: 'parallel',
@@ -98,7 +98,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 3,
     patternNumber: 4,
-    defaultConfig: { branches: [] },
+    defaultConfig: { branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' },
   },
   {
     type: 'reflect',
@@ -109,7 +109,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 1,
     patternNumber: 5,
-    defaultConfig: { maxIterations: 3 },
+    defaultConfig: { critiquePrompt: '', maxIterations: 3 },
   },
   {
     type: 'tool_call',
@@ -131,7 +131,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 1,
     patternNumber: 7,
-    defaultConfig: { objective: '' },
+    defaultConfig: { objective: '', maxSubSteps: 5 },
   },
   {
     type: 'human_approval',
@@ -142,7 +142,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 1,
     patternNumber: 8,
-    defaultConfig: { prompt: '' },
+    defaultConfig: { prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' },
   },
   {
     type: 'rag_retrieve',
@@ -153,7 +153,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     inputs: 1,
     outputs: 1,
     patternNumber: 9,
-    defaultConfig: { query: '', topK: 5 },
+    defaultConfig: { query: '', topK: 5, similarityThreshold: 0.7 },
   },
 ] as const;
 

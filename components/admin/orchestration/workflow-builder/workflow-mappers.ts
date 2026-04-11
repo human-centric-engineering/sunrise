@@ -24,6 +24,11 @@ export interface PatternNodeData extends Record<string, unknown> {
   label: string;
   type: WorkflowStepType;
   config: Record<string, unknown>;
+  /**
+   * Transient UI flag set by the live validator. Never persisted —
+   * `flowToWorkflowDefinition` strips it before serialising.
+   */
+  hasError?: boolean;
 }
 
 export type PatternNode = Node<PatternNodeData, 'pattern'>;
@@ -142,6 +147,7 @@ export function workflowDefinitionToFlow(definition: WorkflowDefinition): {
         label: step.name,
         type: step.type,
         config: stripLayout(step.config),
+        hasError: false,
       },
     };
   });

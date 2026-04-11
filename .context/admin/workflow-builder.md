@@ -1,8 +1,8 @@
 # Workflow builder
 
-Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a.
+Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + selection → config-panel **shell**. Save / Validate / Execute toolbar buttons are rendered but disabled — wiring arrives in Session 5.1b.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH). Execute button remains disabled — wiring arrives in Session 5.2 with the engine.
 
 **Core files:**
 
@@ -44,7 +44,7 @@ All three are async server components. The list page calls `serverFetch(API.ADMI
 └──────────┴────────────────────────────────────┴─────────────────────┘
 ```
 
-When nothing is selected the right column collapses. The toolbar's disabled action buttons carry a native `title="Available in Session 5.1b"` tooltip.
+When nothing is selected the right column collapses. The Execute button stays disabled with a `title="Available in Session 5.2"` tooltip until the workflow engine lands.
 
 ## Step registry
 
@@ -122,15 +122,114 @@ All four categories have a matching entry in `STEP_CATEGORY_COLOURS` driving the
 
 **Drop payload validation:** `onDrop` rejects any `application/reactflow` value that isn't in `STEP_REGISTRY` — a defensive check so we never materialise a node from an unknown string (security-review note).
 
-## Config panel
+## Block configuration panel
 
-Session 5.1a shell only:
+`components/admin/orchestration/workflow-builder/block-config-panel.tsx` — the right-hand panel. Session 5.1b replaced the read-only `config-panel.tsx` shell with a type-switched editor surface.
 
-- Read-only type badge (category colour + icon + label).
-- Editable **Name** `<Input>` with `<FieldHelp title="Step name">`. Writes back via `onLabelChange(id, value)`, which updates `data.label` on the selected node.
+Structure (top to bottom):
+
+- Read-only type badge (category colour + icon + label) and a **Delete** button that removes the node + incident edges and clears the selection.
+- Editable **Name** `<Input>` with `<FieldHelp title="Step name">`. Writes back via `onLabelChange(id, value)`.
 - Read-only **Step ID** with a copy-to-clipboard button. IDs are generated via `makeStepId()` (`step_<random8>`) and never change.
-- Read-only **Configuration** — `<pre>{JSON.stringify(data.config, null, 2)}</pre>`. A `<FieldHelp>` notes that per-step-type editors (prompt, routes, capability slug, etc.) land in Session 5.1b.
-- **Delete** button at the top of the panel — removes the node and its incident edges, clears the selection.
+- A type-specific **editor** section picked from `block-editors/` via a single `switch (node.data.type)`. Each editor receives `{ config, onChange, capabilities? }` per the `EditorProps<TConfig>` interface in `block-editors/index.ts`. `onChange(partial)` bubbles to `onConfigChange(nodeId, partial)` on the builder shell, which shallow-merges the partial into `data.config`.
+
+**One panel, one switch.** Matches the "one `PatternNode` for all step types" decision from 5.1a: adding a new step type means one new `case` and one new editor file — no new panel component, no new shell wiring.
+
+### Block editors
+
+All nine editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
+
+| Type             | Editor                      | Fields (default)                                                                                                                   |
+| ---------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                |
+| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                      |
+| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                            |
+| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                              |
+| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                           |
+| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                    |
+| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                  |
+| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed) |
+| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                             |
+
+**Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
+
+**Route branch labels.** `route-editor.tsx` writes to `config.routes = [{ label }]`. The 5.1b mapper does **not** sync these labels to outgoing edge labels — inline edge-condition editing is a Session 5.1c concern.
+
+### Default configuration
+
+`lib/orchestration/engine/step-registry.ts` holds a `defaultConfig` per entry that matches the editor fields. Dropping a fresh block onto the canvas gives it sensible initial values so the first validation pass highlights only the empty _required_ fields.
+
+## Validation
+
+Live validation runs client-side on every change, **debounced at 300ms**:
+
+```
+nodes/edges change ─┐
+                    ├─► setTimeout(300) ─► flowToWorkflowDefinition
+                    ┘                      ├─► validateWorkflow()  (authoritative backend-aligned)
+                                           └─► runExtraChecks()    (FE-only)
+                                                ├─► setValidationErrors(combined)
+                                                └─► setNodes(prev => mark data.hasError)
+```
+
+- **`validateWorkflow(def).errors`** — from `lib/orchestration/workflows/validator.ts`. Covers `MISSING_ENTRY`, `UNKNOWN_TARGET`, `UNREACHABLE_STEP`, `CYCLE_DETECTED`, `DUPLICATE_STEP_ID`, `MISSING_APPROVAL_PROMPT`, `MISSING_CAPABILITY_SLUG`. This is the authoritative validator — the backend runs the same code on POST / PATCH.
+- **`runExtraChecks(nodes, edges)`** — `components/admin/orchestration/workflow-builder/extra-checks.ts`. Pure TS. Three FE-only checks that the backend validator does not yet cover:
+  - `DISCONNECTED_NODE` — a non-entry node with zero incoming **and** zero outgoing edges.
+  - `PARALLEL_WITHOUT_MERGE` — a `parallel` step whose branches never reconverge at a single downstream node.
+  - `MISSING_REQUIRED_CONFIG` — type-specific emptiness: `llm_call.prompt`, `tool_call.capabilitySlug`, `human_approval.prompt`, `route.classificationPrompt`, `route.routes.length ≥ 2`, `rag_retrieve.query`, `plan.objective`, `reflect.critiquePrompt`. Some of these duplicate backend checks so the red ring appears instantly on the canvas without waiting for a save round-trip.
+
+`ExtraCheckError` has the same `{ code, message, stepId? }` shape as the core validator's `WorkflowValidationError`, so the summary panel merges both lists without any type gymnastics.
+
+### Red ring on the canvas
+
+`PatternNode` reads a transient `data.hasError: boolean` flag. The debounced effect in `workflow-builder.tsx` builds a `Set<string>` of stepIds from the combined error list and shallow-merges `hasError` into each node. The custom node renders `ring-2 ring-red-500 dark:ring-red-400` when set and falls back to `ring-primary` for the normal selected state. A visually-hidden `<span className="sr-only">Step has validation errors</span>` is emitted so screen readers announce the state.
+
+`hasError` is **UI state, not config**. `flowToWorkflowDefinition` only serialises `node.data.config`, so the flag never reaches the stored `WorkflowDefinition`.
+
+### Summary panel
+
+`validation-summary-panel.tsx` renders above the canvas with `role="status" aria-live="polite"`, so the AT layer announces changes even when the user has not clicked Validate. Each error row is a button that calls `onFocusNode(stepId)`, which the builder shell wires to `useReactFlow().setCenter(node.position.x + 100, node.position.y + 40, { zoom: 1.2, duration: 400 })`. Errors without a `stepId` (e.g. `MISSING_ENTRY`) render as disabled buttons.
+
+The **Validate** toolbar button does not fire any network request — validation is cheap and local. It simply calls `summaryPanelRef.current?.scrollIntoView({ behavior: 'smooth' })` so the panel pops into view and the aria-live update re-announces.
+
+## Saving
+
+`components/admin/orchestration/workflow-builder/workflow-save.ts` is a pure helper that serialises React Flow state via `flowToWorkflowDefinition(nodes, edges, { errorStrategy })` and POSTs or PATCHes via `apiClient`. Keeping it outside the React component makes it trivial to unit-test.
+
+Request body shape for both create and edit:
+
+```ts
+{
+  name: string;
+  slug: string;
+  description: string;
+  workflowDefinition: WorkflowDefinition; // { steps, entryStepId, errorStrategy }
+  isTemplate: boolean;
+}
+```
+
+### Create flow (first save)
+
+The POST schema requires `slug` and `description`, which the canvas does not capture. On the **first** create save the builder shell opens `WorkflowDetailsDialog` (shadcn `<Dialog>`) to collect:
+
+- **Slug** — auto-derived from the workflow name via a local `slugify()` helper, but the dialog stops auto-deriving once the user types in the slug field (`slugTouched` state). Validated against `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` before the Confirm button enables.
+- **Description** — free-text, required non-empty.
+- **Error strategy** — Select over `fail` / `retry` / `fallback`, defaults to `fail`. Threaded through `flowToWorkflowDefinition` opts.
+- **Is template** — Checkbox, default false.
+
+Confirming calls `performSave(resolved)` → `saveWorkflow()` → on success `router.push('/admin/orchestration/workflows/:id')`. On subsequent saves the shell holds the resolved `details` in state and skips the dialog.
+
+### Edit flow
+
+The edit page seeds `details` from the fetched `AiWorkflow` in `initialState()`, so the details dialog never opens — the Save button calls `performSave(details)` directly, which PATCHes `API.ADMIN.ORCHESTRATION.workflowById(id)` and calls `router.refresh()` to pick up the updated record.
+
+### Error surfacing
+
+Save errors render as an inline red alert above the canvas (`role="alert"` + `AlertCircle` icon). The same pattern as `agent-form.tsx` — no toast library in the repo. `APIClientError.message` is sanitised by the API client before it reaches the builder; we log the full error via `logger.error('Workflow save failed', …)` and show `err.message` (already server-sanitised) to the user.
+
+### Toolbar wiring
+
+`builder-toolbar.tsx` accepts `{ onValidate, onSave, saving, hasErrors }`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute remains disabled with `title="Available in Session 5.2"`.
 
 ## Layout persistence
 
@@ -145,25 +244,26 @@ The mapper module is **pure TypeScript** — no React / React Flow imports. It's
 
 ## Scope
 
-Session 5.1a **ships:**
+Session 5.1a + 5.1b **ship:**
 
-- Three pages reachable from the sidebar.
+- Three pages reachable from the sidebar (list, new, edit).
 - Full list table with search, pagination, active switch, delete.
-- Empty builder on `/new`.
-- Hydrated builder on `/[id]` from the stored `WorkflowDefinition`, including layout.
 - Drag from palette, drop, snap-to-grid, connect handles, click-to-select, rename, delete.
-- Read-only view of each step's current configuration.
+- Hydrated builder on `/[id]` from the stored `WorkflowDefinition`, including layout.
+- Per-step config editors for all nine step types (5.1b).
+- Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
+- Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
 
-Session 5.1a **defers:**
+**Deferred:**
 
-- **Save** — button disabled. Wiring (POST/PATCH against `/api/v1/admin/orchestration/workflows[/:id]`) lands in 5.1b.
-- **Validate** — button disabled. Session 5.1b fires `POST /validate` and decorates offending nodes/edges with error markers.
 - **Execute** — button disabled. Real executor + SSE-streamed trace land in Session 5.2.
-- **Per-step-type config editors** — prompt/route/capability/etc. forms in the right panel. Session 5.1b.
+- **Chain sub-step editor** — placeholder card in 5.1b; tree editor lands in 5.1c.
 - **Templates dropdown** — currently a stub with a single disabled menu item. Session 5.1c loads real `isTemplate: true` workflows from the list endpoint.
+- **Inline edge condition editor** — click edge → condition textarea. 5.1c.
+- **Per-capability argument schemas inside Tool Call** — 5.1b only picks the slug; a mini form driven by `capability.functionDefinition.parameters` is future work.
 - **Undo/redo, copy/paste, keyboard shortcuts** — not planned for 5.1 at all.
-- **Inline edge condition editor** — click edge → condition textarea. Future work.
 - **Pattern Explorer** — the palette "Learn more" links forward to `/admin/orchestration/learning/patterns/:n`, which doesn't exist yet. 404 until the Pattern Explorer ships.
+- **Backend `PARALLEL_WITHOUT_MERGE` check** — runs FE-only in 5.1b; Session 5.2 will unify when the registry lives on both sides.
 
 ## Testing
 
