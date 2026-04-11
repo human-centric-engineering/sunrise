@@ -51,7 +51,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
 import type { AiCapability } from '@/types/prisma';
+
+/**
+ * Narrow an untrusted JSON blob (API response or Prisma JSON field) to a
+ * plain object we can index with string keys. Arrays, null, primitives —
+ * anything that isn't a plain object — collapse to `{}`. Zero `as` casts.
+ */
+function asJsonRecord(value: unknown): Record<string, unknown> {
+  const parsed = z.record(z.string(), z.unknown()).safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
 
 const NEW_CATEGORY = '__new__';
 
@@ -205,7 +216,7 @@ export function CapabilityForm({
   const [categoryIsNew, setCategoryIsNew] = useState(false);
 
   // --- Function-definition editor state (outside RHF) ---------------------
-  const initialFnDef = (capability?.functionDefinition ?? {}) as Record<string, unknown>;
+  const initialFnDef = asJsonRecord(capability?.functionDefinition);
   const initialRows = useMemo(() => tryReverseCompile(initialFnDef) ?? [], [initialFnDef]);
 
   const [fnName, setFnName] = useState<string>(
@@ -235,8 +246,29 @@ export function CapabilityForm({
         rev
       );
     }
-    // Trust the stored JSON as-is — it passed the backend schema.
-    return initialFnDef as unknown as CompiledFunctionDef;
+    // Validate the stored JSON at the boundary — the backend schema is the
+    // authoritative contract, but never ship a blind cast on API response
+    // data. Malformed rows surface as `null` and leave the visual builder
+    // disabled until the admin fixes the JSON.
+    const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
+    if (!parsed.success) return null;
+    // `capabilityFunctionDefinitionSchema` only validates the outer keys;
+    // `parameters` is `Record<string, unknown>`. Re-narrow through
+    // `CompiledFunctionDef`'s required shape at the same boundary.
+    const params = parsed.data.parameters;
+    const paramShape = z
+      .object({
+        type: z.literal('object'),
+        properties: z.record(z.string(), z.object({ type: z.string(), description: z.string() })),
+        required: z.array(z.string()),
+      })
+      .safeParse(params);
+    if (!paramShape.success) return null;
+    return {
+      name: parsed.data.name,
+      description: parsed.data.description,
+      parameters: paramShape.data,
+    };
   });
 
   // --- executionConfig JSON textarea state --------------------------------
@@ -245,9 +277,11 @@ export function CapabilityForm({
   );
   const [execConfigError, setExecConfigError] = useState<string | null>(null);
   const [execConfigParsed, setExecConfigParsed] = useState<Record<string, unknown> | undefined>(
-    capability?.executionConfig && typeof capability.executionConfig === 'object'
-      ? (capability.executionConfig as Record<string, unknown>)
-      : undefined
+    () => {
+      if (!capability?.executionConfig) return undefined;
+      const parsed = z.record(z.string(), z.unknown()).safeParse(capability.executionConfig);
+      return parsed.success ? parsed.data : undefined;
+    }
   );
   const execConfigTimerRef = useRef<NodeJS.Timeout | null>(null);
   const jsonTimerRef = useRef<NodeJS.Timeout | null>(null);

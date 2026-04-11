@@ -72,7 +72,7 @@ describe('getCostSummary — localSavings passthrough', () => {
     // Arrange
     const mockSavings = {
       usd: 42.5,
-      methodology: 'equivalent_hosted' as const,
+      methodology: 'tier_fallback' as const,
       sampleSize: 7,
       dateFrom: '2026-04-01T00:00:00.000Z',
       dateTo: '2026-04-30T00:00:00.000Z',

@@ -236,7 +236,7 @@ describe('AgentCapabilitiesTab', () => {
       // Assert
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenCalledWith(
-          expect.stringContaining('/capabilities/link-1')
+          expect.stringContaining('/capabilities/cap-search')
         );
         expect(apiClient.get).toHaveBeenCalledTimes(4); // 2 initial + 2 refetch
       });
@@ -264,7 +264,7 @@ describe('AgentCapabilitiesTab', () => {
       // Assert: PATCH with isEnabled: false (was true → toggled to false)
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalledWith(
-          expect.stringContaining('/capabilities/link-1'),
+          expect.stringContaining('/capabilities/cap-search'),
           expect.objectContaining({ body: { isEnabled: false } })
         );
       });
@@ -323,7 +323,7 @@ describe('AgentCapabilitiesTab', () => {
       // Assert
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalledWith(
-          expect.stringContaining('/capabilities/link-1'),
+          expect.stringContaining('/capabilities/cap-search'),
           expect.objectContaining({
             body: expect.objectContaining({
               customConfig: { maxResults: 10 },
@@ -331,6 +331,69 @@ describe('AgentCapabilitiesTab', () => {
             }),
           })
         );
+      });
+    });
+  });
+
+  // ── Error / empty-state edge cases ────────────────────────────────────────
+
+  describe('error and edge-case paths', () => {
+    it('renders inline error banner when initial apiClient.get rejects', async () => {
+      // Arrange: both fetches reject
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockRejectedValue(
+        new APIClientError('Network error', 'SERVICE_UNAVAILABLE', 503)
+      );
+
+      // Act
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      // Assert: error banner appears, layout is preserved (no throw)
+      await waitFor(() => {
+        expect(screen.getByText(/network error/i)).toBeInTheDocument();
+      });
+
+      // Both column headings still rendered (layout intact)
+      expect(screen.getByText('Attached')).toBeInTheDocument();
+      expect(screen.getByText('Available')).toBeInTheDocument();
+    });
+
+    it('renders "No capabilities attached yet" when agent capabilities fetch returns empty array', async () => {
+      // Arrange: agent capabilities = [], catalogue has one item
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/agents/')) return Promise.resolve([]);
+        return Promise.resolve([CAP_SEARCH]);
+      });
+
+      // Act
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      // Assert: left column empty state
+      await waitFor(() => {
+        expect(screen.getByText(/no capabilities attached yet/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders inline error when Attach POST fails', async () => {
+      // Arrange: initial fetch succeeds; POST fails
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Attach failed', 'INTERNAL_ERROR', 500)
+      );
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Calculator')).toBeInTheDocument());
+
+      // Act: click Attach
+      await user.click(screen.getByRole('button', { name: /attach/i }));
+
+      // Assert: inline error message
+      await waitFor(() => {
+        expect(screen.getByText(/attach failed/i)).toBeInTheDocument();
       });
     });
   });

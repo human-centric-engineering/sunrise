@@ -1053,6 +1053,15 @@ export const completeEvaluationBodySchema = z.object({}).passthrough();
  * `.superRefine` delegates to `validateTaskDefaults()` in the model
  * registry so unknown model ids are rejected at the boundary.
  */
+/**
+ * Runtime validator for the `defaultModels` JSON column read from
+ * `AiOrchestrationSettings`. Parses a `Prisma.JsonValue` into a
+ * `Record<string, string>` so the route handler can merge stored values into
+ * the computed defaults without a blind `as` cast. Unknown shapes (null,
+ * array, primitives) collapse to `{}` at the call site via `.catch({})`.
+ */
+export const storedDefaultModelsSchema = z.record(z.string(), z.string()).catch({});
+
 export const updateOrchestrationSettingsSchema = z
   .object({
     defaultModels: z

@@ -99,9 +99,12 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
   const handleToggleEnabled = useCallback(
     async (link: AttachedLink, nextEnabled: boolean) => {
       try {
-        await apiClient.patch(API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.id), {
-          body: { isEnabled: nextEnabled },
-        });
+        await apiClient.patch(
+          API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId),
+          {
+            body: { isEnabled: nextEnabled },
+          }
+        );
         await fetchAll();
       } catch (err) {
         setError(err instanceof APIClientError ? err.message : 'Could not update capability.');
@@ -163,7 +166,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       variant="ghost"
                       size="sm"
                       className="text-red-600"
-                      onClick={() => void handleDetach(link.id)}
+                      onClick={() => void handleDetach(link.capabilityId)}
                     >
                       Detach
                     </Button>
@@ -269,9 +272,12 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         return;
       }
 
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.id), {
-        body: { customConfig, customRateLimit },
-      });
+      await apiClient.patch(
+        API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId),
+        {
+          body: { customConfig, customRateLimit },
+        }
+      );
       onSaved();
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Could not save capability config.');

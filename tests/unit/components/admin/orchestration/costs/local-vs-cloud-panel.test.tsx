@@ -31,7 +31,7 @@ function makeSummary(localSavings: LocalSavingsResult | null, cloudSpend = 0): C
 function makeSavings(overrides: Partial<LocalSavingsResult> = {}): LocalSavingsResult {
   return {
     usd: 42.5,
-    methodology: 'equivalent_hosted',
+    methodology: 'tier_fallback',
     sampleSize: 5,
     dateFrom: '2026-04-01T00:00:00.000Z',
     dateTo: '2026-04-30T00:00:00.000Z',
@@ -83,22 +83,10 @@ describe('LocalVsCloudPanel', () => {
       expect(screen.getByText('1 sample')).toBeInTheDocument();
     });
 
-    it('renders methodology label: Exact hosted-model match for equivalent_hosted', () => {
-      const summary = makeSummary(makeSavings({ methodology: 'equivalent_hosted' }), 10);
-      render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
-      expect(screen.getByText('Exact hosted-model match')).toBeInTheDocument();
-    });
-
     it('renders methodology label: Cheapest non-local in same tier for tier_fallback', () => {
       const summary = makeSummary(makeSavings({ methodology: 'tier_fallback' }), 10);
       render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
       expect(screen.getByText('Cheapest non-local in same tier')).toBeInTheDocument();
-    });
-
-    it('renders methodology label: Mixed (both methods) for mixed', () => {
-      const summary = makeSummary(makeSavings({ methodology: 'mixed' }), 10);
-      render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
-      expect(screen.getByText('Mixed (both methods)')).toBeInTheDocument();
     });
 
     it('renders — for methodology when savings is null', () => {

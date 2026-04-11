@@ -295,14 +295,16 @@ export interface OrchestrationSettings {
 }
 
 /**
- * How `calculateLocalSavings()` derived its savings number:
- *   - `equivalent_hosted` — every local row was priced against a matching non-local
- *     model id in the registry.
- *   - `tier_fallback`     — every local row was priced against the cheapest non-local
- *     model in the same tier (no direct id match existed).
- *   - `mixed`             — some rows used direct id match, some used tier fallback.
+ * How `calculateLocalSavings()` derived its savings number. Only one mode
+ * is currently reachable: local rows have local model ids, so there is no
+ * direct hosted equivalent — every row prices against the cheapest
+ * non-local model in the same tier. The union is kept as a single literal
+ * so additional modes can be added here without changing the consumer shape.
+ *
+ *   - `tier_fallback` — every local row was priced against the cheapest
+ *     non-local model in the same tier.
  */
-export type SavingsMethodology = 'equivalent_hosted' | 'tier_fallback' | 'mixed';
+export type SavingsMethodology = 'tier_fallback';
 
 /** Result of `calculateLocalSavings({ dateFrom, dateTo })`. */
 export interface LocalSavingsResult {

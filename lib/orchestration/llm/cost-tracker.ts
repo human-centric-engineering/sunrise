@@ -21,12 +21,7 @@ import type { AiCostLog, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getAvailableModels, getModel } from './model-registry';
-import type {
-  CostOperation,
-  CostSummary,
-  LocalSavingsResult,
-  SavingsMethodology,
-} from '@/types/orchestration';
+import type { CostOperation, CostSummary, LocalSavingsResult } from '@/types/orchestration';
 import type { ModelInfo } from './types';
 
 /** Computed cost breakdown for a single operation. */
@@ -288,12 +283,6 @@ interface LocalRow {
   outputTokens: number;
 }
 
-function findEquivalentHostedModel(modelId: string): ModelInfo | null {
-  const direct = getModel(modelId);
-  if (direct && direct.tier !== 'local') return direct;
-  return null;
-}
-
 function findCheapestNonLocalInTier(tier: ModelInfo['tier']): ModelInfo | null {
   const candidates = getAvailableModels()
     .filter((m) => m.tier === tier && m.tier !== 'local')
@@ -306,13 +295,12 @@ function findCheapestNonLocalInTier(tier: ModelInfo['tier']): ModelInfo | null {
  * Hypothetical-cost savings from local models.
  *
  * For every `AiCostLog` row with `isLocal = true` in the window, price
- * the same token counts against the closest non-local model in the
- * registry — the savings are (what-you-would-have-paid − 0).
- *
- * Methodology tag reflects *how* we picked the reference price:
- *   - `equivalent_hosted` — every row matched a non-local model by id
- *   - `tier_fallback`    — every row fell back to cheapest-non-local-in-tier
- *   - `mixed`            — both paths contributed
+ * the same token counts against the cheapest non-local model in the
+ * same tier — the savings are (what-you-would-have-paid − 0). Local
+ * rows always have local model ids, so there is never a direct
+ * non-local equivalent to price against; `methodology` is therefore
+ * always `'tier_fallback'`. The field is retained so future modes can
+ * be added without a response-shape change.
  *
  * This helper never throws — on any unexpected error it logs and returns
  * a zero-savings result so the cost summary can still render.
@@ -324,7 +312,7 @@ export async function calculateLocalSavings(opts: {
   const { dateFrom, dateTo } = opts;
   const base: LocalSavingsResult = {
     usd: 0,
-    methodology: 'equivalent_hosted',
+    methodology: 'tier_fallback',
     sampleSize: 0,
     dateFrom: dateFrom.toISOString(),
     dateTo: dateTo.toISOString(),
@@ -345,29 +333,19 @@ export async function calculateLocalSavings(opts: {
 
   if (rows.length === 0) return base;
 
-  let usedEquivalent = false;
-  let usedTierFallback = false;
   let totalUsd = 0;
   let contributing = 0;
 
   for (const row of rows) {
     const localModel = getModel(row.model);
-    // Prefer a direct non-local match for the same id (rare — local rows
-    // record the local model id), otherwise try tier fallback based on
-    // whatever tier the local entry reports.
-    let ref: ModelInfo | null = findEquivalentHostedModel(row.model);
-    if (ref) {
-      usedEquivalent = true;
-    } else {
-      const tier = localModel?.tier ?? 'budget';
-      // `local` rows have no direct non-local equivalent; walk up through
-      // budget → mid if nothing is found at the reported tier.
-      ref =
-        findCheapestNonLocalInTier(tier === 'local' ? 'budget' : tier) ??
-        findCheapestNonLocalInTier('budget') ??
-        findCheapestNonLocalInTier('mid');
-      if (ref) usedTierFallback = true;
-    }
+    // Local rows have no direct non-local equivalent — walk up through
+    // the reported tier (or `budget` as a default), falling back to
+    // `mid` if neither yields a hosted reference.
+    const tier = localModel?.tier ?? 'budget';
+    const ref =
+      findCheapestNonLocalInTier(tier === 'local' ? 'budget' : tier) ??
+      findCheapestNonLocalInTier('budget') ??
+      findCheapestNonLocalInTier('mid');
 
     if (!ref) continue;
 
@@ -378,14 +356,9 @@ export async function calculateLocalSavings(opts: {
     contributing += 1;
   }
 
-  let methodology: SavingsMethodology;
-  if (usedEquivalent && usedTierFallback) methodology = 'mixed';
-  else if (usedTierFallback) methodology = 'tier_fallback';
-  else methodology = 'equivalent_hosted';
-
   return {
     usd: totalUsd,
-    methodology,
+    methodology: 'tier_fallback',
     sampleSize: contributing,
     dateFrom: dateFrom.toISOString(),
     dateTo: dateTo.toISOString(),

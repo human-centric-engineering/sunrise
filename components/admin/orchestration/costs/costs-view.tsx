@@ -27,7 +27,6 @@ import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-ag
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import type { AiAgent } from '@/types/prisma';
 import type { OrchestrationSettings } from '@/types/orchestration';
 
 interface PerModelDaily {
@@ -40,7 +39,6 @@ export interface CostsViewProps {
   alerts: BudgetAlert[] | null;
   perModel: PerModelDaily[] | null;
   models: ModelInfo[] | null;
-  agents: AiAgent[] | null;
   settings: OrchestrationSettings | null;
 }
 

@@ -6,7 +6,6 @@ import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import type { AiAgent } from '@/types/prisma';
 import type { OrchestrationSettings } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -27,7 +26,6 @@ export const metadata: Metadata = {
  *   - `/costs/alerts`       → warning/critical budget alerts
  *   - `/costs?groupBy=model` → 30-day per-model rows for client-side tier synthesis
  *   - `/models`             → model registry (tier + local badge)
- *   - `/agents?limit=100`   → agent list for the per-agent table
  *   - `/settings`           → singleton for the Configuration form
  *
  * Every fetch is wrapped so that an upstream failure renders an empty
@@ -96,18 +94,6 @@ async function getModels(): Promise<ModelInfo[] | null> {
   }
 }
 
-async function getAgents(): Promise<AiAgent[] | null> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<AiAgent[]>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load agents', err);
-    return null;
-  }
-}
-
 async function getSettings(): Promise<OrchestrationSettings | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS);
@@ -121,12 +107,11 @@ async function getSettings(): Promise<OrchestrationSettings | null> {
 }
 
 export default async function CostsPage() {
-  const [summary, alerts, perModel, models, agents, settings] = await Promise.all([
+  const [summary, alerts, perModel, models, settings] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
     getPerModel30Day(),
     getModels(),
-    getAgents(),
     getSettings(),
   ]);
 
@@ -144,7 +129,6 @@ export default async function CostsPage() {
         alerts={alerts}
         perModel={perModel}
         models={models}
-        agents={agents}
         settings={settings}
       />
     </div>

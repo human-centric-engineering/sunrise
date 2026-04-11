@@ -8,8 +8,9 @@
  *       `globalMonthlyBudgetUsd`. Validates every model id against the registry and
  *       invalidates the in-memory cache so the next chat turn picks up the change.
  *
- * Authentication: Admin role required. PATCH is additionally rate-limited via the
- * shared `adminLimiter`.
+ * Authentication: Admin role required. Both GET and PATCH are rate-limited via
+ * the shared `adminLimiter` — GET performs an upsert-on-read, so it is a
+ * mutating endpoint despite the HTTP verb.
  */
 
 import { Prisma } from '@prisma/client';
@@ -24,8 +25,21 @@ import {
   computeDefaultModelMap,
   invalidateSettingsCache,
 } from '@/lib/orchestration/llm/model-registry';
-import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
+import {
+  storedDefaultModelsSchema,
+  updateOrchestrationSettingsSchema,
+} from '@/lib/validations/orchestration';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
+
+/**
+ * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.defaultModels`
+ * into a `Record<string, string>` via Zod. Anything that isn't a plain object of
+ * string values collapses to `{}` so callers can safely spread / lookup keys.
+ */
+function parseStoredDefaults(raw: Prisma.JsonValue | null | undefined): Record<string, string> {
+  const parsed = storedDefaultModelsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : {};
+}
 
 /**
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
@@ -41,10 +55,7 @@ function hydrate(row: {
   updatedAt: Date;
 }): OrchestrationSettings {
   const computed = computeDefaultModelMap();
-  const stored =
-    row.defaultModels && typeof row.defaultModels === 'object' && !Array.isArray(row.defaultModels)
-      ? (row.defaultModels as Record<string, unknown>)
-      : {};
+  const stored = parseStoredDefaults(row.defaultModels);
   const merged: Record<TaskType, string> = { ...computed };
   for (const key of TASK_TYPES) {
     const val = stored[key];
@@ -61,6 +72,10 @@ function hydrate(row: {
 }
 
 export const GET = withAdminAuth(async (request) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const defaults = computeDefaultModelMap();
   const row = await prisma.aiOrchestrationSettings.upsert({
@@ -91,9 +106,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
   // overlay the patch.
   const existing = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
   const computed = computeDefaultModelMap();
-  const currentDefaults = {
+  const currentDefaults: Record<string, string> = {
     ...computed,
-    ...((existing?.defaultModels as Record<string, unknown> | null) ?? {}),
+    ...parseStoredDefaults(existing?.defaultModels),
   };
   const mergedDefaults: Record<TaskType, string> = { ...computed };
   for (const key of TASK_TYPES) {

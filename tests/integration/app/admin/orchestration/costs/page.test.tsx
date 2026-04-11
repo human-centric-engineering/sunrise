@@ -128,7 +128,6 @@ describe('CostsPage (server component)', () => {
         data: { rows: [], groupBy: 'model' },
       }) // perModel
       .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } }) // models
-      .mockResolvedValueOnce({ success: true, data: [] }) // agents
       .mockResolvedValueOnce({ success: true, data: MOCK_SETTINGS }); // settings
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
@@ -150,7 +149,6 @@ describe('CostsPage (server component)', () => {
       .mockResolvedValueOnce({ success: true, data: { alerts: MOCK_ALERTS } })
       .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
       .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } })
-      .mockResolvedValueOnce({ success: true, data: [] })
       .mockResolvedValueOnce({ success: true, data: MOCK_SETTINGS });
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');

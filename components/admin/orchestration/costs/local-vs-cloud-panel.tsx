@@ -19,6 +19,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
 import type { CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
+import type { SavingsMethodology } from '@/types/orchestration';
 
 export interface LocalVsCloudPanelProps {
   summary: CostSummary | null;
@@ -30,10 +31,9 @@ const COLOURS = {
   cloud: '#60a5fa', // blue-400
 };
 
-function methodologyLabel(method: 'equivalent_hosted' | 'tier_fallback' | 'mixed'): string {
-  if (method === 'equivalent_hosted') return 'Exact hosted-model match';
+function methodologyLabel(method: SavingsMethodology): string {
   if (method === 'tier_fallback') return 'Cheapest non-local in same tier';
-  return 'Mixed (both methods)';
+  return method;
 }
 
 export function LocalVsCloudPanel({ summary, models }: LocalVsCloudPanelProps) {

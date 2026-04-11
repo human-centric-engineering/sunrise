@@ -47,13 +47,13 @@ This is an approximation (a day with a spike in frontier usage still shows the 3
 
 ## Local savings methodology
 
-`calculateLocalSavings()` in `lib/orchestration/llm/cost-tracker.ts` reads every `isLocal: true` row from the rolling month window and, per row, looks up what it _would have_ cost on a hosted model. Three modes are tagged per row and rolled up into a single `methodology` value on the result:
+`calculateLocalSavings()` in `lib/orchestration/llm/cost-tracker.ts` reads every `isLocal: true` row from the rolling month window and, per row, prices the same token counts against the cheapest non-local model in the same tier — the savings are (what-you-would-have-paid − 0).
 
-| Value               | Meaning                                                                    |
-| ------------------- | -------------------------------------------------------------------------- |
-| `equivalent_hosted` | An identically-named hosted model exists in the registry (exact match).    |
-| `tier_fallback`     | No exact match; substituted with the cheapest non-local model in the tier. |
-| `mixed`             | Both paths contributed at least one row.                                   |
+| Value           | Meaning                                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tier_fallback` | Substituted with the cheapest non-local model in the reported tier. This is the only reachable mode today — local rows always carry local model ids, so there is never a direct hosted equivalent to match against. |
+
+The `methodology` field is retained as a single-value union on `LocalSavingsResult` so future modes (e.g. `equivalent_hosted` when local models gain a hosted-alias mapping) can be added without a response-shape break.
 
 On any error — registry lookup blew up, Prisma threw, anything — the helper returns `null` and the rest of `getCostSummary()` still renders. The UI shows "—" in the savings callout in that case.
 

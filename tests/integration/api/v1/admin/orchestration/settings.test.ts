@@ -195,6 +195,54 @@ describe('Admin Orchestration — /settings', () => {
     });
   });
 
+  describe('GET — Rate limiting', () => {
+    it('returns 429 when rate limit is exceeded', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 100,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      });
+
+      const res = await GET(makeGet());
+
+      expect(res.status).toBe(429);
+      // Upsert must NOT fire when rate-limited
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET — Malformed stored defaultModels', () => {
+    // Exercises parseStoredDefaults() fail branch: whatever the stored JSON
+    // is (string, array, null, nested object with non-string values), it
+    // must safely collapse to {} and the response must fall back to the
+    // computed registry defaults.
+    it.each([
+      ['string', 'not-an-object'],
+      ['array', ['claude-haiku-4-5']],
+      ['null', null],
+      ['nested non-string values', { chat: 42, routing: { id: 'x' } }],
+    ])('collapses %s stored defaultModels to registry defaults', async (_label, stored) => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ defaultModels: stored as never }) as never
+      );
+
+      const res = await GET(makeGet());
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { defaultModels: Record<string, string> } }>(res);
+      // All four task keys fall back to the computeDefaultModelMap mock
+      expect(body.data.defaultModels).toEqual({
+        routing: 'claude-haiku-4-5',
+        chat: 'claude-haiku-4-5',
+        reasoning: 'claude-opus-4-6',
+        embeddings: 'claude-haiku-4-5',
+      });
+    });
+  });
+
   describe('PATCH — Authentication & Authorization', () => {
     it('returns 401 when unauthenticated', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
