@@ -17,36 +17,36 @@ datasource db {
 // better-auth is configured to delegate ID generation to Prisma (see lib/auth/config.ts)
 // This ensures consistent CUID format across all user creation methods (UI, API, OAuth, seed)
 model User {
-  id            String    @id @default(cuid())
+  id            String   @id @default(cuid())
   name          String
   email         String
-  emailVerified Boolean   @default(false)
+  emailVerified Boolean  @default(false)
   image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Custom fields for RBAC
-  role          String    @default("USER")
+  role String @default("USER")
 
   // Extended Profile Fields (Phase 3.2)
-  bio           String?   @db.Text        // User biography (long text)
-  phone         String?   @db.VarChar(20) // Phone number
-  timezone      String?   @default("UTC") // IANA timezone (e.g., "America/New_York")
-  location      String?   @db.VarChar(100) // Free-form location string
-  preferences   Json?     @default("{}")  // Email preferences as JSON
+  bio         String? @db.Text // User biography (long text)
+  phone       String? @db.VarChar(20) // Phone number
+  timezone    String? @default("UTC") // IANA timezone (e.g., "America/New_York")
+  location    String? @db.VarChar(100) // Free-form location string
+  preferences Json?   @default("{}") // Email preferences as JSON
 
   // Relations
-  sessions      Session[]
-  accounts      Account[]
+  sessions Session[]
+  accounts Account[]
 
   // Agent Orchestration relations
-  aiAgents              AiAgent[]              @relation("AiAgentCreator")
-  aiWorkflows           AiWorkflow[]           @relation("AiWorkflowCreator")
-  aiWorkflowExecutions  AiWorkflowExecution[]  @relation("AiWorkflowExecutionUser")
-  aiConversations       AiConversation[]       @relation("AiConversationUser")
-  aiKnowledgeDocuments  AiKnowledgeDocument[]  @relation("AiKnowledgeDocumentUploader")
-  aiEvaluationSessions  AiEvaluationSession[]  @relation("AiEvaluationSessionUser")
-  aiProviderConfigs     AiProviderConfig[]     @relation("AiProviderConfigCreator")
+  aiAgents             AiAgent[]             @relation("AiAgentCreator")
+  aiWorkflows          AiWorkflow[]          @relation("AiWorkflowCreator")
+  aiWorkflowExecutions AiWorkflowExecution[] @relation("AiWorkflowExecutionUser")
+  aiConversations      AiConversation[]      @relation("AiConversationUser")
+  aiKnowledgeDocuments AiKnowledgeDocument[] @relation("AiKnowledgeDocumentUploader")
+  aiEvaluationSessions AiEvaluationSession[] @relation("AiEvaluationSessionUser")
+  aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
 
   @@unique([email])
   @@index([role])
@@ -82,7 +82,7 @@ model Account {
   accessTokenExpiresAt  DateTime?
   refreshTokenExpiresAt DateTime?
   scope                 String?
-  password              String?   // Hashed password for email/password auth
+  password              String? // Hashed password for email/password auth
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
@@ -100,7 +100,7 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  metadata   Json?    // Stores invitation details (name, role, invitedBy, invitedAt)
+  metadata   Json? // Stores invitation details (name, role, invitedBy, invitedAt)
 
   @@index([identifier])
   @@index([expiresAt])
@@ -126,7 +126,7 @@ model ContactSubmission {
 // Runtime feature toggle system for admin-controlled features
 model FeatureFlag {
   id          String   @id @default(cuid())
-  name        String   @unique           // e.g., "ENABLE_BETA_FEATURES"
+  name        String   @unique // e.g., "ENABLE_BETA_FEATURES"
   enabled     Boolean  @default(false)
   description String?  @db.Text
   metadata    Json?    @default("{}")
@@ -150,7 +150,7 @@ model AiAgent {
   description               String   @db.Text
   systemInstructions        String   @db.Text
   systemInstructionsHistory Json     @default("[]") // [{instructions, changedAt, changedBy}]
-  model                     String   // e.g. "claude-sonnet-4-6", "llama3:latest"
+  model                     String // e.g. "claude-sonnet-4-6", "llama3:latest"
   provider                  String   @default("anthropic")
   providerConfig            Json?
   temperature               Float    @default(0.7)
@@ -182,12 +182,12 @@ model AiCapability {
   slug               String  @unique
   description        String  @db.Text
   category           String
-  functionDefinition Json    // OpenAI-compatible function schema
-  executionType      String  // "internal", "api", "webhook"
-  executionHandler   String  // class path or endpoint
+  functionDefinition Json // OpenAI-compatible function schema
+  executionType      String // "internal", "api", "webhook"
+  executionHandler   String // class path or endpoint
   executionConfig    Json?
   requiresApproval   Boolean @default(false)
-  rateLimit          Int?    // calls per minute
+  rateLimit          Int? // calls per minute
   isActive           Boolean @default(true)
   metadata           Json?
 
@@ -225,8 +225,8 @@ model AiWorkflow {
   name               String
   slug               String   @unique
   description        String   @db.Text
-  workflowDefinition Json     // DAG of pattern steps
-  patternsUsed       Int[]    // pattern numbers used in this workflow
+  workflowDefinition Json // DAG of pattern steps
+  patternsUsed       Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
   metadata           Json?
@@ -235,7 +235,7 @@ model AiWorkflow {
   updatedAt          DateTime @updatedAt
 
   // Relations
-  creator    User                    @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
+  creator    User                  @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
   executions AiWorkflowExecution[]
 
   @@index([createdBy])
@@ -248,11 +248,11 @@ model AiWorkflow {
 model AiWorkflowExecution {
   id              String    @id @default(cuid())
   workflowId      String
-  status          String    // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
+  status          String // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
   inputData       Json
   outputData      Json?
   currentStep     String?
-  executionTrace  Json      // array of step execution logs
+  executionTrace  Json // array of step execution logs
   totalTokensUsed Int       @default(0)
   totalCostUsd    Float     @default(0)
   budgetLimitUsd  Float?
@@ -264,8 +264,8 @@ model AiWorkflowExecution {
   updatedAt       DateTime  @updatedAt
 
   // Relations
-  workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  user     User       @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
+  workflow AiWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user     User        @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
   costLogs AiCostLog[]
 
   @@index([workflowId])
@@ -303,17 +303,17 @@ model AiConversation {
 
 // Individual messages
 model AiMessage {
-  id              String   @id @default(cuid())
-  conversationId  String
-  role            String   // "user", "assistant", "system", "tool"
-  content         String   @db.Text
-  metadata        Json?    // {tokenUsage, modelUsed, latencyMs, costUsd}
-  capabilitySlug  String?
-  toolCallId      String?
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String // "user", "assistant", "system", "tool"
+  content        String   @db.Text
+  metadata       Json? // {tokenUsage, modelUsed, latencyMs, costUsd}
+  capabilitySlug String?
+  toolCallId     String?
+  createdAt      DateTime @default(now())
 
   // Relations
-  conversation   AiConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   AiConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   evaluationLogs AiEvaluationLog[]
 
   @@index([conversationId])
@@ -327,16 +327,16 @@ model AiKnowledgeDocument {
   id           String   @id @default(cuid())
   name         String
   fileName     String
-  fileHash     String   // SHA-256 for deduplication
+  fileHash     String // SHA-256 for deduplication
   chunkCount   Int      @default(0)
-  status       String   // "processing", "ready", "failed"
+  status       String // "processing", "ready", "failed"
   errorMessage String?  @db.Text
   uploadedBy   String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   // Relations
-  uploader User              @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
+  uploader User               @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
   chunks   AiKnowledgeChunk[]
 
   @@index([uploadedBy])
@@ -347,17 +347,17 @@ model AiKnowledgeDocument {
 
 // Vector store for knowledge base content
 model AiKnowledgeChunk {
-  id              String                          @id @default(cuid())
-  chunkKey        String                          @unique
+  id              String                       @id @default(cuid())
+  chunkKey        String                       @unique
   documentId      String
-  content         String                          @db.Text
+  content         String                       @db.Text
   embedding       Unsupported("vector(1536)")?
   chunkType       String // "pattern_section", "pattern_overview", "glossary", etc.
   patternNumber   Int?
   patternName     String?
   category        String?
   section         String?
-  keywords        String?                         @db.Text
+  keywords        String?                      @db.Text
   estimatedTokens Int?
   metadata        Json?
 
@@ -375,10 +375,10 @@ model AiKnowledgeChunk {
 model AiEvaluationSession {
   id                     String    @id @default(cuid())
   userId                 String
-  agentId                String?   // nullable so SetNull can preserve history when the agent is deleted
+  agentId                String? // nullable so SetNull can preserve history when the agent is deleted
   title                  String
   description            String?   @db.Text
-  status                 String    // "draft", "in_progress", "completed", "archived"
+  status                 String // "draft", "in_progress", "completed", "archived"
   summary                String?   @db.Text
   improvementSuggestions Json?
   startedAt              DateTime?
@@ -388,8 +388,8 @@ model AiEvaluationSession {
   updatedAt              DateTime  @updatedAt
 
   // Relations
-  user User               @relation("AiEvaluationSessionUser", fields: [userId], references: [id])
-  agent AiAgent?           @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  user  User              @relation("AiEvaluationSessionUser", fields: [userId], references: [id])
+  agent AiAgent?          @relation(fields: [agentId], references: [id], onDelete: SetNull)
   logs  AiEvaluationLog[]
 
   @@index([userId])
@@ -400,12 +400,12 @@ model AiEvaluationSession {
 
 // Per-turn evaluation logs
 model AiEvaluationLog {
-  id              String  @id @default(cuid())
+  id              String   @id @default(cuid())
   sessionId       String
   messageId       String?
   sequenceNumber  Int
-  eventType       String  // "user_input", "ai_response", "capability_call", "capability_result", "error"
-  content         String? @db.Text
+  eventType       String // "user_input", "ai_response", "capability_call", "capability_result", "error"
+  content         String?  @db.Text
   inputData       Json?
   outputData      Json?
   capabilitySlug  String?
@@ -426,26 +426,26 @@ model AiEvaluationLog {
 
 // Granular cost tracking
 model AiCostLog {
-  id                    String   @id @default(cuid())
-  agentId               String?
-  conversationId        String?
-  workflowExecutionId   String?
-  model                 String
-  provider              String
-  inputTokens           Int
-  outputTokens          Int
-  inputCostUsd          Float
-  outputCostUsd         Float
-  totalCostUsd          Float
-  isLocal               Boolean  @default(false)
-  operation             String   // "chat", "tool_call", "embedding", "evaluation"
-  metadata              Json?
-  createdAt             DateTime @default(now())
+  id                  String   @id @default(cuid())
+  agentId             String?
+  conversationId      String?
+  workflowExecutionId String?
+  model               String
+  provider            String
+  inputTokens         Int
+  outputTokens        Int
+  inputCostUsd        Float
+  outputCostUsd       Float
+  totalCostUsd        Float
+  isLocal             Boolean  @default(false)
+  operation           String // "chat", "tool_call", "embedding", "evaluation"
+  metadata            Json?
+  createdAt           DateTime @default(now())
 
   // Relations
-  agent               AiAgent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  conversation        AiConversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  workflowExecution   AiWorkflowExecution?  @relation(fields: [workflowExecutionId], references: [id], onDelete: SetNull)
+  agent             AiAgent?             @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  conversation      AiConversation?      @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  workflowExecution AiWorkflowExecution? @relation(fields: [workflowExecutionId], references: [id], onDelete: SetNull)
 
   @@index([agentId])
   @@index([conversationId])
@@ -461,9 +461,9 @@ model AiProviderConfig {
   id           String   @id @default(cuid())
   name         String   @unique
   slug         String   @unique
-  providerType String   // "anthropic", "openai-compatible"
-  baseUrl      String?  // API base URL (required for openai-compatible)
-  apiKeyEnvVar String?  // env var name e.g. "ANTHROPIC_API_KEY"
+  providerType String // "anthropic", "openai-compatible"
+  baseUrl      String? // API base URL (required for openai-compatible)
+  apiKeyEnvVar String? // env var name e.g. "ANTHROPIC_API_KEY"
   isLocal      Boolean  @default(false)
   isActive     Boolean  @default(true)
   metadata     Json?
@@ -478,4 +478,25 @@ model AiProviderConfig {
   @@index([providerType])
   @@index([isActive])
   @@map("ai_provider_config")
+}
+
+/// Singleton settings row for agent orchestration, keyed by `slug = "global"`.
+///
+/// Holds admin-editable defaults that cross-cut the orchestration layer:
+///   * `defaultModels` — `{ routing, chat, reasoning, embeddings }` map used by
+///     `getDefaultModelForTask()` in `lib/orchestration/llm/model-registry.ts`.
+///   * `globalMonthlyBudgetUsd` — optional month-to-date spend ceiling across
+///     *all* agents, consulted by `checkBudget()` in `lib/orchestration/llm/cost-tracker.ts`.
+///
+/// Upserted lazily on the first `GET /api/v1/admin/orchestration/settings`
+/// call; never touched by the seeder so admin edits survive deploys.
+model AiOrchestrationSettings {
+  id                     String   @id @default(cuid())
+  slug                   String   @unique @default("global")
+  defaultModels          Json // { routing: string, chat: string, reasoning: string, embeddings: string }
+  globalMonthlyBudgetUsd Float?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@map("ai_orchestration_settings")
 }

@@ -48,6 +48,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/costs`                           | GET                | Cost breakdown by day / agent / model               |
 | `/api/v1/admin/orchestration/costs/summary`                   | GET                | Today / week / month totals, per-agent, per-model   |
 | `/api/v1/admin/orchestration/costs/alerts`                    | GET                | Agents at or above 80% of their monthly budget      |
+| `/api/v1/admin/orchestration/settings`                        | GET, PATCH         | Singleton: task-type model defaults + global cap    |
 | `/api/v1/admin/orchestration/agents/:id/budget`               | GET                | Read-only budget status (use PATCH agent to mutate) |
 | `/api/v1/admin/orchestration/evaluations`                     | GET, POST          | List the caller's evaluation sessions / create one  |
 | `/api/v1/admin/orchestration/evaluations/:id`                 | GET, PATCH         | Read / update an evaluation session                 |
@@ -1026,6 +1027,62 @@ Successive runs inside the 60-second `adminLimiter` window may hit 429s — wait
 - **Don't** trust `file.type` (the MIME header) as a security boundary on upload. Browsers frequently omit it for `.md` files — the extension whitelist is the source of truth.
 
 ## Related
+
+## Orchestration settings (singleton)
+
+`AiOrchestrationSettings` is a single row (`slug: 'global'`) storing task-type model defaults and an optional cross-agent monthly budget cap. Lazily upserted on first read — the seeder deliberately does not touch it, so admin edits survive re-seeds.
+
+### GET /settings
+
+```http
+GET /api/v1/admin/orchestration/settings
+```
+
+Returns the hydrated singleton. Missing task keys are filled in from `computeDefaultModelMap()` so the response always has a complete `defaultModels` map even on first read.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "cmjbv4i3x00003wsloputgwu1",
+    "slug": "global",
+    "defaultModels": {
+      "routing": "claude-haiku-4-5",
+      "chat": "claude-sonnet-4-6",
+      "reasoning": "claude-opus-4-6",
+      "embeddings": "claude-haiku-4-5"
+    },
+    "globalMonthlyBudgetUsd": null,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z"
+  }
+}
+```
+
+### PATCH /settings
+
+```http
+PATCH /api/v1/admin/orchestration/settings
+Content-Type: application/json
+
+{ "defaultModels": { "routing": "claude-haiku-4-5" }, "globalMonthlyBudgetUsd": 500 }
+```
+
+Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`:
+
+- `defaultModels` keys must be one of `routing | chat | reasoning | embeddings`
+- Every model id must resolve via `getModel()` in the in-memory registry (`validateTaskDefaults()`)
+- `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
+- At least one field must be present (empty PATCH rejected)
+
+On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` so the next chat turn picks up the new defaults immediately (otherwise the 30s TTL cache would delay the change).
+
+### Enforcement
+
+- `getDefaultModelForTask(task)` in `lib/orchestration/llm/model-registry.ts` resolves `task → model` through this row. Used by any orchestration code that needs "the default model for X" rather than an agent-specific override.
+- `checkBudget()` in `lib/orchestration/llm/cost-tracker.ts` consults `globalMonthlyBudgetUsd` in addition to the per-agent cap. When the month-to-date cross-agent total meets or exceeds the cap it returns `{ withinBudget: false, globalCapExceeded: true }`, which the streaming chat handler translates into a `BUDGET_EXCEEDED_GLOBAL` error frame.
+
+Failures in the global-cap lookup are swallowed and the code falls back to the per-agent path so a flaky Prisma read can't lock up chat globally.
 
 - [`overview.md`](./overview.md) — Orchestration module layout and architecture decisions
 - [`workflows.md`](./workflows.md) — DAG validator, step shapes, error codes, Phase 5.2 roadmap

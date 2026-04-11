@@ -274,6 +274,46 @@ export interface CostSummary {
   entries: AiCostLog[];
 }
 
+// ============================================================================
+// Orchestration Settings (Phase 4 Session 4.4)
+// ============================================================================
+
+/** Task categories that resolve to a default model via the settings singleton. */
+export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** Admin-editable defaults for the orchestration layer. */
+export interface OrchestrationSettings {
+  id: string;
+  slug: 'global';
+  /** Map of `TaskType` → canonical model id. */
+  defaultModels: Record<TaskType, string>;
+  /** Month-to-date global spend cap in USD, or `null` to disable. */
+  globalMonthlyBudgetUsd: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * How `calculateLocalSavings()` derived its savings number:
+ *   - `equivalent_hosted` — every local row was priced against a matching non-local
+ *     model id in the registry.
+ *   - `tier_fallback`     — every local row was priced against the cheapest non-local
+ *     model in the same tier (no direct id match existed).
+ *   - `mixed`             — some rows used direct id match, some used tier fallback.
+ */
+export type SavingsMethodology = 'equivalent_hosted' | 'tier_fallback' | 'mixed';
+
+/** Result of `calculateLocalSavings({ dateFrom, dateTo })`. */
+export interface LocalSavingsResult {
+  usd: number;
+  methodology: SavingsMethodology;
+  /** Count of `AiCostLog` rows considered. */
+  sampleSize: number;
+  dateFrom: string;
+  dateTo: string;
+}
+
 /** Provider config with creator info */
 export type ProviderConfigWithCreator = AiProviderConfig & {
   creator: Pick<User, 'id' | 'name'>;

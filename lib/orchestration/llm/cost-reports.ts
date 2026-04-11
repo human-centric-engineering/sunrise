@@ -14,6 +14,8 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { calculateLocalSavings } from './cost-tracker';
+import type { LocalSavingsResult } from '@/types/orchestration';
 
 // ----------------------------------------------------------------------------
 // Types
@@ -77,6 +79,11 @@ export interface CostSummary {
   byModel: CostSummaryModelRow[];
   /** Last 30 UTC days in ascending order. Days with no spend are omitted. */
   trend: CostSummaryTrendPoint[];
+  /**
+   * Hypothetical savings from local models over the rolling month window.
+   * `null` when the helper errored (the rest of the summary still renders).
+   */
+  localSavings: LocalSavingsResult | null;
 }
 
 export interface BudgetAlert {
@@ -337,6 +344,18 @@ export async function getCostSummary(): Promise<CostSummary> {
     totalCostUsd: toNumber(r.total_cost_usd),
   }));
 
+  // Savings is a purely additive signal — any failure here is logged and
+  // surfaced as `null` so the rest of the summary renders.
+  let localSavings: LocalSavingsResult | null = null;
+  try {
+    localSavings = await calculateLocalSavings({ dateFrom: monthStart, dateTo: tomorrowStart });
+  } catch (err) {
+    logger.warn('getCostSummary: calculateLocalSavings threw, returning null savings', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    localSavings = null;
+  }
+
   return {
     totals: {
       today: todayAgg._sum.totalCostUsd ?? 0,
@@ -346,6 +365,7 @@ export async function getCostSummary(): Promise<CostSummary> {
     byAgent,
     byModel,
     trend,
+    localSavings,
   };
 }
 

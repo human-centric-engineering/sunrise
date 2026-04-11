@@ -9,6 +9,8 @@
 import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema, slugSchema } from './common';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
+import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 
 // ============================================================================
 // Shared Schemas
@@ -1038,6 +1040,47 @@ export const evaluationLogsQuerySchema = z.object({
 export const completeEvaluationBodySchema = z.object({}).passthrough();
 
 // ============================================================================
+// Orchestration Settings (Phase 4 Session 4.4)
+// ============================================================================
+
+/**
+ * Partial update for the singleton `AiOrchestrationSettings` row.
+ *
+ * Only the fields that appear on the request body are touched on the row.
+ * `defaultModels` is partial-patchable — the server merges with the
+ * existing map so admins can change a single task at a time.
+ *
+ * `.superRefine` delegates to `validateTaskDefaults()` in the model
+ * registry so unknown model ids are rejected at the boundary.
+ */
+export const updateOrchestrationSettingsSchema = z
+  .object({
+    defaultModels: z
+      .record(z.enum(TASK_TYPES), z.string().min(1).max(200))
+      .optional()
+      .superRefine((val, ctx) => {
+        if (!val) return;
+        const errors = validateTaskDefaults(val as Partial<Record<TaskType, string>>);
+        for (const err of errors) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['defaultModels', err.task],
+            message: err.message,
+          });
+        }
+      }),
+    globalMonthlyBudgetUsd: z
+      .number()
+      .nonnegative('Global monthly budget must be zero or positive')
+      .max(1_000_000, 'Global monthly budget must be at most $1,000,000')
+      .nullable()
+      .optional(),
+  })
+  .refine((v) => v.defaultModels !== undefined || v.globalMonthlyBudgetUsd !== undefined, {
+    message: 'At least one field must be provided',
+  });
+
+// ============================================================================
 // Inferred Types
 // ============================================================================
 
@@ -1080,3 +1123,4 @@ export type CreateEvaluationInput = z.infer<typeof createEvaluationSchema>;
 export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
 export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
 export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;
+export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestrationSettingsSchema>;

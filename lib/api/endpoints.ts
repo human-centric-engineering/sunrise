@@ -88,6 +88,7 @@ export const API = {
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
+      SETTINGS: '/api/v1/admin/orchestration/settings',
       EVALUATIONS: '/api/v1/admin/orchestration/evaluations',
     },
   },

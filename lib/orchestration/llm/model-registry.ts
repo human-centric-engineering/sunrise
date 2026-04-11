@@ -23,9 +23,11 @@
 
 import { z } from 'zod';
 
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { fetchWithTimeout, ProviderError, type LlmProvider } from './provider';
 import type { ModelInfo, ModelTier } from './types';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_FETCH_TIMEOUT_MS = 10_000;
@@ -167,6 +169,120 @@ export function getModelsByProvider(provider: string): ModelInfo[] {
 export function __resetForTests(): void {
   state = { models: buildFallbackMap(), fetchedAt: 0 };
   inflightRefresh = null;
+  settingsCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration settings — task-default model resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory TTL cache for the `AiOrchestrationSettings` singleton's
+ * `defaultModels` map. Invalidated by `invalidateSettingsCache()` (called
+ * from the PATCH route) and rebuilt lazily on the next lookup.
+ */
+const SETTINGS_CACHE_TTL_MS = 30_000;
+interface SettingsCacheEntry {
+  defaults: Record<TaskType, string>;
+  fetchedAt: number;
+}
+let settingsCache: SettingsCacheEntry | null = null;
+
+/** Clear the cached `defaultModels` map so the next lookup re-reads the singleton. */
+export function invalidateSettingsCache(): void {
+  settingsCache = null;
+}
+
+/**
+ * Compute sensible defaults for the task → model map from whatever is
+ * currently in the registry. Used on first-seed and as a fallback when
+ * the stored map is missing a key.
+ *
+ * Preference order:
+ *   - `chat` / `routing` — cheapest budget-tier model
+ *   - `reasoning` — frontier-tier, falls back to mid, then any non-local
+ *   - `embeddings` — first embeddings-capable entry, else any non-local
+ */
+export function computeDefaultModelMap(): Record<TaskType, string> {
+  const all = dedupeModels(state.models).filter((m) => m.tier !== 'local');
+  const byCost = [...all].sort((a, b) => a.inputCostPerMillion - b.inputCostPerMillion);
+  const budget = byCost.find((m) => m.tier === 'budget') ?? byCost[0];
+  const mid = byCost.find((m) => m.tier === 'mid') ?? budget;
+  const frontier = byCost.find((m) => m.tier === 'frontier') ?? mid;
+
+  // No embeddings tier in the registry today — fall back to the cheapest non-local.
+  const embeddings = budget;
+
+  // If the registry is empty (test or refresh-failed state), fall back to known
+  // ids from the fallback map.
+  return {
+    routing: budget?.id ?? 'claude-haiku-4-5',
+    chat: budget?.id ?? 'claude-haiku-4-5',
+    reasoning: frontier?.id ?? 'claude-opus-4-6',
+    embeddings: embeddings?.id ?? 'claude-haiku-4-5',
+  };
+}
+
+/**
+ * Validate a partial `defaultModels` map: every model id must resolve
+ * through `getModel()`. Returns an array of per-task error descriptors
+ * (empty if everything is valid). Used by the Zod schema in
+ * `lib/validations/orchestration.ts` so the route never sees an unknown id.
+ */
+export function validateTaskDefaults(
+  defaults: Partial<Record<TaskType, string>>
+): Array<{ task: TaskType; message: string }> {
+  const errors: Array<{ task: TaskType; message: string }> = [];
+  for (const task of TASK_TYPES) {
+    const id = defaults[task];
+    if (id === undefined) continue;
+    if (typeof id !== 'string' || id.length === 0) {
+      errors.push({ task, message: 'Model id must be a non-empty string' });
+      continue;
+    }
+    if (!getModel(id)) {
+      errors.push({ task, message: `Unknown model id: ${id}` });
+    }
+  }
+  return errors;
+}
+
+/**
+ * Resolve the default model id for a task category from the singleton
+ * `AiOrchestrationSettings` row. Falls back to `computeDefaultModelMap()`
+ * for any task the row doesn't specify (and for the empty/missing-row
+ * case). Results are cached for 30s so chat handlers don't hit the DB
+ * on every turn.
+ */
+export async function getDefaultModelForTask(task: TaskType): Promise<string> {
+  const now = Date.now();
+  if (settingsCache && now - settingsCache.fetchedAt < SETTINGS_CACHE_TTL_MS) {
+    return settingsCache.defaults[task];
+  }
+
+  let stored: Record<string, unknown> | null = null;
+  try {
+    const row = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
+    if (row && row.defaultModels && typeof row.defaultModels === 'object') {
+      stored = row.defaultModels as Record<string, unknown>;
+    }
+  } catch (err) {
+    logger.warn('getDefaultModelForTask: singleton read failed, using computed defaults', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const computed = computeDefaultModelMap();
+  const merged: Record<TaskType, string> = { ...computed };
+  if (stored) {
+    for (const key of TASK_TYPES) {
+      const val = stored[key];
+      if (typeof val === 'string' && val.length > 0) merged[key] = val;
+    }
+  }
+
+  settingsCache = { defaults: merged, fetchedAt: now };
+  return merged[task];
 }
 
 // ---------------------------------------------------------------------------
