@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { logger } from '@/lib/logging';
 import { fetchWithTimeout, ProviderError, type LlmProvider } from './provider';
 import type { ModelInfo, ModelTier } from './types';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_FETCH_TIMEOUT_MS = 10_000;
@@ -167,6 +168,64 @@ export function getModelsByProvider(provider: string): ModelInfo[] {
 export function __resetForTests(): void {
   state = { models: buildFallbackMap(), fetchedAt: 0 };
   inflightRefresh = null;
+}
+
+// ---------------------------------------------------------------------------
+// Task default-model helpers (registry-only; DB read lives in settings-resolver.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute sensible defaults for the task → model map from whatever is
+ * currently in the registry. Used on first-seed and as a fallback when
+ * the stored map is missing a key.
+ *
+ * Preference order:
+ *   - `chat` / `routing` — cheapest budget-tier model
+ *   - `reasoning` — frontier-tier, falls back to mid, then any non-local
+ *   - `embeddings` — first embeddings-capable entry, else any non-local
+ */
+export function computeDefaultModelMap(): Record<TaskType, string> {
+  const all = dedupeModels(state.models).filter((m) => m.tier !== 'local');
+  const byCost = [...all].sort((a, b) => a.inputCostPerMillion - b.inputCostPerMillion);
+  const budget = byCost.find((m) => m.tier === 'budget') ?? byCost[0];
+  const mid = byCost.find((m) => m.tier === 'mid') ?? budget;
+  const frontier = byCost.find((m) => m.tier === 'frontier') ?? mid;
+
+  // No embeddings tier in the registry today — fall back to the cheapest non-local.
+  const embeddings = budget;
+
+  // If the registry is empty (test or refresh-failed state), fall back to known
+  // ids from the fallback map.
+  return {
+    routing: budget?.id ?? 'claude-haiku-4-5',
+    chat: budget?.id ?? 'claude-haiku-4-5',
+    reasoning: frontier?.id ?? 'claude-opus-4-6',
+    embeddings: embeddings?.id ?? 'claude-haiku-4-5',
+  };
+}
+
+/**
+ * Validate a partial `defaultModels` map: every model id must resolve
+ * through `getModel()`. Returns an array of per-task error descriptors
+ * (empty if everything is valid). Used by the Zod schema in
+ * `lib/validations/orchestration.ts` so the route never sees an unknown id.
+ */
+export function validateTaskDefaults(
+  defaults: Partial<Record<TaskType, string>>
+): Array<{ task: TaskType; message: string }> {
+  const errors: Array<{ task: TaskType; message: string }> = [];
+  for (const task of TASK_TYPES) {
+    const id = defaults[task];
+    if (id === undefined) continue;
+    if (typeof id !== 'string' || id.length === 0) {
+      errors.push({ task, message: 'Model id must be a non-empty string' });
+      continue;
+    }
+    if (!getModel(id)) {
+      errors.push({ task, message: `Unknown model id: ${id}` });
+    }
+  }
+  return errors;
 }
 
 // ---------------------------------------------------------------------------

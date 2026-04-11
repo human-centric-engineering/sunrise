@@ -56,13 +56,14 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/costs`                           | GET                | Breakdown by day / agent / model                     | 3.4     |
 | `/costs/summary`                   | GET                | Today / week / month + per-agent + trend             | 3.4     |
 | `/costs/alerts`                    | GET                | Agents ≥ 80% of their budget                         | 3.4     |
+| `/settings`                        | GET, PATCH         | Task-type defaults + global monthly budget cap       | 4.4     |
 | `/agents/:id/budget`               | GET                | Read-only budget status                              | 3.4     |
 | `/evaluations`                     | GET, POST          | List caller's sessions / create                      | 3.4     |
 | `/evaluations/:id`                 | GET, PATCH         | Read / update                                        | 3.4     |
 | `/evaluations/:id/logs`            | GET                | Read log events                                      | 3.4     |
 | `/evaluations/:id/complete`        | POST               | Run AI analysis and flip to `completed`              | 3.4     |
 
-41 endpoints. For architecture detail see `.context/orchestration/admin-api.md`.
+42 endpoints. For architecture detail see `.context/orchestration/admin-api.md`.
 
 ---
 
@@ -392,7 +393,9 @@ Response: `{ groupBy, rows: [{ key, label?, totalCostUsd, inputTokens, outputTok
 
 ### `GET /costs/summary`
 
-Dashboard summary. Returns `{ totals: { today, week, month }, byAgent: [...], byModel: [...], trend: [...30 UTC days] }`. Per-agent rows include `utilisation = monthSpend / monthlyBudgetUsd` (null when no budget is set).
+Dashboard summary. Returns `{ totals: { today, week, month }, byAgent: [...], byModel: [...], trend: [...30 UTC days], localSavings }`. Per-agent rows include `utilisation = monthSpend / monthlyBudgetUsd` (null when no budget is set).
+
+`localSavings` is `{ usd, methodology, sampleSize, dateFrom, dateTo } | null`. `methodology` is currently always `tier_fallback` (the only reachable mode — local rows have local model ids, so there is never a direct hosted equivalent). The field is kept as a union to allow additional modes without a response-shape break. The whole value is `null` when `calculateLocalSavings()` errored — the rest of the summary still renders. See [`../admin/orchestration-costs.md` § Local savings methodology](../admin/orchestration-costs.md#local-savings-methodology) for the algorithm.
 
 ### `GET /costs/alerts`
 
@@ -411,6 +414,28 @@ Agents without a budget, or with `monthlyBudgetUsd <= 0`, are filtered out.
 Read-only budget status for a single agent: `{ withinBudget, spent, limit, remaining }`. Missing agent → `404`. Malformed id → `400`.
 
 **There is no `PATCH /agents/:id/budget`.** Budget mutations go through `PATCH /agents/:id` via `updateAgentSchema.monthlyBudgetUsd`. A second mutation path would fork the audit trail.
+
+### `GET /settings` / `PATCH /settings`
+
+Singleton orchestration settings (`slug: 'global'`). Lazily upserted on first read. Admin-only, PATCH is rate-limited.
+
+Body for PATCH (`updateOrchestrationSettingsSchema`):
+
+```jsonc
+{
+  "defaultModels": {
+    "routing": "claude-haiku-4-5",
+    "chat": "claude-sonnet-4-6",
+    "reasoning": "claude-opus-4-6",
+    "embeddings": "claude-haiku-4-5",
+  },
+  "globalMonthlyBudgetUsd": 500,
+}
+```
+
+At least one of the two top-level fields must be present. Every model id is validated against the in-memory registry — unknown ids return `400`. `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000.
+
+See [`../orchestration/admin-api.md` § Orchestration settings](../orchestration/admin-api.md#orchestration-settings-singleton) for enforcement semantics and [`../admin/orchestration-costs.md`](../admin/orchestration-costs.md) for the UI.
 
 ---
 

@@ -39,6 +39,7 @@ Instructions for Claude Code when working in this repository.
 
 - **API-first** — implement API endpoints before UI; every capability must be API-accessible
 - **Server components by default** — add `'use client'` only when needed
+- **Contextual help on form fields** — every non-trivial form field gets a `<FieldHelp>` ⓘ popover; see `.context/ui/contextual-help.md`
 
 ## MCP Integration
 
@@ -114,15 +115,17 @@ import { logger } from '../../lib/logging'; // ❌
 
 ### Key Utilities
 
-| Need          | Utility                                | Location                     |
-| ------------- | -------------------------------------- | ---------------------------- |
-| API responses | `successResponse()`, `errorResponse()` | `lib/api/responses.ts`       |
-| Auth guards   | `withAuth()`, `withAdminAuth()`        | `lib/auth/guards.ts`         |
-| Rate limiting | `authLimiter`, `apiLimiter`, etc.      | `lib/security/rate-limit.ts` |
-| Client IP     | `getClientIP()`                        | `lib/security/ip.ts`         |
-| Sanitization  | `escapeHtml()`, `sanitizeUrl()`        | `lib/security/sanitize.ts`   |
-| Server fetch  | `serverFetch()`                        | `lib/api/server-fetch.ts`    |
-| Logging       | `logger.info()`, `logger.error()`      | `lib/logging/index.ts`       |
+| Need          | Utility                                | Location                         |
+| ------------- | -------------------------------------- | -------------------------------- |
+| API responses | `successResponse()`, `errorResponse()` | `lib/api/responses.ts`           |
+| Auth guards   | `withAuth()`, `withAdminAuth()`        | `lib/auth/guards.ts`             |
+| Rate limiting | `authLimiter`, `apiLimiter`, etc.      | `lib/security/rate-limit.ts`     |
+| Client IP     | `getClientIP()`                        | `lib/security/ip.ts`             |
+| Sanitization  | `escapeHtml()`, `sanitizeUrl()`        | `lib/security/sanitize.ts`       |
+| Server fetch  | `serverFetch()`                        | `lib/api/server-fetch.ts`        |
+| Logging       | `logger.info()`, `logger.error()`      | `lib/logging/index.ts`           |
+| Local storage | `useLocalStorage()`                    | `lib/hooks/use-local-storage.ts` |
+| Wizard state  | `useWizard()`                          | `lib/hooks/use-wizard.ts`        |
 
 ## Skills
 
@@ -183,26 +186,37 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 
 **Entry point:** `.context/substrate.md` — full navigation and AI usage patterns
 
-| Domain                  | Path                                      | Key Content                                   |
-| ----------------------- | ----------------------------------------- | --------------------------------------------- |
-| Architecture            | `.context/architecture/`                  | System design, deployment                     |
-| Authentication          | `.context/auth/`                          | better-auth, sessions, guards                 |
-| API                     | `.context/api/`                           | Endpoints, responses, client                  |
-| Database                | `.context/database/`                      | Prisma schema, migrations                     |
-| Security                | `.context/security/`                      | Rate limiting, headers, CORS                  |
-| Logging                 | `.context/logging/`                       | Structured logging, request ctx               |
-| Testing                 | `.context/testing/`                       | Patterns, mocking, async                      |
-| Email                   | `.context/email/`                         | Templates, sending                            |
-| Workflow                | `.context/workflow.md`                    | Git, commits, PR process                      |
-| AI Orchestration        | `.claude/docs/agent-orchestration.md`     | Agent system design, patterns                 |
-| LLM Providers           | `.context/orchestration/llm-providers.md` | Provider abstraction, cost tracking           |
-| Capabilities            | `.context/orchestration/capabilities.md`  | Tool dispatcher, built-ins, rate limits       |
-| Streaming Chat          | `.context/orchestration/chat.md`          | Chat handler, tool loop, context builder      |
-| Knowledge Base          | `.context/orchestration/knowledge.md`     | Document ingestion, chunking, vector search   |
-| Workflows               | `.context/orchestration/workflows.md`     | DAG validator, error codes, Phase 5.2 roadmap |
-| Orchestration Admin API | `.context/orchestration/admin-api.md`     | Agents, capabilities, chat, knowledge, convos |
-| Orchestration Endpoints | `.context/api/orchestration-endpoints.md` | Consumer HTTP reference for all 41 routes     |
-| SSE Bridge              | `.context/api/sse.md`                     | `sseResponse` helper, framing, sanitization   |
+| Domain                  | Path                                           | Key Content                                   |
+| ----------------------- | ---------------------------------------------- | --------------------------------------------- |
+| Architecture            | `.context/architecture/`                       | System design, deployment                     |
+| Authentication          | `.context/auth/`                               | better-auth, sessions, guards                 |
+| API                     | `.context/api/`                                | Endpoints, responses, client                  |
+| Database                | `.context/database/`                           | Prisma schema, migrations                     |
+| Security                | `.context/security/`                           | Rate limiting, headers, CORS                  |
+| Logging                 | `.context/logging/`                            | Structured logging, request ctx               |
+| Testing                 | `.context/testing/`                            | Patterns, mocking, async                      |
+| Email                   | `.context/email/`                              | Templates, sending                            |
+| Workflow                | `.context/workflow.md`                         | Git, commits, PR process                      |
+| AI Orchestration        | `.claude/docs/agent-orchestration.md`          | Agent system design, patterns                 |
+| LLM Providers           | `.context/orchestration/llm-providers.md`      | Provider abstraction, cost tracking           |
+| Capabilities            | `.context/orchestration/capabilities.md`       | Tool dispatcher, built-ins, rate limits       |
+| Streaming Chat          | `.context/orchestration/chat.md`               | Chat handler, tool loop, context builder      |
+| Knowledge Base          | `.context/orchestration/knowledge.md`          | Document ingestion, chunking, vector search   |
+| Workflows               | `.context/orchestration/workflows.md`          | DAG validator, error codes, Phase 5.2 roadmap |
+| Orchestration Admin API | `.context/orchestration/admin-api.md`          | Agents, capabilities, chat, knowledge, convos |
+| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`      | Consumer HTTP reference for all 41 routes     |
+| SSE Bridge              | `.context/api/sse.md`                          | `sseResponse` helper, framing, sanitization   |
+| Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`    | Admin landing page, data sources, layout      |
+| Agents List / Pages     | `.context/admin/orchestration-agents.md`       | List, create, edit shells; table, bulk export |
+| Agent Form              | `.context/admin/agent-form.md`                 | 5-tab create/edit form, FieldHelp reference   |
+| Capabilities List       | `.context/admin/orchestration-capabilities.md` | Table, category filter, agents-using count    |
+| Capability Form         | `.context/admin/capability-form.md`            | 4 tabs, visual builder ↔ JSON editor, safety  |
+| Providers List          | `.context/admin/orchestration-providers.md`    | Card grid, status dots, env-var-only security |
+| Provider Form           | `.context/admin/provider-form.md`              | 4-flavor selector, reverse-mapping on edit    |
+| Costs & Budget          | `.context/admin/orchestration-costs.md`        | Summary, trend, savings, settings singleton   |
+| Setup Wizard            | `.context/admin/setup-wizard.md`               | 5-step guided setup flow, resume behavior     |
+| Contextual Help         | `.context/ui/contextual-help.md`               | `<FieldHelp>` directive for form fields       |
+| UI Hooks                | `.context/ui/hooks.md`                         | `useLocalStorage`, `useWizard`                |
 
 ## Troubleshooting
 

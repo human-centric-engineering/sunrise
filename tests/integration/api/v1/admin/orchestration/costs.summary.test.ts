@@ -56,6 +56,7 @@ function makeCostSummary() {
     ],
     byModel: [{ model: 'claude-sonnet-4-6', monthSpend: 12.8 }],
     trend: [{ date: '2025-01-01', totalCostUsd: 0.4 }],
+    localSavings: null,
   };
 }
 

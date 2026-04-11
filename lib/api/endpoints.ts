@@ -53,6 +53,44 @@ export const API = {
     FEATURE_FLAGS: '/api/v1/admin/feature-flags',
     /** Feature flag by ID */
     featureFlag: (id: string): string => `/api/v1/admin/feature-flags/${id}`,
+
+    /** AI Orchestration admin endpoints (Phase 3 / Phase 4) */
+    ORCHESTRATION: {
+      AGENTS: '/api/v1/admin/orchestration/agents',
+      AGENTS_EXPORT: '/api/v1/admin/orchestration/agents/export',
+      AGENTS_IMPORT: '/api/v1/admin/orchestration/agents/import',
+      agentById: (id: string): string => `/api/v1/admin/orchestration/agents/${id}`,
+      agentBudget: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/budget`,
+      agentCapabilities: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/capabilities`,
+      agentCapabilityById: (id: string, capId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/capabilities/${capId}`,
+      agentInstructionsHistory: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
+      agentInstructionsRevert: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
+      CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
+      capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
+      capabilityAgents: (id: string): string =>
+        `/api/v1/admin/orchestration/capabilities/${id}/agents`,
+      PROVIDERS: '/api/v1/admin/orchestration/providers',
+      providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
+      providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
+      providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
+      MODELS: '/api/v1/admin/orchestration/models',
+      WORKFLOWS: '/api/v1/admin/orchestration/workflows',
+      EXECUTIONS: '/api/v1/admin/orchestration/executions',
+      CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
+      CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
+      CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
+      KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
+      KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
+      COSTS: '/api/v1/admin/orchestration/costs',
+      COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
+      COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
+      SETTINGS: '/api/v1/admin/orchestration/settings',
+      EVALUATIONS: '/api/v1/admin/orchestration/evaluations',
+    },
   },
 
   /** Public endpoints */

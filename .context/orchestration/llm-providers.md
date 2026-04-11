@@ -208,6 +208,12 @@ import { headers } from 'next/headers';
 
 **Don't** skip cost logging for local models — token counts are still valuable for benchmarking and showing up in `getAgentCosts` breakdowns.
 
+## Task-type defaults (Phase 4 Session 4.4)
+
+`getDefaultModelForTask(task: TaskType)` in `lib/orchestration/llm/model-registry.ts` resolves the default model for a `TaskType` (`routing | chat | reasoning | embeddings`) by reading the `AiOrchestrationSettings` singleton (`slug: 'global'`). A 30-second in-memory TTL cache sits in front of the Prisma read. The settings PATCH route calls `invalidateSettingsCache()` so admin edits take effect on the next turn without waiting for the cache to expire.
+
+Missing keys fall back to `computeDefaultModelMap()`, which picks sensible defaults from whatever the registry currently knows about (cheapest budget tier for routing/chat, frontier for reasoning). On a fresh deployment the first `GET /settings` lazily upserts the row with these defaults. See [`admin-api.md` § Orchestration settings](./admin-api.md#orchestration-settings-singleton) and [`../admin/orchestration-costs.md`](../admin/orchestration-costs.md) for the HTTP surface.
+
 ## Admin surface (Phase 3.2)
 
 Admins manage `AiProviderConfig` rows through `/api/v1/admin/orchestration/providers` — full CRUD plus a live `POST /:id/test` (wraps `providerManager.testProvider`) and a per-provider `GET /:id/models` (wraps `provider.listModels()`). Every response hydrates rows with `apiKeyPresent: boolean`, derived via `isApiKeyEnvVarSet()` — the raw `process.env[apiKeyEnvVar]` value is **never** returned from a route, logged, or written to the response envelope. The aggregated `GET /models` endpoint returns the merged model registry and accepts `?refresh=true` to force an OpenRouter refresh. Full route reference lives in [`admin-api.md`](./admin-api.md#providers).

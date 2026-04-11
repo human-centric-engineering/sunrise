@@ -20,8 +20,9 @@
 import type { AiCostLog, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getModel } from './model-registry';
-import type { CostOperation, CostSummary } from '@/types/orchestration';
+import { getAvailableModels, getModel } from './model-registry';
+import type { CostOperation, CostSummary, LocalSavingsResult } from '@/types/orchestration';
+import type { ModelInfo } from './types';
 
 /** Computed cost breakdown for a single operation. */
 export interface ComputedCost {
@@ -53,6 +54,13 @@ export interface BudgetStatus {
   spent: number;
   limit: number | null;
   remaining: number | null;
+  /**
+   * Set when the singleton `AiOrchestrationSettings.globalMonthlyBudgetUsd`
+   * has been met or exceeded by the combined spend of *all* agents this
+   * calendar month. Distinguishes a global cap breach from a per-agent one
+   * so the chat handler can emit a more specific error code.
+   */
+  globalCapExceeded?: boolean;
 }
 
 /**
@@ -179,11 +187,30 @@ export async function getAgentCosts(
 }
 
 /**
+ * Sum of every `AiCostLog.totalCostUsd` row created since the start of
+ * the current UTC calendar month, across all agents. Used by the global
+ * budget cap in `checkBudget` and by surfaces that show platform-wide
+ * spend.
+ */
+export async function getMonthToDateGlobalSpend(): Promise<number> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const aggregate = await prisma.aiCostLog.aggregate({
+    where: { createdAt: { gte: monthStart } },
+    _sum: { totalCostUsd: true },
+  });
+  return aggregate._sum.totalCostUsd ?? 0;
+}
+
+/**
  * Report whether an agent is within its monthly budget.
  *
  * "Month" is the current calendar month in UTC. Agents without a
- * `monthlyBudgetUsd` are always reported as within budget, with
- * `limit` and `remaining` set to `null`.
+ * `monthlyBudgetUsd` are within the per-agent budget. Independently,
+ * the singleton `AiOrchestrationSettings.globalMonthlyBudgetUsd` (if
+ * set) imposes a month-to-date ceiling across the combined spend of
+ * all agents. A global breach surfaces as `globalCapExceeded: true`
+ * so the chat handler can distinguish it from a per-agent breach.
  */
 export async function checkBudget(agentId: string): Promise<BudgetStatus> {
   const agent = await prisma.aiAgent.findUnique({
@@ -203,14 +230,137 @@ export async function checkBudget(agentId: string): Promise<BudgetStatus> {
   });
   const spent = aggregate._sum.totalCostUsd ?? 0;
 
-  if (agent.monthlyBudgetUsd === null || agent.monthlyBudgetUsd === undefined) {
-    return { withinBudget: true, spent, limit: null, remaining: null };
+  // Global-cap check comes first so an exhausted platform cap surfaces
+  // distinctly even for agents that have their own per-agent budget set.
+  let globalCapExceeded = false;
+  try {
+    const settings = await prisma.aiOrchestrationSettings.findUnique({
+      where: { slug: 'global' },
+      select: { globalMonthlyBudgetUsd: true },
+    });
+    const globalCap = settings?.globalMonthlyBudgetUsd ?? null;
+    if (globalCap !== null) {
+      const globalSpent = await getMonthToDateGlobalSpend();
+      if (globalSpent >= globalCap) {
+        globalCapExceeded = true;
+      }
+    }
+  } catch (err) {
+    // Settings lookup must never take the per-agent path down.
+    logger.warn('checkBudget: global cap lookup failed, falling back to per-agent only', {
+      agentId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
+  if (agent.monthlyBudgetUsd === null || agent.monthlyBudgetUsd === undefined) {
+    return {
+      withinBudget: !globalCapExceeded,
+      spent,
+      limit: null,
+      remaining: null,
+      ...(globalCapExceeded ? { globalCapExceeded: true } : {}),
+    };
+  }
+
+  const withinAgentBudget = spent < agent.monthlyBudgetUsd;
   return {
-    withinBudget: spent < agent.monthlyBudgetUsd,
+    withinBudget: withinAgentBudget && !globalCapExceeded,
     spent,
     limit: agent.monthlyBudgetUsd,
     remaining: agent.monthlyBudgetUsd - spent,
+    ...(globalCapExceeded ? { globalCapExceeded: true } : {}),
+  };
+}
+
+// ----------------------------------------------------------------------------
+// calculateLocalSavings
+// ----------------------------------------------------------------------------
+
+interface LocalRow {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+function findCheapestNonLocalInTier(tier: ModelInfo['tier']): ModelInfo | null {
+  const candidates = getAvailableModels()
+    .filter((m) => m.tier === tier && m.tier !== 'local')
+    .filter((m) => m.inputCostPerMillion > 0 || m.outputCostPerMillion > 0)
+    .sort((a, b) => a.inputCostPerMillion - b.inputCostPerMillion);
+  return candidates[0] ?? null;
+}
+
+/**
+ * Hypothetical-cost savings from local models.
+ *
+ * For every `AiCostLog` row with `isLocal = true` in the window, price
+ * the same token counts against the cheapest non-local model in the
+ * same tier — the savings are (what-you-would-have-paid − 0). Local
+ * rows always have local model ids, so there is never a direct
+ * non-local equivalent to price against; `methodology` is therefore
+ * always `'tier_fallback'`. The field is retained so future modes can
+ * be added without a response-shape change.
+ *
+ * This helper never throws — on any unexpected error it logs and returns
+ * a zero-savings result so the cost summary can still render.
+ */
+export async function calculateLocalSavings(opts: {
+  dateFrom: Date;
+  dateTo: Date;
+}): Promise<LocalSavingsResult> {
+  const { dateFrom, dateTo } = opts;
+  const base: LocalSavingsResult = {
+    usd: 0,
+    methodology: 'tier_fallback',
+    sampleSize: 0,
+    dateFrom: dateFrom.toISOString(),
+    dateTo: dateTo.toISOString(),
+  };
+
+  let rows: LocalRow[];
+  try {
+    rows = await prisma.aiCostLog.findMany({
+      where: { isLocal: true, createdAt: { gte: dateFrom, lte: dateTo } },
+      select: { model: true, inputTokens: true, outputTokens: true },
+    });
+  } catch (err) {
+    logger.warn('calculateLocalSavings: query failed, returning zero savings', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return base;
+  }
+
+  if (rows.length === 0) return base;
+
+  let totalUsd = 0;
+  let contributing = 0;
+
+  for (const row of rows) {
+    const localModel = getModel(row.model);
+    // Local rows have no direct non-local equivalent — walk up through
+    // the reported tier (or `budget` as a default), falling back to
+    // `mid` if neither yields a hosted reference.
+    const tier = localModel?.tier ?? 'budget';
+    const ref =
+      findCheapestNonLocalInTier(tier === 'local' ? 'budget' : tier) ??
+      findCheapestNonLocalInTier('budget') ??
+      findCheapestNonLocalInTier('mid');
+
+    if (!ref) continue;
+
+    const rowSavings =
+      (row.inputTokens * ref.inputCostPerMillion + row.outputTokens * ref.outputCostPerMillion) /
+      1_000_000;
+    totalUsd += rowSavings;
+    contributing += 1;
+  }
+
+  return {
+    usd: totalUsd,
+    methodology: 'tier_fallback',
+    sampleSize: contributing,
+    dateFrom: dateFrom.toISOString(),
+    dateTo: dateTo.toISOString(),
   };
 }

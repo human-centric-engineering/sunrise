@@ -1,7 +1,12 @@
 /**
- * Admin Orchestration — Attach capability to agent
+ * Admin Orchestration — Agent ↔ capability pivot list / attach
  *
- * POST /api/v1/admin/orchestration/agents/:id/capabilities
+ * GET    /api/v1/admin/orchestration/agents/:id/capabilities
+ *   Returns every `AiAgentCapability` row for the agent with the related
+ *   capability included. Used by the admin Agent edit page's Capabilities
+ *   tab to render the "Attached" column.
+ *
+ * POST   /api/v1/admin/orchestration/agents/:id/capabilities
  *   Body: { capabilityId, isEnabled?, customConfig?, customRateLimit? }
  *   Creates an `AiAgentCapability` pivot row linking the agent to the
  *   capability. Calls `capabilityDispatcher.clearCache()` on success so
@@ -30,6 +35,28 @@ function parseAgentId(raw: string): string {
   }
   return parsed.data;
 }
+
+export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  const log = await getRouteLogger(request);
+  const { id: rawAgentId } = await params;
+  const agentId = parseAgentId(rawAgentId);
+
+  const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
+  if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+
+  const links = await prisma.aiAgentCapability.findMany({
+    where: { agentId },
+    include: { capability: true },
+    orderBy: { capability: { name: 'asc' } },
+  });
+
+  log.info('Agent capabilities listed', { agentId, count: links.length });
+  return successResponse(links);
+});
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
