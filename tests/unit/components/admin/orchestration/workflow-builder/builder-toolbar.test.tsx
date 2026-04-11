@@ -11,7 +11,10 @@
  * - Execute button is always disabled (available in Session 5.2)
  * - mode="create" shows "Create workflow" text on Save button
  * - mode="edit" shows "Save changes" text on Save button
- * - "Use template" dropdown opens and shows disabled placeholder item
+ * - "Use template" dropdown opens and lists all built-in templates
+ * - Selecting a template item fires onTemplateSelect with the matching template
+ * - templatesDisabled=true renders every template item as disabled
+ * - Execute button tooltip reads "Execution engine arrives in Session 5.2"
  * - Back navigation link is present
  *
  * @see components/admin/orchestration/workflow-builder/builder-toolbar.tsx
@@ -22,6 +25,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +36,8 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     mode: 'create' as const,
     onValidate: vi.fn(),
     onSave: vi.fn(),
+    onTemplateSelect: vi.fn(),
+    templatesDisabled: false,
     saving: false,
     hasErrors: false,
     ...overrides,
@@ -129,6 +135,12 @@ describe('BuilderToolbar', () => {
       renderToolbar();
       expect(screen.getByRole('button', { name: /execute/i })).toBeDisabled();
     });
+
+    it('Execute button tooltip references Session 5.2 engine', () => {
+      renderToolbar();
+      const executeBtn = screen.getByRole('button', { name: /execute/i });
+      expect(executeBtn).toHaveAttribute('title', 'Execution engine arrives in Session 5.2');
+    });
   });
 
   describe('mode prop', () => {
@@ -149,18 +161,51 @@ describe('BuilderToolbar', () => {
       expect(screen.getByRole('button', { name: /use template/i })).toBeInTheDocument();
     });
 
-    it('opens dropdown and shows the stub disabled item on click', async () => {
+    it('lists every built-in template when opened', async () => {
       const user = userEvent.setup();
       renderToolbar();
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
 
+      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+        const item = await screen.findByRole('menuitem', {
+          name: new RegExp(template.name, 'i'),
+          hidden: true,
+        });
+        expect(item).toBeInTheDocument();
+      }
+    });
+
+    it('fires onTemplateSelect with the matching template on click', async () => {
+      const user = userEvent.setup();
+      const onTemplateSelect = vi.fn();
+      renderToolbar({ onTemplateSelect });
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+      const firstTemplate = BUILTIN_WORKFLOW_TEMPLATES[0];
       const item = await screen.findByRole('menuitem', {
-        name: /template loading arrives in session 5\.1c/i,
+        name: new RegExp(firstTemplate.name, 'i'),
         hidden: true,
       });
-      expect(item).toBeInTheDocument();
-      expect(item).toHaveAttribute('data-disabled');
+      await user.click(item);
+
+      expect(onTemplateSelect).toHaveBeenCalledTimes(1);
+      expect(onTemplateSelect).toHaveBeenCalledWith(firstTemplate);
+    });
+
+    it('renders every template item as disabled when templatesDisabled=true', async () => {
+      const user = userEvent.setup();
+      renderToolbar({ templatesDisabled: true });
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+
+      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+        const item = await screen.findByRole('menuitem', {
+          name: new RegExp(template.name, 'i'),
+          hidden: true,
+        });
+        expect(item).toHaveAttribute('data-disabled');
+      }
     });
   });
 

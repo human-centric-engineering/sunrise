@@ -3,9 +3,9 @@
 /**
  * BuilderToolbar — top bar of the workflow builder.
  *
- * Owns the editable workflow name, a "Use Template" dropdown (still
- * stubbed in 5.1b — wires up in 5.1c) and three action buttons:
- * Save / Validate / Execute. Session 5.1b enables Save and Validate;
+ * Owns the editable workflow name, a "Use template" dropdown (wired to
+ * `BUILTIN_WORKFLOW_TEMPLATES` in 5.1c) and three action buttons:
+ * Save / Validate / Execute. Session 5.1b enabled Save and Validate;
  * Execute stays disabled until Session 5.2 lands the engine.
  */
 
@@ -23,9 +23,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { logger } from '@/lib/logging';
+import {
+  BUILTIN_WORKFLOW_TEMPLATES,
+  type WorkflowTemplate,
+} from '@/lib/orchestration/workflows/templates';
 
-const EXECUTE_TOOLTIP = 'Available in Session 5.2';
+const EXECUTE_TOOLTIP = 'Execution engine arrives in Session 5.2';
 
 export interface BuilderToolbarProps {
   workflowName: string;
@@ -35,6 +38,10 @@ export interface BuilderToolbarProps {
   onValidate: () => void;
   /** Called when the Save button is clicked. */
   onSave: () => void;
+  /** Called when a template is picked from the dropdown. */
+  onTemplateSelect: (template: WorkflowTemplate) => void;
+  /** True when the template dropdown should render its items as disabled (edit mode). */
+  templatesDisabled: boolean;
   /** True while a save is in flight — Save shows a spinner. */
   saving: boolean;
   /** True when live validation is reporting at least one error — Save outlines in red. */
@@ -47,6 +54,8 @@ export function BuilderToolbar({
   mode,
   onValidate,
   onSave,
+  onTemplateSelect,
+  templatesDisabled,
   saving,
   hasErrors,
 }: BuilderToolbarProps) {
@@ -79,15 +88,28 @@ export function BuilderToolbar({
             Use template
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-72">
           <DropdownMenuLabel>Templates</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            disabled
-            onClick={() => logger.info('template selection stubbed in 5.1b')}
-          >
-            Template loading arrives in Session 5.1c
-          </DropdownMenuItem>
+          {templatesDisabled && (
+            <p className="text-muted-foreground px-2 py-1.5 text-xs">
+              Templates can only be loaded on a new workflow.
+            </p>
+          )}
+          {BUILTIN_WORKFLOW_TEMPLATES.map((template) => (
+            <DropdownMenuItem
+              key={template.slug}
+              disabled={templatesDisabled}
+              onSelect={(event) => {
+                event.preventDefault();
+                onTemplateSelect(template);
+              }}
+              className="flex-col items-start gap-0.5"
+            >
+              <span className="text-sm font-medium">{template.name}</span>
+              <span className="text-muted-foreground text-xs">{template.shortDescription}</span>
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
 

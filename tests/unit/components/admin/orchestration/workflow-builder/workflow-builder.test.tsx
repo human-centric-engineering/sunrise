@@ -23,7 +23,12 @@ import type { ReactNode } from 'react';
 // ─── @xyflow/react mock ───────────────────────────────────────────────────────
 
 // nodesState captures the initial nodes passed to useNodesState for assertions.
+// `lastNodesStateArg` is reset to `initial` on every render call of the hook.
+// `setNodesArrayCalls` captures every non-function setNodes invocation so tests
+// can observe state updates triggered by user actions (e.g. loading a template)
+// even after the component re-renders.
 let lastNodesStateArg: unknown[] = [];
+let setNodesArrayCalls: unknown[][] = [];
 
 vi.mock('@xyflow/react', () => {
   const ReactFlow = () => <div data-testid="rf-canvas" />;
@@ -50,6 +55,7 @@ vi.mock('@xyflow/react', () => {
           lastNodesStateArg = (updater as (prev: unknown[]) => unknown[])(lastNodesStateArg);
         } else {
           lastNodesStateArg = updater as unknown[];
+          setNodesArrayCalls.push(updater as unknown[]);
         }
       });
       return [initial, setNodes, vi.fn()];
@@ -113,6 +119,7 @@ vi.mock('next/navigation', () => ({
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
 import type { AiWorkflow } from '@prisma/client';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
@@ -157,6 +164,7 @@ describe('WorkflowBuilder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lastNodesStateArg = [];
+    setNodesArrayCalls = [];
     // Default: apiClient.get returns empty capabilities
     vi.mocked(apiClient.get).mockResolvedValue([]);
   });
@@ -383,6 +391,84 @@ describe('WorkflowBuilder', () => {
       await expect(
         user.click(screen.getByRole('button', { name: /validate/i }))
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe('5.1c: template selection', () => {
+    it('opens the template description dialog when a template is picked', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="create" />);
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const item = await screen.findByRole('menuitem', {
+        name: new RegExp(template.name, 'i'),
+        hidden: true,
+      });
+      await user.click(item);
+
+      // The description dialog should now be open with its confirm button.
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /use this template/i })).toBeInTheDocument();
+    });
+
+    it('confirming populates the canvas with nodes matching the template step count', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="create" />);
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const item = await screen.findByRole('menuitem', {
+        name: new RegExp(template.name, 'i'),
+        hidden: true,
+      });
+      await user.click(item);
+
+      // Snapshot how many setNodes(array) calls occurred before the confirm;
+      // the confirm handler should push exactly one more entry whose length
+      // matches the template's step count.
+      const before = setNodesArrayCalls.length;
+      await user.click(screen.getByRole('button', { name: /use this template/i }));
+
+      const templateCall = setNodesArrayCalls
+        .slice(before)
+        .find((nodes) => nodes.length === template.workflowDefinition.steps.length);
+      expect(templateCall).toBeDefined();
+    });
+
+    it('confirming replaces the workflow name with the template name', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="create" />);
+
+      const nameInput = screen.getByRole('textbox', { name: /workflow name/i });
+      expect((nameInput as HTMLInputElement).value).toBe('Untitled workflow');
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const item = await screen.findByRole('menuitem', {
+        name: new RegExp(template.name, 'i'),
+        hidden: true,
+      });
+      await user.click(item);
+
+      await user.click(screen.getByRole('button', { name: /use this template/i }));
+
+      expect((nameInput as HTMLInputElement).value).toBe(template.name);
+    });
+
+    it('renders template items as disabled in edit mode', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
+
+      await user.click(screen.getByRole('button', { name: /use template/i }));
+
+      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+        const item = await screen.findByRole('menuitem', {
+          name: new RegExp(template.name, 'i'),
+          hidden: true,
+        });
+        expect(item).toHaveAttribute('data-disabled');
+      }
     });
   });
 

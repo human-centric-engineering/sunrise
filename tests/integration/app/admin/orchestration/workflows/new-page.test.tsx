@@ -19,27 +19,40 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 // ─── @xyflow/react mock ───────────────────────────────────────────────────────
+//
+// `useNodesState` / `useEdgesState` are backed by real `useState` so the
+// builder's save path sees nodes that were loaded from a template. The
+// dispatcher ignores React Flow's applyChanges semantics — we only need
+// setNodes(array) to trigger a re-render with those nodes.
 
-vi.mock('@xyflow/react', () => ({
-  ReactFlow: () => <div data-testid="rf-canvas" />,
-  ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  Handle: () => null,
-  Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
-  Background: () => null,
-  Controls: () => null,
-  MiniMap: () => null,
-  useReactFlow: vi.fn(() => ({
-    screenToFlowPosition: vi.fn(({ x, y }: { x: number; y: number }) => ({ x, y })),
-    setCenter: vi.fn(),
-    getNode: vi.fn(),
-  })),
-  useNodesState: vi.fn((initial: unknown[]) => [initial, vi.fn(), vi.fn()]),
-  useEdgesState: vi.fn((initial: unknown[]) => [initial, vi.fn(), vi.fn()]),
-  addEdge: vi.fn((edge: unknown, edges: unknown[]) => [...edges, edge]),
-}));
+vi.mock('@xyflow/react', async () => {
+  return {
+    ReactFlow: () => <div data-testid="rf-canvas" />,
+    ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Handle: () => null,
+    Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
+    Background: () => null,
+    Controls: () => null,
+    MiniMap: () => null,
+    useReactFlow: vi.fn(() => ({
+      screenToFlowPosition: vi.fn(({ x, y }: { x: number; y: number }) => ({ x, y })),
+      setCenter: vi.fn(),
+      getNode: vi.fn(),
+    })),
+    useNodesState: vi.fn((initial: unknown[]) => {
+      const [nodes, setNodes] = useState<unknown[]>(initial);
+      return [nodes, setNodes, vi.fn()];
+    }),
+    useEdgesState: vi.fn((initial: unknown[]) => {
+      const [edges, setEdges] = useState<unknown[]>(initial);
+      return [edges, setEdges, vi.fn()];
+    }),
+    addEdge: vi.fn((edge: unknown, edges: unknown[]) => [...edges, edge]),
+  };
+});
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
@@ -91,6 +104,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { apiClient } from '@/lib/api/client';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -185,6 +199,58 @@ describe('NewWorkflowPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
+  });
+
+  it('loading a template populates the canvas and POSTs its WorkflowDefinition on save', async () => {
+    // Radix Dialog temporarily sets `pointer-events: none` on <body> while
+    // its close animation runs; in jsdom that gate never releases, which
+    // blocks subsequent user.click calls. Disabling the pointer-events
+    // check is the standard workaround.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-wf-1' });
+
+    const { default: NewWorkflowPage } =
+      await import('@/app/admin/orchestration/workflows/new/page');
+
+    render(<NewWorkflowPage />);
+
+    // Open the Use template dropdown and pick the first template.
+    await user.click(screen.getByRole('button', { name: /use template/i }));
+    const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+    const item = await screen.findByRole('menuitem', {
+      name: new RegExp(template.name, 'i'),
+      hidden: true,
+    });
+    await user.click(item);
+
+    // Description dialog — confirm to load the template onto the canvas.
+    await user.click(screen.getByRole('button', { name: /use this template/i }));
+
+    // Description dialog should close once the template is loaded.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /use this template/i })).not.toBeInTheDocument();
+    });
+
+    // Open the save dialog and confirm with a description. Radix Dialog
+    // pollutes the tree with aria-hidden on sibling regions during its
+    // close animation, so query with hidden: true.
+    const createBtn = await screen.findByRole('button', { name: /create workflow/i, hidden: true });
+    await user.click(createBtn);
+    await user.type(screen.getByRole('textbox', { name: /description/i }), 'Loaded from template');
+    await user.click(screen.getByRole('button', { name: /save workflow/i }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+    });
+
+    const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+    const body = options?.body as {
+      name: string;
+      workflowDefinition: { steps: unknown[]; entryStepId: string };
+    };
+    expect(body.name).toBe(template.name);
+    expect(body.workflowDefinition.steps).toHaveLength(template.workflowDefinition.steps.length);
+    expect(body.workflowDefinition.entryStepId).toBe(template.workflowDefinition.entryStepId);
   });
 
   it('confirming dialog with empty canvas shows an inline error (no nodes to save)', async () => {

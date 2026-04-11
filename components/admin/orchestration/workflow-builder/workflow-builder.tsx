@@ -41,6 +41,7 @@ import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 import { BlockConfigPanel } from './block-config-panel';
 import { BuilderToolbar } from './builder-toolbar';
 import { PatternPalette } from './pattern-palette';
+import { TemplateDescriptionDialog } from './template-description-dialog';
 import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
 import { WorkflowCanvas } from './workflow-canvas';
 import { WorkflowDetailsDialog } from './workflow-details-dialog';
@@ -52,6 +53,7 @@ import {
   type PatternNode,
 } from './workflow-mappers';
 import type { CapabilityOption } from './block-editors';
+import type { WorkflowTemplate } from '@/lib/orchestration/workflows/templates';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
@@ -110,6 +112,12 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
 
   // Capabilities for the Tool Call editor — fetched once on mount.
   const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>([]);
+
+  // Template selection state. `pendingTemplate` drives the description
+  // dialog — a null value hides it. The dialog confirms before the canvas
+  // is actually replaced so we don't clobber in-progress work.
+  const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,6 +236,34 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
   }, []);
 
   // ------------------------------------------------------------------
+  // Template selection
+  // ------------------------------------------------------------------
+
+  const handleTemplateSelect = useCallback((template: WorkflowTemplate) => {
+    setPendingTemplate(template);
+    setTemplateDialogOpen(true);
+  }, []);
+
+  const handleTemplateDialogOpenChange = useCallback((open: boolean) => {
+    setTemplateDialogOpen(open);
+    if (!open) setPendingTemplate(null);
+  }, []);
+
+  const handleTemplateConfirm = useCallback(() => {
+    if (!pendingTemplate) return;
+    const { nodes: templateNodes, edges: templateEdges } = workflowDefinitionToFlow(
+      pendingTemplate.workflowDefinition
+    );
+    setNodes(templateNodes);
+    setEdges(templateEdges);
+    setWorkflowName(pendingTemplate.name);
+    setSelectedNodeId(null);
+    setSaveError(null);
+    setTemplateDialogOpen(false);
+    setPendingTemplate(null);
+  }, [pendingTemplate, setEdges, setNodes]);
+
+  // ------------------------------------------------------------------
   // Save flow
   // ------------------------------------------------------------------
 
@@ -297,6 +333,8 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
         onNameChange={setWorkflowName}
         onValidate={handleValidate}
         onSave={handleSave}
+        onTemplateSelect={handleTemplateSelect}
+        templatesDisabled={mode === 'edit'}
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
@@ -343,6 +381,14 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
         initial={details ?? undefined}
         onOpenChange={setSaveDialogOpen}
         onConfirm={handleDialogConfirm}
+      />
+
+      <TemplateDescriptionDialog
+        open={templateDialogOpen}
+        template={pendingTemplate}
+        canvasHasContent={nodes.length > 0}
+        onOpenChange={handleTemplateDialogOpenChange}
+        onConfirm={handleTemplateConfirm}
       />
     </div>
   );

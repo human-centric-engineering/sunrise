@@ -107,7 +107,9 @@ Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflo
 
 **What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 9 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
-**What it defers:** Execute remains disabled until Session 5.2 wires the engine. Chain sub-step editor, templates dropdown, and inline edge-condition editing land in 5.1c.
+**What it defers:** Execute remains disabled until Session 5.2 wires the engine. Chain sub-step editor and inline edge-condition editing are future work.
+
+**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 5 built-in composition recipes from `lib/orchestration/workflows/templates/` — pure TS, no network call. Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning). `prisma/seed.ts` also upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
 
 **UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON. Session 5.2 will decide which of these the engine enforces and which stay advisory. The same goes for `step.config._layout` — UI metadata, ignored by the validator.
 
