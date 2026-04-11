@@ -1,6 +1,7 @@
 /**
  * Integration Test: Admin Orchestration Agent Capabilities
  *
+ * GET    /api/v1/admin/orchestration/agents/:id/capabilities           (list)
  * POST   /api/v1/admin/orchestration/agents/:id/capabilities          (attach)
  * PATCH  /api/v1/admin/orchestration/agents/:id/capabilities/:capId   (update link)
  * DELETE /api/v1/admin/orchestration/agents/:id/capabilities/:capId   (detach)
@@ -11,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST } from '@/app/api/v1/admin/orchestration/agents/[id]/capabilities/route';
+import { GET, POST } from '@/app/api/v1/admin/orchestration/agents/[id]/capabilities/route';
 import {
   PATCH,
   DELETE,
@@ -38,6 +39,7 @@ vi.mock('@/lib/db/client', () => ({
     aiAgent: { findUnique: vi.fn() },
     aiCapability: { findUnique: vi.fn() },
     aiAgentCapability: {
+      findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -395,6 +397,91 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id/capabilities/:capId', ()
       );
 
       expect(response.status).toBe(404);
+    });
+  });
+});
+
+// ─── Tests: GET /agents/:id/capabilities ────────────────────────────────────
+
+describe('GET /api/v1/admin/orchestration/agents/:id/capabilities', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+  });
+
+  describe('Authentication & Authorization', () => {
+    it('returns 401 when unauthenticated', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+      const response = await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+      expect(response.status).toBe(401);
+    });
+
+    it('returns 403 when authenticated as non-admin', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+      const response = await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+      expect(response.status).toBe(403);
+    });
+  });
+
+  describe('404 on missing agent', () => {
+    it('returns 404 when agent does not exist', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+      const response = await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+      expect(response.status).toBe(404);
+    });
+  });
+
+  describe('Successful list', () => {
+    it('returns 200 with attached pivot rows', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      const mockLinks = [{ ...makeLink(), capability: makeCapability() }];
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue(mockLinks as never);
+
+      const response = await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+      const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data).toHaveLength(1);
+    });
+
+    it('returns empty array when agent has no capabilities attached', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([] as never);
+
+      const response = await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+      const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data).toHaveLength(0);
+    });
+
+    it('calls findMany with include capability and orderBy capability.name asc', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([] as never);
+
+      await GET(makeAttachRequest({}), makeAttachParams(AGENT_ID));
+
+      expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { agentId: AGENT_ID },
+          include: { capability: true },
+          orderBy: { capability: { name: 'asc' } },
+        })
+      );
+    });
+  });
+
+  describe('Validation', () => {
+    it('returns 400 for invalid agent CUID', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const response = await GET(makeAttachRequest({}), makeAttachParams('bad-id'));
+      expect(response.status).toBe(400);
     });
   });
 });

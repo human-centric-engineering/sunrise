@@ -207,6 +207,8 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Orchestration Endpoints | `.context/api/orchestration-endpoints.md`   | Consumer HTTP reference for all 41 routes     |
 | SSE Bridge              | `.context/api/sse.md`                       | `sseResponse` helper, framing, sanitization   |
 | Orchestration Dashboard | `.context/admin/orchestration-dashboard.md` | Admin landing page, data sources, layout      |
+| Agents List / Pages     | `.context/admin/orchestration-agents.md`    | List, create, edit shells; table, bulk export |
+| Agent Form              | `.context/admin/agent-form.md`              | 5-tab create/edit form, FieldHelp reference   |
 | Setup Wizard            | `.context/admin/setup-wizard.md`            | 5-step guided setup flow, resume behavior     |
 | Contextual Help         | `.context/ui/contextual-help.md`            | `<FieldHelp>` directive for form fields       |
 | UI Hooks                | `.context/ui/hooks.md`                      | `useLocalStorage`, `useWizard`                |

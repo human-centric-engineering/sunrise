@@ -22,9 +22,10 @@
  */
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, X } from 'lucide-react';
 
+import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -648,86 +649,6 @@ interface StepTestAgentProps {
 }
 
 function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
-  const [message, setMessage] = useState('Hello! Can you tell me what you help with?');
-  const [reply, setReply] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
-
-  async function handleSend(event: React.FormEvent) {
-    event.preventDefault();
-    if (!agentSlug) {
-      setError('No agent slug — go back and create an agent first.');
-      return;
-    }
-    setError(null);
-    setReply('');
-    setStreaming(true);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
-        method: 'POST',
-        credentials: 'include',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentSlug, message }),
-      });
-
-      if (!res.ok || !res.body) {
-        setError('Chat stream failed to start. Try again in a moment.');
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      // Parse standard SSE: blocks separated by "\n\n", each block a set of
-      // `event:` / `data:` lines.
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let sepIndex;
-        while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-          const block = buffer.slice(0, sepIndex);
-          buffer = buffer.slice(sepIndex + 2);
-          const event = parseSseBlock(block);
-          if (!event) continue;
-
-          if (event.type === 'content' && typeof event.data.content === 'string') {
-            const chunk = event.data.content;
-            setReply((prev) => prev + chunk);
-          } else if (event.type === 'error') {
-            // Never forward raw server error text to the UI — show a friendly
-            // fallback. Detailed errors are logged server-side only.
-            setError('The agent ran into a problem. Check the server logs for details.');
-            return;
-          } else if (event.type === 'done') {
-            return;
-          }
-        }
-      }
-    } catch (err) {
-      // Swallow abort-on-unmount; show a friendly message for everything else.
-      if (err instanceof Error && err.name === 'AbortError') return;
-      setError('Could not reach the chat stream. Try again in a moment.');
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }
-
   return (
     <div className="space-y-4">
       <p className="text-sm">
@@ -735,41 +656,7 @@ function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
         working.
       </p>
 
-      <form
-        onSubmit={(e) => {
-          void handleSend(e);
-        }}
-        className="space-y-2"
-      >
-        <Label htmlFor="chat-input">Your message</Label>
-        <Textarea
-          id="chat-input"
-          rows={2}
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          disabled={streaming}
-        />
-        <div className="flex justify-end">
-          <Button type="submit" size="sm" disabled={streaming || !message.trim()}>
-            {streaming ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                Streaming…
-              </>
-            ) : (
-              'Send'
-            )}
-          </Button>
-        </div>
-      </form>
-
-      <div className="bg-muted/30 min-h-[100px] rounded-md border p-3 text-sm whitespace-pre-wrap">
-        {reply || (
-          <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
-        )}
-      </div>
-
-      {error && <div className="text-destructive text-sm">{error}</div>}
+      <AgentTestChat agentSlug={agentSlug} />
 
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={onNext}>
@@ -778,32 +665,6 @@ function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
       </div>
     </div>
   );
-}
-
-interface ParsedSseEvent {
-  type: string;
-  data: Record<string, unknown>;
-}
-
-function parseSseBlock(block: string): ParsedSseEvent | null {
-  const lines = block.split('\n');
-  let eventType: string | null = null;
-  const dataLines: string[] = [];
-  for (const line of lines) {
-    if (line.startsWith(':')) continue; // comment / keepalive
-    if (line.startsWith('event:')) {
-      eventType = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trim());
-    }
-  }
-  if (!eventType || dataLines.length === 0) return null;
-  try {
-    const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-    return { type: eventType, data };
-  } catch {
-    return null;
-  }
 }
 
 // ----------------------------------------------------------------------------

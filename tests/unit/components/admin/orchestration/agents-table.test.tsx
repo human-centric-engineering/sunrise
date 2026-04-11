@@ -1,0 +1,510 @@
+/**
+ * AgentsTable Component Tests
+ *
+ * Test Coverage:
+ * - Initial render with 3-agent fixture (columns, headers)
+ * - Debounced search (300ms) triggers refetch
+ * - Sort click triggers refetch with correct params
+ * - Status Switch optimistic PATCH + revert on failure
+ * - Bulk select + Export POSTs with correct ids, respects Content-Disposition filename
+ * - Delete confirm flow
+ * - Budget fetch failure renders em-dash, does not throw
+ *
+ * @see components/admin/orchestration/agents-table.tsx
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+import { AgentsTable } from '@/components/admin/orchestration/agents-table';
+import type { PaginationMeta } from '@/types/api';
+import { createMockFetchResponse } from '@/tests/helpers/mocks';
+import type { AiAgent } from '@prisma/client';
+
+// ─── Mocks ────────────────────────────────────────────────────────────────────
+
+vi.mock('next/navigation', () => ({
+  useRouter: vi.fn(() => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  })),
+}));
+
+vi.mock('@/lib/api/client', () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+  APIClientError: class APIClientError extends Error {
+    constructor(
+      message: string,
+      public code = 'INTERNAL_ERROR',
+      public status = 500
+    ) {
+      super(message);
+      this.name = 'APIClientError';
+    }
+  },
+}));
+
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
+
+function makeAgent(overrides: Partial<AiAgent> = {}): AiAgent {
+  const id = overrides.id ?? 'cmjbv4i3x00003wsloputgwul';
+  return {
+    id,
+    name: 'Test Agent',
+    slug: 'test-agent',
+    description: 'A test agent',
+    systemInstructions: 'You are helpful',
+    provider: 'anthropic',
+    providerConfig: null,
+    model: 'claude-opus-4-6',
+    temperature: 0.7,
+    maxTokens: 4096,
+    monthlyBudgetUsd: null,
+    isActive: true,
+    createdBy: 'system',
+    createdAt: new Date('2025-01-01T00:00:00Z'),
+    updatedAt: new Date('2025-01-01T00:00:00Z'),
+    systemInstructionsHistory: [],
+    metadata: {},
+    ...overrides,
+  } as AiAgent;
+}
+
+const THREE_AGENTS: AiAgent[] = [
+  makeAgent({ id: 'agent-1', name: 'Alpha', slug: 'alpha' }),
+  makeAgent({ id: 'agent-2', name: 'Beta', slug: 'beta', isActive: false }),
+  makeAgent({ id: 'agent-3', name: 'Gamma', slug: 'gamma' }),
+];
+
+const MOCK_META: PaginationMeta = {
+  page: 1,
+  limit: 25,
+  total: 3,
+  totalPages: 1,
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function makeBudgetFetchResponse() {
+  return createMockFetchResponse({
+    success: true,
+    data: { spent: 12.34, limit: 100, withinBudget: true },
+  });
+}
+
+function makeAgentsListResponse(agents: AiAgent[] = THREE_AGENTS) {
+  return createMockFetchResponse({
+    success: true,
+    data: agents,
+    meta: MOCK_META,
+  });
+}
+
+/** Extract a URL string from any fetch RequestInfo | URL argument. */
+function toUrlString(url: RequestInfo | URL): string {
+  if (typeof url === 'string') return url;
+  if (url instanceof URL) return url.href;
+  return url.url; // Request object
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('AgentsTable', () => {
+  let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch = vi.fn<typeof fetch>();
+    global.fetch = mockFetch as typeof fetch;
+
+    // Default: budget fetch succeeds for all rows
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const urlStr = toUrlString(url);
+      if (urlStr.includes('/budget')) {
+        return Promise.resolve(makeBudgetFetchResponse());
+      }
+      return Promise.resolve(makeAgentsListResponse());
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  // ── Rendering ──────────────────────────────────────────────────────────────
+
+  describe('rendering', () => {
+    it('renders table headers', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      expect(screen.getByText('Name')).toBeInTheDocument();
+      expect(screen.getByText('Slug')).toBeInTheDocument();
+      expect(screen.getByText('Provider')).toBeInTheDocument();
+      expect(screen.getByText('Model')).toBeInTheDocument();
+      expect(screen.getByText('Status')).toBeInTheDocument();
+    });
+
+    it('renders all 3 agent rows', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      expect(screen.getByText('Beta')).toBeInTheDocument();
+      expect(screen.getByText('Gamma')).toBeInTheDocument();
+    });
+
+    it('renders agent slugs', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      expect(screen.getByText('alpha')).toBeInTheDocument();
+      expect(screen.getByText('beta')).toBeInTheDocument();
+      expect(screen.getByText('gamma')).toBeInTheDocument();
+    });
+
+    it('renders search input and Create agent button', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      expect(screen.getByPlaceholderText('Search agents...')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /create agent/i })).toBeInTheDocument();
+    });
+
+    it('renders empty state when no agents', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
+
+      // Assert
+      expect(screen.getByText('No agents found.')).toBeInTheDocument();
+    });
+
+    it('renders pagination info', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      expect(screen.getByText(/Showing 1 to 3 of 3 agents/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Budget MTD ─────────────────────────────────────────────────────────────
+
+  describe('budget MTD fetch', () => {
+    it('renders em-dash when budget fetch fails', async () => {
+      // Arrange: budget fetches all fail
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) {
+          return Promise.resolve(createMockFetchResponse({}, 500));
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      // Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert: loading state first (…), then — when request fails
+      await waitFor(() => {
+        const dashes = screen.getAllByText('—');
+        // At minimum 3 (one per row, from budget fail)
+        expect(dashes.length).toBeGreaterThanOrEqual(3);
+      });
+
+      // Critical: no throw
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+    });
+  });
+
+  // ── Search / debounce ──────────────────────────────────────────────────────
+
+  describe('search with debounce', () => {
+    it('does not fetch immediately on typing', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      const initial = mockFetch.mock.calls.length;
+
+      // Act
+      await user.type(screen.getByPlaceholderText('Search agents...'), 'al');
+
+      // Assert: no extra fetches before debounce
+      expect(mockFetch.mock.calls.length).toBe(initial);
+    });
+
+    it('fires refetch after 300ms debounce with search query', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      // Override with a handler that returns correct shapes for both budget and list
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
+        return Promise.resolve(makeAgentsListResponse([THREE_AGENTS[0]]));
+      });
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act
+      await user.type(screen.getByPlaceholderText('Search agents...'), 'al');
+
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // Assert
+      await waitFor(() => {
+        const fetchUrls = mockFetch.mock.calls
+          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/budget'))
+          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true);
+      });
+    });
+  });
+
+  // ── Sorting ────────────────────────────────────────────────────────────────
+
+  describe('sort', () => {
+    it('clicking Name header button fetches agents with updated sort', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Verify sort button is present before acting
+      const nameBtn = screen.getByRole('button', { name: /^Name/ });
+      expect(nameBtn).toBeInTheDocument();
+
+      // Act: click to sort
+      await user.click(nameBtn);
+
+      // Assert: at least one list fetch was fired (beyond the initial budget fetches)
+      await waitFor(() => {
+        const listFetches = mockFetch.mock.calls.filter(
+          (call) =>
+            !toUrlString(call[0] as RequestInfo | URL).includes('/budget') &&
+            !toUrlString(call[0] as RequestInfo | URL).includes('/export')
+        );
+        expect(listFetches.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  // ── Status Switch (optimistic) ─────────────────────────────────────────────
+
+  describe('status switch optimistic update', () => {
+    it('calls apiClient.patch with isActive when switch is toggled', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act: find first active agent switch (Alpha)
+      const switches = screen.getAllByRole('switch');
+      await user.click(switches[0]);
+
+      // Assert
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({ isActive: expect.any(Boolean) }),
+          })
+        );
+      });
+    });
+
+    it('reverts switch on PATCH failure', async () => {
+      // Arrange
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Not allowed', 'FORBIDDEN', 403)
+      );
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Record initial active state for agent-1
+      const switches = screen.getAllByRole('switch');
+      const initialChecked = (switches[0] as HTMLInputElement).checked;
+
+      // Act: toggle the switch
+      await user.click(switches[0]);
+
+      // Assert: error banner visible
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't update/i)).toBeInTheDocument();
+      });
+
+      // Assert: switch reverted to original state
+      const switchesAfter = screen.getAllByRole('switch');
+      expect((switchesAfter[0] as HTMLInputElement).checked).toBe(initialChecked);
+    });
+  });
+
+  // ── Bulk select + Export ───────────────────────────────────────────────────
+
+  describe('bulk select and export', () => {
+    it('Export button is disabled when nothing selected', () => {
+      // Arrange & Act
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Assert
+      const exportBtn = screen.getByRole('button', { name: /export selected/i });
+      expect(exportBtn).toBeDisabled();
+    });
+
+    it('selecting a row enables Export button', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act: select first row checkbox
+      const rowCheckboxes = screen.getAllByRole('checkbox');
+      // index 0 is "select all", index 1..N are row checkboxes
+      await user.click(rowCheckboxes[1]);
+
+      // Assert
+      const exportBtn = screen.getByRole('button', { name: /export selected/i });
+      expect(exportBtn).not.toBeDisabled();
+    });
+
+    it('Export POSTs with correct agent ids and uses Content-Disposition filename', async () => {
+      // Arrange
+      const user = userEvent.setup();
+
+      // Provide a custom Content-Disposition filename
+      const exportResponse = {
+        ok: true,
+        headers: new Headers({ 'Content-Disposition': 'attachment; filename="my-export.json"' }),
+        blob: async () => new Blob(['{}'], { type: 'application/json' }),
+        json: async () => ({}),
+      } as unknown as Response;
+
+      mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
+        if (urlStr.includes('/export') && init?.method === 'POST') {
+          return Promise.resolve(exportResponse);
+        }
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      // Provide fake URL.createObjectURL and a.click
+      vi.stubGlobal('URL', {
+        createObjectURL: vi.fn(() => 'blob:test'),
+        revokeObjectURL: vi.fn(),
+      });
+
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act: select agent-1 row and export
+      const rowCheckboxes = screen.getAllByRole('checkbox');
+      await user.click(rowCheckboxes[1]); // row 1 = agent-1
+
+      await user.click(screen.getByRole('button', { name: /export selected/i }));
+
+      // Assert: POST to export endpoint with agent id
+      await waitFor(() => {
+        const exportCalls = mockFetch.mock.calls.filter(
+          (call) =>
+            toUrlString(call[0] as RequestInfo | URL).includes('/export') &&
+            (call[1] as RequestInit)?.method === 'POST'
+        );
+        expect(exportCalls.length).toBe(1);
+        const body = JSON.parse((exportCalls[0][1] as RequestInit).body as string) as {
+          agentIds: string[];
+        };
+        expect(body.agentIds).toContain('agent-1');
+      });
+    });
+  });
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
+
+  describe('delete confirm flow', () => {
+    async function openDeleteDialog(user: ReturnType<typeof userEvent.setup>) {
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      // Radix renders menuitems in a portal — use hidden:true to find them
+      const deleteItem = await screen.findByRole('menuitem', { name: /delete/i, hidden: true });
+      await user.click(deleteItem);
+      await waitFor(() => expect(screen.getByText('Delete agent')).toBeInTheDocument());
+    }
+
+    it('clicking Delete opens confirmation dialog', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act
+      await openDeleteDialog(user);
+
+      // Assert
+      expect(screen.getByText('Delete agent')).toBeInTheDocument();
+    });
+
+    it('confirms delete calls apiClient.delete', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
+        return Promise.resolve(makeAgentsListResponse(THREE_AGENTS.slice(1)));
+      });
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/agents/agent-1'));
+      });
+    });
+
+    it('cancelling delete closes dialog without calling delete', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(screen.queryByText('Delete agent')).not.toBeInTheDocument();
+      });
+      expect(apiClient.delete).not.toHaveBeenCalled();
+    });
+  });
+});

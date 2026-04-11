@@ -14,7 +14,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | ------------------------------------------------------------- | ------------------ | --------------------------------------------------- |
 | `/api/v1/admin/orchestration/agents`                          | GET, POST          | List / create agents                                |
 | `/api/v1/admin/orchestration/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete an agent                |
-| `/api/v1/admin/orchestration/agents/:id/capabilities`         | POST               | Attach a capability to an agent                     |
+| `/api/v1/admin/orchestration/agents/:id/capabilities`         | GET, POST          | List attached pivots / attach a capability          |
 | `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row         |
 | `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail      |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version   |
@@ -103,6 +103,14 @@ All `updateAgentSchema` fields are optional and applied conditionally. The **onl
 `DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
 
 ## Agent ↔ Capability pivot
+
+### List attached capabilities
+
+```
+GET /api/v1/admin/orchestration/agents/:id/capabilities
+```
+
+Returns every `AiAgentCapability` pivot row for the agent with the related `AiCapability` eagerly loaded (ordered by `capability.name asc`). 404 when the agent doesn't exist. Admin-auth gated, rate-limited. This is the endpoint the agent edit page's Capabilities tab reads to populate the "Attached" column — see [`../admin/agent-form.md`](../admin/agent-form.md).
 
 ### Attach a capability
 

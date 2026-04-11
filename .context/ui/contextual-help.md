@@ -75,5 +75,6 @@ When a setting has deeper explanation in the Pattern Explorer (Phase 6), include
 
 ## Related
 
-- [Setup Wizard](../admin/setup-wizard.md) — reference implementation
+- [Agent form](../admin/agent-form.md) — **reference implementation** for the directive (every FieldHelp copy line is documented verbatim there)
+- [Setup Wizard](../admin/setup-wizard.md) — first application of the directive
 - [Hooks reference](./hooks.md)

@@ -57,10 +57,24 @@ export const API = {
     /** AI Orchestration admin endpoints (Phase 3 / Phase 4) */
     ORCHESTRATION: {
       AGENTS: '/api/v1/admin/orchestration/agents',
+      AGENTS_EXPORT: '/api/v1/admin/orchestration/agents/export',
+      AGENTS_IMPORT: '/api/v1/admin/orchestration/agents/import',
       agentById: (id: string): string => `/api/v1/admin/orchestration/agents/${id}`,
       agentBudget: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/budget`,
+      agentCapabilities: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/capabilities`,
+      agentCapabilityById: (id: string, capId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/capabilities/${capId}`,
+      agentInstructionsHistory: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
+      agentInstructionsRevert: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
+      capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       PROVIDERS: '/api/v1/admin/orchestration/providers',
+      providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
+      providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
+      providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
       EXECUTIONS: '/api/v1/admin/orchestration/executions',

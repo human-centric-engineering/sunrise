@@ -8,13 +8,13 @@ Five-step guided flow that walks a new admin from "fresh install" to "I have a w
 
 ## Steps
 
-| #   | Title                   | Purpose                                                             | Auto-skip?                         |
-| --- | ----------------------- | ------------------------------------------------------------------- | ---------------------------------- |
-| 1   | What are you building?  | Phase 6 pattern-advisor placeholder. Disabled textarea + "Skip" CTA | Always skippable                   |
-| 2   | Configure a provider    | Probes `/providers?limit=1`. Inline create form if empty.           | Auto-complete when providers exist |
-| 3   | Create your first agent | Inline form → `POST /agents`                                        | Auto-complete when agents exist    |
-| 4   | Test your agent         | SSE chat: `POST /chat/stream` → `ReadableStream` reader             | —                                  |
-| 5   | What's next             | Static links; `Finish` clears localStorage and closes the dialog    | —                                  |
+| #   | Title                   | Purpose                                                                  | Auto-skip?                         |
+| --- | ----------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
+| 1   | What are you building?  | Phase 6 pattern-advisor placeholder. Disabled textarea + "Skip" CTA      | Always skippable                   |
+| 2   | Configure a provider    | Probes `/providers?limit=1`. Inline create form if empty.                | Auto-complete when providers exist |
+| 3   | Create your first agent | Inline form → `POST /agents`                                             | Auto-complete when agents exist    |
+| 4   | Test your agent         | Embeds `<AgentTestChat>` — same SSE consumer used by the agent edit page | —                                  |
+| 5   | What's next             | Static links; `Finish` clears localStorage and closes the dialog         | —                                  |
 
 ## Behaviour
 
@@ -22,7 +22,7 @@ Five-step guided flow that walks a new admin from "fresh install" to "I have a w
 - **Resume.** Step index + draft form values are persisted under the versioned localStorage key. Closing and reopening the dialog resumes at the same step. `Finish` clears the key.
 - **Versioned key.** `sunrise.orchestration.setup-wizard.v1`. If the stored shape ever changes in a breaking way, bump the version (`.v2`) so stale drafts are silently ignored rather than crashing the parser.
 - **Friendly errors only.** Server errors are never forwarded verbatim. The wizard shows a generic message ("Could not create the provider. Check the name, slug, and env var and try again.") and the underlying API route logs the real error. See `.context/orchestration/chat.md` for the matching server-side sanitization.
-- **Abort on unmount.** The SSE chat step holds an `AbortController` and calls `.abort()` on unmount to clean up in-flight reads.
+- **Abort on unmount.** The SSE chat step holds an `AbortController` and calls `.abort()` on unmount to clean up in-flight reads. As of Session 4.2 this logic lives in the shared `<AgentTestChat>` component (`components/admin/orchestration/agent-test-chat.tsx`), which is also consumed by the agent edit page's Test tab — a regression in one place is caught by both the wizard test and the test-chat unit test.
 
 ## Hooks used
 
