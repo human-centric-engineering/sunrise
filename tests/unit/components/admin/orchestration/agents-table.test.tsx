@@ -507,4 +507,59 @@ describe('AgentsTable', () => {
       expect(apiClient.delete).not.toHaveBeenCalled();
     });
   });
+
+  // ── Pagination boundary ────────────────────────────────────────────────────
+
+  describe('pagination boundary behaviour', () => {
+    it('Previous button is disabled on page 1', () => {
+      // Arrange: page 1 of 2
+      const meta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={meta} />);
+
+      // Assert: Previous disabled
+      const prevBtn = screen.getByRole('button', { name: /previous/i });
+      expect(prevBtn).toBeDisabled();
+    });
+
+    it('Next button is disabled on the last page', () => {
+      // Arrange: already on last page (page 2 of 2)
+      const meta: PaginationMeta = { page: 2, limit: 25, total: 50, totalPages: 2 };
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={meta} />);
+
+      // Assert: Next disabled
+      const nextBtn = screen.getByRole('button', { name: /^next/i });
+      expect(nextBtn).toBeDisabled();
+    });
+
+    it('Next button is enabled on page 1 of 2 and clicking it refetches page 2', async () => {
+      // Arrange: page 1 of 2
+      const meta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
+
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
+        return Promise.resolve(makeAgentsListResponse());
+      });
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={meta} />);
+
+      // Act: click Next
+      const nextBtn = screen.getByRole('button', { name: /^next/i });
+      expect(nextBtn).not.toBeDisabled();
+      await user.click(nextBtn);
+
+      // Assert: a list fetch with page=2 was fired
+      await waitFor(() => {
+        const listFetches = mockFetch.mock.calls
+          .filter(
+            (call) =>
+              !toUrlString(call[0] as RequestInfo | URL).includes('/budget') &&
+              !toUrlString(call[0] as RequestInfo | URL).includes('/export')
+          )
+          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        expect(listFetches.some((u) => u.includes('page=2'))).toBe(true);
+      });
+    });
+  });
 });

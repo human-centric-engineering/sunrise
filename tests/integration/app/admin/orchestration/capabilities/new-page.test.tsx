@@ -154,4 +154,53 @@ describe('NewCapabilityPage (server component)', () => {
     expect(screen.getByRole('link', { name: /ai orchestration/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /capabilities/i })).toBeInTheDocument();
   });
+
+  // ── Fallback branches ──────────────────────────────────────────────────────
+
+  describe('fallback branches', () => {
+    it('renders when serverFetch rejects (network error)', async () => {
+      // Arrange: fetch rejects entirely
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+
+      const { default: NewCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/new/page');
+
+      // Act: should not throw
+      render(await NewCapabilityPage());
+
+      // Assert: structural stability
+      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
+    });
+
+    it('renders when categories fetch returns res.ok=false', async () => {
+      // Arrange: categories endpoint returns a non-ok response
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+
+      const { default: NewCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/new/page');
+
+      render(await NewCapabilityPage());
+
+      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
+    });
+
+    it('renders when parseApiResponse returns success=false', async () => {
+      // Arrange: fetch ok, but parse returns failure
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse).mockResolvedValue({
+        success: false,
+        error: { message: 'Parse failed', code: 'PARSE_ERROR' },
+      });
+
+      const { default: NewCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/new/page');
+
+      render(await NewCapabilityPage());
+
+      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
+    });
+  });
 });

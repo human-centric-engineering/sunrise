@@ -151,4 +151,64 @@ describe('NewAgentPage (server component)', () => {
     expect(thrown).toBe(false);
     expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
   });
+
+  // ── Fallback branches ──────────────────────────────────────────────────────
+
+  describe('fallback branches', () => {
+    it('renders correctly when serverFetch rejects (network error)', async () => {
+      // Arrange: both fetches reject
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+
+      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+      // Act: should not throw
+      render(await NewAgentPage());
+
+      // Assert: structural stability — page heading still renders
+      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+    });
+
+    it('renders correctly when provider fetch returns res.ok=false', async () => {
+      // Arrange: first fetch (providers) returns !ok; second (models) succeeds
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      let callCount = 0;
+      vi.mocked(serverFetch).mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: false } as Response);
+        return Promise.resolve({ ok: true } as Response);
+      });
+      vi.mocked(parseApiResponse).mockResolvedValueOnce({
+        success: true,
+        data: MOCK_MODELS,
+      });
+
+      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+      render(await NewAgentPage());
+
+      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+    });
+
+    it('renders correctly when model parseApiResponse returns success=false', async () => {
+      // Arrange: providers succeed, model parseApiResponse returns failure
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
+        .mockResolvedValueOnce({
+          success: false,
+          error: { message: 'Registry error', code: 'SERVICE_ERROR' },
+        });
+
+      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+      render(await NewAgentPage());
+
+      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+    });
+  });
 });

@@ -194,4 +194,75 @@ describe('EditAgentPage (server component)', () => {
     // Assert: notFound was called
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
+
+  // ── Fallback branches ──────────────────────────────────────────────────────
+
+  describe('provider/model fetch fallbacks', () => {
+    it('renders with null providers when provider fetch rejects', async () => {
+      // Arrange: agent fetch succeeds; provider fetch rejects; model fetch succeeds
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      let callCount = 0;
+      vi.mocked(serverFetch).mockImplementation(() => {
+        callCount++;
+        if (callCount === 2) throw new Error('Network error');
+        return Promise.resolve({ ok: true } as Response);
+      });
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT }) // agent
+        .mockResolvedValueOnce({ success: true, data: MOCK_MODELS }); // models
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      // Act: should not throw
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      // Assert: page still renders its structural heading (graceful degradation)
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /my edit agent/i })).toBeInTheDocument();
+      });
+    });
+
+    it('renders with null providers when provider fetch returns res.ok=false', async () => {
+      // Arrange: agent ok, provider not ok, model ok
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      let callCount = 0;
+      vi.mocked(serverFetch).mockImplementation(() => {
+        callCount++;
+        if (callCount === 2) return Promise.resolve({ ok: false } as Response);
+        return Promise.resolve({ ok: true } as Response);
+      });
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT }) // agent
+        .mockResolvedValueOnce({ success: true, data: MOCK_MODELS }); // models (provider skips parseApiResponse)
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /my edit agent/i })).toBeInTheDocument();
+      });
+    });
+
+    it('renders with null models when model parseApiResponse returns success=false', async () => {
+      // Arrange: agent and provider succeed; model parseApiResponse returns failure
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT })
+        .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
+        .mockResolvedValueOnce({
+          success: false,
+          error: { message: 'Registry unavailable', code: 'SERVICE_ERROR' },
+        });
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /my edit agent/i })).toBeInTheDocument();
+      });
+    });
+  });
 });

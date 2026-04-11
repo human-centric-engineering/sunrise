@@ -174,4 +174,79 @@ describe('EditCapabilityPage (server component)', () => {
 
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
+
+  // ── Fallback branches ──────────────────────────────────────────────────────
+
+  describe('usedBy / categories fallback branches', () => {
+    it('renders when usedBy fetch rejects (network error on secondary fetch)', async () => {
+      // Arrange: capability fetch succeeds; usedBy rejects; categories ok
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      let callCount = 0;
+      vi.mocked(serverFetch).mockImplementation(() => {
+        callCount++;
+        if (callCount === 2) throw new Error('Network error');
+        return Promise.resolve({ ok: true } as Response);
+      });
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY }) // capability
+        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+
+      const { default: EditCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/[id]/page');
+
+      // Act: should not throw — usedBy falls back to []
+      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+
+      // Assert: structural stability
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
+      });
+    });
+
+    it('renders when usedBy fetch returns res.ok=false', async () => {
+      // Arrange: capability ok, usedBy !ok, categories ok
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      let callCount = 0;
+      vi.mocked(serverFetch).mockImplementation(() => {
+        callCount++;
+        if (callCount === 2) return Promise.resolve({ ok: false } as Response);
+        return Promise.resolve({ ok: true } as Response);
+      });
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
+        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+
+      const { default: EditCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/[id]/page');
+
+      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
+      });
+    });
+
+    it('renders when categories parseApiResponse returns success=false', async () => {
+      // Arrange: capability and usedBy succeed; categories parse fails
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
+        .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY })
+        .mockResolvedValueOnce({
+          success: false,
+          error: { message: 'Parse failed', code: 'PARSE_ERROR' },
+        });
+
+      const { default: EditCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/[id]/page');
+
+      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+
+      // Page still renders with empty categories
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
+      });
+    });
+  });
 });
