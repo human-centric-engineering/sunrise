@@ -144,12 +144,14 @@ Response:
     "agentId": "<cuid>",
     "slug": "support-bot",
     "current": "You are a helpful support assistant.",
-    "history": [{ "instructions": "...", "changedAt": "...", "changedBy": "..." }]
+    "history": [
+      { "instructions": "...", "changedAt": "...", "changedBy": "...", "versionIndex": 2 }
+    ]
   }
 }
 ```
 
-`history` is returned **newest first** for UI convenience. The underlying JSON column is stored oldest→newest — that's the ordering `versionIndex` refers to in the revert endpoint. Malformed rows log a warning and return `history: []` rather than failing.
+`history` is returned **newest first** for UI convenience, but each entry carries an explicit `versionIndex` field that points at the **raw oldest→newest DB position** — i.e. the exact value the `/instructions-revert` endpoint expects. Clients should pass `history[n].versionIndex` straight through rather than the array position `n`, otherwise the newest-first display order would silently invert the target version. Malformed rows log a warning and return `history: []` rather than failing.
 
 ### Revert
 
@@ -158,7 +160,7 @@ curl -X POST /api/v1/admin/orchestration/agents/<id>/instructions-revert \
   -d '{ "versionIndex": 0 }'
 ```
 
-Validated by `instructionsRevertSchema`. `versionIndex` is an index into the stored (oldest-first) array. The route:
+Validated by `instructionsRevertSchema`. `versionIndex` is an index into the stored (oldest-first) array — always pass the `versionIndex` carried on the GET response entry, not the array position of the entry in the newest-first list. The route:
 
 1. Fetches the agent.
 2. Parses history via `systemInstructionsHistorySchema.safeParse`. Malformed history → 400 `ValidationError` ("cannot revert").
@@ -907,10 +909,10 @@ Both methods run an ownership check via `findFirst({ where: { id, userId: sessio
 ### Read evaluation logs
 
 ```
-GET /api/v1/admin/orchestration/evaluations/<id>/logs?limit=100&before=<log-cuid>
+GET /api/v1/admin/orchestration/evaluations/<id>/logs?limit=100&before=<sequenceNumber>
 ```
 
-Cursor pagination — `limit` defaults to 100, hard-capped at 500. `before` is a log id; rows are returned where `id < before`, ordered by `sequenceNumber` ascending. Ownership is checked on the parent session; cross-user → 404.
+Cursor pagination — `limit` defaults to 100, hard-capped at 500. `before` is a positive integer `sequenceNumber`; rows are returned where `sequenceNumber < before`, ordered by `sequenceNumber` ascending. The cursor and the order are on the same key, so backward paging is exact (an earlier CUID-cursor implementation was replaced because CUID lexicographic order diverges from numeric sequence order). Ownership is checked on the parent session; cross-user → 404.
 
 ### Complete evaluation
 

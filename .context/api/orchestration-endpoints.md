@@ -445,7 +445,7 @@ Ownership-checked. Cross-user → `404`.
 
 ### `GET /evaluations/:id/logs`
 
-Cursor pagination. Query (`evaluationLogsQuerySchema`): `limit` (1..500, default 100), `before` (log CUID to page back). Ordered by `sequenceNumber` ascending. Ownership on the parent session; cross-user → `404`.
+Cursor pagination. Query (`evaluationLogsQuerySchema`): `limit` (1..500, default 100), `before` (a positive integer `sequenceNumber` — rows with strictly smaller sequence numbers are returned). Ordered by `sequenceNumber` ascending. Ownership on the parent session; cross-user → `404`.
 
 ### `POST /evaluations/:id/complete`
 
