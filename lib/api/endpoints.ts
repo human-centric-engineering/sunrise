@@ -71,6 +71,8 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
+      capabilityAgents: (id: string): string =>
+        `/api/v1/admin/orchestration/capabilities/${id}/agents`,
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,

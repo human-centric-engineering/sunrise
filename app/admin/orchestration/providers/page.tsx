@@ -1,0 +1,57 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
+import { ProvidersList, type ProviderRow } from '@/components/admin/orchestration/providers-list';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { logger } from '@/lib/logging';
+
+export const metadata: Metadata = {
+  title: 'Providers · AI Orchestration',
+  description: 'LLM provider configurations — status, keys, and model catalogues.',
+};
+
+/**
+ * Admin — Providers list page (Phase 4 Session 4.3).
+ *
+ * Thin async server shell. Fetches the provider list (every row
+ * hydrated with `apiKeyPresent: boolean` on the backend) and hands
+ * it to `<ProvidersList>`. Fetch failures never throw — the list
+ * renders empty so the page remains usable.
+ */
+async function getProviders(): Promise<ProviderRow[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<ProviderRow[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('providers list page: initial fetch failed', err);
+    return [];
+  }
+}
+
+export default async function ProvidersListPage() {
+  const providers = await getProviders();
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <nav className="text-muted-foreground mb-1 text-xs">
+          <Link href="/admin/orchestration" className="hover:underline">
+            AI Orchestration
+          </Link>
+          {' / '}
+          <span>Providers</span>
+        </nav>
+        <h1 className="text-2xl font-semibold">Providers</h1>
+        <p className="text-muted-foreground text-sm">
+          LLM backends your agents can call. API keys live in environment variables on the server —
+          this UI only references them by name.
+        </p>
+      </header>
+
+      <ProvidersList initialProviders={providers} />
+    </div>
+  );
+}

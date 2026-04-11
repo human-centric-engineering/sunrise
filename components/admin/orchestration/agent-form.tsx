@@ -14,13 +14,13 @@
  * rest of Phase 4 — copy the voice, not just the structure.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save, X } from 'lucide-react';
+import { AlertCircle, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -42,6 +42,7 @@ import { API } from '@/lib/api/endpoints';
 import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
+import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 /**
@@ -101,10 +102,6 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<
-    { ok: true; modelCount: number } | { ok: false; message: string } | null
-  >(null);
-  const [testingConnection, setTestingConnection] = useState(false);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
   const providerFallback = !providers || providers.length === 0;
@@ -173,35 +170,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
     }
   };
 
-  const handleTestConnection = useCallback(async () => {
-    if (!currentProvider) return;
-    const providerRow = providers?.find((p) => p.slug === currentProvider);
-    if (!providerRow) {
-      setTestResult({
-        ok: false,
-        message: "We don't have a stored config for this provider yet — save it first.",
-      });
-      return;
-    }
-    setTestingConnection(true);
-    setTestResult(null);
-    try {
-      const result = await apiClient.post<{ modelCount: number }>(
-        API.ADMIN.ORCHESTRATION.providerTest(providerRow.id)
-      );
-      setTestResult({ ok: true, modelCount: result.modelCount ?? 0 });
-    } catch {
-      // Never forward raw provider/SDK error text to the UI — the server
-      // route already sanitized it, but we layer on a friendly fallback
-      // regardless.
-      setTestResult({
-        ok: false,
-        message: "Couldn't reach this provider. Check the server logs for details.",
-      });
-    } finally {
-      setTestingConnection(false);
-    }
-  }, [currentProvider, providers]);
+  const currentProviderId = providers?.find((p) => p.slug === currentProvider)?.id ?? null;
 
   return (
     <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
@@ -472,29 +441,11 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             />
           </div>
 
-          <div className="flex items-center gap-3 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleTestConnection()}
-              disabled={testingConnection}
-            >
-              {testingConnection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Test connection
-            </Button>
-            {testResult && testResult.ok && (
-              <span className="flex items-center gap-1 text-sm text-green-600">
-                <Check className="h-4 w-4" />
-                {testResult.modelCount} models available
-              </span>
-            )}
-            {testResult && !testResult.ok && (
-              <span className="flex items-center gap-1 text-sm text-red-600">
-                <X className="h-4 w-4" />
-                {testResult.message}
-              </span>
-            )}
+          <div className="pt-2">
+            <ProviderTestButton
+              providerId={currentProviderId}
+              disabledMessage="We don't have a stored config for this provider yet — save it first."
+            />
           </div>
         </TabsContent>
 

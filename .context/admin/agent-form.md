@@ -57,6 +57,8 @@ Optional number input. When set, the chat handler rejects new turns once MTD spe
 
 Button that POSTs `/providers/:id/test` (where `:id` is the selected provider's row id, resolved via the hydrated provider list). On success: green check + `{modelCount} models available`. On failure: red × + **"Couldn't reach this provider. Check the server logs for details."** — the server route already sanitizes the upstream error, and the client layers on a friendly fallback regardless. Raw SDK error text never reaches the DOM.
 
+**Shared extract (Phase 4 Session 4.3):** This button is now the `<ProviderTestButton>` at `components/admin/orchestration/provider-test-button.tsx`, shared with `<ProviderForm>`. Behaviour is unchanged; when the selected provider slug doesn't yet correspond to a saved row, the button shows a "save it first" disabled message instead of firing the request. See [`orchestration-providers.md`](./orchestration-providers.md#providertestbutton--shared-extract).
+
 ### Help copy
 
 - **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. Default: `anthropic`."

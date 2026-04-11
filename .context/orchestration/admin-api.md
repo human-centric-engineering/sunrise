@@ -22,6 +22,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)           |
 | `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                          |
 | `/api/v1/admin/orchestration/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete a capability            |
+| `/api/v1/admin/orchestration/capabilities/:id/agents`         | GET                | Reverse-lookup — agents attaching this capability   |
 | `/api/v1/admin/orchestration/providers`                       | GET, POST          | List / create LLM provider configs                  |
 | `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config       |
 | `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider       |
@@ -279,6 +280,19 @@ curl -X DELETE /api/v1/admin/orchestration/capabilities/<id>
 ```
 
 Slug collisions on create → 409 `ConflictError`. On PATCH slug collisions → 400 `ValidationError` with `{ slug: ['Slug is already in use'] }`.
+
+### Reverse-lookup: agents using a capability
+
+```
+GET /api/v1/admin/orchestration/capabilities/:id/agents
+```
+
+Returns the minimal agent projection for every agent that currently attaches this capability via the `AiAgentCapability` pivot — `[{ id, name, slug, isActive }]`, ordered by agent name. Empty array if nothing attached; 404 on unknown id; 400 on invalid CUID. Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2.
+
+Consumers:
+
+- **Capabilities list page** — "agents using it" count column (lazy per-row fetch).
+- **Capability edit page** — the Safety tab's "Used by N agents" card, and the delete confirmation dialog (so admins see exactly who breaks when they soft-delete).
 
 ## Providers
 
