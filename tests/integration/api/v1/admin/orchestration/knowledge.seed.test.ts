@@ -124,5 +124,15 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(seedFromChunksJson)).not.toHaveBeenCalled();
+    });
   });
 });

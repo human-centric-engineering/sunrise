@@ -209,6 +209,19 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded on PATCH', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { name: 'Updated' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiProviderConfig.findUnique)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Successful update', () => {
@@ -231,6 +244,38 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       );
       expect(data.success).toBe(true);
       expect(typeof data.data.apiKeyPresent).toBe('boolean');
+    });
+
+    it('updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(makeProvider() as never);
+
+      const fullPayload = {
+        name: 'New Name',
+        slug: 'new-slug',
+        providerType: 'openai-compatible' as const,
+        baseUrl: 'https://api.example.com',
+        apiKeyEnvVar: 'NEW_KEY_ENV',
+        isLocal: false,
+        isActive: false,
+        metadata: { team: 'platform' },
+      };
+
+      await PATCH(makeRequest('PATCH', fullPayload), makeParams(PROVIDER_ID));
+
+      const updateCall = vi.mocked(prisma.aiProviderConfig.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        name: 'New Name',
+        slug: 'new-slug',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://api.example.com',
+        apiKeyEnvVar: 'NEW_KEY_ENV',
+        isLocal: false,
+        isActive: false,
+        metadata: { team: 'platform' },
+      });
     });
 
     it('clears provider cache after update', async () => {
@@ -358,6 +403,18 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id', () => {
       const response = await DELETE(makeRequest('DELETE'), makeParams(PROVIDER_ID));
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(PROVIDER_ID));
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiProviderConfig.findUnique)).not.toHaveBeenCalled();
     });
   });
 

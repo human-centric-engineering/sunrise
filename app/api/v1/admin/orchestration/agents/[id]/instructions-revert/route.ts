@@ -11,8 +11,11 @@
  *
  *   `versionIndex` is interpreted against the stored (oldest→newest)
  *   history array, the same ordering used in the DB. The history GET
- *   endpoint reverses for UI convenience; callers hitting revert
- *   directly should use the raw index.
+ *   endpoint reverses entries for UI convenience but **annotates each
+ *   entry with the same raw `versionIndex`** — callers should pass
+ *   `history[n].versionIndex` from the GET response here rather than
+ *   the array position `n`, otherwise a newest-first UI index would
+ *   silently revert to the wrong version.
  *
  * Authentication: Admin role required.
  */

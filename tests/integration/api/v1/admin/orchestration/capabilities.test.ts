@@ -382,6 +382,21 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
     });
   });
 
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on PATCH', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await PATCH(
+        makeByIdRequest('PATCH', { name: 'Updated' }),
+        makeParams(CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiCapability.findUnique)).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Successful update', () => {
     it('updates capability and clears cache', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
@@ -397,6 +412,44 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
 
       expect(response.status).toBe(200);
       expect(vi.mocked(capabilityDispatcher.clearCache)).toHaveBeenCalledOnce();
+    });
+
+    it('updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
+      vi.mocked(prisma.aiCapability.update).mockResolvedValue(makeCapability() as never);
+
+      const fullPayload = {
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        category: 'new-category',
+        functionDefinition: { name: 'fn', description: 'd', parameters: {} },
+        executionType: 'api' as const,
+        executionHandler: 'https://example.com/handler',
+        executionConfig: { timeout: 5000 },
+        requiresApproval: true,
+        rateLimit: 60,
+        isActive: false,
+        metadata: { owner: 'platform' },
+      };
+
+      await PATCH(makeByIdRequest('PATCH', fullPayload), makeParams(CAPABILITY_ID));
+
+      const updateCall = vi.mocked(prisma.aiCapability.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        category: 'new-category',
+        executionType: 'api',
+        executionHandler: 'https://example.com/handler',
+        executionConfig: { timeout: 5000 },
+        requiresApproval: true,
+        rateLimit: 60,
+        isActive: false,
+        metadata: { owner: 'platform' },
+      });
     });
   });
 
@@ -455,6 +508,18 @@ describe('DELETE /api/v1/admin/orchestration/capabilities/:id', () => {
       const response = await DELETE(makeByIdRequest('DELETE'), makeParams(CAPABILITY_ID));
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await DELETE(makeByIdRequest('DELETE'), makeParams(CAPABILITY_ID));
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiCapability.findUnique)).not.toHaveBeenCalled();
     });
   });
 

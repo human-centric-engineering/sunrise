@@ -272,5 +272,16 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await POST(makePostRequest(VALID_BODY));
+
+      expect(response.status).toBe(429);
+      // streamChat was never called because the guard short-circuits
+      expect(vi.mocked(streamChat)).not.toHaveBeenCalled();
+    });
   });
 });

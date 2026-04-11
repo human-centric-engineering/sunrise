@@ -199,6 +199,17 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded on PATCH', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await PATCH(makeRequest('PATCH', { name: 'Updated' }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(429);
+      // Prisma was not touched because the guard short-circuits
+      expect(vi.mocked(prisma.aiAgent.findUnique)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Successful update', () => {
@@ -284,6 +295,68 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(history[1].instructions).toBe('Somewhat old instructions.');
     });
 
+    it('PATCH updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      const fullPayload = {
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        model: 'claude-opus-4-6',
+        provider: 'anthropic',
+        providerConfig: { foo: 'bar' },
+        temperature: 0.5,
+        maxTokens: 8192,
+        monthlyBudgetUsd: 100,
+        metadata: { key: 'value' },
+        isActive: false,
+        systemInstructions: 'Brand new instructions.',
+      };
+
+      await PATCH(makeRequest('PATCH', fullPayload), makeParams(AGENT_ID));
+
+      const updateCall = vi.mocked(prisma.aiAgent.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        model: 'claude-opus-4-6',
+        provider: 'anthropic',
+        providerConfig: { foo: 'bar' },
+        temperature: 0.5,
+        maxTokens: 8192,
+        monthlyBudgetUsd: 100,
+        metadata: { key: 'value' },
+        isActive: false,
+        systemInstructions: 'Brand new instructions.',
+      });
+    });
+
+    it('resets history to [] when stored systemInstructionsHistory is malformed', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent({
+        systemInstructions: 'Old instructions.',
+        systemInstructionsHistory: 'not-an-array',
+      });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ systemInstructions: 'New.' }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { systemInstructions: 'New.' }), makeParams(AGENT_ID));
+
+      const updateCall = vi.mocked(prisma.aiAgent.update).mock.calls[0][0];
+      const history = updateCall.data.systemInstructionsHistory as Array<{
+        instructions: string;
+      }>;
+      // Malformed history was reset to [] before pushing the old value
+      expect(history).toHaveLength(1);
+      expect(history[0].instructions).toBe('Old instructions.');
+    });
+
     it('does NOT push to history when systemInstructions value is unchanged', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const sameInstructions = 'You are a helpful assistant.';
@@ -354,6 +427,18 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id', () => {
       const response = await DELETE(makeRequest('DELETE'), makeParams(AGENT_ID));
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiAgent.findUnique)).not.toHaveBeenCalled();
     });
   });
 

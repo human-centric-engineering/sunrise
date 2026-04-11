@@ -1535,14 +1535,26 @@ describe('evaluationLogsQuerySchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts an optional before cursor (CUID)', () => {
-    const result = evaluationLogsQuerySchema.safeParse({ before: VALID_CUID });
+  it('accepts an optional before cursor (positive integer sequenceNumber)', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: 42 });
     expect(result.success).toBe(true);
+    expect(result.success && result.data.before).toBe(42);
   });
 
-  it('rejects a non-CUID before cursor', () => {
+  it('coerces a numeric-string before cursor', () => {
+    const result = evaluationLogsQuerySchema.safeParse({ before: '7' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.before).toBe(7);
+  });
+
+  it('rejects a non-numeric before cursor', () => {
     const result = evaluationLogsQuerySchema.safeParse({ before: 'nope' });
     expect(result.success).toBe(false);
+  });
+
+  it('rejects a zero or negative before cursor', () => {
+    expect(evaluationLogsQuerySchema.safeParse({ before: 0 }).success).toBe(false);
+    expect(evaluationLogsQuerySchema.safeParse({ before: -5 }).success).toBe(false);
   });
 });
 

@@ -7,8 +7,11 @@
  * `sequenceNumber` ascending. Ownership is enforced on the parent
  * session — cross-user returns 404.
  *
- * Cursor pagination: pass `before` (a log row id) to page back.
- * The default `limit` is 100 with a hard ceiling of 500.
+ * Cursor pagination: pass `before` (a positive integer `sequenceNumber`)
+ * to return only rows with a strictly smaller sequence number. Because
+ * results are ordered by `sequenceNumber asc`, the cursor matches the
+ * display order exactly. The default `limit` is 100 with a hard ceiling
+ * of 500.
  *
  * Authentication: Admin role required.
  */
@@ -43,7 +46,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const { limit, before } = validateQueryParams(searchParams, evaluationLogsQuerySchema);
 
   const where: Prisma.AiEvaluationLogWhereInput = { sessionId };
-  if (before) where.id = { lt: before };
+  if (before !== undefined) where.sequenceNumber = { lt: before };
 
   const logs = await prisma.aiEvaluationLog.findMany({
     where,

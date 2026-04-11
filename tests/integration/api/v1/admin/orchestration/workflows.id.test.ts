@@ -208,6 +208,19 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded on PATCH', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { name: 'Updated' }),
+        makeParams(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiWorkflow.findUnique)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Successful update', () => {
@@ -226,6 +239,36 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean }>(response);
       expect(data.success).toBe(true);
+    });
+
+    it('updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
+
+      const fullPayload = {
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        workflowDefinition: VALID_DEFINITION,
+        patternsUsed: [1, 2, 3],
+        isActive: false,
+        isTemplate: true,
+        metadata: { owner: 'platform' },
+      };
+
+      await PATCH(makeRequest('PATCH', fullPayload), makeParams(WORKFLOW_ID));
+
+      const updateCall = vi.mocked(prisma.aiWorkflow.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        name: 'New Name',
+        slug: 'new-slug',
+        description: 'New description',
+        patternsUsed: [1, 2, 3],
+        isActive: false,
+        isTemplate: true,
+        metadata: { owner: 'platform' },
+      });
     });
 
     it('accepts a new workflowDefinition with valid schema', async () => {
@@ -322,6 +365,18 @@ describe('DELETE /api/v1/admin/orchestration/workflows/:id', () => {
       const response = await DELETE(makeRequest('DELETE'), makeParams(WORKFLOW_ID));
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(WORKFLOW_ID));
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiWorkflow.findUnique)).not.toHaveBeenCalled();
     });
   });
 

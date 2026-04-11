@@ -295,6 +295,41 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id/capabilities/:capId', () 
         })
       );
     });
+
+    it('updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgentCapability.update).mockResolvedValue(makeLink() as never);
+
+      const fullPayload = {
+        isEnabled: false,
+        customConfig: { tool: 'custom' },
+        customRateLimit: 30,
+      };
+
+      await PATCH(makeCapIdRequest('PATCH', fullPayload), makeCapIdParams(AGENT_ID, CAPABILITY_ID));
+
+      const updateCall = vi.mocked(prisma.aiAgentCapability.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        isEnabled: false,
+        customConfig: { tool: 'custom' },
+        customRateLimit: 30,
+      });
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on PATCH', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await PATCH(
+        makeCapIdRequest('PATCH', { isEnabled: false }),
+        makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiAgentCapability.update)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Error cases', () => {
@@ -379,6 +414,21 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id/capabilities/:capId', ()
           where: { agentId_capabilityId: { agentId: AGENT_ID, capabilityId: CAPABILITY_ID } },
         })
       );
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate limit exceeded on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await DELETE(
+        makeCapIdRequest('DELETE'),
+        makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiAgentCapability.delete)).not.toHaveBeenCalled();
     });
   });
 

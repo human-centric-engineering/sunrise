@@ -28,7 +28,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
-import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import type { CompleteEvaluationParams, CompleteEvaluationResult } from './types';
@@ -167,11 +167,13 @@ async function runAnalysis(
 
   const parsed = safeParseAnalysis(first.content);
   if (parsed) {
+    const inputTokens = first.usage.inputTokens;
+    const outputTokens = first.usage.outputTokens;
     return {
       summary: parsed.summary,
       improvementSuggestions: parsed.improvementSuggestions,
-      tokenUsage: { input: first.usage.inputTokens, output: first.usage.outputTokens },
-      costUsd: 0,
+      tokenUsage: { input: inputTokens, output: outputTokens },
+      costUsd: calculateCost(model, inputTokens, outputTokens).totalCostUsd,
     };
   }
 
@@ -202,14 +204,16 @@ async function runAnalysis(
     throw new Error('Analysis response was not valid JSON after retry');
   }
 
+  const totalInputTokens = first.usage.inputTokens + retry.usage.inputTokens;
+  const totalOutputTokens = first.usage.outputTokens + retry.usage.outputTokens;
   return {
     summary: reparsed.summary,
     improvementSuggestions: reparsed.improvementSuggestions,
     tokenUsage: {
-      input: first.usage.inputTokens + retry.usage.inputTokens,
-      output: first.usage.outputTokens + retry.usage.outputTokens,
+      input: totalInputTokens,
+      output: totalOutputTokens,
     },
-    costUsd: 0,
+    costUsd: calculateCost(model, totalInputTokens, totalOutputTokens).totalCostUsd,
   };
 }
 

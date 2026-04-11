@@ -148,13 +148,21 @@ describe('GET /api/v1/admin/orchestration/agents/:id/instructions-history', () =
       const response = await GET(makeRequest(), makeParams(AGENT_ID));
 
       const data = await parseJson<{
-        data: { history: Array<{ instructions: string; changedAt: string }> };
+        data: {
+          history: Array<{ instructions: string; changedAt: string; versionIndex: number }>;
+        };
       }>(response);
 
       // History should be reversed: newest first
       expect(data.data.history[0].instructions).toBe('Newest stored instructions.');
       expect(data.data.history[1].instructions).toBe('Middle instructions.');
       expect(data.data.history[2].instructions).toBe('Oldest instructions.');
+      // Each entry is annotated with its raw (oldest→newest) DB index
+      // so clients can pass it straight to /instructions-revert without
+      // having to invert the newest-first display order.
+      expect(data.data.history[0].versionIndex).toBe(2);
+      expect(data.data.history[1].versionIndex).toBe(1);
+      expect(data.data.history[2].versionIndex).toBe(0);
     });
 
     it('returns empty history array when no history exists', async () => {

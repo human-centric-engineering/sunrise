@@ -233,6 +233,35 @@ describe('PATCH /api/v1/admin/orchestration/evaluations/:id', () => {
     });
   });
 
+  describe('Full payload update', () => {
+    it('updates all optional fields in a single payload', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiEvaluationSession.findFirst).mockResolvedValue(
+        makeEvaluationSession() as never
+      );
+      vi.mocked(prisma.aiEvaluationSession.update).mockResolvedValue(
+        makeEvaluationSession() as never
+      );
+
+      const fullPayload = {
+        title: 'New Title',
+        description: 'New description',
+        status: 'in_progress' as const,
+        metadata: { owner: 'qa' },
+      };
+
+      await PATCH(makePatchRequest(fullPayload), makeParams(SESSION_ID));
+
+      const updateCall = vi.mocked(prisma.aiEvaluationSession.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        title: 'New Title',
+        description: 'New description',
+        status: 'in_progress',
+        metadata: { owner: 'qa' },
+      });
+    });
+  });
+
   describe('Validation errors', () => {
     it('returns 400 when body is empty (schema refine requires at least one field)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
