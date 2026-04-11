@@ -23,7 +23,6 @@
 
 import { z } from 'zod';
 
-import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { fetchWithTimeout, ProviderError, type LlmProvider } from './provider';
 import type { ModelInfo, ModelTier } from './types';
@@ -169,29 +168,11 @@ export function getModelsByProvider(provider: string): ModelInfo[] {
 export function __resetForTests(): void {
   state = { models: buildFallbackMap(), fetchedAt: 0 };
   inflightRefresh = null;
-  settingsCache = null;
 }
 
 // ---------------------------------------------------------------------------
-// Orchestration settings — task-default model resolver
+// Task default-model helpers (registry-only; DB read lives in settings-resolver.ts)
 // ---------------------------------------------------------------------------
-
-/**
- * In-memory TTL cache for the `AiOrchestrationSettings` singleton's
- * `defaultModels` map. Invalidated by `invalidateSettingsCache()` (called
- * from the PATCH route) and rebuilt lazily on the next lookup.
- */
-const SETTINGS_CACHE_TTL_MS = 30_000;
-interface SettingsCacheEntry {
-  defaults: Record<TaskType, string>;
-  fetchedAt: number;
-}
-let settingsCache: SettingsCacheEntry | null = null;
-
-/** Clear the cached `defaultModels` map so the next lookup re-reads the singleton. */
-export function invalidateSettingsCache(): void {
-  settingsCache = null;
-}
 
 /**
  * Compute sensible defaults for the task → model map from whatever is
@@ -245,44 +226,6 @@ export function validateTaskDefaults(
     }
   }
   return errors;
-}
-
-/**
- * Resolve the default model id for a task category from the singleton
- * `AiOrchestrationSettings` row. Falls back to `computeDefaultModelMap()`
- * for any task the row doesn't specify (and for the empty/missing-row
- * case). Results are cached for 30s so chat handlers don't hit the DB
- * on every turn.
- */
-export async function getDefaultModelForTask(task: TaskType): Promise<string> {
-  const now = Date.now();
-  if (settingsCache && now - settingsCache.fetchedAt < SETTINGS_CACHE_TTL_MS) {
-    return settingsCache.defaults[task];
-  }
-
-  let stored: Record<string, unknown> | null = null;
-  try {
-    const row = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
-    if (row && row.defaultModels && typeof row.defaultModels === 'object') {
-      stored = row.defaultModels as Record<string, unknown>;
-    }
-  } catch (err) {
-    logger.warn('getDefaultModelForTask: singleton read failed, using computed defaults', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  const computed = computeDefaultModelMap();
-  const merged: Record<TaskType, string> = { ...computed };
-  if (stored) {
-    for (const key of TASK_TYPES) {
-      const val = stored[key];
-      if (typeof val === 'string' && val.length > 0) merged[key] = val;
-    }
-  }
-
-  settingsCache = { defaults: merged, fetchedAt: now };
-  return merged[task];
 }
 
 // ---------------------------------------------------------------------------

@@ -21,10 +21,8 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import {
-  computeDefaultModelMap,
-  invalidateSettingsCache,
-} from '@/lib/orchestration/llm/model-registry';
+import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
+import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import {
   storedDefaultModelsSchema,
   updateOrchestrationSettingsSchema,

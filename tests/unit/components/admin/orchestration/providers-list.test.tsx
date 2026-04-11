@@ -124,8 +124,15 @@ const MOCK_MODELS_RESPONSE = {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ProvidersList', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Default the lazy model-count fetch to a never-resolving promise.
+    // This prevents the useEffect-triggered setState from firing after
+    // synchronous render-based tests finish, which would otherwise cause
+    // React "not wrapped in act(...)" warnings. Tests that need the
+    // resolved state override this mock explicitly.
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockImplementation(() => new Promise(() => {}));
   });
 
   afterEach(() => {
@@ -135,10 +142,7 @@ describe('ProvidersList', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    it('renders all 3 provider cards', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('renders all 3 provider cards', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       expect(screen.getByText('Anthropic')).toBeInTheDocument();
@@ -146,10 +150,7 @@ describe('ProvidersList', () => {
       expect(screen.getByText('Ollama')).toBeInTheDocument();
     });
 
-    it('renders provider slugs', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('renders provider slugs', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       expect(screen.getByText('anthropic')).toBeInTheDocument();
@@ -157,34 +158,25 @@ describe('ProvidersList', () => {
       expect(screen.getByText('ollama-local')).toBeInTheDocument();
     });
 
-    it('renders "+ Add provider" link', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('renders "+ Add provider" link', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       expect(screen.getByRole('link', { name: /add provider/i })).toBeInTheDocument();
     });
 
-    it('renders "Local" badge for local provider', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('renders "Local" badge for local provider', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       expect(screen.getByText('Local')).toBeInTheDocument();
     });
 
-    it('renders empty state when no providers', async () => {
+    it('renders empty state when no providers', () => {
       render(<ProvidersList initialProviders={[]} />);
 
       expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
     });
 
-    it('renders "N providers configured" count', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('renders "N providers configured" count', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       expect(screen.getByText(/3 providers configured/i)).toBeInTheDocument();
@@ -194,10 +186,7 @@ describe('ProvidersList', () => {
   // ── Missing API key warning ────────────────────────────────────────────────
 
   describe('missing API key warning', () => {
-    it('shows env var missing warning for non-local provider with apiKeyPresent=false', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('shows env var missing warning for non-local provider with apiKeyPresent=false', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       // OpenAI has apiKeyPresent: false and is not local → warning
@@ -205,10 +194,7 @@ describe('ProvidersList', () => {
       expect(screen.getByText(/missing on the server/i)).toBeInTheDocument();
     });
 
-    it('status dot for OpenAI (apiKeyPresent=false) has red class', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
+    it('status dot for OpenAI (apiKeyPresent=false) has red class', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
       // The red dot has class 'bg-red-500'
@@ -322,9 +308,6 @@ describe('ProvidersList', () => {
     }
 
     it('clicking Delete in dropdown opens AlertDialog', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
@@ -335,7 +318,6 @@ describe('ProvidersList', () => {
 
     it('confirm delete calls apiClient.delete and removes the card', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
       vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
 
       const user = userEvent.setup();
@@ -351,7 +333,6 @@ describe('ProvidersList', () => {
 
     it('cancelling delete closes dialog without calling delete', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
 
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);

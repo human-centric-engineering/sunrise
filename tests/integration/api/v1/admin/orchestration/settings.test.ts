@@ -73,16 +73,20 @@ vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
       }
       return errors;
     }),
-    invalidateSettingsCache: vi.fn(),
   };
 });
+
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  invalidateSettingsCache: vi.fn(),
+  getDefaultModelForTask: vi.fn(),
+}));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
-import { invalidateSettingsCache } from '@/lib/orchestration/llm/model-registry';
+import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 

@@ -28,6 +28,7 @@ vi.mock('@/lib/logging', () => ({
 
 const { prisma } = await import('@/lib/db/client');
 const registry = await import('@/lib/orchestration/llm/model-registry');
+const resolver = await import('@/lib/orchestration/llm/settings-resolver');
 
 const mockedFindUnique = prisma.aiOrchestrationSettings.findUnique as unknown as ReturnType<
   typeof vi.fn
@@ -35,8 +36,9 @@ const mockedFindUnique = prisma.aiOrchestrationSettings.findUnique as unknown as
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Reset registry state (resets settingsCache and model state to fallback)
+  // Reset registry state (model fallback map) and the resolver's settings cache
   registry.__resetForTests();
+  resolver.__resetSettingsResolverForTests();
 });
 
 describe('getDefaultModelForTask', () => {
@@ -53,7 +55,7 @@ describe('getDefaultModelForTask', () => {
       });
 
       // Act
-      const model = await registry.getDefaultModelForTask('routing');
+      const model = await resolver.getDefaultModelForTask('routing');
 
       // Assert
       expect(model).toBe('claude-haiku-4-5');
@@ -70,7 +72,7 @@ describe('getDefaultModelForTask', () => {
       });
 
       // Act: request a task that is NOT in the stored map
-      const model = await registry.getDefaultModelForTask('routing');
+      const model = await resolver.getDefaultModelForTask('routing');
 
       // Assert: gets a non-empty string from computeDefaultModelMap
       expect(typeof model).toBe('string');
@@ -82,7 +84,7 @@ describe('getDefaultModelForTask', () => {
       mockedFindUnique.mockResolvedValueOnce(null);
 
       // Act
-      const model = await registry.getDefaultModelForTask('chat');
+      const model = await resolver.getDefaultModelForTask('chat');
 
       // Assert: computed defaults still work
       expect(typeof model).toBe('string');
@@ -103,8 +105,8 @@ describe('getDefaultModelForTask', () => {
       });
 
       // Act: two calls to different tasks
-      const first = await registry.getDefaultModelForTask('routing');
-      const second = await registry.getDefaultModelForTask('chat');
+      const first = await resolver.getDefaultModelForTask('routing');
+      const second = await resolver.getDefaultModelForTask('chat');
 
       // Assert: DB only queried once (cache hit on second call)
       expect(mockedFindUnique).toHaveBeenCalledOnce();
@@ -126,14 +128,14 @@ describe('getDefaultModelForTask', () => {
       });
 
       // First call — caches
-      await registry.getDefaultModelForTask('routing');
+      await resolver.getDefaultModelForTask('routing');
       expect(mockedFindUnique).toHaveBeenCalledTimes(1);
 
       // Invalidate cache
-      registry.invalidateSettingsCache();
+      resolver.invalidateSettingsCache();
 
       // Second call — should re-read DB
-      await registry.getDefaultModelForTask('chat');
+      await resolver.getDefaultModelForTask('chat');
       expect(mockedFindUnique).toHaveBeenCalledTimes(2);
     });
   });
@@ -147,7 +149,7 @@ describe('getDefaultModelForTask', () => {
       let thrown = false;
       let model;
       try {
-        model = await registry.getDefaultModelForTask('reasoning');
+        model = await resolver.getDefaultModelForTask('reasoning');
       } catch {
         thrown = true;
       }
