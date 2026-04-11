@@ -129,6 +129,16 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
+
+    it('returns 429 when rate limit exceeded', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+
+      expect(response.status).toBe(429);
+      expect(vi.mocked(prisma.aiAgent.findMany)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Successful export', () => {
@@ -192,6 +202,23 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       expect(exportedAgent).not.toHaveProperty('createdAt');
       expect(exportedAgent).not.toHaveProperty('updatedAt');
       expect(exportedAgent).not.toHaveProperty('createdBy');
+    });
+
+    it('exports empty history array when stored systemInstructionsHistory is malformed', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agentWithBadHistory = {
+        ...makeDbAgent(AGENT_ID_1, 'agent-one'),
+        systemInstructionsHistory: 'not-an-array',
+      };
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([agentWithBadHistory] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { agents: Array<{ systemInstructionsHistory: unknown[] }> };
+      }>(response);
+      expect(data.data.agents[0].systemInstructionsHistory).toEqual([]);
     });
 
     it('exports capabilities with slug (not id)', async () => {

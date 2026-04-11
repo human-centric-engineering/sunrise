@@ -202,6 +202,36 @@ describe('GET /api/v1/admin/orchestration/costs', () => {
       expect(data.data.groupBy).toBe('model');
     });
 
+    it('forwards agentId filter to getCostBreakdown when supplied', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getCostBreakdown).mockResolvedValue(makeBreakdownResult('agent'));
+
+      await GET(
+        makeGetRequest({
+          dateFrom: DATE_FROM,
+          dateTo: DATE_TO,
+          groupBy: 'agent',
+          agentId: 'cmjbv4i3x00003wsloputgwul',
+        })
+      );
+
+      expect(vi.mocked(getCostBreakdown)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'cmjbv4i3x00003wsloputgwul',
+        })
+      );
+    });
+
+    it('omits agentId from the breakdown query when not supplied', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getCostBreakdown).mockResolvedValue(makeBreakdownResult('day'));
+
+      await GET(makeGetRequest({ dateFrom: DATE_FROM, dateTo: DATE_TO, groupBy: 'day' }));
+
+      const callArg = vi.mocked(getCostBreakdown).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty('agentId');
+    });
+
     it('calls getCostBreakdown with the parsed date range and groupBy', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(getCostBreakdown).mockResolvedValue(makeBreakdownResult('day'));
