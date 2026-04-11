@@ -1,0 +1,114 @@
+'use client';
+
+/**
+ * PatternPalette — left sidebar of the workflow builder.
+ *
+ * Data-driven: reads from `STEP_REGISTRY` and groups entries by
+ * category. Each block is HTML5-draggable — `onDragStart` sets
+ * `application/reactflow` on the dataTransfer, which the canvas'
+ * `onDrop` reads back out and validates against the registry before
+ * materialising a node.
+ *
+ * Each block has a short `title` tooltip (the description) and a
+ * "Learn more" forward-link to the Pattern Explorer (which may 404
+ * until that page lands).
+ */
+
+import Link from 'next/link';
+
+import {
+  STEP_CATEGORY_COLOURS,
+  STEP_CATEGORY_LABELS,
+  STEP_CATEGORY_ORDER,
+  STEP_REGISTRY,
+  type StepCategory,
+  type StepRegistryEntry,
+} from '@/lib/orchestration/engine/step-registry';
+import { cn } from '@/lib/utils';
+
+function onDragStart(event: React.DragEvent<HTMLDivElement>, type: string) {
+  event.dataTransfer.setData('application/reactflow', type);
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function PaletteBlock({ entry }: { entry: StepRegistryEntry }) {
+  const colours = STEP_CATEGORY_COLOURS[entry.category];
+  const Icon = entry.icon;
+  const learnMoreHref = entry.patternNumber
+    ? `/admin/orchestration/learning/patterns/${entry.patternNumber}`
+    : null;
+
+  return (
+    <div
+      data-testid={`palette-block-${entry.type}`}
+      draggable
+      onDragStart={(e) => onDragStart(e, entry.type)}
+      title={entry.description}
+      className={cn(
+        'group cursor-grab rounded-md border p-2 transition-shadow hover:shadow-sm active:cursor-grabbing',
+        colours.bg,
+        colours.border,
+        colours.text
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <div className={cn('flex h-7 w-7 items-center justify-center rounded', colours.iconBg)}>
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="flex-1 text-sm font-medium">{entry.label}</div>
+      </div>
+      <p className="text-muted-foreground mt-1 line-clamp-2 text-[11px]">{entry.description}</p>
+      {learnMoreHref && (
+        <Link
+          href={learnMoreHref}
+          className="mt-1 inline-block text-[11px] underline opacity-0 transition-opacity group-hover:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          Learn more
+        </Link>
+      )}
+    </div>
+  );
+}
+
+export function PatternPalette() {
+  const byCategory: Record<StepCategory, StepRegistryEntry[]> = {
+    agent: [],
+    decision: [],
+    input: [],
+    output: [],
+  };
+  for (const entry of STEP_REGISTRY) {
+    byCategory[entry.category].push(entry);
+  }
+
+  return (
+    <aside
+      data-testid="pattern-palette"
+      className="bg-background flex h-full w-[240px] shrink-0 flex-col overflow-y-auto border-r p-3"
+    >
+      <h2 className="mb-3 text-sm font-semibold">Patterns</h2>
+      <div className="space-y-4">
+        {STEP_CATEGORY_ORDER.map((category) => {
+          const entries = byCategory[category];
+          if (entries.length === 0) return null;
+          return (
+            <section key={category}>
+              <h3 className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-wide uppercase">
+                {STEP_CATEGORY_LABELS[category]}
+              </h3>
+              <div className="space-y-2">
+                {entries.map((entry) => (
+                  <PaletteBlock key={entry.type} entry={entry} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      <p className="text-muted-foreground mt-4 text-[11px] leading-relaxed">
+        Drag a pattern onto the canvas to add it to the workflow.
+      </p>
+    </aside>
+  );
+}

@@ -101,6 +101,16 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | Session 5.1b workflow editor UI            | Live validation inside the editor as the admin edits a definition     |
 | Session 5.2 `OrchestrationEngine`          | Defence-in-depth pre-flight before execution                          |
 
+## Admin UI
+
+Session 5.1a shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
+
+**What it ships:** canvas, pattern palette (data-driven from `lib/orchestration/engine/step-registry.ts`), single `PatternNode` custom type for all 9 step types, click-to-select config panel shell, layout round-trip.
+
+**What it defers:** Save (POST/PATCH), Validate (wiring this validator's `/validate` route), and Execute are rendered as disabled toolbar buttons until Session 5.1b. Per-step-type config editors also land in 5.1b.
+
+See [`.context/admin/workflow-builder.md`](../admin/workflow-builder.md) for the full builder reference — pages, registry, node type, canvas interactions, layout persistence, and scope.
+
 ## Coming in Session 5.2
 
 **Not yet implemented** — Phase 3.2 deliberately stops at the validator. Session 5.2 adds the real `OrchestrationEngine` under `lib/orchestration/workflows/` alongside the existing `validator.ts`:

@@ -13,6 +13,7 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | `lib/orchestration/capabilities/` | Tool dispatcher, built-in capabilities, rate limiting, approval gating                                                  | Phase 2b ✓                   |
 | `lib/orchestration/chat/`         | Streaming chat handler, context builder, message composition                                                            | Phase 2c ✓                   |
 | `lib/orchestration/workflows/`    | DAG validator (executor + step runners arrive in Session 5.2)                                                           | Phase 3.2 ✓ (validator only) |
+| `lib/orchestration/engine/`       | Step registry — data-driven metadata for pattern step types (FE-only until Session 5.2 unifies with validator)          | Phase 5.1a ✓                 |
 | `lib/orchestration/seed/`         | Dev seed data for providers / agents                                                                                    | Phase 1 ✓                    |
 | `lib/orchestration/evaluations/`  | Evaluation session completion handler (bounded prompt, sanitized errors)                                                | Phase 3.4 ✓                  |
 | `app/api/v1/admin/orchestration/` | Admin CRUD + runtime routes (chat stream, knowledge, conversations, costs, evaluations); execution routes 501 until 5.2 | Phase 3.4 ✓                  |
@@ -30,15 +31,16 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 
 ### Admin UI (`.context/admin/`)
 
-| Topic             | File                                                                      | Covers                                                              |
-| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Agents list       | [`orchestration-agents.md`](../admin/orchestration-agents.md)             | List page, table, duplicate/import dialogs                          |
-| Agent form        | [`agent-form.md`](../admin/agent-form.md)                                 | 5-tab create/edit form, instructions history, test chat             |
-| Capabilities list | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md) | Table, category filter, lazy agents-using count, soft-delete dialog |
-| Capability form   | [`capability-form.md`](../admin/capability-form.md)                       | 4 tabs, visual builder ↔ JSON editor, execution, safety             |
-| Providers list    | [`orchestration-providers.md`](../admin/orchestration-providers.md)       | Card grid, status dots, models dialog, env-var-only security model  |
-| Provider form     | [`provider-form.md`](../admin/provider-form.md)                           | 4-flavor selector, reverse-mapping on edit, test-connection flow    |
-| Costs & budget    | [`orchestration-costs.md`](../admin/orchestration-costs.md)               | Summary cards, trend chart, savings panel, settings singleton       |
+| Topic             | File                                                                      | Covers                                                               |
+| ----------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Agents list       | [`orchestration-agents.md`](../admin/orchestration-agents.md)             | List page, table, duplicate/import dialogs                           |
+| Agent form        | [`agent-form.md`](../admin/agent-form.md)                                 | 5-tab create/edit form, instructions history, test chat              |
+| Capabilities list | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md) | Table, category filter, lazy agents-using count, soft-delete dialog  |
+| Capability form   | [`capability-form.md`](../admin/capability-form.md)                       | 4 tabs, visual builder ↔ JSON editor, execution, safety              |
+| Providers list    | [`orchestration-providers.md`](../admin/orchestration-providers.md)       | Card grid, status dots, models dialog, env-var-only security model   |
+| Provider form     | [`provider-form.md`](../admin/provider-form.md)                           | 4-flavor selector, reverse-mapping on edit, test-connection flow     |
+| Costs & budget    | [`orchestration-costs.md`](../admin/orchestration-costs.md)               | Summary cards, trend chart, savings panel, settings singleton        |
+| Workflow builder  | [`workflow-builder.md`](../admin/workflow-builder.md)                     | React Flow canvas, pattern palette, step registry, layout round-trip |
 
 ## Architecture Decisions
 

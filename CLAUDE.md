@@ -214,6 +214,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Providers List          | `.context/admin/orchestration-providers.md`    | Card grid, status dots, env-var-only security |
 | Provider Form           | `.context/admin/provider-form.md`              | 4-flavor selector, reverse-mapping on edit    |
 | Costs & Budget          | `.context/admin/orchestration-costs.md`        | Summary, trend, savings, settings singleton   |
+| Workflow Builder        | `.context/admin/workflow-builder.md`           | React Flow canvas, palette, step registry     |
 | Setup Wizard            | `.context/admin/setup-wizard.md`               | 5-step guided setup flow, resume behavior     |
 | Contextual Help         | `.context/ui/contextual-help.md`               | `<FieldHelp>` directive for form fields       |
 | UI Hooks                | `.context/ui/hooks.md`                         | `useLocalStorage`, `useWizard`                |
