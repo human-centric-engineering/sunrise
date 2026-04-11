@@ -9,8 +9,12 @@
 
 import { z } from 'zod';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
-import { BaseCapability } from '../base-capability';
-import type { CapabilityContext, CapabilityFunctionDefinition, CapabilityResult } from '../types';
+import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import type {
+  CapabilityContext,
+  CapabilityFunctionDefinition,
+  CapabilityResult,
+} from '@/lib/orchestration/capabilities/types';
 
 const schema = z.object({
   pattern_number: z.number().int().min(1).max(999),

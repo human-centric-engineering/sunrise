@@ -10,7 +10,7 @@
  * - Ownership enforced on the parent session — cross-user returns 404
  * - Logs ordered by sequenceNumber ascending
  * - take equals the limit param
- * - before cursor forwarded into where.id.lt
+ * - before cursor forwarded into where.sequenceNumber.lt (numeric, not CUID)
  * - Invalid limit (e.g. 9999 > max 500) → 400
  * - Bad CUID → 400
  */
@@ -55,7 +55,7 @@ import { prisma } from '@/lib/db/client';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const SESSION_ID = 'cmjbv4i3x00003wsloputgwu3';
 const LOG_ID = 'cmjbv4i3x00003wsloputgwu4';
-const CURSOR_ID = 'cmjbv4i3x00003wsloputgwu5';
+const CURSOR_SEQUENCE = 42;
 const INVALID_ID = 'not-a-cuid';
 
 function makeLog(overrides: Record<string, unknown> = {}) {
@@ -192,19 +192,19 @@ describe('GET /api/v1/admin/orchestration/evaluations/:id/logs', () => {
       );
     });
 
-    it('forwards before cursor param into where.id.lt', async () => {
+    it('forwards before cursor param into where.sequenceNumber.lt', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiEvaluationSession.findFirst).mockResolvedValue(
         makeParentSession() as never
       );
       vi.mocked(prisma.aiEvaluationLog.findMany).mockResolvedValue([]);
 
-      await GET(makeGetRequest({ before: CURSOR_ID }), makeParams(SESSION_ID));
+      await GET(makeGetRequest({ before: String(CURSOR_SEQUENCE) }), makeParams(SESSION_ID));
 
       expect(vi.mocked(prisma.aiEvaluationLog.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            id: expect.objectContaining({ lt: CURSOR_ID }),
+            sequenceNumber: expect.objectContaining({ lt: CURSOR_SEQUENCE }),
           }),
         })
       );

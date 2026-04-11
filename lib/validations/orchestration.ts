@@ -1017,14 +1017,15 @@ export const updateEvaluationSchema = z
 /**
  * Evaluation logs query (GET /admin/orchestration/evaluations/:id/logs).
  *
- * Simple cursor pagination using a `before` CUID — results come back
- * in `sequenceNumber` ascending order, so `before` refers to a log id
- * whose id is lexically smaller (CUIDs are monotonic enough for this
- * use case).
+ * Cursor pagination: pass `before` (a positive integer `sequenceNumber`)
+ * to return only rows with a strictly smaller sequence number. Results
+ * are always returned in ascending `sequenceNumber` order, so this
+ * cursor matches the display order exactly — no CUID lexicographic-vs-
+ * numeric-order divergence.
  */
 export const evaluationLogsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(100),
-  before: cuidSchema.optional(),
+  before: z.coerce.number().int().positive().optional(),
 });
 
 /**

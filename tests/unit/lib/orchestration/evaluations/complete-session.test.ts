@@ -36,6 +36,11 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(),
+  calculateCost: vi.fn(() => ({
+    inputCostUsd: 0.001,
+    outputCostUsd: 0.002,
+    totalCostUsd: 0.003,
+  })),
 }));
 
 const { prisma } = await import('@/lib/db/client');
