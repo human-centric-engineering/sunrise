@@ -189,4 +189,63 @@ describe('WorkflowCanvas', () => {
       expect(onNodeAdd).not.toHaveBeenCalled();
     });
   });
+
+  describe('dragOver handling', () => {
+    it('calls preventDefault on dragover to allow drop', () => {
+      render(<WorkflowCanvas {...DEFAULT_PROPS} />);
+
+      const canvasWrapper = screen.getByTestId('workflow-canvas');
+
+      // Create a real DragEvent and spy on preventDefault
+      const event = new Event('dragover', { bubbles: true, cancelable: true });
+      // Attach a minimal dataTransfer so the handler can set dropEffect
+      Object.defineProperty(event, 'dataTransfer', {
+        value: { dropEffect: '' },
+        writable: true,
+      });
+
+      const prevented = !canvasWrapper.dispatchEvent(event);
+      expect(prevented).toBe(true);
+    });
+
+    it('sets dropEffect to move on dragover', () => {
+      render(<WorkflowCanvas {...DEFAULT_PROPS} />);
+
+      const canvasWrapper = screen.getByTestId('workflow-canvas');
+
+      const dataTransfer = { dropEffect: '' };
+      const event = new Event('dragover', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: dataTransfer,
+        writable: true,
+      });
+
+      canvasWrapper.dispatchEvent(event);
+      expect(dataTransfer.dropEffect).toBe('move');
+    });
+  });
+
+  describe('ReactFlow callback wiring', () => {
+    it('onNodeClick calls onNodeClick prop with node id', () => {
+      const onNodeClick = vi.fn();
+      render(<WorkflowCanvas {...DEFAULT_PROPS} onNodeClick={onNodeClick} />);
+
+      const props = getLastRFProps();
+      const onNodeClickCb = props.onNodeClick as (event: unknown, node: { id: string }) => void;
+      onNodeClickCb(null, { id: 'node-42' });
+
+      expect(onNodeClick).toHaveBeenCalledWith('node-42');
+    });
+
+    it('onPaneClick calls onNodeClick prop with null (deselect)', () => {
+      const onNodeClick = vi.fn();
+      render(<WorkflowCanvas {...DEFAULT_PROPS} onNodeClick={onNodeClick} />);
+
+      const props = getLastRFProps();
+      const onPaneClickCb = props.onPaneClick as () => void;
+      onPaneClickCb();
+
+      expect(onNodeClick).toHaveBeenCalledWith(null);
+    });
+  });
 });
