@@ -109,8 +109,8 @@ export function AgentTestChat({
           const parsed = parseSseBlock(block);
           if (!parsed) continue;
 
-          if (parsed.type === 'content' && typeof parsed.data.content === 'string') {
-            const chunk = parsed.data.content;
+          if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
+            const chunk = parsed.data.delta;
             setReply((prev) => prev + chunk);
           } else if (parsed.type === 'error') {
             // Never forward raw server error text to the UI — show a friendly

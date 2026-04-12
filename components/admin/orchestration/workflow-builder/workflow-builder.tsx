@@ -63,6 +63,8 @@ export type WorkflowBuilderMode = 'create' | 'edit';
 export interface WorkflowBuilderProps {
   mode: WorkflowBuilderMode;
   workflow?: AiWorkflow | null;
+  /** Pre-populate the canvas from a WorkflowDefinition (e.g. from advisor). */
+  initialDefinition?: WorkflowDefinition;
 }
 
 interface InitialState {
@@ -72,7 +74,15 @@ interface InitialState {
   details: WorkflowDetails | null;
 }
 
-function initialState(workflow: AiWorkflow | null | undefined): InitialState {
+function initialState(
+  workflow: AiWorkflow | null | undefined,
+  initialDefinition?: WorkflowDefinition
+): InitialState {
+  if (!workflow && initialDefinition && Array.isArray(initialDefinition.steps)) {
+    const { nodes, edges } = workflowDefinitionToFlow(initialDefinition);
+    return { nodes, edges, name: 'Imported workflow', details: null };
+  }
+
   if (!workflow) {
     return { nodes: [], edges: [], name: 'Untitled workflow', details: null };
   }
@@ -93,9 +103,12 @@ function initialState(workflow: AiWorkflow | null | undefined): InitialState {
   return { nodes, edges, name: workflow.name, details: baseDetails };
 }
 
-function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
+function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBuilderProps) {
   const router = useRouter();
-  const seed = useMemo(() => initialState(workflow), [workflow]);
+  const seed = useMemo(
+    () => initialState(workflow, initialDefinition),
+    [workflow, initialDefinition]
+  );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<PatternNode>(seed.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(seed.edges);

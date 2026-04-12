@@ -417,4 +417,126 @@ describe('CapabilityDispatcher', () => {
       });
     });
   });
+
+  describe('malformed functionDefinition', () => {
+    it('skips rows with invalid functionDefinition during loadFromDatabase', async () => {
+      capabilityDispatcher.register(new OkCapability());
+      // Row has a malformed functionDefinition — missing required 'name'
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ functionDefinition: { bad: true } })]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result).toEqual({
+        success: false,
+        error: expect.objectContaining({ code: 'capability_inactive' }),
+      });
+    });
+  });
+
+  describe('logCost failure', () => {
+    it('logs error when logCost rejects but still returns success', async () => {
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockLogCost.mockRejectedValue(new Error('cost DB down'));
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 5 }, ctx);
+
+      expect(result).toEqual({ success: true, data: { doubled: 10 } });
+
+      // Flush microtasks for fire-and-forget .catch()
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        'Capability dispatch: logCost rejected',
+        expect.objectContaining({ slug: 'ok' })
+      );
+    });
+  });
+
+  describe('agent binding with null capability', () => {
+    it('skips pivot rows where capability is null', async () => {
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockAgentFindMany.mockResolvedValue([
+        {
+          id: 'aac-1',
+          agentId: 'agent-1',
+          capabilityId: 'cap-1',
+          isEnabled: true,
+          customRateLimit: null,
+          capability: null, // null capability
+        },
+      ]);
+
+      // Should fall through to default-allow binding
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result).toEqual({ success: true, data: { doubled: 2 } });
+    });
+  });
+
+  describe('inflight binding deduplication', () => {
+    it('issues exactly one aiAgentCapability.findMany when two dispatches fire concurrently', async () => {
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockAgentFindMany.mockResolvedValue([]);
+
+      const [r1, r2] = await Promise.all([
+        capabilityDispatcher.dispatch('ok', { n: 1 }, ctx),
+        capabilityDispatcher.dispatch('ok', { n: 2 }, ctx),
+      ]);
+
+      expect(r1.success).toBe(true);
+      expect(r2.success).toBe(true);
+      // Both calls for the same agentId should dedupe
+      expect(mockAgentFindMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('null rate limit', () => {
+    it('does not rate limit when effectiveLimit is null (unlimited)', async () => {
+      capabilityDispatcher.register(new RateLimitedCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'ratelimited', rateLimit: null })]);
+
+      // Even many calls should succeed
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => capabilityDispatcher.dispatch('ratelimited', {}, ctx))
+      );
+
+      expect(results.every((r) => r.success)).toBe(true);
+    });
+  });
+
+  describe('execution throws non-Error value', () => {
+    it('returns execution_error with generic message for non-Error throw', async () => {
+      // Create a capability that throws a string
+      class StringThrowCapability extends BaseCapability<unknown, never> {
+        readonly slug = 'string-throw';
+        readonly functionDefinition = {
+          name: 'string-throw',
+          description: '',
+          parameters: {},
+        };
+        protected readonly schema = z.unknown();
+
+        async execute(_args: unknown): Promise<never> {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'string error';
+        }
+      }
+
+      capabilityDispatcher.register(new StringThrowCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'string-throw' })]);
+
+      const result = await capabilityDispatcher.dispatch('string-throw', {}, ctx);
+
+      expect(result).toEqual({
+        success: false,
+        error: expect.objectContaining({
+          code: 'execution_error',
+          message: 'Capability execution failed',
+        }),
+      });
+    });
+  });
 });

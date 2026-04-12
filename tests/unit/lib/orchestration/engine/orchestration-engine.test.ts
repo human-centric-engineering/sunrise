@@ -549,4 +549,238 @@ describe('OrchestrationEngine', () => {
     // Engine should still complete despite checkpoint failures
     expect(types).toContain('workflow_completed');
   });
+
+  // ─── MAX_STEPS guard ──────────────────────────────────────────────
+
+  it('emits workflow_failed when step count exceeds MAX_STEPS_PER_RUN via cyclic edges', async () => {
+    // Build a very long chain to trigger the MAX_STEPS guard
+    const longSteps = Array.from({ length: 1001 }, (_, i) => ({
+      id: `s${i}`,
+      name: `Step ${i}`,
+      type: 'llm_call',
+      config: { prompt: `${i}` },
+      nextSteps: i < 1000 ? [{ targetStepId: `s${i + 1}` }] : [],
+    }));
+    const longDef: WorkflowDefinition = {
+      steps: longSteps,
+      entryStepId: 's0',
+      errorStrategy: 'fail',
+    };
+
+    registerStepType('llm_call', async (step) => ({
+      output: step.id,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(longDef));
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed).toBeDefined();
+    expect(failed.error).toContain('1000');
+  });
+
+  // ─── Signal aborted mid-execution ─────────────────────────────────
+
+  it('aborts execution when signal is aborted during step execution', async () => {
+    const controller = new AbortController();
+    let stepCount = 0;
+
+    registerStepType('llm_call', async () => {
+      stepCount++;
+      if (stepCount === 1) {
+        // Abort during the first step execution
+        controller.abort();
+      }
+      return { output: 'x', tokensUsed: 0, costUsd: 0 };
+    });
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+      userId: USER_ID,
+      signal: controller.signal,
+    });
+    const types = events.map((e) => e.type);
+    expect(types).toContain('workflow_failed');
+    // Only step a should have started and completed; b should not start
+    expect(events.filter((e) => e.type === 'step_started')).toHaveLength(1);
+  });
+
+  // ─── nextStepIds override ─────────────────────────────────────────
+
+  it('uses result.nextStepIds when provided instead of definition edges', async () => {
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'b' }],
+        },
+        {
+          id: 'b',
+          name: 'B',
+          type: 'llm_call',
+          config: { prompt: 'B' },
+          nextSteps: [],
+        },
+        {
+          id: 'c',
+          name: 'C',
+          type: 'llm_call',
+          config: { prompt: 'C' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        // Override: go to c instead of b
+        return { output: 'a-out', tokensUsed: 0, costUsd: 0, nextStepIds: ['c'] };
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const completedSteps = events
+      .filter((e) => e.type === 'step_completed')
+      .map((e) => {
+        if (e.type === 'step_completed') return e.stepId;
+        return '';
+      });
+
+    expect(completedSteps).toContain('c');
+    expect(completedSteps).not.toContain('b');
+  });
+
+  // ─── Budget warning fires only once ───────────────────────────────
+
+  it('budget warning fires only once even across multiple steps', async () => {
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'b' }],
+        },
+        {
+          id: 'b',
+          name: 'B',
+          type: 'llm_call',
+          config: { prompt: 'B' },
+          nextSteps: [{ targetStepId: 'c' }],
+        },
+        {
+          id: 'c',
+          name: 'C',
+          type: 'llm_call',
+          config: { prompt: 'C' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    // Each step costs $0.30 — total $0.90.
+    // Budget $1.00 → 80% threshold at $0.80.
+    // After step 3 ($0.90) the warning should fire, but only once.
+    registerStepType('llm_call', async () => ({
+      output: 'x',
+      tokensUsed: 0,
+      costUsd: 0.3,
+    }));
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+      userId: USER_ID,
+      budgetLimitUsd: 1.0,
+    });
+    const warnings = events.filter((e) => e.type === 'budget_warning');
+    expect(warnings).toHaveLength(1);
+  });
+
+  // ─── Non-Error thrown from executor ───────────────────────────────
+
+  it('wraps non-Error thrown value from executor', async () => {
+    registerStepType('llm_call', async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'string error';
+    });
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed).toBeDefined();
+    expect(failed.error).toBe('Executor threw an unknown error');
+  });
+
+  // ─── Resume with non-array executionTrace ─────────────────────────
+
+  it('resumes gracefully when executionTrace is not an array', async () => {
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_bad_trace',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      executionTrace: 'not-an-array', // malformed
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      budgetLimitUsd: null,
+      currentStep: null,
+      startedAt: new Date(),
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const events: ExecutionEvent[] = [];
+    const engine = new OrchestrationEngine();
+    for await (const e of engine.execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID, resumeFromExecutionId: 'exec_bad_trace' }
+    )) {
+      events.push(e);
+    }
+
+    // Should still run — empty trace, starts from entryStepId
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+  });
+
+  // ─── Resume not found ─────────────────────────────────────────────
+
+  it('throws when resumeFromExecutionId row is not found', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(null);
+
+    registerStepType('llm_call', async () => ({
+      output: 'x',
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    await expect(
+      collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'nonexistent',
+      })
+    ).rejects.toThrow('not found');
+  });
 });

@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,10 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+}));
+
+vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
+  ChatInterface: () => <div data-testid="chat-interface" />,
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -130,5 +135,41 @@ describe('LearnPage (server component)', () => {
 
     expect(thrown).toBe(false);
     expect(screen.getByRole('heading', { name: /^learning$/i })).toBeInTheDocument();
+  });
+
+  it('advisor tab renders ChatInterface component', async () => {
+    const user = userEvent.setup();
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
+
+    const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
+
+    render(await LearnPage());
+
+    await user.click(screen.getByRole('tab', { name: /advisor/i }));
+
+    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
+  });
+
+  it('quiz tab renders ChatInterface component', async () => {
+    const user = userEvent.setup();
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
+
+    const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
+
+    render(await LearnPage());
+
+    await user.click(screen.getByRole('tab', { name: /quiz/i }));
+
+    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
   });
 });

@@ -21,6 +21,22 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
+vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
+  ChatInterface: ({
+    agentSlug,
+    starterPrompts,
+  }: {
+    agentSlug: string;
+    starterPrompts?: string[];
+  }) => (
+    <div data-testid="chat-interface" data-agent={agentSlug}>
+      {starterPrompts?.map((p) => (
+        <span key={p}>{p}</span>
+      ))}
+    </div>
+  ),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const MOCK_PATTERNS: PatternSummary[] = [
@@ -60,23 +76,21 @@ describe('LearningTabs', () => {
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
-  it('switches to Advisor tab showing placeholder', async () => {
+  it('switches to Advisor tab showing ChatInterface', async () => {
     const user = userEvent.setup();
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     await user.click(screen.getByRole('tab', { name: /advisor/i }));
 
-    expect(screen.getByText(/pattern advisor/i)).toBeInTheDocument();
-    expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
+    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
   });
 
-  it('switches to Quiz tab showing placeholder', async () => {
+  it('switches to Quiz tab showing ChatInterface', async () => {
     const user = userEvent.setup();
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
-    expect(screen.getByText(/knowledge quiz/i)).toBeInTheDocument();
-    expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
+    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
   });
 });
