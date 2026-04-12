@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **5 built-in templates** loadable from the toolbar. Execute button remains disabled — wiring arrives in Session 5.2 with the engine.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **5 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
 
 **Core files:**
 
@@ -44,7 +44,7 @@ All three are async server components. The list page calls `serverFetch(API.ADMI
 └──────────┴────────────────────────────────────┴─────────────────────┘
 ```
 
-When nothing is selected the right column collapses. The Execute button stays disabled with a `title="Execution engine arrives in Session 5.2"` tooltip until the workflow engine lands.
+When nothing is selected the right column collapses. In **create** mode the Execute button is disabled with a `title="Save the workflow before executing"` tooltip — you can only run a persisted workflow. In **edit** mode Execute opens an input dialog and then slides in an `ExecutionPanel` on the right.
 
 ## Step registry
 
@@ -82,7 +82,7 @@ interface StepRegistryEntry {
 
 **Adding a new step type:** append an entry to `STEP_REGISTRY`. The palette, the `PatternNode`, and any future registry-driven consumer will pick it up automatically — no new component, no new JSX.
 
-**FE/BE split:** this registry is FE-only in Session 5.1a. The backend validator (`lib/orchestration/workflows/validator.ts`) keeps its own `KNOWN_STEP_TYPES` array for now. Session 5.2 will unify them when it wires the workflow engine executor.
+**FE/BE split:** this registry remains FE-only — it pulls in `lucide-react` icons for the palette so it cannot be imported from server code. Session 5.2 added a parallel **executor registry** at `lib/orchestration/engine/executor-registry.ts` with one `StepExecutor` per step type. A unit test enforces that both registries cover the same set of `WorkflowStepType`s, so a new step can never land with only FE or only BE support. See [`../orchestration/engine.md`](../orchestration/engine.md) for the executor contract.
 
 ### Category → colour map
 
@@ -229,7 +229,7 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ### Toolbar wiring
 
-`builder-toolbar.tsx` accepts `{ onValidate, onSave, onTemplateSelect, templatesDisabled, saving, hasErrors }`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute remains disabled with `title="Execution engine arrives in Session 5.2"`.
+`builder-toolbar.tsx` accepts `{ onValidate, onSave, onExecute, onTemplateSelect, templatesDisabled, saving, hasErrors, mode }`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute is **disabled** in create mode with `title="Save the workflow before executing"` and **enabled** in edit mode, where clicking it fires `onExecute` — see [Execution panel](#execution-panel) below.
 
 ## Templates
 
@@ -304,13 +304,42 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 
 **Deferred:**
 
-- **Execute** — button disabled. Real executor + SSE-streamed trace land in Session 5.2.
 - **Chain sub-step editor** — placeholder card in 5.1b; tree editor is future work.
 - **Inline edge condition editor** — click edge → condition textarea. Future work.
 - **Per-capability argument schemas inside Tool Call** — 5.1b only picks the slug; a mini form driven by `capability.functionDefinition.parameters` is future work.
 - **Undo/redo, copy/paste, keyboard shortcuts** — not planned for 5.1 at all.
 - **Pattern Explorer** — the palette "Learn more" links forward to `/admin/orchestration/learning/patterns/:n`, which doesn't exist yet. 404 until the Pattern Explorer ships.
-- **Backend `PARALLEL_WITHOUT_MERGE` check** — runs FE-only in 5.1b; Session 5.2 will unify when the registry lives on both sides.
+- **Execution history page** — each run persists to `AiWorkflowExecution` but there is no list UI yet.
+- **Mid-run resume for non-approval failures** — only `human_approval` resumes cleanly; a dead LLM call leaves the row at its last checkpoint without an automatic replay path.
+
+## Execution panel
+
+Clicking **Execute** in edit mode opens `ExecutionInputDialog` — a JSON textarea seeded with `{ "query": "" }` plus an optional budget input. On confirm the dialog calls `onExecutionConfirm({ inputData, budgetLimitUsd })` and the builder renders an `ExecutionPanel` in a new 420px column on the right of the canvas.
+
+**Files:**
+
+- `components/admin/orchestration/workflow-builder/execution-panel.tsx` — the sliding panel + SSE consumer
+- `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx` — one collapsible row per step
+- `components/admin/orchestration/workflow-builder/execution-input-dialog.tsx` — `inputData` collector
+
+`ExecutionPanel` calls `POST /api/v1/admin/orchestration/workflows/:id/execute` with the input body and reads the SSE stream directly via `fetch` + `reader.read()` + a manual `\n\n` split (the same pattern as `agent-test-chat.tsx`). It **cannot** use `EventSource` because that API can't POST a JSON body. Each parsed `ExecutionEvent` drives a reducer over a `LiveTraceEntry[]`:
+
+| Event                | UI effect                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `workflow_started`   | Captures `executionId`, flips status pill to "Running"                                  |
+| `step_started`       | Appends a new trace row with status `running`                                           |
+| `step_completed`     | Updates the row with `output`, `tokensUsed`, `costUsd`, `durationMs`; bumps totals      |
+| `step_failed`        | Flags the row `failed` (or leaves it `running` when `willRetry: true`)                  |
+| `approval_required`  | Flips status to `awaiting_approval` and surfaces the **Approve & continue** button      |
+| `budget_warning`     | Renders an amber banner `Used $X of $Y budget (N%)`                                     |
+| `workflow_completed` | Terminal — status pill → "Completed"                                                    |
+| `workflow_failed`    | Terminal — status pill → "Failed", red banner with the sanitized `error` from the frame |
+
+**Abort** — while `status === 'running'` the panel renders an abort button that calls `abortController.abort()`. The in-flight `fetch` tears down, the engine's DB checkpoint reflects the last completed step, and the panel flips to `aborted`. Unmounting the panel while a stream is open has the same effect via the cleanup function on the `useEffect` that drives `streamRun`.
+
+**Approve** — on `approval_required` the panel enables the Approve button. Clicking it POSTs `{ approvalPayload: { approved: true } }` to `/executions/:id/approve` via `apiClient.post`, then reconnects to the execute route with `?resumeFromExecutionId=<id>` so the engine drains the remaining events. The resume path is covered by the engine docs — see [`../orchestration/engine.md`](../orchestration/engine.md).
+
+**Error sanitization** — the panel never prints the raw `fetch` error from a network failure; it renders a generic `"Connection to the execution stream was lost."` banner. Domain errors yielded by the engine as `workflow_failed` frames are displayed verbatim because those strings come from the engine's own sanitized payload (see [`../api/sse.md`](../api/sse.md#error-sanitization) for the framing guarantee).
 
 ## Testing
 
@@ -323,7 +352,10 @@ Unit tests live under `tests/unit/lib/orchestration/engine/` and `tests/unit/com
 ## Related
 
 - [.context/orchestration/workflows.md](../orchestration/workflows.md) — the DAG validator, step types, error codes, and HTTP surface the builder reads/writes
+- [.context/orchestration/engine.md](../orchestration/engine.md) — runtime execution engine consumed by the Execute button
 - [.context/orchestration/admin-api.md](../orchestration/admin-api.md) — the admin API surface for workflows (list / get / create / patch / delete / validate / execute)
+- [.context/api/sse.md](../api/sse.md) — the SSE framing contract used by the execute route
 - [.context/admin/agent-form.md](./agent-form.md) — reference implementation of the `<FieldHelp>` directive; the builder config panel mirrors its voice
 - [.context/ui/contextual-help.md](../ui/contextual-help.md) — contextual-help directive and help-text pattern
-- `lib/orchestration/workflows/validator.ts` — the validator the 5.1b Validate button will call
+- `lib/orchestration/workflows/validator.ts` — the validator the 5.1b Validate button calls
+- `lib/orchestration/engine/orchestration-engine.ts` — the engine the Execute button streams against

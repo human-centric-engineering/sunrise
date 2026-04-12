@@ -85,6 +85,9 @@ export const API = {
       workflowExecute: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/execute`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
+      executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
+      executionApprove: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/approve`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',

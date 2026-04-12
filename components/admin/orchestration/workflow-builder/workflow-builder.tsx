@@ -40,6 +40,8 @@ import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
 import { BlockConfigPanel } from './block-config-panel';
 import { BuilderToolbar } from './builder-toolbar';
+import { ExecutionInputDialog } from './execution-input-dialog';
+import { ExecutionPanel } from './execution-panel';
 import { PatternPalette } from './pattern-palette';
 import { TemplateDescriptionDialog } from './template-description-dialog';
 import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
@@ -112,6 +114,14 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
 
   // Capabilities for the Tool Call editor — fetched once on mount.
   const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>([]);
+
+  // Execution flow state.
+  const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
+  const [executionPanelOpen, setExecutionPanelOpen] = useState(false);
+  const [executionInput, setExecutionInput] = useState<{
+    inputData: Record<string, unknown>;
+    budgetLimitUsd?: number;
+  } | null>(null);
 
   // Template selection state. `pendingTemplate` drives the description
   // dialog — a null value hides it. The dialog confirms before the canvas
@@ -315,6 +325,28 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
     }
   }, [details, performSave]);
 
+  // ------------------------------------------------------------------
+  // Execution flow
+  // ------------------------------------------------------------------
+
+  const handleExecute = useCallback(() => {
+    setExecutionDialogOpen(true);
+  }, []);
+
+  const handleExecutionConfirm = useCallback(
+    (input: { inputData: Record<string, unknown>; budgetLimitUsd?: number }) => {
+      setExecutionDialogOpen(false);
+      setExecutionInput(input);
+      setExecutionPanelOpen(true);
+    },
+    []
+  );
+
+  const handleExecutionPanelClose = useCallback(() => {
+    setExecutionPanelOpen(false);
+    setExecutionInput(null);
+  }, []);
+
   const handleDialogConfirm = useCallback(
     (resolved: WorkflowDetails) => {
       setSaveDialogOpen(false);
@@ -333,6 +365,7 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
         onNameChange={setWorkflowName}
         onValidate={handleValidate}
         onSave={handleSave}
+        onExecute={handleExecute}
         onTemplateSelect={handleTemplateSelect}
         templatesDisabled={mode === 'edit'}
         saving={saving}
@@ -373,7 +406,22 @@ function WorkflowBuilderInner({ mode, workflow }: WorkflowBuilderProps) {
             capabilities={capabilities}
           />
         )}
+        {executionPanelOpen && executionInput && workflow && (
+          <ExecutionPanel
+            open={executionPanelOpen}
+            workflowId={workflow.id}
+            inputData={executionInput.inputData}
+            budgetLimitUsd={executionInput.budgetLimitUsd}
+            onClose={handleExecutionPanelClose}
+          />
+        )}
       </div>
+
+      <ExecutionInputDialog
+        open={executionDialogOpen}
+        onOpenChange={setExecutionDialogOpen}
+        onConfirm={handleExecutionConfirm}
+      />
 
       <WorkflowDetailsDialog
         open={saveDialogOpen}

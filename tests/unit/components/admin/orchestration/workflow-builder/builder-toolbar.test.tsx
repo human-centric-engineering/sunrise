@@ -36,6 +36,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     mode: 'create' as const,
     onValidate: vi.fn(),
     onSave: vi.fn(),
+    onExecute: vi.fn(),
     onTemplateSelect: vi.fn(),
     templatesDisabled: false,
     saving: false,
@@ -131,15 +132,21 @@ describe('BuilderToolbar', () => {
   });
 
   describe('Execute button', () => {
-    it('Execute button is always disabled', () => {
-      renderToolbar();
-      expect(screen.getByRole('button', { name: /execute/i })).toBeDisabled();
+    it('is disabled in create mode with a tooltip asking the user to save first', () => {
+      renderToolbar({ mode: 'create' });
+      const executeBtn = screen.getByRole('button', { name: /execute/i });
+      expect(executeBtn).toBeDisabled();
+      expect(executeBtn).toHaveAttribute('title', 'Save the workflow before executing');
     });
 
-    it('Execute button tooltip references Session 5.2 engine', () => {
-      renderToolbar();
+    it('is enabled in edit mode and fires onExecute when clicked', async () => {
+      const user = userEvent.setup();
+      const onExecute = vi.fn();
+      renderToolbar({ mode: 'edit', onExecute });
       const executeBtn = screen.getByRole('button', { name: /execute/i });
-      expect(executeBtn).toHaveAttribute('title', 'Execution engine arrives in Session 5.2');
+      expect(executeBtn).toBeEnabled();
+      await user.click(executeBtn);
+      expect(onExecute).toHaveBeenCalledTimes(1);
     });
   });
 

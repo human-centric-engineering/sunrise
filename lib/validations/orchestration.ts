@@ -847,6 +847,19 @@ export const approveExecutionBodySchema = z.object({
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
+/**
+ * Resume execution query schema (POST /workflows/[id]/execute?resumeFromExecutionId=…).
+ *
+ * When the engine reaches a `human_approval` step it pauses and leaves an
+ * `AiWorkflowExecution` row in `paused_for_approval`. After the client
+ * POSTs to `/executions/:id/approve`, it reconnects to the execute route
+ * with this query parameter to stream the remaining events of the same
+ * run instead of starting a new one.
+ */
+export const resumeExecutionQuerySchema = z.object({
+  resumeFromExecutionId: cuidSchema.optional(),
+});
+
 // ============================================================================
 // Session 3.3 — Chat stream, Knowledge, Conversations
 // ============================================================================
@@ -1121,6 +1134,7 @@ export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
 export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
 export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
 export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;
+export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
 export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;

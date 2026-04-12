@@ -28,7 +28,7 @@ import {
   type WorkflowTemplate,
 } from '@/lib/orchestration/workflows/templates';
 
-const EXECUTE_TOOLTIP = 'Execution engine arrives in Session 5.2';
+const EXECUTE_CREATE_TOOLTIP = 'Save the workflow before executing';
 
 export interface BuilderToolbarProps {
   workflowName: string;
@@ -38,6 +38,8 @@ export interface BuilderToolbarProps {
   onValidate: () => void;
   /** Called when the Save button is clicked. */
   onSave: () => void;
+  /** Called when the Execute button is clicked (edit mode only). */
+  onExecute: () => void;
   /** Called when a template is picked from the dropdown. */
   onTemplateSelect: (template: WorkflowTemplate) => void;
   /** True when the template dropdown should render its items as disabled (edit mode). */
@@ -54,11 +56,13 @@ export function BuilderToolbar({
   mode,
   onValidate,
   onSave,
+  onExecute,
   onTemplateSelect,
   templatesDisabled,
   saving,
   hasErrors,
 }: BuilderToolbarProps) {
+  const executeDisabled = mode !== 'edit';
   return (
     <div
       data-testid="builder-toolbar"
@@ -118,7 +122,13 @@ export function BuilderToolbar({
         Validate
       </Button>
 
-      <Button variant="outline" size="sm" disabled title={EXECUTE_TOOLTIP}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onExecute}
+        disabled={executeDisabled}
+        title={executeDisabled ? EXECUTE_CREATE_TOOLTIP : undefined}
+      >
         <Play className="mr-2 h-4 w-4" />
         Execute
       </Button>

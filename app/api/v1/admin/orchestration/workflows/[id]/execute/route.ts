@@ -1,34 +1,37 @@
 /**
- * Admin Orchestration — Execute workflow (STUB, 501)
+ * Admin Orchestration — Execute workflow
  *
  * POST /api/v1/admin/orchestration/workflows/:id/execute
  *
- * The real `OrchestrationEngine` lands in Phase 5 (Session 5.2). This
- * route ships this session as a full handler that validates auth, body,
- * workflow existence, workflow activity, and DAG structure — everything
- * up to the engine boundary — then returns 501 `NOT_IMPLEMENTED`.
+ * Instantiates `OrchestrationEngine` and streams `ExecutionEvent`s back
+ * to the client via `sseResponse()`. Platform-agnostic engine code lives
+ * in `lib/orchestration/engine/`; this route only handles auth, rate
+ * limit, validation, and the SSE bridge.
  *
- * The handler contract (shape, auth, validation, error codes) is stable
- * so Phase 4 UI work can build against it. Session 5.2 replaces the 501
- * line with an `engine.execute(...)` call and nothing else changes.
+ * Resume: when the client passes `?resumeFromExecutionId=<cuid>`, the
+ * engine continues the named run instead of creating a new row. Used by
+ * the `human_approval` flow after the reviewer POSTs to
+ * `/executions/:id/approve`.
  *
  * Authentication: Admin role required.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { errorResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { sseResponse } from '@/lib/api/sse';
 import { validateWorkflow } from '@/lib/orchestration/workflows';
-import { executeWorkflowBodySchema } from '@/lib/validations/orchestration';
+import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
+import {
+  executeWorkflowBodySchema,
+  resumeExecutionQuerySchema,
+} from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import type { WorkflowDefinition } from '@/types/orchestration';
-
-const NOT_IMPLEMENTED_MESSAGE = 'Workflow execution engine arrives in Phase 5 (Session 5.2)';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -44,6 +47,18 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const id = parsed.data;
 
   const body = await validateRequestBody(request, executeWorkflowBodySchema);
+
+  // Query params — resume support.
+  const url = new URL(request.url);
+  const queryParsed = resumeExecutionQuerySchema.safeParse({
+    resumeFromExecutionId: url.searchParams.get('resumeFromExecutionId') ?? undefined,
+  });
+  if (!queryParsed.success) {
+    throw new ValidationError('Invalid query parameters', {
+      resumeFromExecutionId: ['Must be a valid CUID'],
+    });
+  }
+  const { resumeFromExecutionId } = queryParsed.data;
 
   const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
@@ -63,23 +78,32 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
-  log.warn('workflow execute stubbed — 501', {
+  // Resume-path ownership guard — cross-user resume returns 404 (not 403)
+  // to avoid confirming existence of another user's execution.
+  if (resumeFromExecutionId) {
+    const existing = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: resumeFromExecutionId },
+      select: { id: true, userId: true, workflowId: true },
+    });
+    if (!existing || existing.userId !== session.user.id || existing.workflowId !== id) {
+      throw new NotFoundError(`Execution ${resumeFromExecutionId} not found`);
+    }
+  }
+
+  log.info('workflow execute started', {
     workflowId: id,
     userId: session.user.id,
     budgetLimitUsd: body.budgetLimitUsd,
+    resumeFromExecutionId,
   });
 
-  // TODO(Session 5.2): replace this 501 with
-  //   return successResponse(
-  //     await engine.execute({
-  //       workflow,
-  //       inputData: body.inputData,
-  //       budgetLimitUsd: body.budgetLimitUsd,
-  //       userId: session.user.id,
-  //     })
-  //   );
-  return errorResponse(NOT_IMPLEMENTED_MESSAGE, {
-    code: 'NOT_IMPLEMENTED',
-    status: 501,
+  const engine = new OrchestrationEngine();
+  const events = engine.execute({ id: workflow.id, definition }, body.inputData, {
+    userId: session.user.id,
+    budgetLimitUsd: body.budgetLimitUsd,
+    signal: request.signal,
+    resumeFromExecutionId,
   });
+
+  return sseResponse(events, { signal: request.signal });
 });
