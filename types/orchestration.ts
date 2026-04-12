@@ -427,6 +427,16 @@ export interface KnowledgeSearchResult {
   similarity: number;
 }
 
+/** Summary of a pattern for the pattern explorer card grid */
+export interface PatternSummary {
+  patternNumber: number;
+  patternName: string;
+  category: string | null;
+  complexity: string | null;
+  description: string | null;
+  chunkCount: number;
+}
+
 // Re-export Prisma model types for convenience
 export type {
   AiAgent,

@@ -6,13 +6,13 @@ Document ingestion, chunking, embeddings, and vector search for the agent knowle
 
 ## Module Layout
 
-| File                  | Exports                               | Purpose                                                 |
-| --------------------- | ------------------------------------- | ------------------------------------------------------- |
-| `document-manager.ts` | `documentManager` (singleton)         | Upload, delete, rechunk, list documents                 |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail` | Vector + keyword search; single-pattern lookup          |
-| `seeder.ts`           | `seedFromChunksJson`                  | Idempotent seeder for the "Agentic Design Patterns" doc |
-| `chunker.ts`          | internal                              | Markdown → chunks with type classification              |
-| `embedder.ts`         | internal                              | Generates embeddings for chunks                         |
+| File                  | Exports                                               | Purpose                                                                   |
+| --------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| `document-manager.ts` | `documentManager` (singleton)                         | Upload, delete, rechunk, list documents                                   |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns` | Vector + keyword search; single-pattern lookup; pattern list for explorer |
+| `seeder.ts`           | `seedFromChunksJson`                                  | Idempotent seeder for the "Agentic Design Patterns" doc                   |
+| `chunker.ts`          | internal                                              | Markdown → chunks with type classification                                |
+| `embedder.ts`         | internal                                              | Generates embeddings for chunks                                           |
 
 ## Quick Start
 

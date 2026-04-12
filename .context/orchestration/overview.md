@@ -42,6 +42,8 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | Provider form     | [`provider-form.md`](../admin/provider-form.md)                           | 4-flavor selector, reverse-mapping on edit, test-connection flow     |
 | Costs & budget    | [`orchestration-costs.md`](../admin/orchestration-costs.md)               | Summary cards, trend chart, savings panel, settings singleton        |
 | Workflow builder  | [`workflow-builder.md`](../admin/workflow-builder.md)                     | React Flow canvas, pattern palette, step registry, layout round-trip |
+| Learning UI       | [`orchestration-learn.md`](../admin/orchestration-learn.md)               | Pattern explorer, mermaid diagrams, tabbed hub                       |
+| Knowledge Base UI | [`orchestration-knowledge-ui.md`](../admin/orchestration-knowledge-ui.md) | Document management, drag-drop upload, search test                   |
 
 ## Architecture Decisions
 
