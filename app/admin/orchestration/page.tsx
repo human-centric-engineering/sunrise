@@ -2,17 +2,28 @@ import type { Metadata } from 'next';
 import type { AiConversation, AiWorkflowExecution } from '@prisma/client';
 
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
+import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
+import { ObservabilityStatsCards } from '@/components/admin/orchestration/observability-stats-cards';
 import { OrchestrationStatsCards } from '@/components/admin/orchestration/orchestration-stats-cards';
 import { QuickActions } from '@/components/admin/orchestration/quick-actions';
 import {
   RecentActivityList,
   type RecentActivityItem,
 } from '@/components/admin/orchestration/recent-activity-list';
+import {
+  RecentErrorsPanel,
+  type RecentError,
+} from '@/components/admin/orchestration/recent-errors-panel';
 import { SetupWizardLauncher } from '@/components/admin/orchestration/setup-wizard-launcher';
+import {
+  TopCapabilitiesPanel,
+  type CapabilityUsage,
+} from '@/components/admin/orchestration/top-capabilities-panel';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
   title: 'AI Orchestration',
@@ -138,6 +149,38 @@ async function getRecentActivity(): Promise<RecentActivityItem[] | null> {
   }
 }
 
+interface DashboardStats {
+  activeConversations: number;
+  todayRequests: number;
+  errorRate: number;
+  recentErrors: RecentError[];
+  topCapabilities: CapabilityUsage[];
+}
+
+async function getDashboardStats(): Promise<DashboardStats | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<DashboardStats>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load observability stats', err);
+    return null;
+  }
+}
+
+async function getModels(): Promise<ModelInfo[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ModelInfo[]>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load models', err);
+    return null;
+  }
+}
+
 async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
   try {
     const body = await parseApiResponse<T[]>(res);
@@ -148,17 +191,30 @@ async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
 }
 
 export default async function OrchestrationDashboardPage() {
-  const [costSummary, budgetAlerts, agentsCount, workflowsCount, conversationsCount, activity] =
-    await Promise.all([
-      getCostSummary(),
-      getBudgetAlerts(),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
-      getRecentActivity(),
-    ]);
+  const [
+    costSummary,
+    budgetAlerts,
+    agentsCount,
+    workflowsCount,
+    conversationsCount,
+    activity,
+    dashboardStats,
+    models,
+  ] = await Promise.all([
+    getCostSummary(),
+    getBudgetAlerts(),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
+    getRecentActivity(),
+    getDashboardStats(),
+    getModels(),
+  ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
+
+  // Slice the 30-day trend to last 7 days for the dashboard chart.
+  const weekTrend = costSummary?.trend.slice(-7) ?? null;
 
   return (
     <div className="space-y-8">
@@ -182,6 +238,28 @@ export default async function OrchestrationDashboardPage() {
       </section>
 
       <BudgetAlertsBanner alerts={budgetAlerts} />
+
+      <section aria-label="Observability">
+        <ObservabilityStatsCards
+          activeConversations={dashboardStats?.activeConversations ?? null}
+          todayRequests={dashboardStats?.todayRequests ?? null}
+          errorRate={dashboardStats?.errorRate ?? null}
+        />
+      </section>
+
+      <section aria-label="Trends and capabilities" className="grid gap-4 lg:grid-cols-2">
+        <CostTrendChart
+          title="7-day spend trend"
+          trend={weekTrend}
+          perModel={null}
+          models={models}
+        />
+        <TopCapabilitiesPanel capabilities={dashboardStats?.topCapabilities ?? null} />
+      </section>
+
+      <section aria-label="Recent errors">
+        <RecentErrorsPanel errors={dashboardStats?.recentErrors ?? null} />
+      </section>
 
       <section aria-label="Quick actions" className="space-y-2">
         <h2 className="text-lg font-semibold">Quick actions</h2>

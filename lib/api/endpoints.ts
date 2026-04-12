@@ -90,6 +90,9 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
+      conversationById: (id: string): string => `/api/v1/admin/orchestration/conversations/${id}`,
+      conversationMessages: (id: string): string =>
+        `/api/v1/admin/orchestration/conversations/${id}/messages`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
       knowledgeDocumentById: (id: string): string =>
@@ -110,6 +113,7 @@ export const API = {
       evaluationComplete: (id: string): string =>
         `/api/v1/admin/orchestration/evaluations/${id}/complete`,
       evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
+      OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',
     },
   },
 

@@ -41,6 +41,8 @@ export interface CostTrendChartProps {
   /** Rows from `/costs?groupBy=model&dateFrom=...&dateTo=...`. */
   perModel: PerModelRow[] | null;
   models: ModelInfo[] | null;
+  /** Override the card title. Defaults to "30-day spend trend". */
+  title?: string;
 }
 
 interface PlotRow {
@@ -106,7 +108,12 @@ function buildPlotRows(
   });
 }
 
-export function CostTrendChart({ trend, perModel, models }: CostTrendChartProps) {
+export function CostTrendChart({
+  trend,
+  perModel,
+  models,
+  title = '30-day spend trend',
+}: CostTrendChartProps) {
   const data = React.useMemo(
     () => buildPlotRows(trend, perModel, models),
     [trend, perModel, models]
@@ -115,7 +122,7 @@ export function CostTrendChart({ trend, perModel, models }: CostTrendChartProps)
   return (
     <Card data-testid="cost-trend-chart">
       <CardHeader>
-        <CardTitle className="text-base">30-day spend trend</CardTitle>
+        <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (
@@ -123,7 +130,7 @@ export function CostTrendChart({ trend, perModel, models }: CostTrendChartProps)
             No spend recorded in the last 30 days.
           </p>
         ) : (
-          <div className="h-72 w-full" role="img" aria-label="30-day stacked cost trend by tier">
+          <div className="h-72 w-full" role="img" aria-label={`${title} by tier`}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />

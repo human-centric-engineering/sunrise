@@ -220,6 +220,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Knowledge Base UI       | `.context/admin/orchestration-knowledge-ui.md`   | Document management, upload, search test            |
 | Chat Interface          | `.context/admin/orchestration-chat-interface.md` | Reusable SSE chat component, embedded mode          |
 | Evaluations UI          | `.context/admin/orchestration-evaluations.md`    | Evaluation runner, annotations, completion flow     |
+| Observability Dashboard | `.context/admin/orchestration-observability.md`  | Dashboard metrics, trace viewers, logging audit     |
 | Setup Wizard            | `.context/admin/setup-wizard.md`                 | 5-step guided setup flow, resume behavior           |
 | Contextual Help         | `.context/ui/contextual-help.md`                 | `<FieldHelp>` directive for form fields             |
 | UI Hooks                | `.context/ui/hooks.md`                           | `useLocalStorage`, `useWizard`                      |
