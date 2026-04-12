@@ -33,8 +33,12 @@ function contentFrame(text: string): string {
   return `event: content\ndata: ${JSON.stringify({ delta: text })}\n\n`;
 }
 
-function errorFrame(message: string): string {
-  return `event: error\ndata: ${JSON.stringify({ message })}\n\n`;
+function errorFrame(code: string, message?: string): string {
+  return `event: error\ndata: ${JSON.stringify({ code, message: message ?? 'Error' })}\n\n`;
+}
+
+function warningFrame(code: string, message: string): string {
+  return `event: warning\ndata: ${JSON.stringify({ code, message })}\n\n`;
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -91,11 +95,11 @@ describe('AgentTestChat', () => {
     });
   });
 
-  it('renders friendly fallback on error frame and does NOT leak raw error text', async () => {
+  it('renders structured error from error frame and does NOT leak raw error text', async () => {
     // Arrange — secret string must never reach the DOM
     const SECRET = `RAW_SDK_LEAK_${Date.now()}`;
     const user = userEvent.setup();
-    const stream = makeSseStream([errorFrame(SECRET)]);
+    const stream = makeSseStream([errorFrame('internal_error', SECRET)]);
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
 
@@ -104,13 +108,48 @@ describe('AgentTestChat', () => {
     // Act
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    // Assert: friendly message shown
+    // Assert: structured error shown (title from error registry)
     await waitFor(() => {
-      expect(screen.getByText(/ran into a problem/i)).toBeInTheDocument();
+      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
 
     // Assert: raw secret never reaches DOM
     expect(document.body.textContent ?? '').not.toContain(SECRET);
+  });
+
+  it('renders budget_exceeded error with specific message', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([errorFrame('budget_exceeded')]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/monthly budget reached/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders warning banner from warning event', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      warningFrame('budget_warning', 'Agent at 85% budget'),
+      contentFrame('Hello'),
+      'event: done\ndata: {"tokenUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"costUsd":0.001}\n\n',
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+    });
   });
 
   it('calls AbortController.abort() on unmount during active stream', async () => {
@@ -183,8 +222,8 @@ describe('AgentTestChat', () => {
     });
   });
 
-  it('shows friendly fallback when fetch throws (network error)', async () => {
-    // Arrange
+  it('shows connection lost error after max reconnect attempts on network failure', async () => {
+    // Arrange — fetch always rejects to exhaust all reconnect attempts
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
@@ -193,9 +232,12 @@ describe('AgentTestChat', () => {
     // Act
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    // Assert
-    await waitFor(() => {
-      expect(screen.getByText(/could not reach the chat stream/i)).toBeInTheDocument();
-    });
+    // Assert — after retries exhausted, shows connection lost
+    await waitFor(
+      () => {
+        expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
+      },
+      { timeout: 20000 }
+    );
   });
 });

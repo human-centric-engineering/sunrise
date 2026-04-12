@@ -182,7 +182,9 @@ describe('SetupWizard', () => {
     const streamBody = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(
-          encoder.encode(`event: error\ndata: ${JSON.stringify({ message: SECRET })}\n\n`)
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({ code: 'internal_error', message: SECRET })}\n\n`
+          )
         );
         controller.close();
       },
@@ -235,7 +237,7 @@ describe('SetupWizard', () => {
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/ran into a problem/i)).toBeInTheDocument();
+      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
 
     // Critical: the raw provider error must not appear anywhere in the DOM.

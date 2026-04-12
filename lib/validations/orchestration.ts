@@ -71,6 +71,11 @@ export const createAgentSchema = z.object({
     .max(50, 'Provider must be less than 50 characters')
     .default('anthropic'),
 
+  fallbackProviders: z
+    .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
+    .max(5, 'At most 5 fallback providers')
+    .default([]),
+
   providerConfig: z.record(z.string(), z.unknown()).optional(),
 
   temperature: z
@@ -133,6 +138,11 @@ export const updateAgentSchema = z.object({
     .string()
     .min(1, 'Provider cannot be empty')
     .max(50, 'Provider must be less than 50 characters')
+    .optional(),
+
+  fallbackProviders: z
+    .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
+    .max(5, 'At most 5 fallback providers')
     .optional(),
 
   providerConfig: z.record(z.string(), z.unknown()).optional(),

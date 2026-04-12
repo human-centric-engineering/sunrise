@@ -28,6 +28,7 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | Knowledge     | [`knowledge.md`](./knowledge.md)         | Document ingestion, chunking, vector search, seeder                            |
 | Workflows     | [`workflows.md`](./workflows.md)         | DAG validator, step types, error codes                                         |
 | Engine        | [`engine.md`](./engine.md)               | Runtime executor, executor registry, events, checkpoints, error strategies     |
+| Resilience    | [`resilience.md`](./resilience.md)       | Circuit breaker, provider fallback, budget UX, input guard, error registry     |
 | Admin API     | [`admin-api.md`](./admin-api.md)         | Agents, capabilities, providers, workflows, chat, knowledge, costs, executions |
 
 ### Admin UI (`.context/admin/`)

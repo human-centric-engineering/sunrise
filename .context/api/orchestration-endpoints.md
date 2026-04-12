@@ -224,6 +224,7 @@ data: <json>
 | `content`           | `{ delta: string }`                                                     | Incremental assistant text                                           |
 | `status`            | `{ phase: 'thinking' \| 'calling_tool' \| 'writing'; detail?: string }` | Human-readable progress indicator                                    |
 | `capability_result` | `{ name, input, output, durationMs }`                                   | A tool call completed — mid-stream                                   |
+| `warning`           | `{ code, message }`                                                     | Non-terminal warning (e.g. budget at 80%) — stream continues         |
 | `done`              | `{ usage: { input, output }, finishReason }`                            | Terminal success frame                                               |
 | `error`             | `{ code, message }`                                                     | Terminal error frame                                                 |
 

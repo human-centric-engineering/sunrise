@@ -21,12 +21,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { API } from '@/lib/api/endpoints';
+import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 
 export interface AgentTestChatProps {
   /** Agent slug to hit via `POST /chat/stream`. Required. */
@@ -55,7 +56,8 @@ export function AgentTestChat({
   const [message, setMessage] = useState(initialMessage);
   const [reply, setReply] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserFacingError | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -67,68 +69,94 @@ export function AgentTestChat({
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
     if (!agentSlug) {
-      setError('No agent slug — save the agent first.');
+      setError({ title: 'Missing Agent', message: 'No agent slug — save the agent first.' });
       return;
     }
     setError(null);
+    setWarning(null);
     setReply('');
     setStreaming(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
-        method: 'POST',
-        credentials: 'include',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentSlug, message }),
-      });
+    const MAX_RECONNECT_ATTEMPTS = 3;
 
-      if (!res.ok || !res.body) {
-        setError('Chat stream failed to start. Try again in a moment.');
-        return;
-      }
+    for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
+          method: 'POST',
+          credentials: 'include',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentSlug, message }),
+        });
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+        if (!res.ok || !res.body) {
+          // HTTP-level errors are not retriable via reconnect
+          if (res.status === 429) {
+            setError(getUserFacingError('rate_limited'));
+          } else {
+            setError(getUserFacingError('stream_error'));
+          }
+          return;
+        }
 
-      // Parse standard SSE: blocks separated by "\n\n", each block a set of
-      // `event:` / `data:` lines.
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        let sepIndex;
-        while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-          const block = buffer.slice(0, sepIndex);
-          buffer = buffer.slice(sepIndex + 2);
-          const parsed = parseSseBlock(block);
-          if (!parsed) continue;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
 
-          if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
-            const chunk = parsed.data.delta;
-            setReply((prev) => prev + chunk);
-          } else if (parsed.type === 'error') {
-            // Never forward raw server error text to the UI — show a friendly
-            // fallback. Detailed errors are logged server-side only.
-            setError('The agent ran into a problem. Check the server logs for details.');
-            return;
-          } else if (parsed.type === 'done') {
-            return;
+          let sepIndex;
+          while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, sepIndex);
+            buffer = buffer.slice(sepIndex + 2);
+            const parsed = parseSseBlock(block);
+            if (!parsed) continue;
+
+            if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
+              const delta: string = parsed.data.delta;
+              setReply((prev) => prev + delta);
+            } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
+              setWarning(parsed.data.message);
+            } else if (parsed.type === 'error') {
+              const code =
+                typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+              setError(getUserFacingError(code));
+              return;
+            } else if (parsed.type === 'done') {
+              return;
+            }
           }
         }
+
+        // Stream ended without a done/error event — treat as complete
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+
+        // Network failure — attempt reconnect with exponential backoff
+        if (attempt < MAX_RECONNECT_ATTEMPTS) {
+          const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
+          setWarning('Connection interrupted. Reconnecting...');
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        setError({
+          title: 'Connection Lost',
+          message: 'Could not reconnect to the chat stream.',
+          action: 'Please try sending your message again.',
+        });
+        return;
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
       }
-    } catch (err) {
-      // Swallow abort-on-unmount; show a friendly message for everything else.
-      if (err instanceof Error && err.name === 'AbortError') return;
-      setError('Could not reach the chat stream. Try again in a moment.');
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
     }
   }
 
@@ -170,13 +198,26 @@ export function AgentTestChat({
         </div>
       </form>
 
+      {warning && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{warning}</span>
+        </div>
+      )}
+
       <div className={`bg-muted/30 ${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}>
         {reply || (
           <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
         )}
       </div>
 
-      {error && <div className="text-destructive text-sm">{error}</div>}
+      {error && (
+        <div className="space-y-1 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm dark:border-red-900 dark:bg-red-950/40">
+          <p className="font-medium text-red-800 dark:text-red-200">{error.title}</p>
+          <p className="text-red-700 dark:text-red-300">{error.message}</p>
+          {error.action && <p className="text-muted-foreground text-xs">{error.action}</p>}
+        </div>
+      )}
     </div>
   );
 }

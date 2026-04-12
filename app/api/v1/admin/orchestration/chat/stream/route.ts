@@ -19,15 +19,18 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { sseResponse } from '@/lib/api/sse';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { adminLimiter, chatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { streamChat } from '@/lib/orchestration/chat';
 import { chatStreamRequestSchema } from '@/lib/validations/orchestration';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
-  const rateLimit = adminLimiter.check(clientIP);
-  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+  const ipLimit = adminLimiter.check(clientIP);
+  if (!ipLimit.success) return createRateLimitResponse(ipLimit);
+
+  const userLimit = chatLimiter.check(session.user.id);
+  if (!userLimit.success) return createRateLimitResponse(userLimit);
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, chatStreamRequestSchema);

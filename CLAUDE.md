@@ -204,6 +204,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Knowledge Base          | `.context/orchestration/knowledge.md`            | Document ingestion, chunking, vector search         |
 | Workflows               | `.context/orchestration/workflows.md`            | DAG validator, step types, error codes              |
 | Orchestration Engine    | `.context/orchestration/engine.md`               | Runtime executor, registry, events, strategies      |
+| Resilience & Errors     | `.context/orchestration/resilience.md`           | Circuit breaker, fallback, budget UX, input guard   |
 | Orchestration Admin API | `.context/orchestration/admin-api.md`            | Agents, capabilities, chat, knowledge, executions   |
 | Orchestration Endpoints | `.context/api/orchestration-endpoints.md`        | Consumer HTTP reference for all 41 routes           |
 | SSE Bridge              | `.context/api/sse.md`                            | `sseResponse` helper, framing, sanitization         |

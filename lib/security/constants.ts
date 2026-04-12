@@ -43,6 +43,8 @@ export const SECURITY_CONSTANTS = {
       INVITE_INTERVAL: 15 * 60 * 1000,
       /** CSP report: 20 reports per minute */
       CSP_REPORT: 20,
+      /** Chat stream: 20 messages per minute per user */
+      CHAT: 20,
     },
   },
 

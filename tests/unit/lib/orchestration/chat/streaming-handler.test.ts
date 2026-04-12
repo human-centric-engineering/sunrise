@@ -27,6 +27,21 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(),
+  getProviderWithFallbacks: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/llm/circuit-breaker', () => ({
+  getBreaker: vi.fn(() => ({
+    recordSuccess: vi.fn(),
+    recordFailure: vi.fn(),
+    canAttempt: vi.fn(() => true),
+    state: 'closed',
+  })),
+  resetAllBreakers: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/chat/input-guard', () => ({
+  scanForInjection: vi.fn(() => ({ flagged: false, patterns: [] })),
 }));
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
@@ -61,7 +76,7 @@ vi.mock('@/lib/orchestration/chat/context-builder', () => ({
 
 const { prisma } = await import('@/lib/db/client');
 const { logger } = await import('@/lib/logging');
-const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
+const { getProviderWithFallbacks } = await import('@/lib/orchestration/llm/provider-manager');
 const { checkBudget, logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 // Registry mocks are established via vi.mock above; no direct assertion needed here.
@@ -199,7 +214,7 @@ describe('StreamingChatHandler', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error', code: 'agent_not_found' });
-    expect(getProvider).not.toHaveBeenCalled();
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
     expect(prisma.aiMessage.create).not.toHaveBeenCalled();
   });
 
@@ -216,7 +231,7 @@ describe('StreamingChatHandler', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error', code: 'budget_exceeded' });
-    expect(getProvider).not.toHaveBeenCalled();
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
     expect(prisma.aiConversation.create).not.toHaveBeenCalled();
     expect(prisma.aiMessage.create).not.toHaveBeenCalled();
   });
@@ -230,7 +245,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const events = await collect(streamChat(baseRequest));
 
@@ -281,7 +299,10 @@ describe('StreamingChatHandler', () => {
     const provider = mockProvider([
       [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const request = { ...baseRequest, message: 'What is the meaning of life?' };
     await collect(streamChat(request));
@@ -311,7 +332,10 @@ describe('StreamingChatHandler', () => {
     const provider = mockProvider([
       [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const request = { ...baseRequest, contextType: 'pattern', contextId: '7' };
     await collect(streamChat(request));
@@ -349,7 +373,10 @@ describe('StreamingChatHandler', () => {
     const provider = mockProvider([
       [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const request = { ...baseRequest, conversationId: 'conv-existing' };
     const events = await collect(streamChat(request));
@@ -370,7 +397,7 @@ describe('StreamingChatHandler', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error', code: 'conversation_not_found' });
-    expect(getProvider).not.toHaveBeenCalled();
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
   });
 
   // 8 -----------------------------------------------------------------------
@@ -391,7 +418,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 30, outputTokens: 8 }, finishReason: 'stop' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: { results: [] },
@@ -453,7 +483,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: { cost: 0.05 },
@@ -484,7 +517,10 @@ describe('StreamingChatHandler', () => {
       { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'tool_use' },
     ];
     const provider = mockProvider(Array.from({ length: 10 }, () => toolScript));
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: {},
@@ -519,7 +555,10 @@ describe('StreamingChatHandler', () => {
         throw new Error('SECRET_PROD_HOSTNAME network down');
       }),
     };
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     // collect() must return without throwing
     const events = await collect(streamChat(baseRequest));
@@ -557,7 +596,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: false,
       error: { code: 'requires_approval', message: 'admin approval needed' },
@@ -607,7 +649,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 2, outputTokens: 1 }, finishReason: 'stop' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: {},
@@ -625,7 +670,10 @@ describe('StreamingChatHandler', () => {
     const provider1 = mockProvider([
       [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider1);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider1,
+      usedSlug: 'anthropic',
+    });
 
     await collect(streamChat(baseRequest));
 
@@ -665,7 +713,10 @@ describe('StreamingChatHandler', () => {
       ],
       [{ type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider2);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider2,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: {},
@@ -691,7 +742,10 @@ describe('StreamingChatHandler', () => {
         throw new Error('crash');
       }),
     };
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     await collect(streamChat(baseRequest));
 
@@ -718,7 +772,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
     (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
       data: {},
@@ -740,7 +797,10 @@ describe('StreamingChatHandler', () => {
     const provider = mockProvider([
       [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const request = { ...baseRequest, signal };
     await collect(streamChat(request));
@@ -761,7 +821,10 @@ describe('StreamingChatHandler', () => {
         { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
       ],
     ]);
-    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(provider);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
 
     const stream = streamChat(baseRequest);
     // The return value must be iterable

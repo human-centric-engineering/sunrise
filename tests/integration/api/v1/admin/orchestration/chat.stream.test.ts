@@ -38,6 +38,7 @@ vi.mock('@/lib/orchestration/chat', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  chatLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
     Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
   ),

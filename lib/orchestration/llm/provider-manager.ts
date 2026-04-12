@@ -24,6 +24,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from './anthropic';
+import { getBreaker } from './circuit-breaker';
 import { OpenAiCompatibleProvider } from './openai-compatible';
 import { ProviderError, type LlmProvider, type ProviderTestResult } from './provider';
 import type { ProviderConfig } from './types';
@@ -166,6 +167,51 @@ export function isApiKeyEnvVarSet(apiKeyEnvVar: string | null): boolean {
 export async function testProvider(slugOrName: string): Promise<ProviderTestResult> {
   const provider = await getProvider(slugOrName);
   return provider.testConnection();
+}
+
+/**
+ * Resolve a provider instance, falling back through a list of
+ * alternatives if the primary's circuit breaker is open.
+ *
+ * Returns the resolved provider and the slug that was actually used,
+ * so the caller can record success/failure on the correct breaker.
+ */
+export async function getProviderWithFallbacks(
+  primarySlug: string,
+  fallbackSlugs: string[]
+): Promise<{ provider: LlmProvider; usedSlug: string }> {
+  const candidates = [primarySlug, ...fallbackSlugs];
+
+  for (const slug of candidates) {
+    const breaker = getBreaker(slug);
+    if (!breaker.canAttempt()) {
+      logger.info('Skipping provider — circuit breaker open', { provider: slug });
+      continue;
+    }
+
+    try {
+      const provider = await getProvider(slug);
+      if (slug !== primarySlug) {
+        logger.info('Using fallback provider', {
+          primary: primarySlug,
+          fallback: slug,
+        });
+      }
+      return { provider, usedSlug: slug };
+    } catch (err) {
+      // Provider not found or disabled — skip to next candidate
+      logger.warn('Provider resolution failed, trying next', {
+        provider: slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+  }
+
+  throw new ProviderError('All providers are unavailable', {
+    code: 'all_providers_exhausted',
+    retriable: true,
+  });
 }
 
 /** Evict one (or all) cached provider instances. */
