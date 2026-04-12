@@ -45,6 +45,7 @@
 import { Prisma } from '@prisma/client';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
+import { stepErrorConfigSchema } from '@/lib/validations/orchestration';
 import {
   WorkflowStatus,
   type ExecutionEvent,
@@ -70,13 +71,6 @@ import { getExecutor } from './executor-registry';
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
 import './executors';
-
-/** Extra fields an executor's step-level config may carry. */
-interface StepErrorConfig {
-  errorStrategy?: 'retry' | 'fallback' | 'skip' | 'fail';
-  retryCount?: number;
-  fallbackStepId?: string;
-}
 
 /** Default retry count for `retry` strategy. */
 const DEFAULT_RETRY_COUNT = 2;
@@ -139,16 +133,19 @@ export class OrchestrationEngine {
     let stepCount = 0;
     let finalOutput: unknown = null;
     let failed = false;
+    let failureReason: string | null = null;
 
     while (queue.length > 0) {
       if (options.signal?.aborted) {
-        yield workflowFailed('Execution aborted by client');
+        failureReason = 'Execution aborted by client';
+        yield workflowFailed(failureReason);
         failed = true;
         break;
       }
 
       if (stepCount++ >= MAX_STEPS_PER_RUN) {
-        yield workflowFailed(`Step count exceeded ${MAX_STEPS_PER_RUN}`);
+        failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
+        yield workflowFailed(failureReason);
         failed = true;
         break;
       }
@@ -157,7 +154,8 @@ export class OrchestrationEngine {
       if (visited.has(stepId)) continue;
       const step = byId.get(stepId);
       if (!step) {
-        yield workflowFailed(`Unknown step id "${stepId}"`, stepId);
+        failureReason = `Unknown step id "${stepId}"`;
+        yield workflowFailed(failureReason, stepId);
         failed = true;
         break;
       }
@@ -195,7 +193,8 @@ export class OrchestrationEngine {
           return;
         }
         if (err instanceof BudgetExceeded) {
-          yield workflowFailed('Budget exceeded', step.id);
+          failureReason = 'Budget exceeded';
+          yield workflowFailed(failureReason, step.id);
           failed = true;
           break;
         }
@@ -232,7 +231,8 @@ export class OrchestrationEngine {
           durationMs,
         });
         await this.checkpoint(executionId, ctx, trace);
-        yield workflowFailed(sanitizeError(stepError), step.id);
+        failureReason = sanitizeError(stepError);
+        yield workflowFailed(failureReason, step.id);
         failed = true;
         break;
       }
@@ -261,8 +261,8 @@ export class OrchestrationEngine {
 
       // Budget check
       if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-        await this.finalize(executionId, ctx, trace, WorkflowStatus.FAILED, 'Budget exceeded');
-        yield workflowFailed('Budget exceeded', step.id);
+        failureReason = 'Budget exceeded';
+        yield workflowFailed(failureReason, step.id);
         failed = true;
         break;
       }
@@ -294,15 +294,12 @@ export class OrchestrationEngine {
       await this.finalize(executionId, ctx, trace, WorkflowStatus.COMPLETED, null);
       yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
     } else {
-      // The row is finalised to FAILED inside the specific branches
-      // that set `failed = true`; if a branch bailed without doing so
-      // (e.g. abort) make sure the row is still closed.
       await this.finalize(
         executionId,
         ctx,
         trace,
         WorkflowStatus.FAILED,
-        'Execution did not complete'
+        failureReason ?? 'Execution did not complete'
       );
     }
   }
@@ -321,7 +318,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
-    const errorConfig = step.config as StepErrorConfig;
+    const errorConfig = stepErrorConfigSchema.parse(step.config);
     const strategy = errorConfig.errorStrategy ?? 'fail';
     const retryCount =
       typeof errorConfig.retryCount === 'number' ? errorConfig.retryCount : DEFAULT_RETRY_COUNT;
@@ -571,8 +568,12 @@ export class OrchestrationEngine {
 
 /** Sanitize an error for client-facing text. */
 function sanitizeError(err: ExecutorError): string {
-  // Error messages from `ExecutorError` are already authored by us (not
-  // raw upstream strings), so they're safe to forward.
+  // `executor_threw` wraps raw upstream errors (e.g. LLM provider failures)
+  // whose messages may contain sensitive internals — return a generic message.
+  if (err.code === 'executor_threw') {
+    return `Step "${err.stepId}" failed unexpectedly`;
+  }
+  // All other codes are authored by us and safe to forward.
   return err.message;
 }
 

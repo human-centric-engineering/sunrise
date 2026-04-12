@@ -18,7 +18,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
-import type { ExecutionTraceEntry } from '@/types/orchestration';
+import { executionTraceSchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
   const { id: rawId } = await params;
@@ -33,9 +33,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
     throw new NotFoundError(`Execution ${id} not found`);
   }
 
-  const trace: ExecutionTraceEntry[] = Array.isArray(execution.executionTrace)
-    ? (execution.executionTrace as unknown as ExecutionTraceEntry[])
-    : [];
+  const trace = executionTraceSchema.parse(execution.executionTrace);
 
   return successResponse({
     execution: {

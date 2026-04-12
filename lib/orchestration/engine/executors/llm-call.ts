@@ -9,23 +9,17 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { runLlmCall } from '../llm-runner';
-import { registerStepType } from '../executor-registry';
-
-interface LlmCallConfig {
-  prompt?: string;
-  modelOverride?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
+import { llmCallConfigSchema } from '@/lib/validations/orchestration';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executeLlmCall(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as LlmCallConfig;
+  const config = llmCallConfigSchema.parse(step.config);
   const prompt = config.prompt;
   if (typeof prompt !== 'string' || prompt.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_prompt', 'llm_call step is missing a prompt');

@@ -1103,6 +1103,88 @@ export const updateOrchestrationSettingsSchema = z
   });
 
 // ============================================================================
+// Execution Trace — Prisma Json column parsing
+// ============================================================================
+
+/**
+ * Schema for `AiWorkflowExecution.executionTrace` entries stored as Prisma
+ * `Json`. Used in route handlers to safely parse the raw JSON array instead
+ * of blind-casting.
+ */
+export const executionTraceEntrySchema = z.object({
+  stepId: z.string(),
+  stepType: z.string(),
+  label: z.string(),
+  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval']),
+  output: z.unknown(),
+  error: z.string().optional(),
+  tokensUsed: z.number(),
+  costUsd: z.number(),
+  startedAt: z.string(),
+  completedAt: z.string().optional(),
+  durationMs: z.number(),
+});
+
+export const executionTraceSchema = z.array(executionTraceEntrySchema).catch([]);
+
+// ============================================================================
+// Executor Config Schemas — step.config validation
+// ============================================================================
+
+/** Shared error-strategy fields present on every step config. */
+export const stepErrorConfigSchema = z.object({
+  errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']).optional(),
+  retryCount: z.number().int().nonnegative().optional(),
+  fallbackStepId: z.string().optional(),
+});
+
+export const llmCallConfigSchema = stepErrorConfigSchema.extend({
+  prompt: z.string().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+  maxTokens: z.number().optional(),
+});
+
+export const toolCallConfigSchema = stepErrorConfigSchema.extend({
+  capabilitySlug: z.string().optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const routeConfigSchema = stepErrorConfigSchema.extend({
+  classificationPrompt: z.string().optional(),
+  routes: z.array(z.object({ label: z.unknown() })).optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const reflectConfigSchema = stepErrorConfigSchema.extend({
+  critiquePrompt: z.string().optional(),
+  maxIterations: z.number().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const planConfigSchema = stepErrorConfigSchema.extend({
+  objective: z.string().optional(),
+  maxSubSteps: z.number().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
+  prompt: z.string().optional(),
+  timeoutMinutes: z.number().optional(),
+  notificationChannel: z.string().optional(),
+});
+
+export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
+  query: z.string().optional(),
+  topK: z.number().optional(),
+  similarityThreshold: z.number().optional(),
+  filters: z.record(z.string(), z.unknown()).optional(),
+});
+
+// ============================================================================
 // Inferred Types
 // ============================================================================
 

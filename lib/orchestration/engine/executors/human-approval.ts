@@ -17,21 +17,16 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { ExecutorError, PausedForApproval } from '../errors';
-import { registerStepType } from '../executor-registry';
-
-interface HumanApprovalConfig {
-  prompt?: string;
-  timeoutMinutes?: number;
-  notificationChannel?: string;
-}
+import { humanApprovalConfigSchema } from '@/lib/validations/orchestration';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError, PausedForApproval } from '@/lib/orchestration/engine/errors';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export function executeHumanApproval(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as HumanApprovalConfig;
+  const config = humanApprovalConfigSchema.parse(step.config);
   const prompt = config.prompt;
   if (typeof prompt !== 'string' || prompt.trim().length === 0) {
     return Promise.reject(

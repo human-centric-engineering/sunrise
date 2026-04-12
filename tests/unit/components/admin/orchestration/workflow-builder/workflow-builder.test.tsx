@@ -472,6 +472,50 @@ describe('WorkflowBuilder', () => {
     });
   });
 
+  describe('execution flow', () => {
+    it('clicking Execute in edit mode opens ExecutionInputDialog', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
+
+      const executeBtn = screen.getByRole('button', { name: /execute/i });
+      expect(executeBtn).not.toBeDisabled();
+
+      await user.click(executeBtn);
+
+      // The ExecutionInputDialog should now be open
+      await waitFor(() => {
+        expect(screen.getByText(/execute workflow/i)).toBeInTheDocument();
+      });
+    });
+
+    it('Execute button is disabled in create mode', () => {
+      render(<WorkflowBuilder mode="create" />);
+
+      const executeBtn = screen.getByRole('button', { name: /execute/i });
+      expect(executeBtn).toBeDisabled();
+    });
+
+    it('confirming ExecutionInputDialog closes it and opens ExecutionPanel', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
+
+      // Open the dialog
+      await user.click(screen.getByRole('button', { name: /execute/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/execute workflow/i)).toBeInTheDocument();
+      });
+
+      // Click Run to confirm (default textarea has valid JSON)
+      await user.click(screen.getByRole('button', { name: /run/i }));
+
+      // The dialog should close (title should disappear)
+      await waitFor(() => {
+        expect(screen.queryByText(/execute workflow/i)).not.toBeInTheDocument();
+      });
+    });
+  });
+
   describe('5.1b: toolbar wiring', () => {
     it('passes saving=false initially to the toolbar', () => {
       render(<WorkflowBuilder mode="create" />);

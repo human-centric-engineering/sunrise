@@ -210,4 +210,86 @@ describe('executeReflect', () => {
 
     expect(runLlmCall).toHaveBeenCalledTimes(3);
   });
+
+  // ─── stringifyValue() branch coverage ────────────────────────────────
+
+  it('stringifies a numeric step output into the draft prompt', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes needed',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const ctx = makeCtx({ stepOutputs: { prev: 42 } });
+    const result = await executeReflect(makeStep(), ctx);
+
+    expect(result.output).toMatchObject({ finalDraft: '42', stopReason: 'converged' });
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].prompt).toContain('42');
+  });
+
+  it('stringifies a boolean step output into the draft prompt', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const ctx = makeCtx({ stepOutputs: { prev: true } });
+    const result = await executeReflect(makeStep(), ctx);
+
+    expect(result.output).toMatchObject({ finalDraft: 'true', stopReason: 'converged' });
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].prompt).toContain('true');
+  });
+
+  it('JSON-stringifies an object step output into the draft prompt', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const ctx = makeCtx({ stepOutputs: { prev: { key: 'value', n: 1 } } });
+    const result = await executeReflect(makeStep(), ctx);
+
+    const expectedJson = JSON.stringify({ key: 'value', n: 1 });
+    expect(result.output).toMatchObject({ finalDraft: expectedJson, stopReason: 'converged' });
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].prompt).toContain(expectedJson);
+  });
+
+  it('returns "[unserializable]" for a circular object step output', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const circular: Record<string, unknown> = { a: 1 };
+    circular.self = circular;
+
+    const ctx = makeCtx({ stepOutputs: { prev: circular } });
+    const result = await executeReflect(makeStep(), ctx);
+
+    expect(result.output).toMatchObject({
+      finalDraft: '[unserializable]',
+      stopReason: 'converged',
+    });
+  });
+
+  it('returns empty string for null step output', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const ctx = makeCtx({ stepOutputs: { prev: null } });
+    const result = await executeReflect(makeStep(), ctx);
+
+    expect(result.output).toMatchObject({ finalDraft: '', stopReason: 'converged' });
+  });
 });

@@ -18,8 +18,8 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { registerStepType } from '../executor-registry';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export function executeParallel(
   step: WorkflowStep,
