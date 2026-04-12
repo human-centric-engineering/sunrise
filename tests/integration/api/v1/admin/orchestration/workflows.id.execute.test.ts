@@ -1,23 +1,11 @@
 /**
- * Integration Test: Execute workflow stub (501)
+ * Integration Test: Execute workflow
  *
  * POST /api/v1/admin/orchestration/workflows/:id/execute
  *
- * This route is a full handler that validates auth, body, workflow existence,
- * workflow activity, and DAG structure — then returns 501 NOT_IMPLEMENTED.
- * The engine arrives in Session 5.2.
- *
- * Key assertions:
- *   - Auth guard blocks unauthenticated (401)
- *   - Body validation runs (bad body → 400)
- *   - CUID validation runs (bad id → 400)
- *   - Not-found returns 404
- *   - Inactive workflow → 400 ValidationError
- *   - DAG-invalid workflow → 400 with structured errors
- *   - Happy path returns HTTP 501 with code: 'NOT_IMPLEMENTED'
- *   - Rate-limit wiring via adminLimiter
- *
- * @see app/api/v1/admin/orchestration/workflows/[id]/execute/route.ts
+ * Flipped from the 5.1 stub in Session 5.2. The route now instantiates
+ * `OrchestrationEngine` (mocked here) and returns an SSE stream of
+ * `ExecutionEvent`s. Validation and auth logic stays identical to 5.1.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -52,6 +40,17 @@ vi.mock('@/lib/security/rate-limit', () => ({
   createRateLimitResponse: vi.fn(() =>
     Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
   ),
+}));
+
+// Mock the engine module so we can assert the route wires it up
+// correctly without pulling in every executor + provider transitively.
+const mockExecute = vi.fn();
+vi.mock('@/lib/orchestration/engine/orchestration-engine', () => ({
+  OrchestrationEngine: class {
+    execute(...args: unknown[]) {
+      return mockExecute(...args);
+    }
+  },
 }));
 
 // NOTE: validateWorkflow is NOT mocked — route uses the real implementation
@@ -288,20 +287,66 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/execute', () => {
     });
   });
 
-  describe('Happy path → 501 NOT_IMPLEMENTED', () => {
-    it('returns HTTP 501 with NOT_IMPLEMENTED code when all validation passes', async () => {
+  describe('Happy path → SSE stream', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('returns an SSE stream carrying the engine events', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
 
+      mockExecute.mockImplementation(async function* () {
+        yield { type: 'workflow_started', executionId: 'exec1', workflowId: WORKFLOW_ID };
+        yield {
+          type: 'step_completed',
+          stepId: 'step-1',
+          output: 'ok',
+          tokensUsed: 5,
+          costUsd: 0.01,
+          durationMs: 100,
+        };
+        yield {
+          type: 'workflow_completed',
+          output: 'ok',
+          totalTokensUsed: 5,
+          totalCostUsd: 0.01,
+        };
+      });
+
       const response = await POST(makePostRequest(), makeParams(WORKFLOW_ID));
 
-      expect(response.status).toBe(501);
-      const data = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
-        response
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+      expect(mockExecute).toHaveBeenCalledTimes(1);
+
+      // Drain the stream and confirm the frames land.
+      const text = await response.text();
+      expect(text).toContain('event: workflow_started');
+      expect(text).toContain('"executionId":"exec1"');
+      expect(text).toContain('event: step_completed');
+      expect(text).toContain('event: workflow_completed');
+    });
+
+    it('forwards inputData + budgetLimitUsd to the engine', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      mockExecute.mockImplementation(async function* () {
+        // nothing — just exercise the call
+      });
+
+      const response = await POST(
+        makePostRequest({ inputData: { key: 'value' }, budgetLimitUsd: 0.5 }),
+        makeParams(WORKFLOW_ID)
       );
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('NOT_IMPLEMENTED');
-      expect(data.error.message).toContain('Session 5.2');
+      // Drain the body so the generator runs.
+      await response.text();
+
+      const [workflowArg, inputArg, optionsArg] = mockExecute.mock.calls[0];
+      expect(workflowArg.id).toBe(WORKFLOW_ID);
+      expect(inputArg).toEqual({ key: 'value' });
+      expect(optionsArg.budgetLimitUsd).toBe(0.5);
+      expect(optionsArg.userId).toBe(ADMIN_ID);
     });
   });
 });

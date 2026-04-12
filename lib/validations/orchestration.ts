@@ -847,6 +847,19 @@ export const approveExecutionBodySchema = z.object({
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
+/**
+ * Resume execution query schema (POST /workflows/[id]/execute?resumeFromExecutionId=…).
+ *
+ * When the engine reaches a `human_approval` step it pauses and leaves an
+ * `AiWorkflowExecution` row in `paused_for_approval`. After the client
+ * POSTs to `/executions/:id/approve`, it reconnects to the execute route
+ * with this query parameter to stream the remaining events of the same
+ * run instead of starting a new one.
+ */
+export const resumeExecutionQuerySchema = z.object({
+  resumeFromExecutionId: cuidSchema.optional(),
+});
+
 // ============================================================================
 // Session 3.3 — Chat stream, Knowledge, Conversations
 // ============================================================================
@@ -1090,6 +1103,88 @@ export const updateOrchestrationSettingsSchema = z
   });
 
 // ============================================================================
+// Execution Trace — Prisma Json column parsing
+// ============================================================================
+
+/**
+ * Schema for `AiWorkflowExecution.executionTrace` entries stored as Prisma
+ * `Json`. Used in route handlers to safely parse the raw JSON array instead
+ * of blind-casting.
+ */
+export const executionTraceEntrySchema = z.object({
+  stepId: z.string(),
+  stepType: z.string(),
+  label: z.string(),
+  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval']),
+  output: z.unknown(),
+  error: z.string().optional(),
+  tokensUsed: z.number(),
+  costUsd: z.number(),
+  startedAt: z.string(),
+  completedAt: z.string().optional(),
+  durationMs: z.number(),
+});
+
+export const executionTraceSchema = z.array(executionTraceEntrySchema).catch([]);
+
+// ============================================================================
+// Executor Config Schemas — step.config validation
+// ============================================================================
+
+/** Shared error-strategy fields present on every step config. */
+export const stepErrorConfigSchema = z.object({
+  errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']).optional(),
+  retryCount: z.number().int().nonnegative().optional(),
+  fallbackStepId: z.string().optional(),
+});
+
+export const llmCallConfigSchema = stepErrorConfigSchema.extend({
+  prompt: z.string().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+  maxTokens: z.number().optional(),
+});
+
+export const toolCallConfigSchema = stepErrorConfigSchema.extend({
+  capabilitySlug: z.string().optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const routeConfigSchema = stepErrorConfigSchema.extend({
+  classificationPrompt: z.string().optional(),
+  routes: z.array(z.object({ label: z.unknown() })).optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const reflectConfigSchema = stepErrorConfigSchema.extend({
+  critiquePrompt: z.string().optional(),
+  maxIterations: z.number().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const planConfigSchema = stepErrorConfigSchema.extend({
+  objective: z.string().optional(),
+  maxSubSteps: z.number().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
+  prompt: z.string().optional(),
+  timeoutMinutes: z.number().optional(),
+  notificationChannel: z.string().optional(),
+});
+
+export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
+  query: z.string().optional(),
+  topK: z.number().optional(),
+  similarityThreshold: z.number().optional(),
+  filters: z.record(z.string(), z.unknown()).optional(),
+});
+
+// ============================================================================
 // Inferred Types
 // ============================================================================
 
@@ -1121,6 +1216,7 @@ export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
 export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
 export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
 export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;
+export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
 export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;

@@ -74,6 +74,7 @@
     "@react-email/components": "^1.0.7",
     "@sentry/nextjs": "^10.38.0",
     "@vercel/blob": "^2.2.0",
+    "@xyflow/react": "^12.10.2",
     "better-auth": "^1.4.18",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

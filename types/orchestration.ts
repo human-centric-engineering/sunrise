@@ -179,6 +179,106 @@ export interface WorkflowDefinition {
 }
 
 // ============================================================================
+// Workflow Execution Events (Session 5.2)
+// ============================================================================
+
+/**
+ * Platform-agnostic workflow execution event.
+ *
+ * Returned by `OrchestrationEngine.execute()` as `AsyncIterable<ExecutionEvent>`.
+ * The API layer converts these to SSE frames via `sseResponse`.
+ *
+ * Event ordering invariant (happy path):
+ *   `workflow_started` → N × (`step_started` → `step_completed`) → `workflow_completed`
+ *
+ * On failure:
+ *   `... → step_failed → workflow_failed`
+ *
+ * On pause:
+ *   `... → step_started → approval_required` (stream ends here;
+ *   execution row transitions to `paused_for_approval`).
+ */
+export type ExecutionEvent =
+  | { type: 'workflow_started'; executionId: string; workflowId: string }
+  | { type: 'step_started'; stepId: string; stepType: WorkflowStepType; label: string }
+  | {
+      type: 'step_completed';
+      stepId: string;
+      output: unknown;
+      tokensUsed: number;
+      costUsd: number;
+      durationMs: number;
+    }
+  | { type: 'step_failed'; stepId: string; error: string; willRetry: boolean }
+  | { type: 'approval_required'; stepId: string; payload: unknown }
+  | { type: 'budget_warning'; usedUsd: number; limitUsd: number }
+  | {
+      type: 'workflow_completed';
+      output: unknown;
+      totalTokensUsed: number;
+      totalCostUsd: number;
+    }
+  | { type: 'workflow_failed'; error: string; failedStepId?: string };
+
+/**
+ * One entry in the persisted `AiWorkflowExecution.executionTrace` JSON array.
+ *
+ * The engine writes one entry per completed step (or per terminally-failed
+ * step). Survives process restarts and is the source of truth for the
+ * execution detail view.
+ */
+export interface ExecutionTraceEntry {
+  stepId: string;
+  stepType: WorkflowStepType;
+  label: string;
+  status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval';
+  output: unknown;
+  error?: string;
+  tokensUsed: number;
+  costUsd: number;
+  startedAt: string;
+  completedAt?: string;
+  durationMs: number;
+}
+
+/**
+ * Per-step executor return value. Executors are pure functions w.r.t.
+ * context — they return a `StepResult` and the engine merges it back
+ * into the live `ExecutionContext`.
+ */
+export interface StepResult {
+  /** Structured step output — written to `ctx.stepOutputs[stepId]`. */
+  output: unknown;
+  /** Token count consumed by this step (0 for non-LLM steps). */
+  tokensUsed: number;
+  /** Cost incurred by this step in USD (0 for non-LLM steps). */
+  costUsd: number;
+  /**
+   * Explicit next step ids — overrides the step's declared `nextSteps`.
+   * Used by `route` (branch selection) and `parallel` (fan-out control).
+   * If omitted, the engine follows `step.nextSteps` as written.
+   */
+  nextStepIds?: string[];
+  /**
+   * If true, terminates the workflow with `workflow_completed` immediately
+   * after this step. Used by the final step of a chain to signal completion.
+   */
+  terminal?: boolean;
+}
+
+/** Minimal summary of a workflow execution row, for list views. */
+export interface WorkflowExecutionSummary {
+  id: string;
+  workflowId: string;
+  status: WorkflowStatus;
+  totalTokensUsed: number;
+  totalCostUsd: number;
+  startedAt: Date;
+  completedAt: Date | null;
+  currentStep: string | null;
+}
+
+// ============================================================================
 // Streaming Chat Events
 // ============================================================================
 

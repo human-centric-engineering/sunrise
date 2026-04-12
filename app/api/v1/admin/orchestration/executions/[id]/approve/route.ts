@@ -1,29 +1,30 @@
 /**
- * Admin Orchestration — Approve paused execution (STUB, 501)
+ * Admin Orchestration — Approve paused execution
  *
  * POST /api/v1/admin/orchestration/executions/:id/approve
  *
- * Validates auth, body shape, URL id, and execution lookup, then
- * returns 501. Deliberately does NOT check
- * `execution.status === 'paused_for_approval'` — state-transition logic
- * belongs with the real engine (Session 5.2), which is the source of
- * truth on approval lifecycle.
+ * Transitions a `paused_for_approval` row back to `running` and writes
+ * the approval payload onto the awaiting step's trace entry so the
+ * engine sees it when the client reconnects via
+ * `POST /workflows/:workflowId/execute?resumeFromExecutionId=<id>`.
+ *
+ * Ownership: rows are scoped to `session.user.id`. Cross-user access
+ * returns 404 (not 403).
  *
  * Authentication: Admin role required.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { errorResponse } from '@/lib/api/responses';
+import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { approveExecutionBodySchema } from '@/lib/validations/orchestration';
+import { approveExecutionBodySchema, executionTraceSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-
-const NOT_IMPLEMENTED_MESSAGE = 'Workflow execution engine arrives in Phase 5 (Session 5.2)';
+import { WorkflowStatus } from '@/types/orchestration';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -41,20 +42,48 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const body = await validateRequestBody(request, approveExecutionBodySchema);
 
   const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
-  if (!execution) throw new NotFoundError(`Execution ${id} not found`);
+  // Cross-user → 404 (not 403). Non-paused → 404 as well: the resource in
+  // the requested state doesn't exist from the client's perspective.
+  if (!execution || execution.userId !== session.user.id) {
+    throw new NotFoundError(`Execution ${id} not found`);
+  }
+  if (execution.status !== WorkflowStatus.PAUSED_FOR_APPROVAL) {
+    throw new ValidationError('Execution is not awaiting approval', {
+      status: [`Expected "paused_for_approval", got "${execution.status}"`],
+    });
+  }
 
-  log.warn('execution approve stubbed — 501', {
-    executionId: id,
-    userId: session.user.id,
-    hasPayload: body.approvalPayload !== undefined,
+  // Persist the approval payload onto the awaiting trace entry so the
+  // engine can pick it up on resume.
+  const trace = executionTraceSchema.parse(execution.executionTrace);
+  const awaitingIdx = trace.findIndex((e) => e.status === 'awaiting_approval');
+  if (awaitingIdx !== -1) {
+    trace[awaitingIdx] = {
+      ...trace[awaitingIdx],
+      status: 'completed',
+      output: body.approvalPayload ?? { approved: true, notes: body.notes ?? null },
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  await prisma.aiWorkflowExecution.update({
+    where: { id },
+    data: {
+      status: WorkflowStatus.RUNNING,
+      executionTrace: trace as unknown as object,
+    },
   });
 
-  // TODO(Session 5.2): replace this 501 with
-  //   return successResponse(
-  //     await engine.resumeApproval(id, session.user.id, body.approvalPayload)
-  //   );
-  return errorResponse(NOT_IMPLEMENTED_MESSAGE, {
-    code: 'NOT_IMPLEMENTED',
-    status: 501,
+  log.info('execution approved', {
+    executionId: id,
+    userId: session.user.id,
+    resumeStepId: execution.currentStep,
+  });
+
+  return successResponse({
+    success: true,
+    executionId: id,
+    resumeStepId: execution.currentStep,
+    workflowId: execution.workflowId,
   });
 });

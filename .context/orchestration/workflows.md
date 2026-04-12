@@ -1,8 +1,8 @@
 # Workflows
 
-Structural validation for `AiWorkflow.workflowDefinition`. Lives in `lib/orchestration/workflows/` and is consumed by the admin `/validate` route, the `/execute` route pre-flight, the Session 5.1b editor UI, and the Session 5.2 orchestration engine.
+Structural validation for `AiWorkflow.workflowDefinition`. Lives in `lib/orchestration/workflows/` and is consumed by the admin `/validate` route, the `/execute` route pre-flight, the builder UI, and the runtime orchestration engine.
 
-**Scope note:** This session (Phase 3.2) ships **only the validator**. The executor, step runners, approval resume, and trace writers all land in Session 5.2 — see [Coming in Session 5.2](#coming-in-session-52).
+**Execution** is implemented by `OrchestrationEngine` at `lib/orchestration/engine/` — see [`engine.md`](./engine.md) for the event stream, executor registry, checkpoint lifecycle, and error strategies. This file covers **authoring-time** validation only.
 
 ## Module Layout
 
@@ -99,21 +99,34 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | `POST /workflows/:id/validate`             | Live validation endpoint — wraps the result in `successResponse`      |
 | `POST /workflows/:id/execute` (pre-flight) | Blocks a bad DAG from reaching the engine (400 with same error shape) |
 | Session 5.1b workflow editor UI            | Live validation inside the editor as the admin edits a definition     |
-| Session 5.2 `OrchestrationEngine`          | Defence-in-depth pre-flight before execution                          |
+| Engine pre-flight at `/execute`            | Defence-in-depth structural check before each run                     |
 
-## Coming in Session 5.2
+## Admin UI
 
-**Not yet implemented** — Phase 3.2 deliberately stops at the validator. Session 5.2 adds the real `OrchestrationEngine` under `lib/orchestration/workflows/` alongside the existing `validator.ts`:
+Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
 
-| Future addition    | Purpose                                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------------------------ |
-| `engine.ts`        | `engine.execute({ workflow, inputData, budgetLimitUsd, userId })` and `engine.resumeApproval(id, ...)` |
-| Step runners       | `llm_call`, `tool_call`, `human_approval`, `chain` — one handler per `WorkflowStep.type`               |
-| Trace writer       | Appends structured entries to `AiWorkflowExecution.executionTrace` as steps run                        |
-| Budget enforcement | Honours `budgetLimitUsd` per-run cap using existing `costTracker.checkBudget`                          |
-| Approval state     | Transitions `AiWorkflowExecution.status` through `paused_for_approval` → `running` on resume           |
+**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 9 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
-Until 5.2 lands, the three execute/read/approve admin routes return `501 NOT_IMPLEMENTED` with a `Session 5.2` message. See [`admin-api.md`](./admin-api.md#executions-stubbed) for the stub contract.
+**What it defers:** Chain sub-step editor and inline edge-condition editing are future work.
+
+**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 5 built-in composition recipes from `lib/orchestration/workflows/templates/` — pure TS, no network call. Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning). `prisma/seed.ts` also upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
+
+**UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON and are honoured opportunistically by the runtime executors (see [`engine.md`](./engine.md)). The same goes for `step.config._layout` — UI metadata, ignored by the validator and the engine.
+
+**FE-only extra checks.** The builder also runs `runExtraChecks()` from `components/admin/orchestration/workflow-builder/extra-checks.ts` alongside `validateWorkflow()`. It adds `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, and `MISSING_REQUIRED_CONFIG` codes that duplicate or extend this validator's coverage so the red ring appears instantly on the canvas. Session 5.2 will unify this into the backend validator when the registry lives on both sides.
+
+See [`.context/admin/workflow-builder.md`](../admin/workflow-builder.md) for the full builder reference — pages, registry, node type, canvas interactions, layout persistence, and scope.
+
+## Runtime execution
+
+The validator only covers authoring. Runtime execution lives in `lib/orchestration/engine/` and is documented in full at [`engine.md`](./engine.md). Quick links:
+
+- **`OrchestrationEngine.execute(workflow, inputData, options)`** — async generator yielding `ExecutionEvent`s and checkpointing to `AiWorkflowExecution` after each step.
+- **Executor registry** — one executor per `WorkflowStep.type`; each executor self-registers via the barrel at `lib/orchestration/engine/executors/index.ts`.
+- **Error strategies** — `retry`, `fallback`, `skip`, `fail` per step; budget enforcement with 80% warning.
+- **Human approval pause** — `human_approval` executor throws `PausedForApproval`; engine flips the row to `paused_for_approval` and exits cleanly.
+
+The three execute/read/approve admin routes are live; see [`admin-api.md`](./admin-api.md#executions) for the HTTP contract.
 
 ## Extending the validator
 
@@ -122,12 +135,13 @@ If a new step type (`WorkflowStep.type`) carries required config, add the check 
 - Add a new `code` variant to the `WorkflowValidationError['code']` union.
 - Update the error-codes table above — this doc is the source of truth for error rendering.
 - Add a unit test in `tests/unit/lib/orchestration/workflows/validator.test.ts` that asserts on the new `code`, not on the message.
-- Never make the validator read from the DB or call `process.env`. If a check needs external data, it belongs in the engine (Session 5.2), not the validator.
+- Never make the validator read from the DB or call `process.env`. If a check needs external data, it belongs in the engine, not the validator.
 
 ## Related
 
-- [`admin-api.md`](./admin-api.md) — Workflow CRUD + `/validate` + stubbed executions
+- [`engine.md`](./engine.md) — Runtime orchestration engine, executors, events
+- [`admin-api.md`](./admin-api.md) — Workflow CRUD + `/validate` + live executions
 - [`overview.md`](./overview.md) — Orchestration module layout
 - `lib/orchestration/workflows/validator.ts` — Implementation
-- `types/orchestration.ts` — `WorkflowDefinition`, `WorkflowStep`, `ConditionalEdge`, `KNOWN_STEP_TYPES`
+- `types/orchestration.ts` — `WorkflowDefinition`, `WorkflowStep`, `ConditionalEdge`, `KNOWN_STEP_TYPES`, `ExecutionEvent`, `ExecutionTraceEntry`
 - `lib/validations/orchestration.ts` — `createWorkflowSchema`, `updateWorkflowSchema`, `executeWorkflowBodySchema`

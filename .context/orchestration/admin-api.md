@@ -31,9 +31,9 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                             |
 | `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow              |
 | `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | DAG validation of the stored `workflowDefinition`   |
-| `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow _(501 — stub, Session 5.2)_          |
-| `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution _(501 — stub, Session 5.2)_       |
-| `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a paused execution _(501 — stub, 5.2)_      |
+| `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow — SSE `text/event-stream`            |
+| `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution row + parsed trace                |
+| `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a `paused_for_approval` execution           |
 | `/api/v1/admin/orchestration/chat/stream`                     | POST               | Streaming chat turn (SSE `text/event-stream`)       |
 | `/api/v1/admin/orchestration/knowledge/search`                | POST               | Hybrid vector + keyword search over chunks          |
 | `/api/v1/admin/orchestration/knowledge/patterns/:number`      | GET                | Fetch all chunks for a single design pattern        |
@@ -379,7 +379,7 @@ Returns `{ models, refreshed }` from `modelRegistry.getAvailableModels()` — th
 
 ## Workflows
 
-CRUD over `AiWorkflow`, plus a pure-logic DAG `/validate` endpoint. The workflow **executor** lands in Phase 5 (Session 5.2) — the three execute / read / approve routes ship this session as 501 stubs (see _Executions (stubbed)_ below).
+CRUD over `AiWorkflow`, plus a pure-logic DAG `/validate` endpoint and a live SSE `/execute` path. The runtime engine is documented in [`engine.md`](./engine.md); execution HTTP contracts are in [Executions](#executions) below.
 
 ### List / create / read / update / delete
 
@@ -434,63 +434,105 @@ Empty body. Runs `validateWorkflow(workflow.workflowDefinition)` from `lib/orche
 
 Errors are **typed by `code`**, never just message strings — clients and the future workflow-editor UI should render them structurally. Every `code`, its meaning, and the validator's algorithm are documented in [`workflows.md`](./workflows.md).
 
-The validator is reused verbatim by `POST /workflows/:id/execute` (as a pre-flight check before the engine call) and will be reused by the Session 5.2 engine itself.
+The validator is reused verbatim by `POST /workflows/:id/execute` as a pre-flight check before the engine call, and again by the engine's defence-in-depth pass on the stored definition.
 
-## Executions (stubbed)
+## Executions
 
-`POST /workflows/:id/execute`, `GET /executions/:id`, and `POST /executions/:id/approve` ship this session as **501 stubs**. The `OrchestrationEngine` arrives in Phase 5 (Session 5.2). Each stub is a **full route handler** — auth, rate limit, Zod validation, DB lookup — and returns `errorResponse` at the exact line the engine will plug into.
+Three admin routes drive the runtime engine. The engine implementation lives in `lib/orchestration/engine/` — see [`engine.md`](./engine.md) for the event model, executor registry, context lifecycle, and error strategies. This section is the **HTTP contract**.
 
-Why stubs rather than a minimal engine: building a throwaway executor now would either create two code paths that drift, or lock us into implementation decisions 5.2 is better placed to make. The stubs lock the route **contract** (shape, auth, errors) so Phase 4 UI work can build against them today.
+**Ownership scoping.** Every route is scoped to `session.user.id`. A cross-user lookup on `GET /executions/:id` or `POST /executions/:id/approve` returns **404**, not 403 — we do not confirm existence of rows outside the caller's own history. The same rule applies when resuming via `?resumeFromExecutionId=` on `/execute`.
 
-### What the stubs validate
+### Execute workflow (SSE)
 
-Clients can exercise everything short of the engine itself:
+```bash
+curl -N -X POST /api/v1/admin/orchestration/workflows/<id>/execute \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputData": { "query": "Summarise the ReAct pattern" },
+    "budgetLimitUsd": 0.5
+  }'
+```
 
-| Stub route                     | Validates                                                                                                                                                                                                                           |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /workflows/:id/execute`  | Admin auth · rate limit · `executeWorkflowBodySchema` (`inputData` required, optional `budgetLimitUsd`) · CUID · workflow exists (404) · workflow `isActive` (400) · `validateWorkflow` pre-flight (400 with DAG errors)            |
-| `GET /executions/:id`          | Admin auth · CUID · execution exists (404)                                                                                                                                                                                          |
-| `POST /executions/:id/approve` | Admin auth · rate limit · `approveExecutionBodySchema` (optional `approvalPayload`, optional `notes`) · CUID · execution exists (404). Deliberately does **not** check `execution.status` — state transitions are the engine's job. |
+Validated by `executeWorkflowBodySchema` (`inputData` required, optional `budgetLimitUsd`). The route:
 
-### 501 response shape
+1. Runs admin auth + rate limit.
+2. Loads the workflow, rejects with **404** when missing, **400 VALIDATION_ERROR** when `isActive === false`.
+3. Runs `validateWorkflow()` pre-flight on the stored definition — structural errors surface as `400` with the full DAG error list on `error.details`.
+4. Optionally resolves `?resumeFromExecutionId=<cuid>` — if the target row exists but belongs to another user, **404** (never 403).
+5. Instantiates `OrchestrationEngine`, hands the resulting `AsyncIterable<ExecutionEvent>` straight to [`sseResponse`](../api/sse.md), and returns the `text/event-stream` response.
 
-All three stubs return:
+Each frame is a discriminated `ExecutionEvent` — `workflow_started`, `step_started`, `step_completed`, `step_failed`, `approval_required`, `budget_warning`, `workflow_completed`, `workflow_failed`. See [`engine.md`](./engine.md#executionevent-sse-payloads) for the full union and [`../api/sse.md`](../api/sse.md) for the framing contract and error sanitization guarantee (raw executor errors never reach the wire).
+
+The client's `AbortController.abort()` is forwarded to the engine via `request.signal`; aborting mid-stream leaves the `AiWorkflowExecution` row at its last checkpoint.
+
+### Read execution detail
+
+```bash
+curl /api/v1/admin/orchestration/executions/<id>
+```
+
+No body. Returns the row plus a parsed `ExecutionTraceEntry[]`:
 
 ```json
 {
-  "success": false,
-  "error": {
-    "code": "NOT_IMPLEMENTED",
-    "message": "Workflow execution engine arrives in Phase 5 (Session 5.2)"
+  "success": true,
+  "data": {
+    "execution": {
+      "id": "<cuid>",
+      "workflowId": "<cuid>",
+      "status": "running",
+      "currentStep": "step2",
+      "totalTokensUsed": 2400,
+      "totalCostUsd": 0.012,
+      "budgetLimitUsd": 0.5,
+      "startedAt": "2026-04-11T12:00:00.000Z",
+      "completedAt": null
+    },
+    "trace": [
+      {
+        "stepId": "step1",
+        "stepType": "llm_call",
+        "label": "Generate",
+        "status": "completed",
+        "output": "...",
+        "tokensUsed": 1200,
+        "costUsd": 0.006,
+        "startedAt": "2026-04-11T12:00:00.000Z",
+        "completedAt": "2026-04-11T12:00:01.200Z",
+        "durationMs": 1200
+      }
+    ]
   }
 }
 ```
 
-HTTP status: `501`. Each route also logs `log.warn('... stubbed — 501', { ... })` so the stub is visible in production logs if anyone deploys a client against it prematurely.
+Cross-user → **404**. Malformed CUID → **400 VALIDATION_ERROR**.
 
-### The Session 5.2 swap
+### Approve paused execution
 
-Each stub carries a `// TODO(Session 5.2):` comment marking the exact line the engine plugs into. The 5.2 change per route is a single-line replacement:
-
-```typescript
-// workflows/:id/execute
-return successResponse(
-  await engine.execute({
-    workflow,
-    inputData: body.inputData,
-    budgetLimitUsd: body.budgetLimitUsd,
-    userId: session.user.id,
-  })
-);
-
-// executions/:id
-return successResponse(execution);
-
-// executions/:id/approve
-return successResponse(await engine.resumeApproval(id, session.user.id, body.approvalPayload));
+```bash
+curl -X POST /api/v1/admin/orchestration/executions/<id>/approve \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approvalPayload": { "decision": "approved", "reviewer": "alice" },
+    "notes": "LGTM"
+  }'
 ```
 
-Everything above that line — auth, validation, lookups — stays as-is.
+Validated by `approveExecutionBodySchema` (`approvalPayload` optional object, `notes` optional string ≤ 5000 chars). The route:
+
+1. Auth + rate limit + CUID + ownership check (cross-user → **404**).
+2. Rejects with **400** if `execution.status !== 'paused_for_approval'`.
+3. Flips the row's `status` from `paused_for_approval` → `running`, persists `approvalPayload` onto the awaiting step's trace entry (marking it `status: 'completed'` with `approvalPayload` merged into its `output`), and returns:
+
+```json
+{
+  "success": true,
+  "data": { "success": true, "resumeStepId": "<stepId>" }
+}
+```
+
+The client is then expected to reconnect via `POST /workflows/:id/execute?resumeFromExecutionId=<id>` to drain the remaining events. This keeps the engine stateless between HTTP boundaries.
 
 ## Chat (streaming)
 

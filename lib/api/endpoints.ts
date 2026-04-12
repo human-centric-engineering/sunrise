@@ -79,7 +79,15 @@ export const API = {
       providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
+      workflowById: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}`,
+      workflowValidate: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/validate`,
+      workflowExecute: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/execute`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
+      executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
+      executionApprove: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/approve`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',

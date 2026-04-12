@@ -1,19 +1,12 @@
 /**
- * Integration Test: Get execution stub (501)
+ * Integration Test: Get execution detail
  *
  * GET /api/v1/admin/orchestration/executions/:id
  *
- * This route is a full handler that validates auth, CUID, and execution lookup
- * — then returns 501 NOT_IMPLEMENTED when the row is found.
- *
- * Key assertions:
- *   - Auth guard blocks unauthenticated (401)
- *   - CUID validation runs (bad id → 400)
- *   - Not-found returns 404
- *   - Happy path returns HTTP 501 with code: 'NOT_IMPLEMENTED'
- *     and message containing "Session 5.2"
- *
- * @see app/api/v1/admin/orchestration/executions/[id]/route.ts
+ * Flipped from the 5.1 stub in Session 5.2. The route now returns the
+ * `AiWorkflowExecution` row plus a parsed `trace` array and a
+ * structured projection. Ownership is scoped to `session.user.id`; a
+ * cross-user lookup returns 404 (not 403).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -53,29 +46,43 @@ import { prisma } from '@/lib/db/client';
 const EXECUTION_ID = 'cmjbv4i3x00003wsloputgwul';
 const WORKFLOW_ID = 'cmjbv4i3x00003wsloputgwu2';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
+const OTHER_USER_ID = 'cmjbv4i3x00003wsloputgwz9';
 const INVALID_ID = 'not-a-cuid';
 
 function makeExecution(overrides: Record<string, unknown> = {}) {
   return {
     id: EXECUTION_ID,
     workflowId: WORKFLOW_ID,
+    userId: ADMIN_ID,
     status: 'running',
     inputData: {},
-    executionTrace: [],
-    currentStep: null,
+    outputData: null,
+    executionTrace: [
+      {
+        stepId: 'step1',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: 'hi',
+        tokensUsed: 10,
+        costUsd: 0.01,
+        startedAt: '2025-01-01T00:00:00Z',
+        completedAt: '2025-01-01T00:00:01Z',
+        durationMs: 1000,
+      },
+    ],
+    currentStep: 'step2',
     errorMessage: null,
-    totalCostUsd: null,
+    totalTokensUsed: 10,
+    totalCostUsd: 0.01,
     budgetLimitUsd: null,
     startedAt: new Date('2025-01-01'),
     completedAt: null,
-    createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
     ...overrides,
   };
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeGetRequest(): NextRequest {
   return new NextRequest(
@@ -91,68 +98,65 @@ async function parseJson<T>(response: Response): Promise<T> {
   return JSON.parse(await response.text()) as T;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('GET /api/v1/admin/orchestration/executions/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('Authentication & Authorization', () => {
-    it('returns 401 when unauthenticated', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
-
-      const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-
-      expect(response.status).toBe(401);
-    });
-
-    it('returns 403 when authenticated as non-admin', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
-
-      const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-
-      expect(response.status).toBe(403);
-    });
+  it('returns 401 when unauthenticated', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(401);
   });
 
-  describe('CUID validation', () => {
-    it('returns 400 for invalid CUID param', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-
-      const response = await GET(makeGetRequest(), makeParams(INVALID_ID));
-
-      expect(response.status).toBe(400);
-      const data = await parseJson<{ error: { code: string } }>(response);
-      expect(data.error.code).toBe('VALIDATION_ERROR');
-    });
+  it('returns 403 when authenticated as non-admin', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(403);
   });
 
-  describe('Execution lookup', () => {
-    it('returns 404 when execution not found', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(null);
-
-      const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-
-      expect(response.status).toBe(404);
-    });
+  it('returns 400 for invalid CUID param', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const response = await GET(makeGetRequest(), makeParams(INVALID_ID));
+    expect(response.status).toBe(400);
   });
 
-  describe('Happy path → 501 NOT_IMPLEMENTED', () => {
-    it('returns HTTP 501 with NOT_IMPLEMENTED code when execution exists', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+  it('returns 404 when execution not found', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(null);
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(404);
+  });
 
-      const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+  it('returns 404 when execution belongs to a different user (not 403)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ userId: OTHER_USER_ID }) as never
+    );
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(404);
+  });
 
-      expect(response.status).toBe(501);
-      const data = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
-        response
-      );
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('NOT_IMPLEMENTED');
-      expect(data.error.message).toContain('Session 5.2');
-    });
+  it('returns the execution row + parsed trace on happy path', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(200);
+
+    const data = await parseJson<{
+      success: boolean;
+      data: {
+        execution: { id: string; status: string; totalTokensUsed: number; currentStep: string };
+        trace: Array<{ stepId: string; status: string }>;
+      };
+    }>(response);
+
+    expect(data.success).toBe(true);
+    expect(data.data.execution.id).toBe(EXECUTION_ID);
+    expect(data.data.execution.currentStep).toBe('step2');
+    expect(data.data.execution.totalTokensUsed).toBe(10);
+    expect(data.data.trace).toHaveLength(1);
+    expect(data.data.trace[0].stepId).toBe('step1');
   });
 });

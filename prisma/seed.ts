@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { logger } from '../lib/logging';
 import { DEFAULT_FLAGS } from '../lib/feature-flags/config';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '../lib/orchestration/workflows/templates';
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -21,7 +22,10 @@ async function main() {
     await prisma.session.deleteMany();
     await prisma.account.deleteMany();
     // Clear orchestration rows that FK to User before deleting users, or
-    // the deleteMany below fails with a foreign-key error.
+    // the deleteMany below fails with a foreign-key error. Workflow
+    // executions FK to workflows so they go first.
+    await prisma.aiWorkflowExecution.deleteMany();
+    await prisma.aiWorkflow.deleteMany();
     await prisma.aiProviderConfig.deleteMany();
     await prisma.user.deleteMany();
     await prisma.featureFlag.deleteMany();
@@ -70,6 +74,11 @@ async function main() {
   // env-var presence at seed time so a fresh install with
   // `ANTHROPIC_API_KEY` set lights up the provider immediately.
   await seedDefaultProviders(adminUser.id);
+
+  // Seed built-in workflow templates so they show up in the workflows
+  // list page. Each template is a pure-TS WorkflowDefinition shared with
+  // the builder toolbar's "Use template" dropdown.
+  await seedBuiltinTemplates(adminUser.id);
 
   logger.info('🎉 Seeding complete!');
 }
@@ -138,6 +147,37 @@ async function seedDefaultProviders(createdBy: string): Promise<void> {
   }
 
   logger.info(`✅ Upserted ${defaults.length} default providers`);
+}
+
+/**
+ * Upsert the built-in workflow templates (`BUILTIN_WORKFLOW_TEMPLATES`)
+ * as `AiWorkflow` rows with `isTemplate: true`. Each row is keyed by the
+ * template's static `slug`; the `update` branch is empty so re-running
+ * the seeder against an admin-edited template row is a no-op.
+ */
+async function seedBuiltinTemplates(createdBy: string): Promise<void> {
+  logger.info('📚 Seeding built-in workflow templates...');
+
+  for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+    const patternsUsed = template.patterns.map((p) => p.number);
+    await prisma.aiWorkflow.upsert({
+      where: { slug: template.slug },
+      // Empty update — re-seeding never overwrites admin edits.
+      update: {},
+      create: {
+        slug: template.slug,
+        name: template.name,
+        description: template.shortDescription,
+        workflowDefinition: template.workflowDefinition as unknown as object,
+        patternsUsed,
+        isActive: true,
+        isTemplate: true,
+        createdBy,
+      },
+    });
+  }
+
+  logger.info(`✅ Upserted ${BUILTIN_WORKFLOW_TEMPLATES.length} built-in templates`);
 }
 
 main()

@@ -4,7 +4,12 @@ First SSE infrastructure in the repo. Bridges an `AsyncIterable<T>` to a streami
 
 **Location:** `lib/api/sse.ts`
 
-Reusable for any route that streams typed events — the first caller is the admin chat stream (`app/api/v1/admin/orchestration/chat/stream/route.ts`); future consumers include workflow execution status and long-running admin jobs.
+Reusable for any route that streams typed events. Current callers:
+
+- **Admin chat stream** — `app/api/v1/admin/orchestration/chat/stream/route.ts` wraps an `AsyncIterable<ChatEvent>` from `streamChat()`.
+- **Workflow execution** — `app/api/v1/admin/orchestration/workflows/[id]/execute/route.ts` wraps the `AsyncIterable<ExecutionEvent>` from `OrchestrationEngine.execute()` (see [`engine.md`](../orchestration/engine.md) and [`admin-api.md`](../orchestration/admin-api.md#execute-workflow-sse)).
+
+Both consumers share the same framing, keepalive, and error-sanitization contract — any future long-running admin job (e.g. knowledge base rechunk status, bulk imports) should funnel through this helper rather than hand-rolling SSE frames.
 
 ## Signature
 
@@ -124,5 +129,6 @@ Unit tests at `tests/unit/lib/api/sse.test.ts` cover framing, keepalive (with `v
 
 ## Related Documentation
 
-- [Orchestration Admin API](../orchestration/admin-api.md) — first consumer (chat stream route)
+- [Orchestration Admin API](../orchestration/admin-api.md) — chat stream and workflow execute routes
 - [Streaming Chat Handler](../orchestration/chat.md) — the `AsyncIterable<ChatEvent>` source
+- [Orchestration Engine](../orchestration/engine.md) — the `AsyncIterable<ExecutionEvent>` source
