@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -42,6 +43,21 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+/**
+ * Strip the embedding prefix ("PatternName — SectionName\n\n" or "PatternName\n\n")
+ * that the chunker prepends for vector search context. The detail page already
+ * displays the pattern name and section heading separately.
+ */
+function stripEmbeddingPrefix(content: string): string {
+  // The chunker prepends "PatternName — SectionName\n\n" or "PatternName\n\n"
+  // for embedding context. Strip whichever form matches the first line.
+  const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);
+  if (withDash) return withDash[1];
+  const plain = content.match(/^[^\n]+\n\n([\s\S]*)$/);
+  if (plain) return plain[1];
+  return content;
+}
+
 export default async function PatternDetailPage({ params }: PageProps) {
   const { number: rawNum } = await params;
   const num = parseInt(rawNum, 10);
@@ -70,8 +86,18 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
+  // Sections shown open at the top as cards
+  const HERO_SECTIONS = new Set(['overview', 'tldr', 'tl;dr summary']);
+
+  const heroChunks = detail.chunks.filter((c) =>
+    HERO_SECTIONS.has((c.section ?? '').toLowerCase())
+  );
+  const restChunks = detail.chunks.filter(
+    (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <header>
         <nav className="text-muted-foreground mb-1 text-xs">
           <Link href="/admin/orchestration" className="hover:underline">
@@ -87,18 +113,18 @@ export default async function PatternDetailPage({ params }: PageProps) {
         <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
       </header>
 
-      <div className="space-y-8">
-        {detail.chunks.map((chunk) => (
-          <section key={chunk.id}>
-            {chunk.section && (
-              <h2 className="mb-3 text-lg font-medium capitalize">
-                {chunk.section.replace(/_/g, ' ')}
-              </h2>
-            )}
-            <PatternContent content={chunk.content} />
-          </section>
-        ))}
-      </div>
+      {/* Hero sections — always visible in cards */}
+      {heroChunks.map((chunk) => (
+        <div key={chunk.id} className="bg-card rounded-lg border p-6">
+          {chunk.section && chunk.section.toLowerCase() !== 'overview' && (
+            <h2 className="mb-3 text-lg font-medium">{chunk.section.replace(/_/g, ' ')}</h2>
+          )}
+          <PatternContent content={stripEmbeddingPrefix(chunk.content)} />
+        </div>
+      ))}
+
+      {/* Remaining sections — collapsible accordions */}
+      {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}
     </div>
   );
 }

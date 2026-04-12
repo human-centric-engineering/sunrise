@@ -166,6 +166,17 @@ export async function searchKnowledge(
 }
 
 /**
+ * Strip leading markdown headings (lines starting with `#`) so the
+ * card description doesn't repeat the pattern name already shown in
+ * the card title.
+ */
+function stripLeadingHeadings(content: string | null | undefined): string | null {
+  if (!content) return null;
+  const stripped = content.replace(/^(?:#+ .*\n?)+/, '').trim();
+  return stripped || null;
+}
+
+/**
  * List all distinct patterns in the knowledge base.
  *
  * Groups chunks by patternNumber and returns a summary for each pattern,
@@ -184,14 +195,18 @@ export async function listPatterns(): Promise<PatternSummary[]> {
   for (const group of groups) {
     if (group.patternNumber === null) continue;
 
-    // Fetch the overview chunk for description and complexity metadata
-    const overviewChunk = await prisma.aiKnowledgeChunk.findFirst({
-      where: {
-        patternNumber: group.patternNumber,
-        chunkType: 'pattern_overview',
-      },
-      select: { content: true, metadata: true },
-    });
+    // Fetch the overview chunk (for complexity metadata) and the TL;DR chunk
+    // (for a concise card description). Prefer TL;DR over overview content.
+    const [overviewChunk, tldrChunk] = await Promise.all([
+      prisma.aiKnowledgeChunk.findFirst({
+        where: { patternNumber: group.patternNumber, chunkType: 'pattern_overview' },
+        select: { content: true, metadata: true },
+      }),
+      prisma.aiKnowledgeChunk.findFirst({
+        where: { patternNumber: group.patternNumber, section: 'TL;DR Summary' },
+        select: { content: true },
+      }),
+    ]);
 
     const rawMeta: unknown = overviewChunk?.metadata ?? null;
     const metadata =
@@ -200,12 +215,17 @@ export async function listPatterns(): Promise<PatternSummary[]> {
         : null;
     const complexity = typeof metadata?.complexity === 'string' ? metadata.complexity : null;
 
+    const description =
+      stripLeadingHeadings(tldrChunk?.content)?.slice(0, 300) ??
+      stripLeadingHeadings(overviewChunk?.content)?.slice(0, 200) ??
+      null;
+
     summaries.push({
       patternNumber: group.patternNumber,
       patternName: group.patternName ?? `Pattern ${group.patternNumber}`,
       category: group.category,
       complexity,
-      description: overviewChunk?.content?.slice(0, 200) ?? null,
+      description,
       chunkCount: group._count.id,
     });
   }
@@ -220,12 +240,15 @@ const SECTION_ORDER = [
   'TL;DR Summary',
   'definition',
   'Definition & Core Concept',
+  'Agentic Definition',
+  'Common Questions',
   'how_it_works',
   'How It Works',
   'code_example',
   'Code Examples',
   'swe_parallels',
   'SWE Parallels',
+  'Traditional SWE Parallels',
   'when_to_use',
   'When to Use',
   'pitfalls',
