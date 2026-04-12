@@ -11,24 +11,18 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
+import { ragRetrieveConfigSchema } from '@/lib/validations/orchestration';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { interpolatePrompt } from '../llm-runner';
-import { registerStepType } from '../executor-registry';
-
-interface RagRetrieveConfig {
-  query?: string;
-  topK?: number;
-  similarityThreshold?: number;
-  filters?: Record<string, unknown>;
-}
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executeRagRetrieve(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as RagRetrieveConfig;
+  const config = ragRetrieveConfigSchema.parse(step.config);
   const rawQuery = config.query;
   if (typeof rawQuery !== 'string' || rawQuery.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_query', 'rag_retrieve step is missing a query');

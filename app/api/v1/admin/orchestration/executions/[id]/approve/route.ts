@@ -22,9 +22,9 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { approveExecutionBodySchema } from '@/lib/validations/orchestration';
+import { approveExecutionBodySchema, executionTraceSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { WorkflowStatus, type ExecutionTraceEntry } from '@/types/orchestration';
+import { WorkflowStatus } from '@/types/orchestration';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -55,9 +55,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   // Persist the approval payload onto the awaiting trace entry so the
   // engine can pick it up on resume.
-  const trace: ExecutionTraceEntry[] = Array.isArray(execution.executionTrace)
-    ? (execution.executionTrace as unknown as ExecutionTraceEntry[])
-    : [];
+  const trace = executionTraceSchema.parse(execution.executionTrace);
   const awaitingIdx = trace.findIndex((e) => e.status === 'awaiting_approval');
   if (awaitingIdx !== -1) {
     trace[awaitingIdx] = {

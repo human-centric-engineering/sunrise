@@ -16,23 +16,17 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { runLlmCall } from '../llm-runner';
-import { registerStepType } from '../executor-registry';
-
-interface PlanConfig {
-  objective?: string;
-  maxSubSteps?: number;
-  modelOverride?: string;
-  temperature?: number;
-}
+import { planConfigSchema } from '@/lib/validations/orchestration';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executePlan(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as PlanConfig;
+  const config = planConfigSchema.parse(step.config);
   const objective = config.objective;
   if (typeof objective !== 'string' || objective.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_objective', 'plan step is missing an objective');

@@ -16,23 +16,17 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { runLlmCall } from '../llm-runner';
-import { registerStepType } from '../executor-registry';
-
-interface RouteConfig {
-  classificationPrompt?: string;
-  routes?: Array<{ label?: unknown }>;
-  modelOverride?: string;
-  temperature?: number;
-}
+import { routeConfigSchema } from '@/lib/validations/orchestration';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executeRoute(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as RouteConfig;
+  const config = routeConfigSchema.parse(step.config);
 
   const routes = Array.isArray(config.routes) ? config.routes : [];
   const labels = routes

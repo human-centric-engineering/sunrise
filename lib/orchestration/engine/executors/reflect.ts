@@ -18,17 +18,11 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { runLlmCall } from '../llm-runner';
-import { registerStepType } from '../executor-registry';
-
-interface ReflectConfig {
-  critiquePrompt?: string;
-  maxIterations?: number;
-  modelOverride?: string;
-  temperature?: number;
-}
+import { reflectConfigSchema } from '@/lib/validations/orchestration';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 const NO_CHANGE_MARKERS = [
   'no further changes',
@@ -42,7 +36,7 @@ export async function executeReflect(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as ReflectConfig;
+  const config = reflectConfigSchema.parse(step.config);
 
   const critiquePrompt = config.critiquePrompt;
   if (typeof critiquePrompt !== 'string' || critiquePrompt.trim().length === 0) {

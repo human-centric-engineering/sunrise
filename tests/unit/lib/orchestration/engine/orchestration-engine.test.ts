@@ -483,7 +483,8 @@ describe('OrchestrationEngine', () => {
       { type: 'workflow_failed' }
     >;
     expect(failed).toBeDefined();
-    expect(failed.error).toBe('raw error');
+    // sanitizeError scrubs executor_threw messages — raw error is not forwarded
+    expect(failed.error).toBe('Step "a" failed unexpectedly');
   });
 
   // ─── Terminal step ─────────────────────────────────────────────────

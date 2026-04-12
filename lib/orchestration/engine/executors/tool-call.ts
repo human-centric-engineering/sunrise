@@ -15,21 +15,17 @@
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
+import { toolCallConfigSchema } from '@/lib/validations/orchestration';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
-import type { ExecutionContext } from '../context';
-import { ExecutorError } from '../errors';
-import { registerStepType } from '../executor-registry';
-
-interface ToolCallConfig {
-  capabilitySlug?: string;
-  args?: Record<string, unknown>;
-}
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 
 export async function executeToolCall(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
-  const config = step.config as ToolCallConfig;
+  const config = toolCallConfigSchema.parse(step.config);
   const slug = config.capabilitySlug;
   if (typeof slug !== 'string' || slug.length === 0) {
     throw new ExecutorError(

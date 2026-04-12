@@ -307,6 +307,141 @@ describe('SetupWizard — step content', () => {
       });
     });
 
+    it('typing in the name field updates the input value', async () => {
+      const fetchMock = makeFetchMock(1, 0);
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2, {
+        agentDraft: {
+          name: '',
+          slug: '',
+          description: '',
+          systemInstructions: '',
+          model: '',
+          provider: '',
+        },
+      });
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument();
+      });
+
+      const nameInput = document.getElementById('agent-name') as HTMLInputElement;
+      await user.type(nameInput, 'My Bot');
+      expect(nameInput.value).toBe('My Bot');
+    });
+
+    it('typing in the slug field updates the input value', async () => {
+      const fetchMock = makeFetchMock(1, 0);
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2, {
+        agentDraft: {
+          name: 'Bot',
+          slug: '',
+          description: 'desc',
+          systemInstructions: 'instr',
+          model: 'claude-opus-4-6',
+          provider: 'anthropic',
+        },
+      });
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument();
+      });
+
+      const slugInput = document.getElementById('agent-slug') as HTMLInputElement;
+      await user.type(slugInput, 'my-bot');
+      expect(slugInput.value).toBe('my-bot');
+    });
+
+    it('typing in the description field updates the textarea value', async () => {
+      const fetchMock = makeFetchMock(1, 0);
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2, {
+        agentDraft: {
+          name: 'Bot',
+          slug: 'bot',
+          description: '',
+          systemInstructions: 'instr',
+          model: 'claude-opus-4-6',
+          provider: 'anthropic',
+        },
+      });
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument();
+      });
+
+      const descInput = document.getElementById('agent-description') as HTMLTextAreaElement;
+      await user.type(descInput, 'Helpful assistant');
+      expect(descInput.value).toBe('Helpful assistant');
+    });
+
+    it('typing in the provider field updates the input value', async () => {
+      const fetchMock = makeFetchMock(1, 0);
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2, {
+        agentDraft: {
+          name: 'Bot',
+          slug: 'bot',
+          description: 'desc',
+          systemInstructions: 'instr',
+          model: 'claude-opus-4-6',
+          provider: '',
+        },
+      });
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument();
+      });
+
+      const providerInput = document.getElementById('agent-provider') as HTMLInputElement;
+      await user.type(providerInput, 'openai');
+      expect(providerInput.value).toBe('openai');
+    });
+
+    it('typing in the model field updates the input value', async () => {
+      const fetchMock = makeFetchMock(1, 0);
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2, {
+        agentDraft: {
+          name: 'Bot',
+          slug: 'bot',
+          description: 'desc',
+          systemInstructions: 'instr',
+          model: '',
+          provider: 'anthropic',
+        },
+      });
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument();
+      });
+
+      const modelInput = document.getElementById('agent-model') as HTMLInputElement;
+      await user.type(modelInput, 'gpt-4o');
+      expect(modelInput.value).toBe('gpt-4o');
+    });
+
     it('POST failure renders an inline error and keeps user on step 3', async () => {
       const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : '';
