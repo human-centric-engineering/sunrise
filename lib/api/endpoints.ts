@@ -106,6 +106,10 @@ export const API = {
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
       SETTINGS: '/api/v1/admin/orchestration/settings',
       EVALUATIONS: '/api/v1/admin/orchestration/evaluations',
+      evaluationById: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}`,
+      evaluationComplete: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/${id}/complete`,
+      evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
     },
   },
 

@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
+import { parseSseBlock } from '@/lib/api/sse-parser';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,34 +49,6 @@ export interface ChatInterfaceProps {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
-}
-
-interface ParsedSseEvent {
-  type: string;
-  data: Record<string, unknown>;
-}
-
-// ─── SSE Parser ──────────────────────────────────────────────────────────────
-
-function parseSseBlock(block: string): ParsedSseEvent | null {
-  const lines = block.split('\n');
-  let eventType: string | null = null;
-  const dataLines: string[] = [];
-  for (const line of lines) {
-    if (line.startsWith(':')) continue; // comment / keepalive
-    if (line.startsWith('event:')) {
-      eventType = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trim());
-    }
-  }
-  if (!eventType || dataLines.length === 0) return null;
-  try {
-    const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-    return { type: eventType, data };
-  } catch {
-    return null;
-  }
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
