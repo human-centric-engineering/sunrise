@@ -85,6 +85,8 @@ const { buildContext, invalidateContext } =
   await import('@/lib/orchestration/chat/context-builder');
 const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
 const { CostOperation } = await import('@/types/orchestration');
+const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
+const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -813,7 +815,154 @@ describe('StreamingChatHandler', () => {
     expect(opts.signal).toBe(signal);
   });
 
-  // 18 ----------------------------------------------------------------------
+  // 18 — Budget warning at 80% ---------------------------------------------------
+  it('yields a warning event when budget is at 85%', async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 85,
+      limit: 100,
+      remaining: 15,
+    });
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+
+    expect(types).toContain('warning');
+    const warning = (events as Array<{ type: string; code?: string }>).find(
+      (e) => e.type === 'warning'
+    );
+    expect(warning).toMatchObject({ type: 'warning', code: 'budget_warning' });
+    // Stream should continue with start and done
+    expect(types).toContain('start');
+    expect(types).toContain('done');
+  });
+
+  // 19 — No warning below 80% ---------------------------------------------------
+  it('does not yield a warning event when budget is at 50%', async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 50,
+      limit: 100,
+      remaining: 50,
+    });
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+
+    expect(types).not.toContain('warning');
+  });
+
+  // 20 — Provider exhaustion yields internal_error --------------------------------
+  it('yields internal_error when getProviderWithFallbacks throws', async () => {
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('All providers are unavailable')
+    );
+
+    const events = await collect(streamChat(baseRequest));
+
+    // The generic catch surfaces internal_error (never the raw message)
+    expect(events).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'error', code: 'internal_error' })])
+    );
+  });
+
+  // 21 — Circuit breaker recordSuccess on completion --------------------------------
+  it('calls circuit breaker recordSuccess on successful completion', async () => {
+    const mockRecordSuccess = vi.fn();
+    (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue({
+      recordSuccess: mockRecordSuccess,
+      recordFailure: vi.fn(),
+      canAttempt: vi.fn(() => true),
+      state: 'closed',
+    });
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(mockRecordSuccess).toHaveBeenCalled();
+  });
+
+  // 22 — Input guard is called with user message -----------------------------------
+  it('calls scanForInjection with the user message', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(scanForInjection).toHaveBeenCalledWith('Hello there');
+  });
+
+  // 23 — Flagged message triggers logger.warn without content ----------------------
+  it('logs a warning when input guard flags a message', async () => {
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Potential prompt injection detected',
+      expect.objectContaining({
+        patterns: ['system_override'],
+      })
+    );
+    // The logged object must NOT contain the message content
+    const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === 'Potential prompt injection detected'
+    );
+    expect(warnCall?.[1]).not.toHaveProperty('message');
+    expect(warnCall?.[1]).not.toHaveProperty('content');
+  });
+
+  // 24 ----------------------------------------------------------------------
   it('streamChat() wrapper is equivalent to new StreamingChatHandler().run()', async () => {
     const provider = mockProvider([
       [

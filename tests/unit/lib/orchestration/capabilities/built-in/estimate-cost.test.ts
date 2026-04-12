@@ -75,6 +75,64 @@ describe('EstimateCostCapability', () => {
     }
   );
 
+  it('passes correct token totals for a large step count', async () => {
+    (getModelsByTier as ReturnType<typeof vi.fn>).mockReturnValue(mockModel('frontier-model'));
+    (calculateCost as ReturnType<typeof vi.fn>).mockReturnValue({
+      inputCostUsd: 15.0,
+      outputCostUsd: 25.0,
+      totalCostUsd: 40.0,
+      isLocal: false,
+    });
+    const cap = new EstimateCostCapability();
+
+    const result = await cap.execute(
+      { description: 'big workflow', estimated_steps: 1000, model_tier: 'frontier' },
+      context
+    );
+
+    // 1000 steps * 1500 input = 1,500,000; 1000 * 500 output = 500,000
+    expect(calculateCost).toHaveBeenCalledWith('frontier-model', 1_500_000, 500_000);
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      totalSteps: 1000,
+      cost: { totalCostUsd: 40.0 },
+    });
+  });
+
+  it('returns $0 cost when calculateCost returns zeros (e.g. local model)', async () => {
+    (getModelsByTier as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        id: 'local:generic',
+        name: 'Local Model',
+        provider: 'local',
+        tier: 'local',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        contextWindow: 8192,
+        capabilities: [],
+      },
+    ]);
+    (calculateCost as ReturnType<typeof vi.fn>).mockReturnValue({
+      inputCostUsd: 0,
+      outputCostUsd: 0,
+      totalCostUsd: 0,
+      isLocal: true,
+    });
+    const cap = new EstimateCostCapability();
+
+    const result = await cap.execute(
+      { description: 'local run', estimated_steps: 10, model_tier: 'budget' },
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data?.cost).toEqual({
+      inputCostUsd: 0,
+      outputCostUsd: 0,
+      totalCostUsd: 0,
+    });
+  });
+
   it('returns no_model_for_tier when the registry has no models for the tier', async () => {
     (getModelsByTier as ReturnType<typeof vi.fn>).mockReturnValue([]);
     const cap = new EstimateCostCapability();
