@@ -1,0 +1,291 @@
+'use client';
+
+/**
+ * ProvidersList (Phase 4 Session 4.3)
+ *
+ * Card grid rendering every provider config. Providers are typically
+ * ≤ 6 rows with distinctive state (status dot, local badge, model
+ * count) that reads better as cards than a table row.
+ *
+ * State rules for the status dot:
+ *
+ *   - **Green** — `apiKeyPresent === true` AND a `ProviderTestButton`
+ *     click in the current session returned `ok: true`.
+ *   - **Red**  — test-connection returned `ok: false` this session OR
+ *     `apiKeyPresent === false` (env var missing on the server).
+ *   - **Grey** — not tested yet this session.
+ *
+ * Test results are held in local state only; we never persist them.
+ * The model count is lazy-fetched per card after first paint to
+ * avoid blocking the list render on N upstream round trips.
+ */
+
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Cpu, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
+import type { AiProviderConfig } from '@/types/prisma';
+import {
+  DeleteProviderDialog,
+  type DeleteProviderTarget,
+} from '@/components/admin/orchestration/delete-provider-dialog';
+import {
+  ProviderModelsPanel,
+  type ProviderModelInfo,
+} from '@/components/admin/orchestration/provider-models-panel';
+import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+
+export interface ProviderRow extends AiProviderConfig {
+  apiKeyPresent: boolean;
+}
+
+export interface ProvidersListProps {
+  initialProviders: ProviderRow[];
+}
+
+type StatusDot = 'green' | 'red' | 'grey';
+
+interface ModelCountState {
+  count: number | null;
+  loading: boolean;
+}
+
+export function ProvidersList({ initialProviders }: ProvidersListProps) {
+  const [providers, setProviders] = useState<ProviderRow[]>(initialProviders);
+  const [modelCounts, setModelCounts] = useState<Record<string, ModelCountState>>({});
+  const [testedOk, setTestedOk] = useState<Record<string, boolean | null>>({});
+  const [deleteTarget, setDeleteTarget] = useState<DeleteProviderTarget | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
+
+  // Lazy-fetch model counts for every visible provider after mount.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      for (const p of providers) {
+        if (modelCounts[p.id]) continue;
+        setModelCounts((prev) => ({ ...prev, [p.id]: { count: null, loading: true } }));
+        try {
+          const response = await apiClient.get<{ models: ProviderModelInfo[] }>(
+            API.ADMIN.ORCHESTRATION.providerModels(p.id)
+          );
+          if (cancelled) return;
+          setModelCounts((prev) => ({
+            ...prev,
+            [p.id]: { count: response.models?.length ?? 0, loading: false },
+          }));
+        } catch {
+          if (cancelled) return;
+          setModelCounts((prev) => ({ ...prev, [p.id]: { count: null, loading: false } }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers]);
+
+  const statusFor = useCallback(
+    (p: ProviderRow): StatusDot => {
+      const tested = testedOk[p.id];
+      if (!p.apiKeyPresent && !p.isLocal) return 'red';
+      if (tested === true) return 'green';
+      if (tested === false) return 'red';
+      return 'grey';
+    },
+    [testedOk]
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
+      setProviders((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't delete this provider. Try again in a moment."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-muted-foreground text-sm">
+          {providers.length} provider{providers.length === 1 ? '' : 's'} configured
+        </p>
+        <Button asChild>
+          <Link href="/admin/orchestration/providers/new">
+            <Plus className="mr-2 h-4 w-4" />
+            Add provider
+          </Link>
+        </Button>
+      </div>
+
+      {providers.length === 0 ? (
+        <div className="rounded-md border border-dashed py-12 text-center">
+          <p className="text-muted-foreground text-sm">No providers configured yet.</p>
+          <Button asChild className="mt-4">
+            <Link href="/admin/orchestration/providers/new">
+              <Plus className="mr-2 h-4 w-4" />
+              Add your first provider
+            </Link>
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {providers.map((p) => {
+            const status = statusFor(p);
+            const dotClass =
+              status === 'green'
+                ? 'bg-green-500'
+                : status === 'red'
+                  ? 'bg-red-500'
+                  : 'bg-muted-foreground/40';
+            const statusLabel =
+              status === 'green'
+                ? 'Tested OK this session'
+                : status === 'red'
+                  ? !p.apiKeyPresent && !p.isLocal
+                    ? 'Missing API key env var'
+                    : 'Test failed'
+                  : 'Not tested yet';
+            const mc = modelCounts[p.id];
+
+            return (
+              <div
+                key={p.id}
+                className="bg-card flex flex-col gap-3 rounded-lg border p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${dotClass}`}
+                        title={statusLabel}
+                        aria-label={statusLabel}
+                      />
+                      <h3 className="truncate font-semibold">{p.name}</h3>
+                      {p.isLocal && (
+                        <Badge variant="outline" className="text-xs">
+                          Local
+                        </Badge>
+                      )}
+                      {!p.isActive && (
+                        <Badge variant="outline" className="text-xs">
+                          Inactive
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground truncate font-mono text-xs">{p.slug}</p>
+                    {p.baseUrl && (
+                      <p className="text-muted-foreground mt-1 truncate text-xs">{p.baseUrl}</p>
+                    )}
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem asChild>
+                        <Link href={`/admin/orchestration/providers/${p.id}`}>
+                          <Pencil className="mr-2 h-4 w-4" /> Edit
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setModelsDialogFor(p)}>
+                        <Cpu className="mr-2 h-4 w-4" /> View models
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                  <span>
+                    {mc?.loading
+                      ? 'Loading models…'
+                      : mc && mc.count !== null
+                        ? `${mc.count} models`
+                        : '—'}
+                  </span>
+                </div>
+
+                {!p.apiKeyPresent && !p.isLocal && (
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    Env var <code className="font-mono">{p.apiKeyEnvVar ?? '(not set)'}</code> is
+                    missing on the server.
+                  </p>
+                )}
+
+                <div className="mt-auto border-t pt-3">
+                  <ProviderTestButton
+                    providerId={p.id}
+                    onResult={(ok) => setTestedOk((prev) => ({ ...prev, [p.id]: ok }))}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <DeleteProviderDialog
+        target={deleteTarget}
+        error={deleteError}
+        isDeleting={deleting}
+        onCancel={() => {
+          setDeleteTarget(null);
+          setDeleteError(null);
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
+
+      <Dialog
+        open={!!modelsDialogFor}
+        onOpenChange={(open) => {
+          if (!open) setModelsDialogFor(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Model catalogue</DialogTitle>
+          </DialogHeader>
+          {modelsDialogFor && (
+            <ProviderModelsPanel
+              providerId={modelsDialogFor.id}
+              providerName={modelsDialogFor.name}
+              isLocal={modelsDialogFor.isLocal}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

@@ -14,7 +14,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | ------------------------------------------------------------- | ------------------ | --------------------------------------------------- |
 | `/api/v1/admin/orchestration/agents`                          | GET, POST          | List / create agents                                |
 | `/api/v1/admin/orchestration/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete an agent                |
-| `/api/v1/admin/orchestration/agents/:id/capabilities`         | POST               | Attach a capability to an agent                     |
+| `/api/v1/admin/orchestration/agents/:id/capabilities`         | GET, POST          | List attached pivots / attach a capability          |
 | `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row         |
 | `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail      |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version   |
@@ -22,6 +22,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)           |
 | `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                          |
 | `/api/v1/admin/orchestration/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete a capability            |
+| `/api/v1/admin/orchestration/capabilities/:id/agents`         | GET                | Reverse-lookup — agents attaching this capability   |
 | `/api/v1/admin/orchestration/providers`                       | GET, POST          | List / create LLM provider configs                  |
 | `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config       |
 | `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider       |
@@ -47,6 +48,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/costs`                           | GET                | Cost breakdown by day / agent / model               |
 | `/api/v1/admin/orchestration/costs/summary`                   | GET                | Today / week / month totals, per-agent, per-model   |
 | `/api/v1/admin/orchestration/costs/alerts`                    | GET                | Agents at or above 80% of their monthly budget      |
+| `/api/v1/admin/orchestration/settings`                        | GET, PATCH         | Singleton: task-type model defaults + global cap    |
 | `/api/v1/admin/orchestration/agents/:id/budget`               | GET                | Read-only budget status (use PATCH agent to mutate) |
 | `/api/v1/admin/orchestration/evaluations`                     | GET, POST          | List the caller's evaluation sessions / create one  |
 | `/api/v1/admin/orchestration/evaluations/:id`                 | GET, PATCH         | Read / update an evaluation session                 |
@@ -103,6 +105,14 @@ All `updateAgentSchema` fields are optional and applied conditionally. The **onl
 `DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
 
 ## Agent ↔ Capability pivot
+
+### List attached capabilities
+
+```
+GET /api/v1/admin/orchestration/agents/:id/capabilities
+```
+
+Returns every `AiAgentCapability` pivot row for the agent with the related `AiCapability` eagerly loaded (ordered by `capability.name asc`). 404 when the agent doesn't exist. Admin-auth gated, rate-limited. This is the endpoint the agent edit page's Capabilities tab reads to populate the "Attached" column — see [`../admin/agent-form.md`](../admin/agent-form.md).
 
 ### Attach a capability
 
@@ -271,6 +281,19 @@ curl -X DELETE /api/v1/admin/orchestration/capabilities/<id>
 ```
 
 Slug collisions on create → 409 `ConflictError`. On PATCH slug collisions → 400 `ValidationError` with `{ slug: ['Slug is already in use'] }`.
+
+### Reverse-lookup: agents using a capability
+
+```
+GET /api/v1/admin/orchestration/capabilities/:id/agents
+```
+
+Returns the minimal agent projection for every agent that currently attaches this capability via the `AiAgentCapability` pivot — `[{ id, name, slug, isActive }]`, ordered by agent name. Empty array if nothing attached; 404 on unknown id; 400 on invalid CUID. Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2.
+
+Consumers:
+
+- **Capabilities list page** — "agents using it" count column (lazy per-row fetch).
+- **Capability edit page** — the Safety tab's "Used by N agents" card, and the delete confirmation dialog (so admins see exactly who breaks when they soft-delete).
 
 ## Providers
 
@@ -1004,6 +1027,62 @@ Successive runs inside the 60-second `adminLimiter` window may hit 429s — wait
 - **Don't** trust `file.type` (the MIME header) as a security boundary on upload. Browsers frequently omit it for `.md` files — the extension whitelist is the source of truth.
 
 ## Related
+
+## Orchestration settings (singleton)
+
+`AiOrchestrationSettings` is a single row (`slug: 'global'`) storing task-type model defaults and an optional cross-agent monthly budget cap. Lazily upserted on first read — the seeder deliberately does not touch it, so admin edits survive re-seeds.
+
+### GET /settings
+
+```http
+GET /api/v1/admin/orchestration/settings
+```
+
+Returns the hydrated singleton. Missing task keys are filled in from `computeDefaultModelMap()` so the response always has a complete `defaultModels` map even on first read.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "cmjbv4i3x00003wsloputgwu1",
+    "slug": "global",
+    "defaultModels": {
+      "routing": "claude-haiku-4-5",
+      "chat": "claude-sonnet-4-6",
+      "reasoning": "claude-opus-4-6",
+      "embeddings": "claude-haiku-4-5"
+    },
+    "globalMonthlyBudgetUsd": null,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z"
+  }
+}
+```
+
+### PATCH /settings
+
+```http
+PATCH /api/v1/admin/orchestration/settings
+Content-Type: application/json
+
+{ "defaultModels": { "routing": "claude-haiku-4-5" }, "globalMonthlyBudgetUsd": 500 }
+```
+
+Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`:
+
+- `defaultModels` keys must be one of `routing | chat | reasoning | embeddings`
+- Every model id must resolve via `getModel()` in the in-memory registry (`validateTaskDefaults()`)
+- `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
+- At least one field must be present (empty PATCH rejected)
+
+On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` so the next chat turn picks up the new defaults immediately (otherwise the 30s TTL cache would delay the change).
+
+### Enforcement
+
+- `getDefaultModelForTask(task)` in `lib/orchestration/llm/model-registry.ts` resolves `task → model` through this row. Used by any orchestration code that needs "the default model for X" rather than an agent-specific override.
+- `checkBudget()` in `lib/orchestration/llm/cost-tracker.ts` consults `globalMonthlyBudgetUsd` in addition to the per-agent cap. When the month-to-date cross-agent total meets or exceeds the cap it returns `{ withinBudget: false, globalCapExceeded: true }`, which the streaming chat handler translates into a `BUDGET_EXCEEDED_GLOBAL` error frame.
+
+Failures in the global-cap lookup are swallowed and the code falls back to the per-agent path so a flaky Prisma read can't lock up chat globally.
 
 - [`overview.md`](./overview.md) — Orchestration module layout and architecture decisions
 - [`workflows.md`](./workflows.md) — DAG validator, step shapes, error codes, Phase 5.2 roadmap

@@ -17,6 +17,14 @@ import {
   ToggleRight,
   ChevronLeft,
   ChevronRight,
+  Bot,
+  Wrench,
+  Server,
+  GitBranch,
+  BookOpen,
+  DollarSign,
+  GraduationCap,
+  ClipboardCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -47,6 +55,68 @@ const navSections = [
         label: 'Feature Flags',
         icon: ToggleRight,
         description: 'Toggle features',
+      },
+    ],
+  },
+  {
+    title: 'AI Orchestration',
+    items: [
+      {
+        href: '/admin/orchestration',
+        label: 'Dashboard',
+        icon: Bot,
+        description: 'Overview and setup',
+        // `exact` prevents the Dashboard item from staying highlighted on
+        // every nested orchestration route (e.g. `/admin/orchestration/agents`).
+        exact: true,
+      },
+      {
+        href: '/admin/orchestration/agents',
+        label: 'Agents',
+        icon: Users,
+        description: 'Manage AI agents',
+      },
+      {
+        href: '/admin/orchestration/capabilities',
+        label: 'Capabilities',
+        icon: Wrench,
+        description: 'Tool definitions',
+      },
+      {
+        href: '/admin/orchestration/providers',
+        label: 'Providers',
+        icon: Server,
+        description: 'LLM providers',
+      },
+      {
+        href: '/admin/orchestration/workflows',
+        label: 'Workflows',
+        icon: GitBranch,
+        description: 'Multi-step flows',
+      },
+      {
+        href: '/admin/orchestration/knowledge',
+        label: 'Knowledge Base',
+        icon: BookOpen,
+        description: 'Docs and patterns',
+      },
+      {
+        href: '/admin/orchestration/costs',
+        label: 'Costs & Budget',
+        icon: DollarSign,
+        description: 'Spend and alerts',
+      },
+      {
+        href: '/admin/orchestration/learning',
+        label: 'Learning',
+        icon: GraduationCap,
+        description: 'Pattern explorer',
+      },
+      {
+        href: '/admin/orchestration/evaluations',
+        label: 'Evaluations',
+        icon: ClipboardCheck,
+        description: 'Agent test runs',
       },
     ],
   },
@@ -109,7 +179,10 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
               )}
               <ul className="space-y-1">
                 {section.items.map((item) => {
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const exact = 'exact' in item && item.exact === true;
+                  const isActive = exact
+                    ? pathname === item.href
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
                   const Icon = item.icon;
 
                   return (

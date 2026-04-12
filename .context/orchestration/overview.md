@@ -28,6 +28,18 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | Workflows     | [`workflows.md`](./workflows.md)         | DAG validator, error codes, Phase 5.2 engine roadmap                            |
 | Admin API     | [`admin-api.md`](./admin-api.md)         | Agents, capabilities, providers, workflows, chat, knowledge, costs, evaluations |
 
+### Admin UI (`.context/admin/`)
+
+| Topic             | File                                                                      | Covers                                                              |
+| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Agents list       | [`orchestration-agents.md`](../admin/orchestration-agents.md)             | List page, table, duplicate/import dialogs                          |
+| Agent form        | [`agent-form.md`](../admin/agent-form.md)                                 | 5-tab create/edit form, instructions history, test chat             |
+| Capabilities list | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md) | Table, category filter, lazy agents-using count, soft-delete dialog |
+| Capability form   | [`capability-form.md`](../admin/capability-form.md)                       | 4 tabs, visual builder ↔ JSON editor, execution, safety             |
+| Providers list    | [`orchestration-providers.md`](../admin/orchestration-providers.md)       | Card grid, status dots, models dialog, env-var-only security model  |
+| Provider form     | [`provider-form.md`](../admin/provider-form.md)                           | 4-flavor selector, reverse-mapping on edit, test-connection flow    |
+| Costs & budget    | [`orchestration-costs.md`](../admin/orchestration-costs.md)               | Summary cards, trend chart, savings panel, settings singleton       |
+
 ## Architecture Decisions
 
 - **Platform-agnostic core**: Orchestration services return plain values and `AsyncIterable`s, not HTTP responses. The API layer adapts.
