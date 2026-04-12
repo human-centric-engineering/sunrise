@@ -21,7 +21,7 @@ Defined in `types/orchestration.ts`:
 ```typescript
 interface WorkflowDefinition {
   entryStepId: string;
-  errorStrategy: 'fail' | 'continue' | 'retry';
+  errorStrategy: 'retry' | 'fallback' | 'fail';
   steps: WorkflowStep[];
 }
 
@@ -30,7 +30,7 @@ interface WorkflowStep {
   name: string;
   type: 'llm_call' | 'tool_call' | 'human_approval' | 'chain' | /* ... */;
   config: Record<string, unknown>;
-  nextSteps: Array<{ targetStepId: string; condition?: ConditionalEdge }>;
+  nextSteps: ConditionalEdge[]; // { targetStepId: string; condition?: string }
 }
 ```
 

@@ -721,7 +721,7 @@ describe('OrchestrationEngine', () => {
       { type: 'workflow_failed' }
     >;
     expect(failed).toBeDefined();
-    expect(failed.error).toBe('Executor threw an unknown error');
+    expect(failed.error).toBe('Step "a" failed unexpectedly');
   });
 
   // ─── Resume with non-array executionTrace ─────────────────────────
