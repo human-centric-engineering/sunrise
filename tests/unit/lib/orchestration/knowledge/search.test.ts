@@ -14,6 +14,8 @@ vi.mock('@/lib/db/client', () => ({
     $queryRawUnsafe: vi.fn(),
     aiKnowledgeChunk: {
       findMany: vi.fn(),
+      groupBy: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -32,7 +34,8 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 // Import SUT and embedder mock after mocks are registered
-const { searchKnowledge, getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
+const { searchKnowledge, getPatternDetail, listPatterns } =
+  await import('@/lib/orchestration/knowledge/search');
 const { embedText } = await import('@/lib/orchestration/knowledge/embedder');
 
 // --- Helpers ---
@@ -324,5 +327,173 @@ describe('getPatternDetail', () => {
 
     expect(result.chunks).toHaveLength(3);
     expect(result.totalTokens).toBe(275);
+  });
+});
+
+describe('listPatterns', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('should return empty array when no pattern groups exist', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+    const result = await listPatterns();
+
+    expect(result).toEqual([]);
+  });
+
+  it('should return summaries for each pattern group', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      {
+        patternNumber: 1,
+        patternName: 'Chain of Thought',
+        category: 'Reasoning',
+        _count: { id: 5 },
+      },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      {
+        patternNumber: 1,
+        content: 'A step-by-step reasoning pattern.',
+        metadata: { complexity: 'beginner' },
+      },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      patternNumber: 1,
+      patternName: 'Chain of Thought',
+      category: 'Reasoning',
+      complexity: 'beginner',
+      description: 'A step-by-step reasoning pattern.',
+      chunkCount: 5,
+    });
+  });
+
+  it('should skip groups where patternNumber is null', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: null, patternName: null, category: null, _count: { id: 2 } },
+      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+    const result = await listPatterns();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].patternNumber).toBe(1);
+  });
+
+  it('should fallback patternName to "Pattern N" when group name is null', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 7, patternName: null, category: null, _count: { id: 1 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].patternName).toBe('Pattern 7');
+  });
+
+  it('should return null description when no overview chunk exists', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 2 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].description).toBeNull();
+    expect(result[0].complexity).toBeNull();
+  });
+
+  it('should truncate description to 200 characters', async () => {
+    const longContent = 'A'.repeat(300);
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: longContent, metadata: null },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].description).toHaveLength(200);
+  });
+
+  it('should return null complexity when metadata is not an object', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: 'not-an-object' },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].complexity).toBeNull();
+  });
+
+  it('should return null complexity when metadata is an array', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: ['beginner'] },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].complexity).toBeNull();
+  });
+
+  it('should return null complexity when metadata.complexity is not a string', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: { complexity: 42 } },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result[0].complexity).toBeNull();
+  });
+
+  it('should batch-fetch overviews in a single query for multiple groups', async () => {
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
+      { patternNumber: 2, patternName: 'ReAct', category: 'Action', _count: { id: 4 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      {
+        patternNumber: 1,
+        content: 'Chain of Thought desc',
+        metadata: { complexity: 'beginner' },
+      },
+      {
+        patternNumber: 2,
+        content: 'ReAct desc',
+        metadata: { complexity: 'intermediate' },
+      },
+    ] as never);
+
+    const result = await listPatterns();
+
+    expect(result).toHaveLength(2);
+    expect(result[0].patternNumber).toBe(1);
+    expect(result[0].complexity).toBe('beginner');
+    expect(result[1].patternNumber).toBe(2);
+    expect(result[1].complexity).toBe('intermediate');
+    // Single batched query instead of N+1
+    expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { patternNumber: { in: [1, 2] }, chunkType: 'pattern_overview' },
+      })
+    );
   });
 });

@@ -107,7 +107,7 @@ const navSections = [
         description: 'Spend and alerts',
       },
       {
-        href: '/admin/orchestration/learning',
+        href: '/admin/orchestration/learn',
         label: 'Learning',
         icon: GraduationCap,
         description: 'Pattern explorer',

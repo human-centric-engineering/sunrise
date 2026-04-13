@@ -9,7 +9,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedText } from './embedder';
-import type { KnowledgeSearchResult } from '@/types/orchestration';
+import type { KnowledgeSearchResult, PatternSummary } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
 
 /** Default similarity threshold (lower = more similar for cosine distance) */
@@ -163,6 +163,60 @@ export async function searchKnowledge(
       similarity: 1 - row.distance + Math.abs(row.keyword_boost),
     };
   });
+}
+
+/**
+ * List all distinct patterns in the knowledge base.
+ *
+ * Groups chunks by patternNumber and returns a summary for each pattern,
+ * suitable for the pattern explorer card grid.
+ */
+export async function listPatterns(): Promise<PatternSummary[]> {
+  const groups = await prisma.aiKnowledgeChunk.groupBy({
+    by: ['patternNumber', 'patternName', 'category'],
+    where: { patternNumber: { not: null } },
+    _count: { id: true },
+    orderBy: { patternNumber: 'asc' },
+  });
+
+  // Batch-fetch all overview chunks in a single query (avoids N+1)
+  const patternNumbers = groups.map((g) => g.patternNumber).filter((n): n is number => n !== null);
+
+  const overviewChunks = await prisma.aiKnowledgeChunk.findMany({
+    where: {
+      patternNumber: { in: patternNumbers },
+      chunkType: 'pattern_overview',
+    },
+    select: { patternNumber: true, content: true, metadata: true },
+  });
+
+  const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
+
+  const summaries: PatternSummary[] = [];
+
+  for (const group of groups) {
+    if (group.patternNumber === null) continue;
+
+    const overviewChunk = overviewByPattern.get(group.patternNumber) ?? null;
+
+    const rawMeta: unknown = overviewChunk?.metadata ?? null;
+    const metadata =
+      rawMeta !== null && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
+        ? (rawMeta as Record<string, unknown>)
+        : null;
+    const complexity = typeof metadata?.complexity === 'string' ? metadata.complexity : null;
+
+    summaries.push({
+      patternNumber: group.patternNumber,
+      patternName: group.patternName ?? `Pattern ${group.patternNumber}`,
+      category: group.category,
+      complexity,
+      description: overviewChunk?.content?.slice(0, 200) ?? null,
+      chunkCount: group._count.id,
+    });
+  }
+
+  return summaries;
 }
 
 /** Ordered sections for pattern detail aggregation */

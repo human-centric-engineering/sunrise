@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const metadata: Metadata = {
   title: 'New workflow · AI Orchestration',
@@ -8,12 +9,31 @@ export const metadata: Metadata = {
 };
 
 /**
- * Admin — New workflow builder page (Phase 5 Session 5.1a).
+ * Admin — New workflow builder page.
  *
- * Renders an empty builder. Save / Validate / Execute wiring lands in
- * Session 5.1b; for now this page exists so admins can click "New
- * workflow" from the list and explore the palette + canvas.
+ * Renders an empty builder, or pre-populates from a `?definition=`
+ * query parameter (URL-encoded JSON WorkflowDefinition). The advisor
+ * chatbot uses this to hand off recommended workflow definitions.
  */
-export default function NewWorkflowPage() {
-  return <WorkflowBuilder mode="create" />;
+export default async function NewWorkflowPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ definition?: string }>;
+}) {
+  const params = await searchParams;
+  let initialDefinition: typeof workflowDefinitionSchema._output | undefined;
+
+  if (params.definition) {
+    try {
+      const parsed: unknown = JSON.parse(decodeURIComponent(params.definition));
+      const result = workflowDefinitionSchema.safeParse(parsed);
+      if (result.success) {
+        initialDefinition = result.data;
+      }
+    } catch {
+      // Invalid definition param — fall through to empty builder
+    }
+  }
+
+  return <WorkflowBuilder mode="create" initialDefinition={initialDefinition} />;
 }

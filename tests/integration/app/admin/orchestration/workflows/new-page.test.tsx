@@ -122,7 +122,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByTestId('pattern-palette')).toBeInTheDocument();
   });
@@ -131,7 +131,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByTestId('workflow-canvas')).toBeInTheDocument();
   });
@@ -140,7 +140,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     const saveBtn = screen.getByRole('button', { name: /create workflow/i });
     expect(saveBtn).toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
   });
@@ -159,7 +159,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByTestId('validation-summary-panel')).toBeInTheDocument();
   });
@@ -169,7 +169,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     await user.click(screen.getByRole('button', { name: /create workflow/i }));
 
@@ -183,7 +183,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     // Open the dialog
     await user.click(screen.getByRole('button', { name: /create workflow/i }));
@@ -212,7 +212,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     // Open the Use template dropdown and pick the first template.
     await user.click(screen.getByRole('button', { name: /use template/i }));
@@ -259,7 +259,7 @@ describe('NewWorkflowPage', () => {
     const { default: NewWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/new/page');
 
-    render(<NewWorkflowPage />);
+    render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
 
     // Open the dialog
     await user.click(screen.getByRole('button', { name: /create workflow/i }));

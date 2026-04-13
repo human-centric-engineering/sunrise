@@ -43,7 +43,7 @@ describe('AdminSidebar', () => {
       { label: 'Workflows', href: '/admin/orchestration/workflows' },
       { label: 'Knowledge Base', href: '/admin/orchestration/knowledge' },
       { label: 'Costs & Budget', href: '/admin/orchestration/costs' },
-      { label: 'Learning', href: '/admin/orchestration/learning' },
+      { label: 'Learning', href: '/admin/orchestration/learn' },
       { label: 'Evaluations', href: '/admin/orchestration/evaluations' },
     ];
 

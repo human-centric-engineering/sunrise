@@ -92,7 +92,15 @@ export const API = {
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
+      knowledgeDocumentById: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}`,
+      knowledgeDocumentRechunk: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
       KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
+      KNOWLEDGE_PATTERNS: '/api/v1/admin/orchestration/knowledge/patterns',
+      knowledgePatternByNumber: (num: number): string =>
+        `/api/v1/admin/orchestration/knowledge/patterns/${num}`,
+      KNOWLEDGE_SEED: '/api/v1/admin/orchestration/knowledge/seed',
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',

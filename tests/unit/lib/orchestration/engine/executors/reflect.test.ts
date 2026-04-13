@@ -213,6 +213,21 @@ describe('executeReflect', () => {
 
   // ─── stringifyValue() branch coverage ────────────────────────────────
 
+  it('uses empty string as initial draft when stepOutputs is empty', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'm',
+    });
+
+    const ctx = makeCtx({ stepOutputs: {} });
+    const result = await executeReflect(makeStep(), ctx);
+
+    expect(result.output).toMatchObject({ finalDraft: '', stopReason: 'converged' });
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].prompt).toContain('Current draft:\n\n');
+  });
+
   it('stringifies a numeric step output into the draft prompt', async () => {
     vi.mocked(runLlmCall).mockResolvedValueOnce({
       content: 'No further changes needed',
@@ -291,5 +306,36 @@ describe('executeReflect', () => {
     const result = await executeReflect(makeStep(), ctx);
 
     expect(result.output).toMatchObject({ finalDraft: '', stopReason: 'converged' });
+  });
+
+  it('defaults to maxIterations=3 when maxIterations is negative', async () => {
+    vi.mocked(runLlmCall).mockResolvedValue({
+      content: 'always new',
+      tokensUsed: 2,
+      costUsd: 0.002,
+      model: 'm',
+    });
+
+    const step = makeStep({ maxIterations: -1 });
+    await executeReflect(step, makeCtx());
+
+    expect(runLlmCall).toHaveBeenCalledTimes(3);
+  });
+
+  it('passes modelOverride and temperature to runLlmCall', async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: 'No further changes',
+      tokensUsed: 3,
+      costUsd: 0.003,
+      model: 'custom-model',
+    });
+
+    const step = makeStep({ modelOverride: 'custom-model', temperature: 0.7 });
+    await executeReflect(step, makeCtx());
+
+    expect(vi.mocked(runLlmCall).mock.calls[0][1]).toMatchObject({
+      modelOverride: 'custom-model',
+      temperature: 0.7,
+    });
   });
 });

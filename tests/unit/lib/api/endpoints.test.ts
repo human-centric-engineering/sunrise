@@ -426,6 +426,92 @@ describe('API Endpoints', () => {
     });
   });
 
+  describe('ORCHESTRATION endpoints', () => {
+    it('should have correct static paths', () => {
+      expect(API.ADMIN.ORCHESTRATION.AGENTS).toBe('/api/v1/admin/orchestration/agents');
+      expect(API.ADMIN.ORCHESTRATION.CAPABILITIES).toBe('/api/v1/admin/orchestration/capabilities');
+      expect(API.ADMIN.ORCHESTRATION.PROVIDERS).toBe('/api/v1/admin/orchestration/providers');
+      expect(API.ADMIN.ORCHESTRATION.WORKFLOWS).toBe('/api/v1/admin/orchestration/workflows');
+      expect(API.ADMIN.ORCHESTRATION.CHAT_STREAM).toBe('/api/v1/admin/orchestration/chat/stream');
+      expect(API.ADMIN.ORCHESTRATION.CONVERSATIONS).toBe(
+        '/api/v1/admin/orchestration/conversations'
+      );
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS).toBe(
+        '/api/v1/admin/orchestration/knowledge/documents'
+      );
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEARCH).toBe(
+        '/api/v1/admin/orchestration/knowledge/search'
+      );
+      expect(API.ADMIN.ORCHESTRATION.COSTS).toBe('/api/v1/admin/orchestration/costs');
+      expect(API.ADMIN.ORCHESTRATION.SETTINGS).toBe('/api/v1/admin/orchestration/settings');
+    });
+
+    it('should generate correct dynamic workflow paths', () => {
+      const id = 'wf-123';
+      expect(API.ADMIN.ORCHESTRATION.workflowById(id)).toBe(
+        '/api/v1/admin/orchestration/workflows/wf-123'
+      );
+      expect(API.ADMIN.ORCHESTRATION.workflowValidate(id)).toBe(
+        '/api/v1/admin/orchestration/workflows/wf-123/validate'
+      );
+      expect(API.ADMIN.ORCHESTRATION.workflowExecute(id)).toBe(
+        '/api/v1/admin/orchestration/workflows/wf-123/execute'
+      );
+    });
+
+    it('should generate correct dynamic execution paths', () => {
+      const id = 'exec-456';
+      expect(API.ADMIN.ORCHESTRATION.executionById(id)).toBe(
+        '/api/v1/admin/orchestration/executions/exec-456'
+      );
+      expect(API.ADMIN.ORCHESTRATION.executionApprove(id)).toBe(
+        '/api/v1/admin/orchestration/executions/exec-456/approve'
+      );
+    });
+
+    it('should generate correct dynamic knowledge paths', () => {
+      const id = 'doc-789';
+      expect(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(id)).toBe(
+        '/api/v1/admin/orchestration/knowledge/documents/doc-789'
+      );
+      expect(API.ADMIN.ORCHESTRATION.knowledgeDocumentRechunk(id)).toBe(
+        '/api/v1/admin/orchestration/knowledge/documents/doc-789/rechunk'
+      );
+      expect(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(14)).toBe(
+        '/api/v1/admin/orchestration/knowledge/patterns/14'
+      );
+    });
+
+    it('should generate correct dynamic agent paths', () => {
+      const id = 'agent-abc';
+      expect(API.ADMIN.ORCHESTRATION.agentById(id)).toBe(
+        '/api/v1/admin/orchestration/agents/agent-abc'
+      );
+      expect(API.ADMIN.ORCHESTRATION.agentBudget(id)).toBe(
+        '/api/v1/admin/orchestration/agents/agent-abc/budget'
+      );
+      expect(API.ADMIN.ORCHESTRATION.agentCapabilities(id)).toBe(
+        '/api/v1/admin/orchestration/agents/agent-abc/capabilities'
+      );
+      expect(API.ADMIN.ORCHESTRATION.agentCapabilityById(id, 'cap-1')).toBe(
+        '/api/v1/admin/orchestration/agents/agent-abc/capabilities/cap-1'
+      );
+    });
+
+    it('should generate correct dynamic provider paths', () => {
+      const id = 'prov-xyz';
+      expect(API.ADMIN.ORCHESTRATION.providerById(id)).toBe(
+        '/api/v1/admin/orchestration/providers/prov-xyz'
+      );
+      expect(API.ADMIN.ORCHESTRATION.providerTest(id)).toBe(
+        '/api/v1/admin/orchestration/providers/prov-xyz/test'
+      );
+      expect(API.ADMIN.ORCHESTRATION.providerModels(id)).toBe(
+        '/api/v1/admin/orchestration/providers/prov-xyz/models'
+      );
+    });
+  });
+
   describe('real-world usage scenarios', () => {
     it('should work in typical client component fetch', () => {
       // Arrange

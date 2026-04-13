@@ -30,7 +30,7 @@ function makeSseStream(blocks: string[]): ReadableStream<Uint8Array> {
 }
 
 function contentFrame(text: string): string {
-  return `event: content\ndata: ${JSON.stringify({ content: text })}\n\n`;
+  return `event: content\ndata: ${JSON.stringify({ delta: text })}\n\n`;
 }
 
 function errorFrame(message: string): string {
