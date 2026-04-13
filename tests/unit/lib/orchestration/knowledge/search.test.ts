@@ -337,6 +337,7 @@ describe('listPatterns', () => {
 
   it('should return empty array when no pattern groups exist', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
     const result = await listPatterns();
 
@@ -352,10 +353,13 @@ describe('listPatterns', () => {
         _count: { id: 5 },
       },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
-      content: 'A step-by-step reasoning pattern.',
-      metadata: { complexity: 'beginner' },
-    } as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      {
+        patternNumber: 1,
+        content: 'A step-by-step reasoning pattern.',
+        metadata: { complexity: 'beginner' },
+      },
+    ] as never);
 
     const result = await listPatterns();
 
@@ -375,7 +379,7 @@ describe('listPatterns', () => {
       { patternNumber: null, patternName: null, category: null, _count: { id: 2 } },
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
     const result = await listPatterns();
 
@@ -387,7 +391,7 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 7, patternName: null, category: null, _count: { id: 1 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
     const result = await listPatterns();
 
@@ -398,7 +402,7 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 2 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
     const result = await listPatterns();
 
@@ -411,10 +415,9 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
-      content: longContent,
-      metadata: null,
-    } as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: longContent, metadata: null },
+    ] as never);
 
     const result = await listPatterns();
 
@@ -425,10 +428,9 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
-      content: 'desc',
-      metadata: 'not-an-object',
-    } as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: 'not-an-object' },
+    ] as never);
 
     const result = await listPatterns();
 
@@ -439,10 +441,9 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
-      content: 'desc',
-      metadata: ['beginner'],
-    } as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: ['beginner'] },
+    ] as never);
 
     const result = await listPatterns();
 
@@ -453,30 +454,32 @@ describe('listPatterns', () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
-      content: 'desc',
-      metadata: { complexity: 42 },
-    } as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      { patternNumber: 1, content: 'desc', metadata: { complexity: 42 } },
+    ] as never);
 
     const result = await listPatterns();
 
     expect(result[0].complexity).toBeNull();
   });
 
-  it('should handle multiple groups and fetch overview for each', async () => {
+  it('should batch-fetch overviews in a single query for multiple groups', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
       { patternNumber: 2, patternName: 'ReAct', category: 'Action', _count: { id: 4 } },
     ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst)
-      .mockResolvedValueOnce({
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      {
+        patternNumber: 1,
         content: 'Chain of Thought desc',
         metadata: { complexity: 'beginner' },
-      } as never)
-      .mockResolvedValueOnce({
+      },
+      {
+        patternNumber: 2,
         content: 'ReAct desc',
         metadata: { complexity: 'intermediate' },
-      } as never);
+      },
+    ] as never);
 
     const result = await listPatterns();
 
@@ -485,6 +488,12 @@ describe('listPatterns', () => {
     expect(result[0].complexity).toBe('beginner');
     expect(result[1].patternNumber).toBe(2);
     expect(result[1].complexity).toBe('intermediate');
-    expect(prisma.aiKnowledgeChunk.findFirst).toHaveBeenCalledTimes(2);
+    // Single batched query instead of N+1
+    expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { patternNumber: { in: [1, 2] }, chunkType: 'pattern_overview' },
+      })
+    );
   });
 });

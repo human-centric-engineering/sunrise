@@ -87,4 +87,149 @@ describe('DocumentUploadZone', () => {
       expect(onUploadComplete).toHaveBeenCalled();
     });
   });
+
+  it('handles drag-and-drop upload', async () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const validFile = new File(['# Dropped'], 'dropped.md', { type: 'text/markdown' });
+
+    fireEvent.dragEnter(dropZone, { preventDefault: vi.fn() });
+    expect(dropZone.className).toContain('border-primary');
+
+    fireEvent.drop(dropZone, {
+      preventDefault: vi.fn(),
+      dataTransfer: { files: [validFile] },
+    });
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/documents'),
+        expect.objectContaining({ method: 'POST' })
+      );
+      expect(onUploadComplete).toHaveBeenCalled();
+    });
+  });
+
+  it('removes drag highlight on drag leave', () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+
+    fireEvent.dragEnter(dropZone, { preventDefault: vi.fn() });
+    expect(dropZone.className).toContain('border-primary');
+
+    fireEvent.dragLeave(dropZone);
+    expect(dropZone.className).not.toContain('border-primary bg-primary/5');
+  });
+
+  it('opens file picker on Enter key', () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const input = screen.getByLabelText(/upload document/i);
+    const clickSpy = vi.spyOn(input, 'click');
+
+    fireEvent.keyDown(dropZone, { key: 'Enter' });
+
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('opens file picker on Space key', () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const input = screen.getByLabelText(/upload document/i);
+    const clickSpy = vi.spyOn(input, 'click');
+
+    fireEvent.keyDown(dropZone, { key: ' ' });
+
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('shows server error message on failed response', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.resolve({ error: { message: 'Duplicate document' } }),
+    });
+
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+
+    fireEvent.change(input, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Duplicate document')).toBeInTheDocument();
+    });
+
+    expect(onUploadComplete).not.toHaveBeenCalled();
+  });
+
+  it('falls back to generic message when server error is not JSON', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.reject(new Error('not json')),
+    });
+
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+
+    fireEvent.change(input, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Upload failed')).toBeInTheDocument();
+    });
+
+    expect(onUploadComplete).not.toHaveBeenCalled();
+  });
+
+  it('shows error on network failure', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+
+    fireEvent.change(input, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error')).toBeInTheDocument();
+    });
+
+    expect(onUploadComplete).not.toHaveBeenCalled();
+  });
+
+  it('shows "Uploading..." text and disables pointer events during upload', async () => {
+    let resolveUpload!: (value: unknown) => void;
+    mockFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveUpload = resolve;
+      })
+    );
+
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+
+    fireEvent.change(input, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Uploading...')).toBeInTheDocument();
+    });
+
+    const dropZone = screen.getByText('Uploading...').closest('[role="button"]')!;
+    expect(dropZone.className).toContain('pointer-events-none');
+
+    resolveUpload({ ok: true, json: () => Promise.resolve({ success: true }) });
+
+    await waitFor(() => {
+      expect(screen.getByText(/drop a file here/i)).toBeInTheDocument();
+    });
+  });
 });

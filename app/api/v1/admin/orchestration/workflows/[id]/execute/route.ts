@@ -31,7 +31,7 @@ import {
   resumeExecutionQuerySchema,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -70,7 +70,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   // Pre-flight DAG validation — same shape clients get from /validate.
-  const definition = workflow.workflowDefinition as unknown as WorkflowDefinition;
+  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  if (!defParsed.success) {
+    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
+      workflowDefinition: defParsed.error.issues.map((i) => i.message),
+    });
+  }
+  const definition = defParsed.data;
   const dag = validateWorkflow(definition);
   if (!dag.ok) {
     throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {

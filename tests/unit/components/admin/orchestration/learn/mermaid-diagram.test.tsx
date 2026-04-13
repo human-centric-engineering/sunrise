@@ -57,4 +57,61 @@ describe('MermaidDiagram', () => {
       expect(screen.getByText(/could not be rendered/i)).toBeInTheDocument();
     });
   });
+
+  it('shows loading skeleton before mermaid resolves', async () => {
+    let resolveRender!: (value: { svg: string }) => void;
+    mockRender.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRender = resolve;
+      })
+    );
+
+    const { container } = render(<MermaidDiagram code="graph TD; A-->B" />);
+
+    // Loading skeleton should be visible
+    const skeleton = container.querySelector('.animate-pulse');
+    expect(skeleton).toBeInTheDocument();
+
+    // Resolve and wait for SVG
+    resolveRender({ svg: '<svg class="mermaid-output"></svg>' });
+
+    await waitFor(() => {
+      expect(container.querySelector('.animate-pulse')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows fallback message when non-Error value is thrown', async () => {
+    mockRender.mockRejectedValue('string error');
+
+    render(<MermaidDiagram code="bad syntax" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('bad syntax')).toBeInTheDocument();
+      expect(screen.getByText(/could not be rendered/i)).toBeInTheDocument();
+    });
+  });
+
+  it('calls mermaid.initialize at most once across multiple instances', async () => {
+    mockRender.mockResolvedValue({ svg: '<svg></svg>' });
+
+    // Track the total initialize calls before this test
+    const initCallsBefore = mockInitialize.mock.calls.length;
+
+    const { unmount } = render(<MermaidDiagram code="graph TD; A-->B" />);
+    await waitFor(() => {
+      expect(mockRender).toHaveBeenCalled();
+    });
+    unmount();
+
+    mockRender.mockClear();
+    render(<MermaidDiagram code="graph TD; C-->D" />);
+    await waitFor(() => {
+      expect(mockRender).toHaveBeenCalled();
+    });
+
+    // initialize should have been called at most once across both renders
+    // (it may be 0 if a prior test already triggered the guard)
+    const initCallsDuring = mockInitialize.mock.calls.length - initCallsBefore;
+    expect(initCallsDuring).toBeLessThanOrEqual(1);
+  });
 });

@@ -22,7 +22,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { cn } from '@/lib/utils';
-import type { ExecutionEvent, ExecutionTraceEntry } from '@/types/orchestration';
+import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 import { ExecutionTraceEntryRow } from './execution-trace-entry';
 
@@ -142,75 +142,95 @@ export function ExecutionPanel({
   );
 
   const applyEvent = useCallback((frame: ParsedFrame): void => {
-    const event = frame.data as unknown as ExecutionEvent;
-    switch (event.type) {
+    const d = frame.data;
+    const eventType = typeof d.type === 'string' ? d.type : null;
+    if (!eventType) return;
+
+    switch (eventType) {
       case 'workflow_started':
-        setExecutionId(event.executionId);
+        if (typeof d.executionId === 'string') setExecutionId(d.executionId);
         break;
       case 'step_started':
-        setEntries((prev) => [
-          ...prev,
-          {
-            stepId: event.stepId,
-            stepType: event.stepType,
-            label: event.label,
-            status: 'running',
-            tokensUsed: 0,
-            costUsd: 0,
-          },
-        ]);
+        if (typeof d.stepId === 'string' && typeof d.label === 'string') {
+          setEntries((prev) => [
+            ...prev,
+            {
+              stepId: d.stepId as string,
+              stepType: typeof d.stepType === 'string' ? d.stepType : 'unknown',
+              label: d.label as string,
+              status: 'running',
+              tokensUsed: 0,
+              costUsd: 0,
+            },
+          ]);
+        }
         break;
-      case 'step_completed':
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.stepId === event.stepId
-              ? {
-                  ...e,
-                  status: 'completed',
-                  output: event.output,
-                  tokensUsed: event.tokensUsed,
-                  costUsd: event.costUsd,
-                  durationMs: event.durationMs,
-                }
-              : e
-          )
-        );
-        setTotalTokens((prev) => prev + event.tokensUsed);
-        setTotalCost((prev) => prev + event.costUsd);
+      case 'step_completed': {
+        const stepId = typeof d.stepId === 'string' ? d.stepId : null;
+        const tokensUsed = typeof d.tokensUsed === 'number' ? d.tokensUsed : 0;
+        const costUsd = typeof d.costUsd === 'number' ? d.costUsd : 0;
+        const durationMs = typeof d.durationMs === 'number' ? d.durationMs : undefined;
+        if (stepId) {
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.stepId === stepId
+                ? { ...e, status: 'completed', output: d.output, tokensUsed, costUsd, durationMs }
+                : e
+            )
+          );
+          setTotalTokens((prev) => prev + tokensUsed);
+          setTotalCost((prev) => prev + costUsd);
+        }
         break;
-      case 'step_failed':
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.stepId === event.stepId
-              ? { ...e, status: event.willRetry ? 'running' : 'failed', error: event.error }
-              : e
-          )
-        );
+      }
+      case 'step_failed': {
+        const stepId = typeof d.stepId === 'string' ? d.stepId : null;
+        if (stepId) {
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.stepId === stepId
+                ? {
+                    ...e,
+                    status: d.willRetry ? 'running' : 'failed',
+                    error: typeof d.error === 'string' ? d.error : 'Unknown error',
+                  }
+                : e
+            )
+          );
+        }
         break;
-      case 'approval_required':
-        setStatus('awaiting_approval');
-        setApprovingStepId(event.stepId);
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.stepId === event.stepId
-              ? { ...e, status: 'awaiting_approval', output: event.payload }
-              : e
-          )
-        );
+      }
+      case 'approval_required': {
+        const stepId = typeof d.stepId === 'string' ? d.stepId : null;
+        if (stepId) {
+          setStatus('awaiting_approval');
+          setApprovingStepId(stepId);
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.stepId === stepId ? { ...e, status: 'awaiting_approval', output: d.payload } : e
+            )
+          );
+        }
         break;
-      case 'budget_warning':
-        setBudgetWarning(
-          `Used $${event.usedUsd.toFixed(4)} of $${event.limitUsd.toFixed(4)} budget (${Math.round(
-            (event.usedUsd / event.limitUsd) * 100
-          )}%).`
-        );
+      }
+      case 'budget_warning': {
+        const usedUsd = typeof d.usedUsd === 'number' ? d.usedUsd : 0;
+        const limitUsd = typeof d.limitUsd === 'number' ? d.limitUsd : 0;
+        if (limitUsd > 0) {
+          setBudgetWarning(
+            `Used $${usedUsd.toFixed(4)} of $${limitUsd.toFixed(4)} budget (${Math.round(
+              (usedUsd / limitUsd) * 100
+            )}%).`
+          );
+        }
         break;
+      }
       case 'workflow_completed':
         setStatus('completed');
         break;
       case 'workflow_failed':
         setStatus('failed');
-        setErrorMessage(event.error);
+        setErrorMessage(typeof d.error === 'string' ? d.error : 'Workflow failed');
         break;
     }
   }, []);

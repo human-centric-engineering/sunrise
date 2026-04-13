@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/orchestration/knowledge/patterns/route';
-import { mockAdminUser } from '@/tests/helpers/auth';
+import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -102,5 +102,12 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(0);
+  });
+
+  it('returns 403 when authenticated as non-admin', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(403);
   });
 });

@@ -179,19 +179,25 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     orderBy: { patternNumber: 'asc' },
   });
 
+  // Batch-fetch all overview chunks in a single query (avoids N+1)
+  const patternNumbers = groups.map((g) => g.patternNumber).filter((n): n is number => n !== null);
+
+  const overviewChunks = await prisma.aiKnowledgeChunk.findMany({
+    where: {
+      patternNumber: { in: patternNumbers },
+      chunkType: 'pattern_overview',
+    },
+    select: { patternNumber: true, content: true, metadata: true },
+  });
+
+  const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
+
   const summaries: PatternSummary[] = [];
 
   for (const group of groups) {
     if (group.patternNumber === null) continue;
 
-    // Fetch the overview chunk for description and complexity metadata
-    const overviewChunk = await prisma.aiKnowledgeChunk.findFirst({
-      where: {
-        patternNumber: group.patternNumber,
-        chunkType: 'pattern_overview',
-      },
-      select: { content: true, metadata: true },
-    });
+    const overviewChunk = overviewByPattern.get(group.patternNumber) ?? null;
 
     const rawMeta: unknown = overviewChunk?.metadata ?? null;
     const metadata =
