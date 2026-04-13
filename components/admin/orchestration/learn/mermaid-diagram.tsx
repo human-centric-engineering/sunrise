@@ -6,6 +6,8 @@ interface MermaidDiagramProps {
   code: string;
 }
 
+let mermaidInitialized = false;
+
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,11 +21,14 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
       try {
         const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: 'neutral',
-          securityLevel: 'loose',
-        });
+        if (!mermaidInitialized) {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: 'neutral',
+            securityLevel: 'loose',
+          });
+          mermaidInitialized = true;
+        }
 
         const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
         const { svg } = await mermaid.render(id, code);

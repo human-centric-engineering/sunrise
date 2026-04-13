@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const metadata: Metadata = {
   title: 'New workflow · AI Orchestration',
@@ -21,18 +21,14 @@ export default async function NewWorkflowPage({
   searchParams: Promise<{ definition?: string }>;
 }) {
   const params = await searchParams;
-  let initialDefinition: WorkflowDefinition | undefined;
+  let initialDefinition: typeof workflowDefinitionSchema._output | undefined;
 
   if (params.definition) {
     try {
       const parsed: unknown = JSON.parse(decodeURIComponent(params.definition));
-      if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        'steps' in parsed &&
-        Array.isArray((parsed as Record<string, unknown>).steps)
-      ) {
-        initialDefinition = parsed as WorkflowDefinition;
+      const result = workflowDefinitionSchema.safeParse(parsed);
+      if (result.success) {
+        initialDefinition = result.data;
       }
     } catch {
       // Invalid definition param — fall through to empty builder

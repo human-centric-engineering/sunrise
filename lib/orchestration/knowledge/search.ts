@@ -190,23 +190,36 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     orderBy: { patternNumber: 'asc' },
   });
 
+  // Batch-fetch overview and TL;DR chunks in two queries (avoids N+1)
+  const patternNumbers = groups.map((g) => g.patternNumber).filter((n): n is number => n !== null);
+
+  const [overviewChunks, tldrChunks] = await Promise.all([
+    prisma.aiKnowledgeChunk.findMany({
+      where: {
+        patternNumber: { in: patternNumbers },
+        chunkType: 'pattern_overview',
+      },
+      select: { patternNumber: true, content: true, metadata: true },
+    }),
+    prisma.aiKnowledgeChunk.findMany({
+      where: {
+        patternNumber: { in: patternNumbers },
+        section: 'TL;DR Summary',
+      },
+      select: { patternNumber: true, content: true },
+    }),
+  ]);
+
+  const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
+  const tldrByPattern = new Map(tldrChunks.map((c) => [c.patternNumber, c]));
+
   const summaries: PatternSummary[] = [];
 
   for (const group of groups) {
     if (group.patternNumber === null) continue;
 
-    // Fetch the overview chunk (for complexity metadata) and the TL;DR chunk
-    // (for a concise card description). Prefer TL;DR over overview content.
-    const [overviewChunk, tldrChunk] = await Promise.all([
-      prisma.aiKnowledgeChunk.findFirst({
-        where: { patternNumber: group.patternNumber, chunkType: 'pattern_overview' },
-        select: { content: true, metadata: true },
-      }),
-      prisma.aiKnowledgeChunk.findFirst({
-        where: { patternNumber: group.patternNumber, section: 'TL;DR Summary' },
-        select: { content: true },
-      }),
-    ]);
+    const overviewChunk = overviewByPattern.get(group.patternNumber) ?? null;
+    const tldrChunk = tldrByPattern.get(group.patternNumber) ?? null;
 
     const rawMeta: unknown = overviewChunk?.metadata ?? null;
     const metadata =

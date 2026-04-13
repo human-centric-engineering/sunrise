@@ -467,7 +467,7 @@ const workflowStepSchema = z.object({
 });
 
 /** Complete workflow definition */
-const workflowDefinitionSchema = z.object({
+export const workflowDefinitionSchema = z.object({
   steps: z.array(workflowStepSchema).min(1, 'Workflow must have at least one step'),
   entryStepId: z.string().min(1, 'Entry step ID is required'),
   errorStrategy: z.enum(['retry', 'fallback', 'fail']),

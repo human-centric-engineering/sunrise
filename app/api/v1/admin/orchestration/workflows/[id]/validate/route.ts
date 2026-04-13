@@ -27,7 +27,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { validateWorkflow } from '@/lib/orchestration/workflows';
 import { cuidSchema } from '@/lib/validations/common';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const clientIP = getClientIP(request);
@@ -45,10 +45,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
   const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
-  // workflowDefinition was validated by the create/update schemas on write,
-  // so we trust its shape here. The validator is a structural pass over
-  // the DAG, not a re-run of the Zod schema.
-  const definition = workflow.workflowDefinition as unknown as WorkflowDefinition;
+  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  if (!defParsed.success) {
+    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
+      workflowDefinition: defParsed.error.issues.map((i) => i.message),
+    });
+  }
+  const definition = defParsed.data;
   const result = validateWorkflow(definition);
 
   log.info('Workflow validated', {

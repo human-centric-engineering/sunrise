@@ -53,6 +53,10 @@ function errorFrame(message: string): string {
   return `event: error\ndata: ${JSON.stringify({ code: 'internal_error', message })}\n\n`;
 }
 
+function statusFrame(message: string): string {
+  return `event: status\ndata: ${JSON.stringify({ message })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ChatInterface', () => {
@@ -261,5 +265,66 @@ describe('ChatInterface', () => {
     const { container } = render(<ChatInterface agentSlug="test-agent" />);
 
     expect(container.querySelector('.rounded-lg.border')).not.toBeNull();
+  });
+
+  it('shows status text from status event and clears on completion', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      statusFrame('Searching knowledge base...'),
+      contentFrame('Found results.'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Search');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Found results.')).toBeInTheDocument();
+    });
+
+    // Status should be cleared after streaming completes (finally block sets status to null)
+    expect(screen.queryByText('Searching knowledge base...')).not.toBeInTheDocument();
+  });
+
+  it('shows error and removes pending message when res.ok is false', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, body: null }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/chat stream failed to start/i)).toBeInTheDocument();
+    });
+
+    // User message should still be visible, but the empty assistant message should be removed
+    expect(screen.getByText('Hi')).toBeInTheDocument();
+    // There should be exactly one message bubble (the user's), not two
+    const messageBubbles = document.querySelectorAll('.rounded-lg.px-3.py-2');
+    expect(messageBubbles).toHaveLength(1);
+  });
+
+  it('shows error when res.body is null despite res.ok', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: null }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/chat stream failed to start/i)).toBeInTheDocument();
+    });
   });
 });

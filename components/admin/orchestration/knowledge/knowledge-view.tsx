@@ -26,9 +26,8 @@ interface KnowledgeViewProps {
   documents: AiKnowledgeDocument[];
 }
 
-export function KnowledgeView({ documents: initialDocuments }: KnowledgeViewProps) {
+export function KnowledgeView({ documents }: KnowledgeViewProps) {
   const router = useRouter();
-  const [documents] = useState(initialDocuments);
   const [seeding, setSeeding] = useState(false);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
 
