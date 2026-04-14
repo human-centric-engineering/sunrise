@@ -108,7 +108,8 @@ export function WorkflowDetailsDialog({
               Slug{' '}
               <FieldHelp title="Slug">
                 URL-safe identifier. Lowercase letters, numbers, and hyphens only. Auto-derived from
-                the workflow name until you edit it manually.
+                the workflow name until you edit it manually — e.g.{' '}
+                <code>customer-triage-flow</code>.
               </FieldHelp>
             </Label>
             <Input
@@ -146,10 +147,21 @@ export function WorkflowDetailsDialog({
           <div className="space-y-1.5">
             <Label htmlFor="details-error-strategy" className="flex items-center">
               Error strategy{' '}
-              <FieldHelp title="Error strategy">
-                What the engine does when a step fails. <code>fail</code> aborts the workflow;{' '}
-                <code>retry</code> re-runs the failing step; <code>fallback</code> runs an
-                alternative branch if defined.
+              <FieldHelp title="Error strategy" contentClassName="w-80">
+                What the engine does when a step fails:
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  <li>
+                    <strong>Fail</strong> — stop immediately. Use when errors are unrecoverable.
+                  </li>
+                  <li>
+                    <strong>Retry</strong> — try the failed step again. Use for transient issues
+                    like network timeouts.
+                  </li>
+                  <li>
+                    <strong>Fallback</strong> — run a backup path you&apos;ve connected in the
+                    builder. Use when you have an alternative approach (e.g. try a different model).
+                  </li>
+                </ul>
               </FieldHelp>
             </Label>
             <Select

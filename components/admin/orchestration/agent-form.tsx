@@ -212,10 +212,18 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">Model</TabsTrigger>
           <TabsTrigger value="instructions">Instructions</TabsTrigger>
-          <TabsTrigger value="capabilities" disabled={!isEdit}>
+          <TabsTrigger
+            value="capabilities"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to attach capabilities' : undefined}
+          >
             Capabilities
           </TabsTrigger>
-          <TabsTrigger value="test" disabled={!isEdit}>
+          <TabsTrigger
+            value="test"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to test a chat' : undefined}
+          >
             Test
           </TabsTrigger>
         </TabsList>
@@ -272,8 +280,11 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="description">
               Description{' '}
               <FieldHelp title="What this agent does">
-                One or two sentences explaining what this agent is for. Shown to other admins on the
-                list page — keep it short.
+                A short summary that helps other admins understand this agent at a glance. It
+                appears on the agents list page and in search results. Keep it to one or two
+                sentences — e.g. &ldquo;Answers customer billing questions using the help docs
+                knowledge base&rdquo; or &ldquo;Triages incoming support requests and routes to
+                specialists.&rdquo;
               </FieldHelp>
             </Label>
             <Textarea
@@ -321,9 +332,14 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="provider">
               Provider{' '}
               <FieldHelp title="LLM provider">
-                Which upstream API answers prompts for this agent. Each provider has its own API key
-                set in the Providers page — agents that reference a provider with no key attached
-                will fail at chat time. Default: <code>anthropic</code>.
+                The AI service that powers this agent (e.g. Anthropic for Claude, OpenAI for GPT, or
+                a local Ollama server). Each provider is configured on the{' '}
+                <Link href="/admin/orchestration/providers" className="underline">
+                  Providers page
+                </Link>{' '}
+                with its own API key. If the selected provider&apos;s key is missing, this agent
+                won&apos;t be able to respond — look for the red &ldquo;no key&rdquo; indicator in
+                the dropdown. Default: <code>anthropic</code>.
               </FieldHelp>
             </Label>
             {providerFallback ? (
@@ -358,9 +374,10 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="model">
               Model{' '}
               <FieldHelp title="Which model answers">
-                The exact model identifier your provider exposes. Changing this switches which model
-                actually answers — cost, latency, and quality all shift. Default:{' '}
-                <code>claude-opus-4-6</code>.
+                The specific AI model this agent uses. Changing it switches which model actually
+                answers — cost, speed, and quality all shift. Smaller models (e.g. Haiku, GPT-4o
+                mini) are faster and cheaper; larger models (e.g. Opus, GPT-4o) are more capable but
+                cost more per message. Default: <code>claude-opus-4-6</code>.
               </FieldHelp>
             </Label>
             {modelFallback || filteredModels.length === 0 ? (
@@ -407,8 +424,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="maxTokens">
               Max output tokens{' '}
               <FieldHelp title="Maximum reply length">
-                Upper bound on how long one reply can be. Defaults to <code>4096</code>. Only raise
-                this if replies are getting cut off — higher values cost more on every turn.
+                Upper bound on how long one reply can be, measured in tokens (roughly &frac34; of a
+                word — so 4 096 tokens &asymp; 3 000 words). Defaults to <code>4096</code>. Only
+                raise this if replies are getting cut off — higher values cost more on every turn.
               </FieldHelp>
             </Label>
             <Input
@@ -425,9 +443,11 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="monthlyBudgetUsd">
               Monthly budget (USD){' '}
               <FieldHelp title="Hard spend cap">
-                Hard spend cap for this agent, in USD. When month-to-date spend exceeds the cap, new
-                chats are rejected until the calendar month rolls over or you raise the limit. Leave
-                blank to disable the cap.
+                Hard spend cap for this agent, in USD. When month-to-date spend reaches the cap, new
+                chats are rejected with a friendly &ldquo;budget exhausted&rdquo; message until the
+                calendar month rolls over or you raise the limit. For example, $10.00 would allow
+                roughly 2 000–5 000 conversations depending on model and reply length. Leave blank
+                to disable the cap.
               </FieldHelp>
             </Label>
             <Input
@@ -455,9 +475,11 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="systemInstructions">
               System instructions{' '}
               <FieldHelp title="The persona and task">
-                The always-on system prompt. Describe the agent&apos;s role, what it should and
-                shouldn&apos;t do, and any output formatting rules. Every PATCH that changes this
-                value is automatically snapshot into the version history below.
+                The instructions the AI reads before every conversation — its personality, what it
+                should and shouldn&apos;t do, and any formatting rules. Think of it as a job
+                description the model follows on every reply. Every time you save changes here, a
+                timestamped copy is kept in the version history below so you can compare or roll
+                back.
               </FieldHelp>
             </Label>
             <Textarea

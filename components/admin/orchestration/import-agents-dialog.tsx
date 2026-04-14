@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -99,7 +100,60 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Import agents</DialogTitle>
+          <DialogTitle>
+            Import agents{' '}
+            <FieldHelp
+              title="How import / export works"
+              contentClassName="w-96 max-h-80 overflow-y-auto"
+            >
+              <p>
+                A <strong>bundle</strong> is a JSON file that contains one or more agent
+                configurations — their name, system instructions, model, temperature, budget, and
+                which capabilities are attached. It&apos;s a portable snapshot you can move between
+                Sunrise instances (e.g. staging → production) or share with colleagues.
+              </p>
+              <p className="text-foreground mt-2 font-medium">How to create a bundle</p>
+              <p>
+                On the agents list, tick the checkboxes next to the agents you want, then click
+                <strong> Export selected</strong>. Your browser downloads a <code>.json</code> file.
+              </p>
+              <p className="text-foreground mt-2 font-medium">How to import a bundle</p>
+              <p>
+                Open this dialog, pick the <code>.json</code> file, choose a conflict mode, and
+                click Import. Agents are matched by <strong>slug</strong> — if a slug already exists
+                you can skip it (keep yours) or overwrite it (replace with the bundle copy).
+                Capabilities referenced in the bundle that don&apos;t exist here are skipped with a
+                warning.
+              </p>
+              <p className="text-foreground mt-2 font-medium">Example bundle</p>
+              <pre className="bg-muted mt-1 overflow-x-auto rounded p-2 text-xs whitespace-pre">
+                {`{
+  "version": "1",
+  "exportedAt": "2026-04-14T...",
+  "agents": [
+    {
+      "name": "Support Triage",
+      "slug": "support-triage",
+      "description": "Routes tickets...",
+      "systemInstructions": "You are...",
+      "model": "claude-sonnet-4-6",
+      "provider": "anthropic",
+      "temperature": 0.7,
+      "maxTokens": 4096,
+      "monthlyBudgetUsd": 25,
+      "isActive": true,
+      "capabilities": [
+        {
+          "slug": "search-knowledge-base",
+          "isEnabled": true
+        }
+      ]
+    }
+  ]
+}`}
+              </pre>
+            </FieldHelp>
+          </DialogTitle>
           <DialogDescription>
             Upload a JSON bundle exported from this or another Sunrise instance. Existing agents
             (matched by slug) are kept by default — choose <em>Overwrite</em> only if you want the
@@ -109,7 +163,15 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="import-agents-file">Bundle file</Label>
+            <Label htmlFor="import-agents-file">
+              Bundle file{' '}
+              <FieldHelp title="What file do I pick?">
+                Choose the <code>.json</code> file you downloaded when you clicked &ldquo;Export
+                selected&rdquo; on an agents list (this instance or another Sunrise install). The
+                file contains agent configurations — no secrets, API keys, or conversation data are
+                included.
+              </FieldHelp>
+            </Label>
             <Input
               id="import-agents-file"
               type="file"
@@ -120,7 +182,16 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
           </div>
 
           <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">When an agent already exists</legend>
+            <legend className="text-sm font-medium">
+              When an agent already exists{' '}
+              <FieldHelp title="Conflict handling">
+                Agents are matched by <strong>slug</strong> (their URL-safe identifier). If a slug
+                from the bundle already exists in this instance, you decide what happens.
+                &ldquo;Skip&rdquo; is safest — it leaves your current agent untouched.
+                &ldquo;Overwrite&rdquo; replaces the existing agent&apos;s entire configuration with
+                the bundle copy.
+              </FieldHelp>
+            </legend>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="radio"

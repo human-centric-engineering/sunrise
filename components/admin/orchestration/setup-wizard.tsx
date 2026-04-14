@@ -260,7 +260,7 @@ function StepIntro({ onSkip }: { onSkip: () => void }) {
       </div>
       <div className="flex justify-end">
         <Button size="sm" onClick={onSkip}>
-          Skip &amp; continue
+          Continue to provider setup →
         </Button>
       </div>
     </div>
@@ -425,6 +425,16 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
 
       {error && <div className="text-destructive text-sm">{error}</div>}
 
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-900/10 dark:text-blue-200">
+        <p className="font-medium">Embedding providers</p>
+        <p className="mt-1">
+          This creates a <strong>chat</strong> provider. For knowledge base vector search you also
+          need an <strong>embedding</strong> provider. We recommend <strong>Voyage AI</strong> (free
+          tier, top retrieval quality) — add it later on the Providers page. Anthropic (Claude) does
+          not offer an embeddings API.
+        </p>
+      </div>
+
       <div className="flex justify-end">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? (
@@ -587,8 +597,9 @@ function StepAgent({ draft, setDraft, onCreated }: StepAgentProps) {
           <Label htmlFor="agent-provider">
             Provider{' '}
             <FieldHelp title="LLM provider">
-              Which provider fulfils requests for this agent. Must match a configured provider slug.
-              Default: <code>anthropic</code>.
+              The AI service that powers this agent (e.g. Anthropic, OpenAI, Ollama). Pick from the
+              providers you&apos;ve already configured. If you only have one, it&apos;s
+              pre-selected. Default: <code>anthropic</code>.
             </FieldHelp>
           </Label>
           <Input

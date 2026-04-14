@@ -67,6 +67,8 @@ import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
+type ExecutionCountEntry = number | null;
+
 export interface WorkflowsTableProps {
   initialWorkflows: AiWorkflow[];
   initialMeta: PaginationMeta;
@@ -85,6 +87,7 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
   const [listError, setListError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AiWorkflow | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [execCounts, setExecCounts] = useState<Record<string, ExecutionCountEntry>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -92,6 +95,38 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, []);
+
+  // Lazy-fetch execution count per visible workflow.
+  useEffect(() => {
+    if (workflows.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      const entries = await Promise.all(
+        workflows.map(async (wf): Promise<[string, ExecutionCountEntry]> => {
+          try {
+            const res = await fetch(
+              `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?workflowId=${wf.id}&limit=1&page=1`,
+              { credentials: 'same-origin' }
+            );
+            if (!res.ok) return [wf.id, null];
+            const body = await parseApiResponse<unknown[]>(res);
+            if (!body.success) return [wf.id, null];
+            const pMeta = parsePaginationMeta(body.meta);
+            return [wf.id, pMeta?.total ?? null];
+          } catch {
+            return [wf.id, null];
+          }
+        })
+      );
+      if (cancelled) return;
+      setExecCounts(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workflows]);
 
   const fetchWorkflows = useCallback(
     async (
@@ -250,10 +285,23 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
                   {renderSortIcon('name')}
                 </Button>
               </TableHead>
-              <TableHead>Slug</TableHead>
+              <TableHead title="URL-safe identifier used in API calls and URLs">Slug</TableHead>
               <TableHead>Description</TableHead>
-              <TableHead className="text-center">Patterns</TableHead>
-              <TableHead className="text-center">Template</TableHead>
+              <TableHead
+                className="text-center"
+                title="Number of pattern blocks (steps) in this workflow"
+              >
+                Patterns
+              </TableHead>
+              <TableHead
+                className="text-center"
+                title='Templates appear in the "Use template" menu when creating new workflows'
+              >
+                Template
+              </TableHead>
+              <TableHead className="text-right" title="Total times this workflow has been executed">
+                Runs
+              </TableHead>
               <TableHead className="text-center">Status</TableHead>
               <TableHead className="w-10" />
             </TableRow>
@@ -261,13 +309,13 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
           <TableBody>
             {isLoading && workflows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell colSpan={8} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : workflows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell colSpan={8} className="h-24 text-center">
                   No workflows found. Click{' '}
                   <Link href="/admin/orchestration/workflows/new" className="font-medium underline">
                     New workflow
@@ -297,9 +345,28 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
                   </TableCell>
                   <TableCell className="text-center">
                     {workflow.isTemplate ? (
-                      <Badge>Template</Badge>
+                      <Badge title='This workflow appears in the "Use template" menu when creating new workflows'>
+                        Template
+                      </Badge>
                     ) : (
                       <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {execCounts[workflow.id] === undefined ? (
+                      <span className="text-muted-foreground">…</span>
+                    ) : execCounts[workflow.id] === null ? (
+                      '—'
+                    ) : execCounts[workflow.id] === 0 ? (
+                      <span className="text-muted-foreground">0</span>
+                    ) : (
+                      <Link
+                        href={`/admin/orchestration/executions?workflowId=${workflow.id}`}
+                        className="hover:underline"
+                        title="View executions for this workflow"
+                      >
+                        {execCounts[workflow.id]}
+                      </Link>
                     )}
                   </TableCell>
                   <TableCell className="text-center">

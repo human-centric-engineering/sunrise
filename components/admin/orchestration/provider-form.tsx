@@ -47,7 +47,7 @@ import { API } from '@/lib/api/endpoints';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiProviderConfig } from '@/types/prisma';
 
-type Flavor = 'anthropic' | 'openai' | 'ollama' | 'openai-compatible';
+type Flavor = 'anthropic' | 'openai' | 'ollama' | 'openai-compatible' | 'voyage';
 
 interface FlavorMeta {
   id: Flavor;
@@ -59,7 +59,7 @@ interface FlavorMeta {
   showApiKeyEnvVar: boolean;
   defaultBaseUrl: string | null;
   defaultApiKeyEnvVar: string | null;
-  providerType: 'anthropic' | 'openai-compatible';
+  providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   isLocal: boolean;
 }
 
@@ -67,7 +67,8 @@ const FLAVORS: readonly FlavorMeta[] = [
   {
     id: 'anthropic',
     label: 'Anthropic',
-    description: 'Claude models (Haiku, Sonnet, Opus). Requires an API key.',
+    description:
+      'Claude models (Haiku, Sonnet, Opus) for chat. No embedding support — pair with Voyage AI or OpenAI for vector search.',
     defaultName: 'Anthropic',
     defaultSlug: 'anthropic',
     showBaseUrl: false,
@@ -80,7 +81,8 @@ const FLAVORS: readonly FlavorMeta[] = [
   {
     id: 'openai',
     label: 'OpenAI',
-    description: 'GPT models via the OpenAI API. Requires an API key.',
+    description:
+      'GPT models and text-embedding-3 embeddings via the OpenAI API. Requires an API key.',
     defaultName: 'OpenAI',
     defaultSlug: 'openai',
     showBaseUrl: false,
@@ -88,6 +90,20 @@ const FLAVORS: readonly FlavorMeta[] = [
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultApiKeyEnvVar: 'OPENAI_API_KEY',
     providerType: 'openai-compatible',
+    isLocal: false,
+  },
+  {
+    id: 'voyage',
+    label: 'Voyage AI',
+    description:
+      'Embedding-focused provider by ex-Anthropic researchers. Free tier (200 M tokens/month). Recommended for knowledge base vector search.',
+    defaultName: 'Voyage AI',
+    defaultSlug: 'voyage-ai',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.voyageai.com/v1',
+    defaultApiKeyEnvVar: 'VOYAGE_API_KEY',
+    providerType: 'voyage',
     isLocal: false,
   },
   {
@@ -121,7 +137,7 @@ const FLAVORS: readonly FlavorMeta[] = [
 ] as const;
 
 const providerFormSchema = z.object({
-  flavor: z.enum(['anthropic', 'openai', 'ollama', 'openai-compatible']),
+  flavor: z.enum(['anthropic', 'openai', 'ollama', 'openai-compatible', 'voyage']),
   name: z.string().min(1, 'Name is required').max(100),
   slug: z
     .string()
@@ -150,6 +166,7 @@ export interface ProviderFormProps {
 /** Reverse-map a saved provider row to a UI flavor. */
 function flavorFromProvider(provider: ProviderRowWithStatus): Flavor {
   if (provider.providerType === 'anthropic') return 'anthropic';
+  if (provider.providerType === 'voyage') return 'voyage';
   if (provider.isLocal) return 'ollama';
   if (provider.baseUrl && provider.baseUrl.includes('api.openai.com')) return 'openai';
   return 'openai-compatible';
@@ -323,13 +340,15 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       <div>
         <Label className="mb-2 block">
           Provider flavor{' '}
-          <FieldHelp title="Pick your backend">
-            Which LLM backend this config talks to. Anthropic and OpenAI are first-class. Ollama is
-            for running open-source models locally. OpenAI-Compatible covers everything else that
-            speaks the OpenAI API — Together AI, Fireworks, Groq, LM Studio, vLLM, and so on.{' '}
-            <Link href="/admin/orchestration/learning" className="underline">
-              Learn more
-            </Link>
+          <FieldHelp title="Pick your backend" contentClassName="w-80">
+            Which LLM backend this config talks to. Anthropic and OpenAI are first-class for chat.
+            Voyage AI is recommended for embeddings (free tier, top retrieval quality). Ollama runs
+            open-source models locally. OpenAI-Compatible covers everything else — Together AI,
+            Fireworks, Groq, LM Studio, vLLM, and so on.
+            <p className="mt-2 text-xs">
+              <strong>Note:</strong> Anthropic (Claude) does not offer an embeddings API. For
+              knowledge base vector search, add a Voyage AI or OpenAI provider alongside Anthropic.
+            </p>
           </FieldHelp>
         </Label>
         <div role="radiogroup" aria-label="Provider flavor" className="grid gap-3 sm:grid-cols-2">
@@ -368,10 +387,9 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         <Label htmlFor="name">
           Name{' '}
           <FieldHelp title="Display name">
-            Shown everywhere the provider is referenced. Default: matches the selected flavor.{' '}
-            <Link href="/admin/orchestration/learning" className="underline">
-              Learn more
-            </Link>
+            A friendly label for this provider, shown on the dashboard, in agent settings, and in
+            cost reports. Pick something your team will recognise — e.g. &ldquo;Anthropic
+            Production&rdquo; or &ldquo;Local Ollama&rdquo;. Default: matches the selected type.
           </FieldHelp>
         </Label>
         <Input id="name" {...register('name')} placeholder={flavorMeta.defaultName} />

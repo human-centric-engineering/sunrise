@@ -28,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -299,7 +300,15 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
 
         <div className="space-y-4">
           <div className="grid gap-2">
-            <Label htmlFor="custom-config">Custom config (JSON)</Label>
+            <Label htmlFor="custom-config">
+              Custom config (JSON){' '}
+              <FieldHelp title="Custom config">
+                JSON key-value pairs passed to the capability handler when it runs. The expected
+                shape depends on the capability — open the capability&apos;s edit page and look at
+                the Execution tab for supported keys. Leave as <code>{'{}'}</code> to use the
+                capability&apos;s defaults.
+              </FieldHelp>
+            </Label>
             <Textarea
               id="custom-config"
               rows={8}
@@ -310,7 +319,13 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="custom-rate-limit">Custom rate limit (calls/min)</Label>
+            <Label htmlFor="custom-rate-limit">
+              Custom rate limit (calls/min){' '}
+              <FieldHelp title="Rate limit override">
+                Override the capability&apos;s global rate limit for this agent only. Leave blank to
+                inherit the limit set on the capability itself.
+              </FieldHelp>
+            </Label>
             <Input
               id="custom-rate-limit"
               type="number"
