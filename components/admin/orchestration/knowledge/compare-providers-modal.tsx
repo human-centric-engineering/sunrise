@@ -90,9 +90,9 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
           <DialogDescription>
             Anthropic (Claude) does not provide an embeddings API. Choose from the providers below
             for knowledge base vector search. Models marked{' '}
-            <Badge variant="default" className="px-1 py-0 text-[10px]">
+            <span className="bg-primary text-primary-foreground inline-flex items-center rounded-md px-1 py-0 text-[10px] font-medium">
               Compatible
-            </Badge>{' '}
+            </span>{' '}
             can produce 1 536-dimension vectors that work with the current database schema.
           </DialogDescription>
         </DialogHeader>

@@ -465,8 +465,7 @@ describe('KnowledgeView', () => {
 
       await waitFor(() => {
         const btn = getEmbedButton();
-        // allEmbedded does not set embedDisabled — button stays enabled (no !allEmbedded in the condition)
-        // but the title attribute communicates the state
+        expect(btn).toBeDisabled();
         expect(btn).toHaveAttribute('title', 'All chunks are already embedded');
         expect(screen.getByText('All chunks embedded')).toBeInTheDocument();
       });

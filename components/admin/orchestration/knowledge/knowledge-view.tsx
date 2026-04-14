@@ -121,9 +121,9 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
-  const embedDisabled = embedding || !hasChunks || !hasProvider;
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
+  const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
 
   return (
     <div className="space-y-8">
