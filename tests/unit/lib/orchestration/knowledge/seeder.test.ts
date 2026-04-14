@@ -353,7 +353,7 @@ describe('embedChunks', () => {
 
     const result = await embedChunks();
 
-    expect(result).toEqual({ processed: 2, total: 5, alreadyEmbedded: 5 });
+    expect(result).toEqual({ processed: 2, total: 5, alreadyEmbedded: 3 });
     expect(embedBatch).toHaveBeenCalledWith(['Chunk 1', 'Chunk 2']);
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
 

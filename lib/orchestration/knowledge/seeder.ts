@@ -187,5 +187,5 @@ export async function embedChunks(): Promise<{
     alreadyEmbedded,
   });
 
-  return { processed: pending.length, total, alreadyEmbedded: alreadyEmbedded + pending.length };
+  return { processed: pending.length, total, alreadyEmbedded };
 }
