@@ -23,7 +23,7 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent } from '@/types/orchestration';
+import type { ChatEvent, MessageMetadata } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -56,7 +56,7 @@ interface PersistMessageParams {
   content: string;
   capabilitySlug?: string;
   toolCallId?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata;
 }
 
 export class StreamingChatHandler {
@@ -201,7 +201,17 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
-            ...(usage ? { metadata: { tokenUsage: usage } } : {}),
+            ...(usage
+              ? {
+                  metadata: {
+                    tokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      totalTokens: usage.inputTokens + usage.outputTokens,
+                    },
+                  },
+                }
+              : {}),
           });
         }
 
@@ -368,6 +378,9 @@ export class StreamingChatHandler {
     if (params.capabilitySlug !== undefined) data.capabilitySlug = params.capabilitySlug;
     if (params.toolCallId !== undefined) data.toolCallId = params.toolCallId;
     if (params.metadata !== undefined) {
+      // `MessageMetadata` is a structured, JSON-serializable shape; the cast
+      // bridges TypeScript's interface-vs-indexed-object mismatch with Prisma's
+      // `InputJsonValue` — it is not laundering unvalidated data.
       data.metadata = params.metadata as Prisma.InputJsonValue;
     }
     return prisma.aiMessage.create({ data });

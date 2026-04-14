@@ -11,30 +11,35 @@
  */
 
 import { readFile } from 'fs/promises';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { embedBatch } from './embedder';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
-interface SeedChunk {
-  id: string;
-  chunk_id: number;
-  content: string;
-  metadata: {
-    type: string;
-    section?: string;
-    section_title?: string;
-    pattern_number?: number;
-    pattern_name?: string;
-    pattern_id?: string;
-    category?: string;
-    complexity?: string;
-    related_patterns?: string[];
-    keywords?: string;
-    source?: string;
-  };
-  estimated_tokens: number;
-}
+const seedChunkMetadataSchema = z.object({
+  type: z.string(),
+  section: z.string().optional(),
+  section_title: z.string().optional(),
+  pattern_number: z.number().optional(),
+  pattern_name: z.string().optional(),
+  pattern_id: z.string().optional(),
+  category: z.string().optional(),
+  complexity: z.string().optional(),
+  related_patterns: z.array(z.string()).optional(),
+  keywords: z.string().optional(),
+  source: z.string().optional(),
+});
+
+export const seedChunkSchema = z.object({
+  id: z.string(),
+  chunk_id: z.number(),
+  content: z.string(),
+  metadata: seedChunkMetadataSchema,
+  estimated_tokens: z.number(),
+});
+
+export type SeedChunk = z.infer<typeof seedChunkSchema>;
 
 const DOCUMENT_NAME = 'Agentic Design Patterns';
 const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
@@ -71,7 +76,16 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   }
 
   const raw = await readFile(chunksJsonPath, 'utf-8');
-  const chunks = JSON.parse(raw) as SeedChunk[];
+  const parsed: unknown = JSON.parse(raw);
+  const result = z.array(seedChunkSchema).safeParse(parsed);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue?.path.join('.') ?? '<root>';
+    throw new Error(
+      `Invalid chunks.json at ${chunksJsonPath}: ${issue?.message ?? 'validation failed'} (at ${path})`
+    );
+  }
+  const chunks = result.data;
 
   logger.info('Loaded chunks from file', { count: chunks.length });
 
