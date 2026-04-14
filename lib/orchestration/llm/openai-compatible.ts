@@ -250,7 +250,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     };
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, _options?: import('./types').EmbedOptions): Promise<number[]> {
     try {
       const result = await withRetry(
         () => this.client.embeddings.create({ model: this.embeddingModel, input: text }),

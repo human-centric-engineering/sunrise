@@ -104,6 +104,9 @@ export const API = {
       knowledgePatternByNumber: (num: number): string =>
         `/api/v1/admin/orchestration/knowledge/patterns/${num}`,
       KNOWLEDGE_SEED: '/api/v1/admin/orchestration/knowledge/seed',
+      EMBEDDING_MODELS: '/api/v1/admin/orchestration/embedding-models',
+      KNOWLEDGE_EMBED: '/api/v1/admin/orchestration/knowledge/embed',
+      KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',

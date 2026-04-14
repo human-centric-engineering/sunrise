@@ -1,9 +1,13 @@
 /**
  * Knowledge Base Seeder
  *
- * Seeds the knowledge base from the pre-parsed chunks.json file.
- * Creates an AiKnowledgeDocument record and links all chunks to it.
- * Used for initial setup of the agentic design patterns knowledge base.
+ * Two-phase seeder for the knowledge base:
+ *
+ * Phase 1 — seedChunks(): inserts chunks from chunks.json with embedding=null
+ * and creates the document with status='ready'. No external dependency.
+ *
+ * Phase 2 — embedChunks(): finds all chunks where embedding IS NULL, batches
+ * them through the configured embedding provider, and writes vectors back.
  */
 
 import { readFile } from 'fs/promises';
@@ -36,35 +40,41 @@ const DOCUMENT_NAME = 'Agentic Design Patterns';
 const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
 
 /**
- * Seed the knowledge base from a pre-parsed chunks.json file.
+ * Phase 1 — Seed chunks into the knowledge base (no embeddings).
  *
  * Creates an AiKnowledgeDocument record named "Agentic Design Patterns"
- * and inserts all chunks with embeddings. Skips if the document already
- * exists (idempotent).
+ * and inserts all chunks with embedding=null. Document status is set to
+ * 'ready' because the content is immediately usable by the Learning UI.
+ *
+ * Idempotent: skips if the document already exists with chunks.
+ * If a previous attempt left a failed record with no chunks, it is
+ * cleaned up and re-seeded.
  *
  * @param chunksJsonPath - Absolute path to the chunks.json file
  */
-export async function seedFromChunksJson(chunksJsonPath: string): Promise<void> {
-  logger.info('Starting knowledge base seed', { chunksJsonPath });
+export async function seedChunks(chunksJsonPath: string): Promise<void> {
+  logger.info('Starting knowledge base seed (chunks only)', { chunksJsonPath });
 
-  // Check if already seeded
   const existing = await prisma.aiKnowledgeDocument.findFirst({
     where: { name: DOCUMENT_NAME },
   });
 
   if (existing) {
-    logger.info('Knowledge base already seeded, skipping', { documentId: existing.id });
-    return;
+    if (existing.status === 'failed') {
+      logger.info('Removing previously failed seed document', { documentId: existing.id });
+      await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId: existing.id } });
+      await prisma.aiKnowledgeDocument.delete({ where: { id: existing.id } });
+    } else {
+      logger.info('Knowledge base already seeded, skipping', { documentId: existing.id });
+      return;
+    }
   }
 
-  // Read and parse chunks.json
   const raw = await readFile(chunksJsonPath, 'utf-8');
   const chunks = JSON.parse(raw) as SeedChunk[];
 
   logger.info('Loaded chunks from file', { count: chunks.length });
 
-  // Create the document record
-  // Use the first available user as the uploader, or a system placeholder
   const firstAdmin = await prisma.user.findFirst({
     where: { role: 'ADMIN' },
     select: { id: true },
@@ -78,7 +88,6 @@ export async function seedFromChunksJson(chunksJsonPath: string): Promise<void> 
     throw new Error('No users found in database. Create a user first, then re-run the seeder.');
   }
 
-  // Compute a hash from the content
   const { createHash } = await import('crypto');
   const contentForHash = chunks.map((c) => c.content).join('');
   const fileHash = createHash('sha256').update(contentForHash).digest('hex');
@@ -88,69 +97,95 @@ export async function seedFromChunksJson(chunksJsonPath: string): Promise<void> 
       name: DOCUMENT_NAME,
       fileName: DOCUMENT_FILE_NAME,
       fileHash,
-      status: 'processing',
+      status: 'ready',
       uploadedBy: uploaderId,
+      chunkCount: chunks.length,
     },
   });
 
-  try {
-    // Generate embeddings in batches
-    const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
-
-    // Insert chunks with embeddings
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embeddingStr = `[${embeddings[i].join(',')}]`;
-
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ai_knowledge_chunk (
-          id, "chunkKey", "documentId", content, embedding,
-          "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
-        ) VALUES (
-          gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
-        )`,
-        chunk.id,
-        document.id,
-        chunk.content,
-        embeddingStr,
-        chunk.metadata.type,
-        chunk.metadata.pattern_number ?? null,
-        chunk.metadata.pattern_name ?? null,
-        chunk.metadata.category ?? null,
-        chunk.metadata.section_title ?? chunk.metadata.section ?? null,
-        chunk.metadata.keywords ?? null,
-        chunk.estimated_tokens,
-        JSON.stringify({
-          complexity: chunk.metadata.complexity ?? null,
-          relatedPatterns: chunk.metadata.related_patterns ?? null,
-          patternId: chunk.metadata.pattern_id ?? null,
-          source: chunk.metadata.source ?? null,
-        })
-      );
-    }
-
-    // Update document status
-    await prisma.aiKnowledgeDocument.update({
-      where: { id: document.id },
-      data: { status: 'ready', chunkCount: chunks.length },
-    });
-
-    logger.info('Knowledge base seeded successfully', {
-      documentId: document.id,
-      chunkCount: chunks.length,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Knowledge base seeding failed', { documentId: document.id, error: message });
-
-    await prisma.aiKnowledgeDocument.update({
-      where: { id: document.id },
-      data: { status: 'failed', errorMessage: message },
-    });
-
-    throw error;
+  for (const chunk of chunks) {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO ai_knowledge_chunk (
+        id, "chunkKey", "documentId", content,
+        "chunkType", "patternNumber", "patternName", category,
+        section, keywords, "estimatedTokens", metadata
+      ) VALUES (
+        gen_random_uuid()::text, $1, $2, $3,
+        $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+      )`,
+      chunk.id,
+      document.id,
+      chunk.content,
+      chunk.metadata.type,
+      chunk.metadata.pattern_number ?? null,
+      chunk.metadata.pattern_name ?? null,
+      chunk.metadata.category ?? null,
+      chunk.metadata.section_title ?? chunk.metadata.section ?? null,
+      chunk.metadata.keywords ?? null,
+      chunk.estimated_tokens,
+      JSON.stringify({
+        complexity: chunk.metadata.complexity ?? null,
+        relatedPatterns: chunk.metadata.related_patterns ?? null,
+        patternId: chunk.metadata.pattern_id ?? null,
+        source: chunk.metadata.source ?? null,
+      })
+    );
   }
+
+  logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
+    documentId: document.id,
+    chunkCount: chunks.length,
+  });
+}
+
+/**
+ * Phase 2 — Generate embeddings for all unembedded chunks.
+ *
+ * Finds every chunk where embedding IS NULL, batches them through the
+ * configured embedding provider, and writes vectors back. Can be called
+ * repeatedly — only processes chunks that still need embeddings.
+ *
+ * @returns Summary of what was processed
+ */
+export async function embedChunks(): Promise<{
+  processed: number;
+  total: number;
+  alreadyEmbedded: number;
+}> {
+  const total = await prisma.aiKnowledgeChunk.count();
+
+  const pending = await prisma.$queryRawUnsafe<Array<{ id: string; content: string }>>(
+    `SELECT id, content FROM ai_knowledge_chunk WHERE embedding IS NULL ORDER BY id`
+  );
+
+  if (pending.length === 0) {
+    logger.info('All chunks already embedded', { total });
+    return { processed: 0, total, alreadyEmbedded: total };
+  }
+
+  logger.info('Starting embedding generation', {
+    pending: pending.length,
+    total,
+  });
+
+  const texts = pending.map((c) => c.content);
+  const embeddings = await embedBatch(texts);
+
+  for (let i = 0; i < pending.length; i++) {
+    const embeddingStr = `[${embeddings[i].join(',')}]`;
+    await prisma.$executeRawUnsafe(
+      `UPDATE ai_knowledge_chunk SET embedding = $1::vector WHERE id = $2`,
+      embeddingStr,
+      pending[i].id
+    );
+  }
+
+  const alreadyEmbedded = total - pending.length;
+  logger.info('Embedding generation complete', {
+    processed: pending.length,
+    total,
+    alreadyEmbedded,
+  });
+
+  return { processed: pending.length, total, alreadyEmbedded: alreadyEmbedded + pending.length };
 }

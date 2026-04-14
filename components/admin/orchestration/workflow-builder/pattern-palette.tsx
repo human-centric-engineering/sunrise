@@ -26,6 +26,14 @@ import {
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
+/** Short descriptions shown under each category heading in the palette. */
+const CATEGORY_HINTS: Record<StepCategory, string> = {
+  agent: 'LLM calls, tool use, and reasoning steps',
+  decision: 'Routing, evaluation, and branching logic',
+  input: 'Data sources that feed into the workflow',
+  output: 'Final results, notifications, and side-effects',
+};
+
 function onDragStart(event: React.DragEvent<HTMLDivElement>, type: string) {
   event.dataTransfer.setData('application/reactflow', type);
   event.dataTransfer.effectAllowed = 'move';
@@ -94,9 +102,12 @@ export function PatternPalette() {
           if (entries.length === 0) return null;
           return (
             <section key={category}>
-              <h3 className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-wide uppercase">
+              <h3 className="text-muted-foreground mb-0.5 text-[11px] font-semibold tracking-wide uppercase">
                 {STEP_CATEGORY_LABELS[category]}
               </h3>
+              <p className="text-muted-foreground/70 mb-2 text-[10px]">
+                {CATEGORY_HINTS[category]}
+              </p>
               <div className="space-y-2">
                 {entries.map((entry) => (
                   <PaletteBlock key={entry.type} entry={entry} />

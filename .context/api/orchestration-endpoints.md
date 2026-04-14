@@ -48,7 +48,10 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/documents`             | GET, POST          | List / upload document (multipart)                   | 3.3     |
 | `/knowledge/documents/:id`         | GET, DELETE        | Read / delete document                               | 3.3     |
 | `/knowledge/documents/:id/rechunk` | POST               | Rechunk + re-embed                                   | 3.3     |
-| `/knowledge/seed`                  | POST               | Seed canonical "Agentic Design Patterns"             | 3.3     |
+| `/knowledge/seed`                  | POST               | Seed chunks (no embeddings) for design patterns      | 3.3     |
+| `/knowledge/embed`                 | POST               | Generate embeddings for unembedded chunks            | 3.3     |
+| `/knowledge/embedding-status`      | GET                | Embedding coverage stats + provider availability     | 3.3     |
+| `/embedding-models`                | GET                | Static registry of embedding models (filterable)     | 7.0     |
 | `/conversations`                   | GET                | List caller's conversations                          | 3.3     |
 | `/conversations/:id`               | DELETE             | Delete one of the caller's conversations             | 3.3     |
 | `/conversations/:id/messages`      | GET                | Read messages of one conversation                    | 3.3     |
@@ -335,9 +338,37 @@ Re-runs the chunker + embedder. Blocked with `409 CONFLICT` when the document is
 
 ### `POST /knowledge/seed`
 
-Idempotent seeder for the canonical "Agentic Design Patterns" document. Returns `{ seeded: true }`. Safe to call on every deploy.
+**Phase 1** of the two-phase seeder. Inserts all chunks from the canonical `chunks.json` with `embedding = null` and sets the document status to `ready`. The Learning Patterns UI works immediately because it reads chunks directly — no embeddings needed. Returns `{ seeded: true }`. Idempotent: skips if the document already exists. If a previous attempt left a `failed` record, it is cleaned up and re-seeded. Safe to call on every deploy.
 
 Knowledge documents are **global, not per-user**. `uploadedBy` is recorded for audit but is not a scope boundary.
+
+### `POST /knowledge/embed`
+
+**Phase 2** of the two-phase seeder. Finds all chunks where `embedding IS NULL`, batches them through the configured embedding provider, and writes vectors back. Returns `{ processed, total, alreadyEmbedded }`. Can be called repeatedly — only processes chunks that still need embeddings. Requires an active embedding provider (OpenAI API key or local provider like Ollama).
+
+### `GET /knowledge/embedding-status`
+
+Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
+
+---
+
+## Embedding Models
+
+### `GET /embedding-models`
+
+Returns a curated, static list of embedding models from the registry at `lib/orchestration/llm/embedding-models.ts`. No database queries — purely informational.
+
+**Query params (all optional boolean):**
+
+| Param                  | Effect                                                |
+| ---------------------- | ----------------------------------------------------- |
+| `schemaCompatibleOnly` | Only models that can output 1536-dim vectors          |
+| `hasFreeTier`          | Only models with a free tier                          |
+| `local`                | `true` = local only, `false` = cloud only, omit = all |
+
+**Response:** `{ success: true, data: EmbeddingModelInfo[] }` — each entry has `id`, `name`, `provider`, `model`, `dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `local`, `quality`, `strengths`, `setup`.
+
+Used by the "Compare embedding providers" modal on the Knowledge Base page.
 
 ---
 

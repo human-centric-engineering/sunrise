@@ -16,6 +16,7 @@ import { Bot, Code, MessageSquare, Settings, User, Wrench } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { FieldHelp } from '@/components/ui/field-help';
 import { cn } from '@/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -192,7 +193,13 @@ function SummaryBar({ messages }: { messages: ConversationMessage[] }) {
       </Card>
       <Card>
         <CardHeader className="pb-1">
-          <CardTitle className="text-xs font-medium">Total Tokens</CardTitle>
+          <CardTitle className="text-xs font-medium">
+            Total Tokens{' '}
+            <FieldHelp title="What are tokens?">
+              Tokens are the units LLMs use to measure text — roughly ¾ of a word. Input tokens are
+              what you send; output tokens are what the model generates. More tokens = higher cost.
+            </FieldHelp>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <span className="text-lg font-bold">{totalTokens.toLocaleString()}</span>
@@ -208,7 +215,13 @@ function SummaryBar({ messages }: { messages: ConversationMessage[] }) {
       </Card>
       <Card>
         <CardHeader className="pb-1">
-          <CardTitle className="text-xs font-medium">Avg Latency</CardTitle>
+          <CardTitle className="text-xs font-medium">
+            Avg Latency{' '}
+            <FieldHelp title="What is latency?">
+              The average time in milliseconds between sending a prompt and receiving the first
+              response token. Lower is faster.
+            </FieldHelp>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <span className="text-lg font-bold">

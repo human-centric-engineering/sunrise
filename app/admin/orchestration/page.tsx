@@ -19,6 +19,7 @@ import {
   TopCapabilitiesPanel,
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -220,7 +221,32 @@ export default async function OrchestrationDashboardPage() {
     <div className="space-y-8">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">AI Orchestration</h1>
+          <h1 className="text-2xl font-semibold">
+            AI Orchestration{' '}
+            <FieldHelp
+              title="What is AI orchestration?"
+              contentClassName="w-96 max-h-80 overflow-y-auto"
+            >
+              <p>
+                AI Orchestration is the control plane for building and running agentic AI systems.
+                It lets you configure agents (AI personas), wire them to LLM providers, give them
+                capabilities (tools), chain them into workflows, and monitor cost and performance.
+              </p>
+              <p className="text-foreground mt-2 font-medium">Key concepts</p>
+              <p>
+                <strong>Agents</strong> reason and respond. <strong>Capabilities</strong> let agents
+                take actions. <strong>Providers</strong> supply the LLM backends.{' '}
+                <strong>Workflows</strong> chain steps into pipelines. The{' '}
+                <strong>knowledge base</strong> gives agents access to your documents via semantic
+                search.
+              </p>
+              <p className="text-foreground mt-2 font-medium">This page</p>
+              <p>
+                A summary dashboard showing agent count, workflow count, today&apos;s spend, recent
+                activity, and system health. Use the sidebar to navigate to each section.
+              </p>
+            </FieldHelp>
+          </h1>
           <p className="text-muted-foreground text-sm">
             Overview of agents, workflows, cost, and recent activity.
           </p>

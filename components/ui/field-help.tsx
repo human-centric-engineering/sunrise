@@ -36,6 +36,8 @@ export interface FieldHelpProps {
   children: React.ReactNode;
   /** Extra classes applied to the trigger button. */
   className?: string;
+  /** Extra classes applied to the popover content panel (e.g. wider width, max-height). */
+  contentClassName?: string;
   /** Accessible label for the icon button. Defaults to "More information". */
   ariaLabel?: string;
 }
@@ -44,6 +46,7 @@ export function FieldHelp({
   title,
   children,
   className,
+  contentClassName,
   ariaLabel = 'More information',
 }: FieldHelpProps) {
   return (
@@ -60,7 +63,7 @@ export function FieldHelp({
           <Info className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="text-sm" align="start">
+      <PopoverContent className={cn('text-sm', contentClassName)} align="start">
         {title && <div className="mb-1 font-semibold">{title}</div>}
         <div className="text-muted-foreground space-y-1 leading-relaxed">{children}</div>
       </PopoverContent>

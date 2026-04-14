@@ -22,6 +22,7 @@ interface EmbeddingProvider {
   apiKey: string | null;
   model: string;
   isLocal: boolean;
+  providerType: string;
 }
 
 /**
@@ -38,6 +39,21 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     orderBy: { createdAt: 'asc' },
   });
 
+  // Prefer Voyage AI provider (best retrieval quality, free tier)
+  const voyageProvider = providers.find((p) => p.providerType === 'voyage');
+  if (voyageProvider) {
+    const apiKey = voyageProvider.apiKeyEnvVar
+      ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
+      : null;
+    return {
+      baseUrl: voyageProvider.baseUrl ?? 'https://api.voyageai.com/v1',
+      apiKey,
+      model: 'voyage-3',
+      isLocal: false,
+      providerType: 'voyage',
+    };
+  }
+
   // Prefer a local provider for embeddings (cheaper/faster)
   const localProvider = providers.find((p) => p.isLocal);
   if (localProvider?.baseUrl) {
@@ -46,6 +62,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       apiKey: localProvider.apiKeyEnvVar ? (process.env[localProvider.apiKeyEnvVar] ?? null) : null,
       model: 'nomic-embed-text',
       isLocal: true,
+      providerType: localProvider.providerType,
     };
   }
 
@@ -62,6 +79,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       apiKey,
       model: DEFAULT_MODEL,
       isLocal: false,
+      providerType: 'openai-compatible',
     };
   }
 
@@ -72,6 +90,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     apiKey: openaiKey,
     model: DEFAULT_MODEL,
     isLocal: false,
+    providerType: 'openai-compatible',
   };
 }
 
@@ -80,7 +99,8 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
  */
 async function callEmbeddingApi(
   provider: EmbeddingProvider,
-  input: string | string[]
+  input: string | string[],
+  inputType?: 'document' | 'query'
 ): Promise<number[][]> {
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/embeddings`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -94,8 +114,14 @@ async function callEmbeddingApi(
     input,
   };
 
+  // Voyage-specific parameters: input_type and output_dimension
+  if (provider.providerType === 'voyage') {
+    body['input_type'] = inputType ?? 'document';
+    body['output_dimension'] = DEFAULT_DIMENSIONS;
+  }
+
   // Request specific dimensions for OpenAI models that support it
-  if (provider.model === DEFAULT_MODEL && !provider.isLocal) {
+  if (provider.providerType !== 'voyage' && provider.model === DEFAULT_MODEL && !provider.isLocal) {
     body['dimensions'] = DEFAULT_DIMENSIONS;
   }
 
@@ -107,7 +133,14 @@ async function callEmbeddingApi(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Embedding API error (${response.status}): ${errorText}`);
+    let message = errorText;
+    try {
+      const parsed = JSON.parse(errorText) as { error?: { message?: string } };
+      if (parsed.error?.message) message = parsed.error.message;
+    } catch {
+      // use raw text as-is
+    }
+    throw new Error(`Embedding API error (${response.status}): ${message}`);
   }
 
   const result = (await response.json()) as {
@@ -124,7 +157,7 @@ async function callEmbeddingApi(
  * @param text - The text to embed
  * @returns Embedding vector (default 1536 dimensions)
  */
-export async function embedText(text: string): Promise<number[]> {
+export async function embedText(text: string, inputType?: 'document' | 'query'): Promise<number[]> {
   const provider = await resolveProvider();
 
   logger.debug('Generating embedding', {
@@ -133,7 +166,7 @@ export async function embedText(text: string): Promise<number[]> {
     textLength: text.length,
   });
 
-  const results = await callEmbeddingApi(provider, text);
+  const results = await callEmbeddingApi(provider, text, inputType);
   return results[0];
 }
 
@@ -146,7 +179,8 @@ export async function embedText(text: string): Promise<number[]> {
  */
 export async function embedBatch(
   texts: string[],
-  batchSize: number = DEFAULT_BATCH_SIZE
+  batchSize: number = DEFAULT_BATCH_SIZE,
+  inputType?: 'document' | 'query'
 ): Promise<number[][]> {
   const provider = await resolveProvider();
   const allEmbeddings: number[][] = [];
@@ -169,7 +203,7 @@ export async function embedBatch(
       batchSize: batch.length,
     });
 
-    const embeddings = await callEmbeddingApi(provider, batch);
+    const embeddings = await callEmbeddingApi(provider, batch, inputType);
     allEmbeddings.push(...embeddings);
 
     // Rate limit between batches (skip for last batch)

@@ -117,7 +117,12 @@ export function BuilderToolbar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Button variant="outline" size="sm" onClick={onValidate}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onValidate}
+        title="Check for disconnected nodes, missing config, and cycle errors"
+      >
         <CheckCircle2 className="mr-2 h-4 w-4" />
         Validate
       </Button>
@@ -127,7 +132,7 @@ export function BuilderToolbar({
         size="sm"
         onClick={onExecute}
         disabled={executeDisabled}
-        title={executeDisabled ? EXECUTE_CREATE_TOOLTIP : undefined}
+        title={executeDisabled ? EXECUTE_CREATE_TOOLTIP : 'Run this workflow now with a test input'}
       >
         <Play className="mr-2 h-4 w-4" />
         Execute
@@ -137,6 +142,9 @@ export function BuilderToolbar({
         size="sm"
         onClick={onSave}
         disabled={saving}
+        aria-label={
+          hasErrors ? 'Save (validation errors present — click Validate to see details)' : undefined
+        }
         className={cn(hasErrors && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
       >
         {saving ? (

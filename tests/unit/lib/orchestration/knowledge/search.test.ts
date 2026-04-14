@@ -227,7 +227,7 @@ describe('searchKnowledge', () => {
 
     await searchKnowledge('my search query');
 
-    expect(embedText).toHaveBeenCalledWith('my search query');
+    expect(embedText).toHaveBeenCalledWith('my search query', 'query');
   });
 });
 

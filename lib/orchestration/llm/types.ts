@@ -105,7 +105,7 @@ export type StreamChunk =
 export interface ProviderConfig {
   /** Human-readable label, typically `AiProviderConfig.name`. */
   name: string;
-  type: 'anthropic' | 'openai' | 'openai-compatible';
+  type: 'anthropic' | 'openai' | 'openai-compatible' | 'voyage';
   /** Resolved API key value (not the env var name). */
   apiKey?: string;
   /** Required for `openai` / `openai-compatible`. */
@@ -115,6 +115,18 @@ export interface ProviderConfig {
   timeoutMs?: number;
   /** Override the default retry count. */
   maxRetries?: number;
+}
+
+/**
+ * Options for `LlmProvider.embed()`.
+ *
+ * Voyage AI (and a few others) distinguish between document and query
+ * embeddings for optimal retrieval. Providers that don't support the
+ * distinction simply ignore this.
+ */
+export interface EmbedOptions {
+  /** Whether the text is a stored document or a search query. */
+  inputType?: 'document' | 'query';
 }
 
 /** Coarse cost/capability band used for routing and display. */

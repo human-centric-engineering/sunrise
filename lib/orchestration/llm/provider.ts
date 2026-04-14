@@ -11,7 +11,14 @@
  */
 
 import { logger } from '@/lib/logging';
-import type { LlmMessage, LlmOptions, LlmResponse, ModelInfo, StreamChunk } from './types';
+import type {
+  EmbedOptions,
+  LlmMessage,
+  LlmOptions,
+  LlmResponse,
+  ModelInfo,
+  StreamChunk,
+} from './types';
 
 /** Default request timeout for cloud providers. */
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -61,7 +68,7 @@ export interface LlmProvider {
   chatStream(messages: LlmMessage[], options: LlmOptions): AsyncIterable<StreamChunk>;
 
   /** Generate an embedding vector for a single text. */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, options?: EmbedOptions): Promise<number[]>;
 
   /**
    * Discover the models this provider can serve.
