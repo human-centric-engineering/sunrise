@@ -984,4 +984,99 @@ describe('StreamingChatHandler', () => {
     expect(types).toContain('start');
     expect(types).toContain('done');
   });
+
+  // 25 — Trailing text suppression after tool call --------------------------------
+  it('suppresses text chunks that arrive after a tool_call in the same turn', async () => {
+    // Stream emits: text("before "), tool_call, text("after"), done
+    // "after" must be suppressed — not yielded to consumer, not persisted.
+    const provider = mockProvider([
+      // Turn 1: text before tool, then tool_call, then trailing text, then done
+      [
+        { type: 'text', content: 'before ' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-trail', name: 'search_knowledge_base', arguments: { query: 'x' } },
+        },
+        { type: 'text', content: 'after' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 4 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: follow-up answer
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 3 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // Consumer must NOT see a content event carrying "after"
+    const contentEvents = (events as Array<{ type: string; delta?: string }>).filter(
+      (e) => e.type === 'content'
+    );
+    const deltas = contentEvents.map((e) => e.delta ?? '');
+    expect(deltas).not.toContain('after');
+    // The pre-tool text IS visible
+    expect(deltas).toContain('before ');
+
+    // The persisted turn-1 assistant message must contain only "before "
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const assistantMsgs = createCalls.filter((c: any) => c[0].data.role === 'assistant');
+    // Turn-1 assistant content should be exactly "before "
+    const turn1Content: string = (assistantMsgs[0] as any)[0].data.content as string;
+    expect(turn1Content).toBe('before ');
+    expect(turn1Content).not.toContain('after');
+
+    // The tool call still dispatched normally
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search_knowledge_base',
+      { query: 'x' },
+      expect.objectContaining({ agentId: 'agent-1' })
+    );
+
+    // Both LLM turns executed
+    expect(provider.chatStream).toHaveBeenCalledTimes(2);
+  });
+
+  // 26 — buildDoneEvent null usage: zeroed tokens and costUsd=0 ------------------
+  it('emits done event with zeroed token counts and costUsd=0 when provider never yields usage', async () => {
+    const { calculateCost } = await import('@/lib/orchestration/llm/cost-tracker');
+
+    // Provider yields only text and done-without-usage
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello!' },
+        // done chunk with usage: null simulates the provider omitting usage data
+        { type: 'done', usage: null, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    const done = (events as Array<{ type: string }>).find((e) => e.type === 'done') as {
+      type: 'done';
+      tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      costUsd: number;
+    };
+
+    expect(done).toBeDefined();
+    expect(done.tokenUsage.inputTokens).toBe(0);
+    expect(done.tokenUsage.outputTokens).toBe(0);
+    expect(done.tokenUsage.totalTokens).toBe(0);
+    expect(done.costUsd).toBe(0);
+
+    // calculateCost must NOT have been called — cost is hard-coded 0 when usage is null
+    expect(calculateCost).not.toHaveBeenCalled();
+  });
 });

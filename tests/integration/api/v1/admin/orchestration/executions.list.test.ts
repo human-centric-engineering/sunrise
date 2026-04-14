@@ -212,4 +212,86 @@ describe('GET /api/v1/admin/orchestration/executions', () => {
       );
     });
   });
+
+  describe('Query filters', () => {
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    });
+
+    it('passes workflowId filter into the where clause', async () => {
+      await GET(makeRequest(`?workflowId=${WORKFLOW_ID}`));
+
+      expect(vi.mocked(prisma.aiWorkflowExecution.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: ADMIN_ID, workflowId: WORKFLOW_ID }),
+        })
+      );
+    });
+
+    it('passes status filter into the where clause', async () => {
+      await GET(makeRequest('?status=completed'));
+
+      expect(vi.mocked(prisma.aiWorkflowExecution.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: ADMIN_ID, status: 'completed' }),
+        })
+      );
+    });
+
+    it('passes startDate only — sets createdAt.gte with no lte', async () => {
+      await GET(makeRequest('?startDate=2025-01-01T00:00:00.000Z'));
+
+      expect(vi.mocked(prisma.aiWorkflowExecution.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: ADMIN_ID,
+            createdAt: expect.objectContaining({
+              gte: new Date('2025-01-01T00:00:00.000Z'),
+            }),
+          }),
+        })
+      );
+
+      const callArg = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0][0];
+      const createdAt = (callArg as { where: { createdAt: { lte?: Date } } }).where.createdAt;
+      expect(createdAt).not.toHaveProperty('lte');
+    });
+
+    it('passes endDate only — sets createdAt.lte with no gte', async () => {
+      await GET(makeRequest('?endDate=2025-01-31T23:59:59.000Z'));
+
+      expect(vi.mocked(prisma.aiWorkflowExecution.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: ADMIN_ID,
+            createdAt: expect.objectContaining({
+              lte: new Date('2025-01-31T23:59:59.000Z'),
+            }),
+          }),
+        })
+      );
+
+      const callArg = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0][0];
+      const createdAt = (callArg as { where: { createdAt: { gte?: Date } } }).where.createdAt;
+      expect(createdAt).not.toHaveProperty('gte');
+    });
+
+    it('passes both startDate and endDate — sets createdAt.gte and createdAt.lte', async () => {
+      await GET(
+        makeRequest('?startDate=2025-01-01T00:00:00.000Z&endDate=2025-01-31T23:59:59.000Z')
+      );
+
+      expect(vi.mocked(prisma.aiWorkflowExecution.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: ADMIN_ID,
+            createdAt: {
+              gte: new Date('2025-01-01T00:00:00.000Z'),
+              lte: new Date('2025-01-31T23:59:59.000Z'),
+            },
+          }),
+        })
+      );
+    });
+  });
 });
