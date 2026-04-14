@@ -111,7 +111,7 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 
 ## API Reference
 
-41 endpoints under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
+48 endpoints under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
 
 | Area          | Endpoints | Purpose                                                         |
 | ------------- | --------- | --------------------------------------------------------------- |

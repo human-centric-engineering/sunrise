@@ -53,7 +53,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/embedding-status`      | GET                | Embedding coverage stats + provider availability     | 3.3     |
 | `/embedding-models`                | GET                | Static registry of embedding models (filterable)     | 7.0     |
 | `/conversations`                   | GET                | List caller's conversations                          | 3.3     |
-| `/conversations/:id`               | DELETE             | Delete one of the caller's conversations             | 3.3     |
+| `/conversations/:id`               | GET, DELETE        | Read / delete one of the caller's conversations      | 3.3     |
 | `/conversations/:id/messages`      | GET                | Read messages of one conversation                    | 3.3     |
 | `/conversations/clear`             | POST               | Bulk-delete by filter (at least one filter required) | 3.3     |
 | `/costs`                           | GET                | Breakdown by day / agent / model                     | 3.4     |
@@ -191,11 +191,11 @@ Streams a single chat turn as **Server-Sent Events** (`text/event-stream`). Requ
 
 ```jsonc
 {
-  "agentId": "<cuid>",
+  "agentSlug": "<slug>",
   "message": "User message text",
   "conversationId": "<cuid>", // optional — creates new conversation when absent
-  "metadata": {
-    /* optional */
+  "entityContext": {
+    /* optional — record of string → unknown */
   },
 }
 ```
@@ -221,15 +221,15 @@ data: <json>
 
 `ChatEvent` union (from `types/orchestration.ts:191-197`):
 
-| `type`              | `data` shape                                                            | Meaning                                                              |
-| ------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `start`             | `{ conversationId, messageId }`                                         | First event — conversation is ready and the assistant turn has begun |
-| `content`           | `{ delta: string }`                                                     | Incremental assistant text                                           |
-| `status`            | `{ phase: 'thinking' \| 'calling_tool' \| 'writing'; detail?: string }` | Human-readable progress indicator                                    |
-| `capability_result` | `{ name, input, output, durationMs }`                                   | A tool call completed — mid-stream                                   |
-| `warning`           | `{ code, message }`                                                     | Non-terminal warning (e.g. budget at 80%) — stream continues         |
-| `done`              | `{ usage: { input, output }, finishReason }`                            | Terminal success frame                                               |
-| `error`             | `{ code, message }`                                                     | Terminal error frame                                                 |
+| `type`              | `data` shape                                                          | Meaning                                                              |
+| ------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `start`             | `{ conversationId, messageId }`                                       | First event — conversation is ready and the assistant turn has begun |
+| `content`           | `{ delta: string }`                                                   | Incremental assistant text                                           |
+| `status`            | `{ message: string }`                                                 | Human-readable progress indicator                                    |
+| `capability_result` | `{ capabilitySlug: string, result: unknown }`                         | A tool call completed — mid-stream                                   |
+| `warning`           | `{ code, message }`                                                   | Non-terminal warning (e.g. budget at 80%) — stream continues         |
+| `done`              | `{ tokenUsage: { inputTokens, outputTokens, totalTokens }, costUsd }` | Terminal success frame                                               |
+| `error`             | `{ code, message }`                                                   | Terminal error frame                                                 |
 
 Plus periodic keepalive comment frames (`: keepalive\n\n`) every 15 000 ms — comments are ignored by `EventSource` and standard SSE clients.
 
@@ -252,7 +252,7 @@ The bridge honours `AbortSignal` — clients that close the `ReadableStream` tri
 ```bash
 curl -N -X POST /api/v1/admin/orchestration/chat/stream \
   -H 'Content-Type: application/json' \
-  -d '{"agentId":"<cuid>","message":"Hello"}'
+  -d '{"agentSlug":"<slug>","message":"Hello"}'
 ```
 
 `-N` disables buffering so frames arrive live.
@@ -263,7 +263,7 @@ curl -N -X POST /api/v1/admin/orchestration/chat/stream \
 const res = await fetch('/api/v1/admin/orchestration/chat/stream', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ agentId, message }),
+  body: JSON.stringify({ agentSlug, message }),
   signal: controller.signal,
 });
 

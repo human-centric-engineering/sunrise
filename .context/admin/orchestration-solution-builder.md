@@ -132,7 +132,7 @@ plan → parallel(research, audience analysis) → outline → draft → reflect
 **Key config:**
 
 - Reflect step: `maxIterations: 3` to prevent infinite revision loops
-- Parallel step: `stragglerStrategy: "wait_all"` to ensure both branches complete
+- Parallel step: `stragglerStrategy: "wait-all"` to ensure both branches complete
 - Error strategy: `retry` with `retryCount: 2` for transient LLM failures
 
 ---
