@@ -295,6 +295,18 @@ describe('seedChunks', () => {
     await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow();
   });
 
+  it('throws a descriptive error when chunks.json has a valid-JSON but invalid shape', async () => {
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
+    // Valid JSON, but `content` field is missing — fails the Zod schema
+    const badChunks = [
+      { id: 'bad-chunk', chunk_id: 1, metadata: { type: 'overview' }, estimated_tokens: 50 },
+    ];
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(badChunks) as never);
+
+    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow(/Invalid chunks\.json/);
+    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow(CHUNKS_PATH);
+  });
+
   it('passes null for optional metadata fields when they are absent', async () => {
     const minimalChunk = {
       id: 'minimal-chunk',

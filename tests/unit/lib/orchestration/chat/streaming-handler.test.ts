@@ -278,7 +278,7 @@ describe('StreamingChatHandler', () => {
     const assistantCall: any = createCalls.find((c: any) => c[0].data.role === 'assistant');
     expect(assistantCall).toBeDefined();
     expect(assistantCall[0].data.metadata).toMatchObject({
-      tokenUsage: { inputTokens: 10, outputTokens: 5 },
+      tokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     });
 
     // logCost called once with correct params
