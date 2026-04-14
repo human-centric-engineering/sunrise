@@ -152,6 +152,7 @@ model AiAgent {
   systemInstructionsHistory Json     @default("[]") // [{instructions, changedAt, changedBy}]
   model                     String // e.g. "claude-sonnet-4-6", "llama3:latest"
   provider                  String   @default("anthropic")
+  fallbackProviders         String[] @default([])
   providerConfig            Json?
   temperature               Float    @default(0.7)
   maxTokens                 Int      @default(4096)

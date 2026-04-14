@@ -24,9 +24,11 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from './anthropic';
+import { getBreaker } from './circuit-breaker';
 import { OpenAiCompatibleProvider } from './openai-compatible';
 import { ProviderError, type LlmProvider, type ProviderTestResult } from './provider';
 import type { ProviderConfig } from './types';
+import { VoyageProvider } from './voyage';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -168,6 +170,51 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
   return provider.testConnection();
 }
 
+/**
+ * Resolve a provider instance, falling back through a list of
+ * alternatives if the primary's circuit breaker is open.
+ *
+ * Returns the resolved provider and the slug that was actually used,
+ * so the caller can record success/failure on the correct breaker.
+ */
+export async function getProviderWithFallbacks(
+  primarySlug: string,
+  fallbackSlugs: string[]
+): Promise<{ provider: LlmProvider; usedSlug: string }> {
+  const candidates = [primarySlug, ...fallbackSlugs];
+
+  for (const slug of candidates) {
+    const breaker = getBreaker(slug);
+    if (!breaker.canAttempt()) {
+      logger.info('Skipping provider — circuit breaker open', { provider: slug });
+      continue;
+    }
+
+    try {
+      const provider = await getProvider(slug);
+      if (slug !== primarySlug) {
+        logger.info('Using fallback provider', {
+          primary: primarySlug,
+          fallback: slug,
+        });
+      }
+      return { provider, usedSlug: slug };
+    } catch (err) {
+      // Provider not found or disabled — skip to next candidate
+      logger.warn('Provider resolution failed, trying next', {
+        provider: slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+  }
+
+  throw new ProviderError('All providers are unavailable', {
+    code: 'all_providers_exhausted',
+    retriable: true,
+  });
+}
+
 /** Evict one (or all) cached provider instances. */
 export function clearCache(slugOrName?: string): void {
   if (slugOrName) {
@@ -196,6 +243,22 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       type: 'anthropic',
       apiKey,
       isLocal: config.isLocal,
+    });
+  }
+
+  if (config.providerType === 'voyage') {
+    if (!apiKey) {
+      throw new ProviderError(
+        `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
+        { code: 'missing_api_key', retriable: false }
+      );
+    }
+    return new VoyageProvider({
+      name: config.name,
+      type: 'voyage',
+      apiKey,
+      baseUrl: config.baseUrl ?? undefined,
+      isLocal: false,
     });
   }
 
@@ -248,6 +311,9 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
 function buildProviderFromInMemoryConfig(config: ProviderConfig): LlmProvider {
   if (config.type === 'anthropic') {
     return new AnthropicProvider(config);
+  }
+  if (config.type === 'voyage') {
+    return new VoyageProvider(config);
   }
   // Both 'openai' and 'openai-compatible' resolve to the OpenAI-compatible provider.
   // 'openai' is collapsed to the public api.openai.com base URL when not provided.

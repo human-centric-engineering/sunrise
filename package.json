@@ -73,6 +73,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@react-email/components": "^1.0.7",
     "@sentry/nextjs": "^10.38.0",
+    "@tailwindcss/typography": "^0.5.19",
     "@vercel/blob": "^2.2.0",
     "@xyflow/react": "^12.10.2",
     "better-auth": "^1.4.18",

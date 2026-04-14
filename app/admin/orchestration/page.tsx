@@ -2,17 +2,29 @@ import type { Metadata } from 'next';
 import type { AiConversation, AiWorkflowExecution } from '@prisma/client';
 
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
+import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
+import { ObservabilityStatsCards } from '@/components/admin/orchestration/observability-stats-cards';
 import { OrchestrationStatsCards } from '@/components/admin/orchestration/orchestration-stats-cards';
 import { QuickActions } from '@/components/admin/orchestration/quick-actions';
 import {
   RecentActivityList,
   type RecentActivityItem,
 } from '@/components/admin/orchestration/recent-activity-list';
+import {
+  RecentErrorsPanel,
+  type RecentError,
+} from '@/components/admin/orchestration/recent-errors-panel';
 import { SetupWizardLauncher } from '@/components/admin/orchestration/setup-wizard-launcher';
+import {
+  TopCapabilitiesPanel,
+  type CapabilityUsage,
+} from '@/components/admin/orchestration/top-capabilities-panel';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
   title: 'AI Orchestration',
@@ -138,6 +150,38 @@ async function getRecentActivity(): Promise<RecentActivityItem[] | null> {
   }
 }
 
+interface DashboardStats {
+  activeConversations: number;
+  todayRequests: number;
+  errorRate: number;
+  recentErrors: RecentError[];
+  topCapabilities: CapabilityUsage[];
+}
+
+async function getDashboardStats(): Promise<DashboardStats | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<DashboardStats>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load observability stats', err);
+    return null;
+  }
+}
+
+async function getModels(): Promise<ModelInfo[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ModelInfo[]>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load models', err);
+    return null;
+  }
+}
+
 async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
   try {
     const body = await parseApiResponse<T[]>(res);
@@ -148,23 +192,61 @@ async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
 }
 
 export default async function OrchestrationDashboardPage() {
-  const [costSummary, budgetAlerts, agentsCount, workflowsCount, conversationsCount, activity] =
-    await Promise.all([
-      getCostSummary(),
-      getBudgetAlerts(),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
-      getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
-      getRecentActivity(),
-    ]);
+  const [
+    costSummary,
+    budgetAlerts,
+    agentsCount,
+    workflowsCount,
+    conversationsCount,
+    activity,
+    dashboardStats,
+    models,
+  ] = await Promise.all([
+    getCostSummary(),
+    getBudgetAlerts(),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
+    getRecentActivity(),
+    getDashboardStats(),
+    getModels(),
+  ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
+
+  // Slice the 30-day trend to last 7 days for the dashboard chart.
+  const weekTrend = costSummary?.trend.slice(-7) ?? null;
 
   return (
     <div className="space-y-8">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">AI Orchestration</h1>
+          <h1 className="text-2xl font-semibold">
+            AI Orchestration{' '}
+            <FieldHelp
+              title="What is AI orchestration?"
+              contentClassName="w-96 max-h-80 overflow-y-auto"
+            >
+              <p>
+                AI Orchestration is the control plane for building and running agentic AI systems.
+                It lets you configure agents (AI personas), wire them to LLM providers, give them
+                capabilities (tools), chain them into workflows, and monitor cost and performance.
+              </p>
+              <p className="text-foreground mt-2 font-medium">Key concepts</p>
+              <p>
+                <strong>Agents</strong> reason and respond. <strong>Capabilities</strong> let agents
+                take actions. <strong>Providers</strong> supply the LLM backends.{' '}
+                <strong>Workflows</strong> chain steps into pipelines. The{' '}
+                <strong>knowledge base</strong> gives agents access to your documents via semantic
+                search.
+              </p>
+              <p className="text-foreground mt-2 font-medium">This page</p>
+              <p>
+                A summary dashboard showing agent count, workflow count, today&apos;s spend, recent
+                activity, and system health. Use the sidebar to navigate to each section.
+              </p>
+            </FieldHelp>
+          </h1>
           <p className="text-muted-foreground text-sm">
             Overview of agents, workflows, cost, and recent activity.
           </p>
@@ -182,6 +264,28 @@ export default async function OrchestrationDashboardPage() {
       </section>
 
       <BudgetAlertsBanner alerts={budgetAlerts} />
+
+      <section aria-label="Observability">
+        <ObservabilityStatsCards
+          activeConversations={dashboardStats?.activeConversations ?? null}
+          todayRequests={dashboardStats?.todayRequests ?? null}
+          errorRate={dashboardStats?.errorRate ?? null}
+        />
+      </section>
+
+      <section aria-label="Trends and capabilities" className="grid gap-4 lg:grid-cols-2">
+        <CostTrendChart
+          title="7-day spend trend"
+          trend={weekTrend}
+          perModel={null}
+          models={models}
+        />
+        <TopCapabilitiesPanel capabilities={dashboardStats?.topCapabilities ?? null} />
+      </section>
+
+      <section aria-label="Recent errors">
+        <RecentErrorsPanel errors={dashboardStats?.recentErrors ?? null} />
+      </section>
 
       <section aria-label="Quick actions" className="space-y-2">
         <h2 className="text-lg font-semibold">Quick actions</h2>

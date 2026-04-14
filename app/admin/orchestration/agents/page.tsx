@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AgentsTable } from '@/components/admin/orchestration/agents-table';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -58,7 +59,28 @@ export default async function AgentsListPage() {
           {' / '}
           <span>Agents</span>
         </nav>
-        <h1 className="text-2xl font-semibold">Agents</h1>
+        <h1 className="text-2xl font-semibold">
+          Agents{' '}
+          <FieldHelp title="What are agents?" contentClassName="w-96 max-h-80 overflow-y-auto">
+            <p>
+              An agent is a configured AI persona. It has a system prompt (personality and
+              instructions), an LLM provider and model that powers it, and capabilities (tools) it
+              can call. Think of it as a specialised AI assistant you design for a specific job.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How it works</p>
+            <p>
+              When a user sends a message, the agent&apos;s LLM reads the system prompt, considers
+              the conversation history, and generates a response. If it needs external data or
+              actions, it calls capabilities — like looking up a database or sending an email — then
+              continues reasoning with the result.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              Create, duplicate, import/export, and test agents. Click an agent to edit its
+              instructions, model, and capabilities.
+            </p>
+          </FieldHelp>
+        </h1>
         <p className="text-muted-foreground text-sm">
           Create, edit, duplicate, import/export, and test your AI agents.
         </p>

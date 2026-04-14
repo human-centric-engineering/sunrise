@@ -341,9 +341,18 @@ export function CapabilitiesTable({
                 </Button>
               </TableHead>
               <TableHead>Category</TableHead>
-              <TableHead>Exec type</TableHead>
-              <TableHead>Approval</TableHead>
-              <TableHead className="text-right">Rate/min</TableHead>
+              <TableHead title="How the capability runs: internal (TypeScript handler in this app), api (HTTP POST, waits for response), or webhook (fire-and-forget POST)">
+                Exec type
+              </TableHead>
+              <TableHead title="When set, a human must approve each call before it executes — use for high-risk actions like sending emails or writing to production">
+                Approval
+              </TableHead>
+              <TableHead
+                className="text-right"
+                title="Maximum calls per minute across all agents — blank means no limit"
+              >
+                Rate/min
+              </TableHead>
               <TableHead className="text-right">Agents</TableHead>
               <TableHead className="text-center">Status</TableHead>
               <TableHead className="w-10" />

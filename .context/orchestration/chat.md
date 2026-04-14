@@ -270,11 +270,22 @@ npm run smoke:chat
 
 Run this whenever you touch `streaming-handler.ts`, `provider-manager.ts`, or the `AiConversation`/`AiMessage`/`AiCostLog` schema — unit tests mock Prisma, so a broken FK chain or import binding can slip through vitest but not the smoke script. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for safety rules and the template to follow when adding more smoke scripts.
 
+## Error Handling & Resilience
+
+See [Resilience](./resilience.md) for full details. Key points for the chat handler:
+
+- **Provider fallback**: `getProviderWithFallbacks()` checks circuit breakers and falls back through `agent.fallbackProviders` before throwing `all_providers_exhausted`.
+- **Circuit breaker**: `getBreaker(slug).recordSuccess()` / `.recordFailure()` called after each LLM turn.
+- **Budget warning**: at 80% usage, yields `{ type: 'warning', code: 'budget_warning' }` before continuing.
+- **Input guard**: `scanForInjection(message)` runs on every user message — log-only, never blocks.
+- **Error sanitization**: the catch-all yields `{ type: 'error', code: 'internal_error', message: 'An unexpected error occurred' }` — raw provider/SDK errors are logged server-side only via `logger.error`.
+
 ## Related Documentation
 
 - [Orchestration Overview](./overview.md) — domain entry point
 - [LLM Providers](./llm-providers.md) — the Phase 2a provider abstraction the handler streams from
 - [Capabilities](./capabilities.md) — the Phase 2b dispatcher the handler invokes on tool calls
+- [Resilience](./resilience.md) — circuit breaker, fallback, budget UX, input guard
 - `.claude/docs/agent-orchestration.md` — architectural brief
 - `types/orchestration.ts` — `ChatEvent`, `TokenUsage`, `CostOperation`, `AgentWithCapabilities`
 - `prisma/schema.prisma` — `AiAgent`, `AiConversation`, `AiMessage`

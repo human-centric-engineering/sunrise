@@ -201,6 +201,40 @@ describe('refreshFromOpenRouter error cases', () => {
   });
 });
 
+describe('OpenRouter merge overwrites fallback data', () => {
+  it('replaces fallback pricing and context window with OpenRouter values', async () => {
+    // Verify the fallback value before refresh
+    const before = registry.getModel('claude-opus-4-6');
+    expect(before?.inputCostPerMillion).toBe(15);
+
+    // OpenRouter returns a different price for the same model
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/claude-opus-4-6',
+            name: 'Claude Opus 4.6 (updated)',
+            context_length: 250_000,
+            pricing: { prompt: '0.00002', completion: '0.0001' },
+            supported_parameters: ['tools'],
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const after = registry.getModel('claude-opus-4-6');
+    expect(after).toBeDefined();
+    expect(after?.inputCostPerMillion).toBeCloseTo(20); // was 15 in fallback
+    expect(after?.outputCostPerMillion).toBeCloseTo(100); // was 75 in fallback
+    expect(after?.maxContext).toBe(250_000); // was 200_000 in fallback
+    expect(after?.name).toBe('Claude Opus 4.6 (updated)');
+  });
+});
+
 describe('refreshFromProvider', () => {
   function makeProvider(models: Array<{ id: string; name?: string; provider?: string }>) {
     return {

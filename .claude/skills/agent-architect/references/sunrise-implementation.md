@@ -36,7 +36,7 @@ For Claude Code, create them via a database seed or API call.
     You help customers with order enquiries, refunds, and general questions.
     Always verify the customer's order before making changes.
     Escalate to a human if the refund exceeds $100 or the customer is upset.`,
-  model: "claude-sonnet-4",
+  model: "claude-sonnet-4-6",
   provider: "anthropic",
   temperature: 0.3,
   maxTokens: 4096,

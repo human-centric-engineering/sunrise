@@ -25,6 +25,10 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('@/lib/orchestration/knowledge/search', () => ({
+  searchKnowledge: vi.fn().mockResolvedValue([]),
+}));
+
 // ---------------------------------------------------------------------------
 // Dynamic imports (after mocks are in place)
 // ---------------------------------------------------------------------------
@@ -35,6 +39,9 @@ const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 const { BaseCapability } = await import('@/lib/orchestration/capabilities/base-capability');
 const { CostOperation } = await import('@/types/orchestration');
+const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
+const { SearchKnowledgeCapability } =
+  await import('@/lib/orchestration/capabilities/built-in/search-knowledge');
 
 // ---------------------------------------------------------------------------
 // Inline test capability subclasses
@@ -504,6 +511,73 @@ describe('CapabilityDispatcher', () => {
       );
 
       expect(results.every((r) => r.success)).toBe(true);
+    });
+  });
+
+  describe('rate limit TTL recovery', () => {
+    it('allows requests again after the sliding window expires', async () => {
+      vi.useFakeTimers();
+      try {
+        capabilityDispatcher.register(new RateLimitedCapability());
+        mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'ratelimited', rateLimit: 1 })]);
+
+        // First call succeeds, second is rate-limited
+        const r1 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
+        const r2 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
+        expect(r1.success).toBe(true);
+        expect(r2.success).toBe(false);
+
+        // Advance past the 60s sliding window
+        vi.advanceTimersByTime(61_000);
+
+        // The window has expired — next call should succeed
+        const r3 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
+        expect(r3.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('search_knowledge_base dispatch integration', () => {
+    it('routes dispatch through SearchKnowledgeCapability and returns results', async () => {
+      const mockSearchKnowledge = searchKnowledge as ReturnType<typeof vi.fn>;
+      mockSearchKnowledge.mockResolvedValue([
+        {
+          chunk: {
+            id: 'chunk-1',
+            content: 'ReAct pattern',
+            patternNumber: 1,
+            patternName: 'ReAct',
+            section: 'Overview',
+          },
+          similarity: 0.92,
+        },
+      ]);
+
+      capabilityDispatcher.register(new SearchKnowledgeCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'search_knowledge_base' })]);
+
+      const result = await capabilityDispatcher.dispatch(
+        'search_knowledge_base',
+        { query: 'ReAct pattern' },
+        ctx
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({
+        results: [
+          {
+            chunkId: 'chunk-1',
+            content: 'ReAct pattern',
+            patternNumber: 1,
+            patternName: 'ReAct',
+            section: 'Overview',
+            similarity: 0.92,
+          },
+        ],
+      });
+      expect(mockSearchKnowledge).toHaveBeenCalledWith('ReAct pattern', undefined, 10, 0.7);
     });
   });
 

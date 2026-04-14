@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -58,7 +59,27 @@ export default async function WorkflowsListPage() {
           {' / '}
           <span>Workflows</span>
         </nav>
-        <h1 className="text-2xl font-semibold">Workflows</h1>
+        <h1 className="text-2xl font-semibold">
+          Workflows{' '}
+          <FieldHelp title="What are workflows?" contentClassName="w-96 max-h-80 overflow-y-auto">
+            <p>
+              A workflow is a multi-step AI pipeline that chains prompts, agent calls, routing
+              logic, and evaluation gates into a directed graph. Instead of a single agent answering
+              one question, a workflow orchestrates several steps — each feeding its output to the
+              next.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How it works</p>
+            <p>
+              You design workflows visually using the builder canvas. Pattern blocks (prompt, chain,
+              route, evaluate, etc.) are connected into a DAG. At runtime the engine walks the graph
+              step by step, tracking tokens, cost, and errors at each stage.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              Create, validate, and launch workflows. Click a workflow to open the visual builder.
+            </p>
+          </FieldHelp>
+        </h1>
         <p className="text-muted-foreground text-sm">
           Design, validate, and run multi-step AI workflows built from pattern blocks.
         </p>

@@ -109,7 +109,7 @@ export function PerAgentCostTable({ rows }: PerAgentCostTableProps) {
                   </button>
                 </TableHead>
                 <TableHead className="text-right">Budget</TableHead>
-                <TableHead>
+                <TableHead title="Percentage of monthly budget spent — green ≤ 50%, amber 50–80%, red > 80%">
                   <button
                     type="button"
                     className="font-medium hover:underline"

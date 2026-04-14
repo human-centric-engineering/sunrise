@@ -75,14 +75,6 @@ describe('PatternCardGrid', () => {
     expect(badges).toHaveLength(2);
   });
 
-  it('shows chunk count per card', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    expect(screen.getByText('5 sections')).toBeInTheDocument();
-    expect(screen.getByText('8 sections')).toBeInTheDocument();
-    expect(screen.getByText('1 section')).toBeInTheDocument();
-  });
-
   it('renders empty state when no patterns', () => {
     render(<PatternCardGrid patterns={[]} />);
 

@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import Markdown from 'react-markdown';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -46,11 +49,10 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
             </CardHeader>
             <CardContent>
               {p.description && (
-                <p className="text-muted-foreground line-clamp-3 text-sm">{p.description}</p>
+                <div className="prose prose-sm dark:prose-invert text-muted-foreground line-clamp-5 max-w-none">
+                  <Markdown>{p.description}</Markdown>
+                </div>
               )}
-              <span className="text-muted-foreground mt-2 block text-xs">
-                {p.chunkCount} {p.chunkCount === 1 ? 'section' : 'sections'}
-              </span>
             </CardContent>
           </Card>
         </Link>

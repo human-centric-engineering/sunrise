@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -69,9 +70,50 @@ export default async function CapabilitiesListPage() {
           {' / '}
           <span>Capabilities</span>
         </nav>
-        <h1 className="text-2xl font-semibold">Capabilities</h1>
+        <h1 className="text-2xl font-semibold">
+          Capabilities{' '}
+          <FieldHelp
+            title="What are capabilities?"
+            contentClassName="w-96 max-h-80 overflow-y-auto"
+          >
+            <p>
+              On their own, AI agents can only read and write text. Capabilities are the real-world
+              actions you give them — actual pieces of code that run on the server when the agent
+              decides it needs to do something. For example, searching your knowledge base, calling
+              an external API, sending an email, or looking up a database record.
+            </p>
+            <p className="text-foreground mt-2 font-medium">A concrete example</p>
+            <p>
+              Imagine an agent that helps with customer support. You could give it a{' '}
+              <em>search_knowledge_base</em> capability that searches your help docs, and a{' '}
+              <em>create_ticket</em> capability that calls your ticketing API. During a conversation
+              the AI decides which capabilities to use, fills in the parameters, and the system
+              executes the code and feeds the result back so the AI can continue the conversation
+              with real data.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Three execution modes</p>
+            <p>
+              <strong>Internal</strong> — a function built into this app (e.g. knowledge search).
+              <br />
+              <strong>API</strong> — calls an external HTTP endpoint and waits for the response.
+              <br />
+              <strong>Webhook</strong> — fires a request to a URL without waiting (fire-and-forget).
+            </p>
+            <p className="text-foreground mt-2 font-medium">Safety controls</p>
+            <p>
+              You can require human approval before a capability executes (useful for sensitive
+              actions like payments or deletions) and set rate limits to prevent runaway usage.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              Browse, create, and manage capabilities. Filter by category and see which agents use
+              each one.
+            </p>
+          </FieldHelp>
+        </h1>
         <p className="text-muted-foreground text-sm">
-          Tools your agents can call — function definitions, execution handlers, and safety gates.
+          Actions your agents can perform — searching data, calling APIs, sending notifications, and
+          more. Each is a piece of server-side code the AI triggers during a conversation.
         </p>
       </header>
 

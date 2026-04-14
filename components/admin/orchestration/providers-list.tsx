@@ -164,47 +164,40 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   : 'bg-muted-foreground/40';
             const statusLabel =
               status === 'green'
-                ? 'Tested OK this session'
+                ? 'Connected'
                 : status === 'red'
                   ? !p.apiKeyPresent && !p.isLocal
-                    ? 'Missing API key env var'
+                    ? 'Key missing'
                     : 'Test failed'
-                  : 'Not tested yet';
+                  : 'Not tested';
             const mc = modelCounts[p.id];
 
             return (
-              <div
-                key={p.id}
-                className="bg-card flex flex-col gap-3 rounded-lg border p-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between">
+              <div key={p.id} className="bg-card flex flex-col rounded-lg border shadow-sm">
+                {/* ── Header: name + badges + menu ── */}
+                <div className="flex items-start gap-2 p-4 pb-0">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${dotClass}`}
-                        title={statusLabel}
-                        aria-label={statusLabel}
-                      />
-                      <h3 className="truncate font-semibold">{p.name}</h3>
+                    <h3 className="truncate font-semibold">{p.name}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {p.isLocal && (
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                          title="Runs locally (e.g. Ollama) — no API key needed, zero cost"
+                        >
                           Local
                         </Badge>
                       )}
                       {!p.isActive && (
-                        <Badge variant="outline" className="text-xs">
+                        <Badge variant="outline" className="text-[10px]">
                           Inactive
                         </Badge>
                       )}
                     </div>
-                    <p className="text-muted-foreground truncate font-mono text-xs">{p.slug}</p>
-                    {p.baseUrl && (
-                      <p className="text-muted-foreground mt-1 truncate text-xs">{p.baseUrl}</p>
-                    )}
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -227,24 +220,43 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   </DropdownMenu>
                 </div>
 
-                <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                  <span>
+                {/* ── Meta details ── */}
+                <div className="text-muted-foreground space-y-1 px-4 pt-2 pb-3 text-xs">
+                  <p className="truncate font-mono">{p.slug}</p>
+                  {p.baseUrl && <p className="truncate">{p.baseUrl}</p>}
+                  <p>
                     {mc?.loading
                       ? 'Loading models…'
                       : mc && mc.count !== null
-                        ? `${mc.count} models`
+                        ? `${mc.count} model${mc.count === 1 ? '' : 's'} available`
                         : '—'}
-                  </span>
+                  </p>
                 </div>
 
+                {/* ── Warning: missing API key ── */}
                 {!p.apiKeyPresent && !p.isLocal && (
-                  <p className="text-xs text-red-600 dark:text-red-400">
-                    Env var <code className="font-mono">{p.apiKeyEnvVar ?? '(not set)'}</code> is
-                    missing on the server.
-                  </p>
+                  <div className="mx-4 mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+                    <p className="font-medium">API key not found</p>
+                    <p className="mt-0.5">
+                      This provider expects a server environment variable called{' '}
+                      <code className="rounded bg-red-100 px-1 font-mono dark:bg-red-900/40">
+                        {p.apiKeyEnvVar ?? '(not set)'}
+                      </code>
+                      . Ask your server admin or hosting provider to add it — the app reads it at
+                      startup so no secrets are stored in the database.
+                    </p>
+                  </div>
                 )}
 
-                <div className="mt-auto border-t pt-3">
+                {/* ── Footer: status + test ── */}
+                <div className="mt-auto flex items-center justify-between border-t px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
+                      aria-hidden="true"
+                    />
+                    <span className="text-muted-foreground text-xs">{statusLabel}</span>
+                  </div>
                   <ProviderTestButton
                     providerId={p.id}
                     onResult={(ok) => setTestedOk((prev) => ({ ...prev, [p.id]: ok }))}

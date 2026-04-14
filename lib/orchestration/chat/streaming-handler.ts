@@ -23,11 +23,13 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent } from '@/types/orchestration';
+import type { ChatEvent, MessageMetadata } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { scanForInjection } from './input-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
@@ -54,7 +56,7 @@ interface PersistMessageParams {
   content: string;
   capabilitySlug?: string;
   toolCallId?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata;
 }
 
 export class StreamingChatHandler {
@@ -67,16 +69,40 @@ export class StreamingChatHandler {
    */
   async *run(request: ChatRequest): ChatStream {
     let conversationId: string | null = null;
+    let resolvedProviderSlug: string | null = null;
     try {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
 
       const budget = await checkBudget(agent.id);
+
+      // Budget warning at 80%
+      if (
+        budget.withinBudget &&
+        budget.limit !== null &&
+        budget.limit > 0 &&
+        budget.spent / budget.limit >= 0.8
+      ) {
+        const pct = ((budget.spent / budget.limit) * 100).toFixed(0);
+        logger.warn('Agent approaching budget limit', {
+          agentId: agent.id,
+          spent: budget.spent,
+          limit: budget.limit,
+          percent: pct,
+        });
+        yield {
+          type: 'warning',
+          code: 'budget_warning',
+          message: `This agent has used ${pct}% of its $${budget.limit.toFixed(2)} monthly budget.`,
+        };
+      }
+
       if (!budget.withinBudget) {
+        const limitStr = budget.limit !== null ? `$${budget.limit.toFixed(2)}` : 'its';
         yield errorEvent(
           'budget_exceeded',
-          `Agent over monthly budget ($${budget.spent.toFixed(2)} / $${budget.limit ?? 0})`
+          `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
         );
         return;
       }
@@ -94,6 +120,17 @@ export class StreamingChatHandler {
       });
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
+
+      // Input guard — log-only, never blocks
+      const scanResult = scanForInjection(request.message);
+      if (scanResult.flagged) {
+        logger.warn('Potential prompt injection detected', {
+          agentSlug: request.agentSlug,
+          conversationId: conversation.id,
+          patterns: scanResult.patterns,
+          // Never log message content
+        });
+      }
 
       const contextBlock =
         request.contextType && request.contextId
@@ -118,7 +155,11 @@ export class StreamingChatHandler {
         parameters: def.parameters,
       }));
 
-      const provider = await getProvider(agent.provider);
+      const { provider, usedSlug } = await getProviderWithFallbacks(
+        agent.provider,
+        (agent as AiAgent & { fallbackProviders?: string[] }).fallbackProviders ?? []
+      );
+      resolvedProviderSlug = usedSlug;
 
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
@@ -160,7 +201,17 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
-            ...(usage ? { metadata: { tokenUsage: usage } } : {}),
+            ...(usage
+              ? {
+                  metadata: {
+                    tokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      totalTokens: usage.inputTokens + usage.outputTokens,
+                    },
+                  },
+                }
+              : {}),
           });
         }
 
@@ -177,6 +228,7 @@ export class StreamingChatHandler {
         }
 
         if (!toolCall) {
+          getBreaker(usedSlug).recordSuccess();
           yield buildDoneEvent(agent.model, usage);
           return;
         }
@@ -215,6 +267,7 @@ export class StreamingChatHandler {
         }
 
         if (result.skipFollowup) {
+          getBreaker(usedSlug).recordSuccess();
           yield buildDoneEvent(agent.model, usage);
           return;
         }
@@ -254,6 +307,9 @@ export class StreamingChatHandler {
         });
         yield errorEvent(err.code, err.message);
         return;
+      }
+      if (resolvedProviderSlug) {
+        getBreaker(resolvedProviderSlug).recordFailure();
       }
       logger.error('Streaming chat handler crashed', err as Error, {
         agentSlug: request.agentSlug,
@@ -322,6 +378,9 @@ export class StreamingChatHandler {
     if (params.capabilitySlug !== undefined) data.capabilitySlug = params.capabilitySlug;
     if (params.toolCallId !== undefined) data.toolCallId = params.toolCallId;
     if (params.metadata !== undefined) {
+      // `MessageMetadata` is a structured, JSON-serializable shape; the cast
+      // bridges TypeScript's interface-vs-indexed-object mismatch with Prisma's
+      // `InputJsonValue` — it is not laundering unvalidated data.
       data.metadata = params.metadata as Prisma.InputJsonValue;
     }
     return prisma.aiMessage.create({ data });

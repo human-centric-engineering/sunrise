@@ -90,6 +90,9 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
+      conversationById: (id: string): string => `/api/v1/admin/orchestration/conversations/${id}`,
+      conversationMessages: (id: string): string =>
+        `/api/v1/admin/orchestration/conversations/${id}/messages`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
       knowledgeDocumentById: (id: string): string =>
@@ -101,11 +104,19 @@ export const API = {
       knowledgePatternByNumber: (num: number): string =>
         `/api/v1/admin/orchestration/knowledge/patterns/${num}`,
       KNOWLEDGE_SEED: '/api/v1/admin/orchestration/knowledge/seed',
+      EMBEDDING_MODELS: '/api/v1/admin/orchestration/embedding-models',
+      KNOWLEDGE_EMBED: '/api/v1/admin/orchestration/knowledge/embed',
+      KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
       SETTINGS: '/api/v1/admin/orchestration/settings',
       EVALUATIONS: '/api/v1/admin/orchestration/evaluations',
+      evaluationById: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}`,
+      evaluationComplete: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/${id}/complete`,
+      evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
+      OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',
     },
   },
 

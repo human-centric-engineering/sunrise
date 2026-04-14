@@ -28,23 +28,28 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | Knowledge     | [`knowledge.md`](./knowledge.md)         | Document ingestion, chunking, vector search, seeder                            |
 | Workflows     | [`workflows.md`](./workflows.md)         | DAG validator, step types, error codes                                         |
 | Engine        | [`engine.md`](./engine.md)               | Runtime executor, executor registry, events, checkpoints, error strategies     |
+| Resilience    | [`resilience.md`](./resilience.md)       | Circuit breaker, provider fallback, budget UX, input guard, error registry     |
 | Admin API     | [`admin-api.md`](./admin-api.md)         | Agents, capabilities, providers, workflows, chat, knowledge, costs, executions |
 
 ### Admin UI (`.context/admin/`)
 
-| Topic             | File                                                                          | Covers                                                               |
-| ----------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Agents list       | [`orchestration-agents.md`](../admin/orchestration-agents.md)                 | List page, table, duplicate/import dialogs                           |
-| Agent form        | [`agent-form.md`](../admin/agent-form.md)                                     | 5-tab create/edit form, instructions history, test chat              |
-| Capabilities list | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md)     | Table, category filter, lazy agents-using count, soft-delete dialog  |
-| Capability form   | [`capability-form.md`](../admin/capability-form.md)                           | 4 tabs, visual builder ↔ JSON editor, execution, safety              |
-| Providers list    | [`orchestration-providers.md`](../admin/orchestration-providers.md)           | Card grid, status dots, models dialog, env-var-only security model   |
-| Provider form     | [`provider-form.md`](../admin/provider-form.md)                               | 4-flavor selector, reverse-mapping on edit, test-connection flow     |
-| Costs & budget    | [`orchestration-costs.md`](../admin/orchestration-costs.md)                   | Summary cards, trend chart, savings panel, settings singleton        |
-| Workflow builder  | [`workflow-builder.md`](../admin/workflow-builder.md)                         | React Flow canvas, pattern palette, step registry, layout round-trip |
-| Learning UI       | [`orchestration-learn.md`](../admin/orchestration-learn.md)                   | Pattern explorer, advisor chatbot, quiz system, tabbed hub           |
-| Knowledge Base UI | [`orchestration-knowledge-ui.md`](../admin/orchestration-knowledge-ui.md)     | Document management, drag-drop upload, search test                   |
-| Chat Interface    | [`orchestration-chat-interface.md`](../admin/orchestration-chat-interface.md) | Reusable SSE chat component, embedded mode, event callbacks          |
+| Topic              | File                                                                                  | Covers                                                               |
+| ------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Overview           | [`orchestration.md`](../admin/orchestration.md)                                       | Architecture, quick start, key concepts, API summary, config         |
+| Solution Builder   | [`orchestration-solution-builder.md`](../admin/orchestration-solution-builder.md)     | Problem-to-solution guide, 5 worked examples                         |
+| Capabilities Guide | [`orchestration-capabilities-guide.md`](../admin/orchestration-capabilities-guide.md) | How to create capabilities, BaseCapability ref, built-ins            |
+| Workflows Guide    | [`orchestration-workflows-guide.md`](../admin/orchestration-workflows-guide.md)       | Step types, error strategies, templates, extending                   |
+| Agents list        | [`orchestration-agents.md`](../admin/orchestration-agents.md)                         | List page, table, duplicate/import dialogs                           |
+| Agent form         | [`agent-form.md`](../admin/agent-form.md)                                             | 5-tab create/edit form, instructions history, test chat              |
+| Capabilities list  | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md)             | Table, category filter, lazy agents-using count, soft-delete dialog  |
+| Capability form    | [`capability-form.md`](../admin/capability-form.md)                                   | 4 tabs, visual builder ↔ JSON editor, execution, safety              |
+| Providers list     | [`orchestration-providers.md`](../admin/orchestration-providers.md)                   | Card grid, status dots, models dialog, env-var-only security model   |
+| Provider form      | [`provider-form.md`](../admin/provider-form.md)                                       | 4-flavor selector, reverse-mapping on edit, test-connection flow     |
+| Costs & budget     | [`orchestration-costs.md`](../admin/orchestration-costs.md)                           | Summary cards, trend chart, savings panel, settings singleton        |
+| Workflow builder   | [`workflow-builder.md`](../admin/workflow-builder.md)                                 | React Flow canvas, pattern palette, step registry, layout round-trip |
+| Learning UI        | [`orchestration-learn.md`](../admin/orchestration-learn.md)                           | Pattern explorer, advisor chatbot, quiz system, tabbed hub           |
+| Knowledge Base UI  | [`orchestration-knowledge-ui.md`](../admin/orchestration-knowledge-ui.md)             | Document management, drag-drop upload, search test                   |
+| Chat Interface     | [`orchestration-chat-interface.md`](../admin/orchestration-chat-interface.md)         | Reusable SSE chat component, embedded mode, event callbacks          |
 
 ## Architecture Decisions
 
