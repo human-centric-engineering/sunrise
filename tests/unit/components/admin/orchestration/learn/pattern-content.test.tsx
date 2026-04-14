@@ -56,7 +56,8 @@ describe('PatternContent', () => {
 
     const { container } = render(<PatternContent content={content} />);
 
-    expect(container.querySelectorAll('pre')).toHaveLength(0);
+    // Non-mermaid code blocks are wrapped in a single <pre> tag
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
   });
 
   it('handles mermaid blocks with non-string children gracefully', () => {

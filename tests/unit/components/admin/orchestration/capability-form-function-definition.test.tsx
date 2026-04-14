@@ -78,7 +78,7 @@ describe('CapabilityForm — Function Definition tab', () => {
       const user = userEvent.setup();
       await openFunctionTab(user);
 
-      expect(screen.getByText('No parameters yet.')).toBeInTheDocument();
+      expect(screen.getByText(/No parameters defined yet/i)).toBeInTheDocument();
     });
 
     it('clicking "Add parameter" appends a row', async () => {
@@ -88,7 +88,7 @@ describe('CapabilityForm — Function Definition tab', () => {
       await user.click(screen.getByRole('button', { name: /add parameter/i }));
 
       await waitFor(() => {
-        expect(screen.queryByText('No parameters yet.')).not.toBeInTheDocument();
+        expect(screen.queryByText(/No parameters defined yet/i)).not.toBeInTheDocument();
         expect(screen.getByPlaceholderText('name')).toBeInTheDocument();
       });
     });

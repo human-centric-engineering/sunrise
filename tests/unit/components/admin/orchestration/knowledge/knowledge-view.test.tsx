@@ -93,7 +93,7 @@ describe('KnowledgeView', () => {
     const user = userEvent.setup();
     render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
-    await user.click(screen.getByRole('button', { name: /seed patterns/i }));
+    await user.click(screen.getByRole('button', { name: /load agentic design patterns/i }));
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(

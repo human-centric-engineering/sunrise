@@ -120,7 +120,7 @@ describe('BuilderToolbar', () => {
 
     it('applies the red-ring class when hasErrors=true', () => {
       renderToolbar({ hasErrors: true });
-      const saveBtn = screen.getByRole('button', { name: /create workflow/i });
+      const saveBtn = screen.getByRole('button', { name: /validation errors/i });
       expect(saveBtn.className).toContain('ring-red');
     });
 

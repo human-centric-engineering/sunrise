@@ -191,7 +191,7 @@ describe('ProvidersList', () => {
 
       // OpenAI has apiKeyPresent: false and is not local → warning
       expect(screen.getByText(/openai_api_key/i)).toBeInTheDocument();
-      expect(screen.getByText(/missing on the server/i)).toBeInTheDocument();
+      expect(screen.getByText(/API key not found/i)).toBeInTheDocument();
     });
 
     it('status dot for OpenAI (apiKeyPresent=false) has red class', () => {
@@ -213,7 +213,7 @@ describe('ProvidersList', () => {
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
       await waitFor(() => {
-        expect(screen.getByText(/1 models/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 model.* available/i)).toBeInTheDocument();
       });
     });
 
