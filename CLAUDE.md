@@ -191,7 +191,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Architecture            | `.context/architecture/`                             | System design, deployment                           |
 | Authentication          | `.context/auth/`                                     | better-auth, sessions, guards                       |
 | API                     | `.context/api/`                                      | Endpoints, responses, client                        |
-| Database                | `.context/database/`                                 | Prisma schema, migrations                           |
+| Database                | `.context/database/`                                 | Prisma schema, migrations, seeding                  |
 | Security                | `.context/security/`                                 | Rate limiting, headers, CORS                        |
 | Logging                 | `.context/logging/`                                  | Structured logging, request ctx                     |
 | Testing                 | `.context/testing/`                                  | Patterns, mocking, async                            |

@@ -25,6 +25,8 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:embeddings": "tsx scripts/seed-embeddings.ts",
+    "db:reset": "prisma migrate reset --force",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "postinstall": "prisma generate",
