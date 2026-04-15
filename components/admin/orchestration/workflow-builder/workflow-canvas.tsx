@@ -84,7 +84,7 @@ export function WorkflowCanvas({
   return (
     <div
       data-testid="workflow-canvas"
-      className="bg-muted/20 relative flex-1"
+      className="bg-muted/20 relative flex-1 overflow-hidden"
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
@@ -104,8 +104,14 @@ export function WorkflowCanvas({
         aria-label="Workflow canvas"
       >
         <Background gap={16} />
-        <Controls />
-        <MiniMap zoomable pannable />
+        <Controls className="dark:!border-zinc-700 dark:!bg-zinc-800 dark:!shadow-lg [&>button]:dark:!border-zinc-700 [&>button]:dark:!bg-zinc-800 [&>button]:dark:!fill-zinc-300 [&>button:hover]:dark:!bg-zinc-700" />
+        <MiniMap
+          zoomable
+          pannable
+          className="dark:!bg-zinc-800"
+          maskColor="rgba(0, 0, 0, 0.3)"
+          nodeColor="rgba(148, 163, 184, 0.6)"
+        />
       </ReactFlow>
     </div>
   );

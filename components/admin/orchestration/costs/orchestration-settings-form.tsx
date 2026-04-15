@@ -84,7 +84,8 @@ const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = 
       <>
         <p>
           Fallback model for agents that have not explicitly set their own model. Changing this
-          immediately affects every agent using the &ldquo;use default&rdquo; option.
+          immediately affects every agent using the &ldquo;use default&rdquo; option. A mid-range
+          model balances cost and quality for most use cases.
         </p>
         <p>
           Typical picks: <code>claude-sonnet-4-6</code> or <code>gpt-4o</code>.
@@ -98,7 +99,8 @@ const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = 
       <>
         <p>
           Used for multi-step reasoning tasks (tool loops, complex planning, capability
-          orchestration). Favour a frontier model for reliability.
+          orchestration). These tasks need the strongest reasoning, so pick the most capable (and
+          typically most expensive) model your provider offers.
         </p>
         <p>
           Typical picks: <code>claude-opus-4-6</code> or <code>o1</code>-class models.
@@ -111,9 +113,14 @@ const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = 
     help: (
       <>
         <p>
-          Used by the knowledge-base retrieval pipeline to embed both documents at ingest time and
-          queries at search time. Changing this invalidates existing embeddings — re-index before
-          you expect retrieval to work correctly.
+          Converts text into numeric vectors so the knowledge base can find relevant documents. Used
+          both when documents are uploaded (ingest) and when the agent searches (query).
+        </p>
+        <p>
+          <strong>Important:</strong> different models produce different vectors, so if you change
+          this, existing document embeddings won&apos;t match new query embeddings. After switching,
+          go to the Knowledge Base page and click &ldquo;Generate Embeddings&rdquo; to re-process
+          all documents.
         </p>
       </>
     ),
@@ -275,12 +282,13 @@ export function OrchestrationSettingsForm({ settings, models }: OrchestrationSet
                 Cap (USD)
                 <FieldHelp title="Cross-agent monthly cap">
                   <p>
-                    When set, the streaming chat handler refuses any new turn whose cumulative
-                    month-to-date spend across <b>all agents</b> would meet or exceed this value.
+                    A single spending limit that covers <b>all agents combined</b>. When
+                    month-to-date spend reaches this value, every agent responds with a friendly
+                    &ldquo;budget exhausted&rdquo; message instead of completing the request.
                   </p>
                   <p>Leave blank for no cross-agent cap — individual per-agent caps still apply.</p>
                   <p>
-                    The cap is evaluated against UTC month boundaries, matching the rest of the cost
+                    The cap resets on the first of each month (UTC), matching the rest of the cost
                     dashboard.
                   </p>
                 </FieldHelp>

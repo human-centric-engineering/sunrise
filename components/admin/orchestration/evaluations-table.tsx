@@ -18,6 +18,7 @@ import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tip } from '@/components/ui/tooltip';
 import {
   Select,
   SelectContent,
@@ -233,11 +234,31 @@ export function EvaluationsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Logs</TableHead>
-              <TableHead>Created</TableHead>
+              <TableHead>
+                <Tip label="The evaluation session name — click to open the runner">
+                  <span>Title</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="The agent being evaluated in this session">
+                  <span>Agent</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="Draft → In Progress → Completed">
+                  <span>Status</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Number of evaluation log entries recorded during the session">
+                  <span>Logs</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="When this evaluation session was created">
+                  <span>Created</span>
+                </Tip>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

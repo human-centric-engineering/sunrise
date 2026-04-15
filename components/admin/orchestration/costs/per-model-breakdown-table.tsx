@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tip } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
@@ -74,10 +75,26 @@ export function PerModelBreakdownTable({ rows, models }: PerModelBreakdownTableP
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Model</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Tier</TableHead>
-                <TableHead className="text-right">Spend</TableHead>
+                <TableHead>
+                  <Tip label="The specific LLM model identifier (e.g. claude-opus-4-6)">
+                    <span>Model</span>
+                  </Tip>
+                </TableHead>
+                <TableHead>
+                  <Tip label="The LLM provider this model belongs to">
+                    <span>Provider</span>
+                  </Tip>
+                </TableHead>
+                <TableHead>
+                  <Tip label="Model pricing tier — frontier (most capable/expensive), standard, or budget">
+                    <span>Tier</span>
+                  </Tip>
+                </TableHead>
+                <TableHead className="text-right">
+                  <Tip label="Month-to-date LLM cost for this model across all agents">
+                    <span>Spend</span>
+                  </Tip>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -69,6 +69,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tip } from '@/components/ui/tooltip';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
@@ -105,6 +106,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const [duplicateSource, setDuplicateSource] = useState<AiAgent | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [budgets, setBudgets] = useState<Record<string, BudgetEntry | null>>({});
+  const [capCounts, setCapCounts] = useState<Record<string, number | null>>({});
+  const [convCounts, setConvCounts] = useState<Record<string, number | null>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -189,6 +192,67 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       );
       if (cancelled) return;
       setBudgets(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agents]);
+
+  // Lazy-fetch capability count per visible row.
+  useEffect(() => {
+    if (agents.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      const entries = await Promise.all(
+        agents.map(async (agent): Promise<[string, number | null]> => {
+          try {
+            const res = await fetch(API.ADMIN.ORCHESTRATION.agentCapabilities(agent.id), {
+              credentials: 'same-origin',
+            });
+            if (!res.ok) return [agent.id, null];
+            const body = await parseApiResponse<unknown[]>(res);
+            return [agent.id, body.success ? body.data.length : null];
+          } catch {
+            return [agent.id, null];
+          }
+        })
+      );
+      if (cancelled) return;
+      setCapCounts(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agents]);
+
+  // Lazy-fetch conversation count per visible row.
+  useEffect(() => {
+    if (agents.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      const entries = await Promise.all(
+        agents.map(async (agent): Promise<[string, number | null]> => {
+          try {
+            const res = await fetch(
+              `${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?agentId=${agent.id}&limit=1&page=1`,
+              { credentials: 'same-origin' }
+            );
+            if (!res.ok) return [agent.id, null];
+            const body = await parseApiResponse<unknown[]>(res);
+            if (!body.success) return [agent.id, null];
+            const meta = parsePaginationMeta(body.meta);
+            return [agent.id, meta?.total ?? null];
+          } catch {
+            return [agent.id, null];
+          }
+        })
+      );
+      if (cancelled) return;
+      setConvCounts(Object.fromEntries(entries));
     })();
 
     return () => {
@@ -337,7 +401,12 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setImportOpen(true)}
+            title="Upload a JSON bundle to create agents from another Sunrise instance"
+          >
             <FileUp className="mr-2 h-4 w-4" />
             Import
           </Button>
@@ -346,6 +415,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
             size="sm"
             onClick={() => void handleExportSelected()}
             disabled={selected.size === 0}
+            title="Download the selected agents as a portable JSON bundle — includes config, instructions, and capability links (no secrets)"
           >
             <Download className="mr-2 h-4 w-4" />
             Export selected ({selected.size})
@@ -378,31 +448,71 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 />
               </TableHead>
               <TableHead>
-                <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
-                  Name
-                  {renderSortIcon('name')}
-                </Button>
+                <Tip label="Sort by agent name">
+                  <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
+                    Name
+                    {renderSortIcon('name')}
+                  </Button>
+                </Tip>
               </TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead>Provider</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead className="text-right">Temp</TableHead>
-              <TableHead className="text-right">Budget</TableHead>
-              <TableHead className="text-right">Spend MTD</TableHead>
-              <TableHead className="text-center">Status</TableHead>
+              <TableHead>
+                <Tip label="URL-safe identifier used in API calls and URLs">
+                  <span>Slug</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Number of capabilities (tools) attached to this agent">
+                  <span>Caps</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Total conversations this agent has participated in">
+                  <span>Convs</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="The LLM service powering this agent (e.g. Anthropic, OpenAI, Ollama)">
+                  <span>Provider</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="The specific model this agent uses for chat responses">
+                  <span>Model</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Temperature — controls response creativity (0 = deterministic, 2 = most creative)">
+                  <span>Temp</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Monthly budget cap in USD — blank means no limit">
+                  <span>Budget</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Spend month-to-date — total LLM cost this calendar month (UTC)">
+                  <span>Spend MTD</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-center">
+                <Tip label="Whether this agent is active and available for chat">
+                  <span>Status</span>
+                </Tip>
+              </TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center">
+                <TableCell colSpan={12} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center">
+                <TableCell colSpan={12} className="h-24 text-center">
                   No agents found.
                 </TableCell>
               </TableRow>
@@ -428,6 +538,32 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-xs">
                       {agent.slug}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {capCounts[agent.id] === undefined ? (
+                        <span className="text-muted-foreground">…</span>
+                      ) : capCounts[agent.id] === null ? (
+                        '—'
+                      ) : capCounts[agent.id] === 0 ? (
+                        <span className="text-muted-foreground">0</span>
+                      ) : (
+                        <Link
+                          href={`/admin/orchestration/agents/${agent.id}`}
+                          className="hover:underline"
+                          title="View agent capabilities"
+                        >
+                          {capCounts[agent.id]}
+                        </Link>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {convCounts[agent.id] === undefined ? (
+                        <span className="text-muted-foreground">…</span>
+                      ) : convCounts[agent.id] === null ? (
+                        '—'
+                      ) : (
+                        convCounts[agent.id]
+                      )}
                     </TableCell>
                     <TableCell>{agent.provider}</TableCell>
                     <TableCell className="text-muted-foreground text-xs">{agent.model}</TableCell>

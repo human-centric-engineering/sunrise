@@ -14,8 +14,11 @@
  * until that page lands).
  */
 
+import { useState } from 'react';
 import Link from 'next/link';
+import { Info } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import {
   STEP_CATEGORY_COLOURS,
   STEP_CATEGORY_LABELS,
@@ -25,6 +28,8 @@ import {
   type StepRegistryEntry,
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
+
+import { PatternCoverageDialog } from './pattern-coverage-dialog';
 
 /** Short descriptions shown under each category heading in the palette. */
 const CATEGORY_HINTS: Record<StepCategory, string> = {
@@ -80,6 +85,8 @@ function PaletteBlock({ entry }: { entry: StepRegistryEntry }) {
 }
 
 export function PatternPalette() {
+  const [coverageOpen, setCoverageOpen] = useState(false);
+
   const byCategory: Record<StepCategory, StepRegistryEntry[]> = {
     agent: [],
     decision: [],
@@ -95,7 +102,18 @@ export function PatternPalette() {
       data-testid="pattern-palette"
       className="bg-background flex h-full w-[240px] shrink-0 flex-col overflow-y-auto border-r p-3"
     >
-      <h2 className="mb-3 text-sm font-semibold">Patterns</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Patterns</h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => setCoverageOpen(true)}
+          title="How patterns map to step types"
+        >
+          <Info className="h-4 w-4" />
+        </Button>
+      </div>
       <div className="space-y-4">
         {STEP_CATEGORY_ORDER.map((category) => {
           const entries = byCategory[category];
@@ -120,6 +138,8 @@ export function PatternPalette() {
       <p className="text-muted-foreground mt-4 text-[11px] leading-relaxed">
         Drag a pattern onto the canvas to add it to the workflow.
       </p>
+
+      <PatternCoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} />
     </aside>
   );
 }

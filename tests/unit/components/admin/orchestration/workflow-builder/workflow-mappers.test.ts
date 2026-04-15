@@ -176,18 +176,18 @@ describe('workflowDefinitionToFlow', () => {
     expect(entryNode?.position).toEqual({ x: 0, y: 0 });
   });
 
-  it('auto-layouts next step at (260,0) in a linear chain', () => {
+  it('auto-layouts next step at (220,40) in a linear chain (staggered)', () => {
     const { nodes } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
 
     const stepB = nodes.find((n) => n.id === 'step-b');
-    expect(stepB?.position).toEqual({ x: 260, y: 0 });
+    expect(stepB?.position).toEqual({ x: 220, y: 40 });
   });
 
-  it('auto-layouts third step at (520,0) in a linear chain', () => {
+  it('auto-layouts third step at (440,0) in a linear chain', () => {
     const { nodes } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
 
     const stepC = nodes.find((n) => n.id === 'step-c');
-    expect(stepC?.position).toEqual({ x: 520, y: 0 });
+    expect(stepC?.position).toEqual({ x: 440, y: 0 });
   });
 });
 

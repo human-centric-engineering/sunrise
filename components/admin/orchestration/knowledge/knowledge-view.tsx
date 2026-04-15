@@ -7,6 +7,7 @@ import { Cpu, RefreshCw, Sprout } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
+import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
@@ -313,10 +314,26 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium">Name</th>
-                  <th className="px-4 py-2 text-left font-medium">Status</th>
-                  <th className="px-4 py-2 text-right font-medium">Chunks</th>
-                  <th className="px-4 py-2 text-left font-medium">Uploaded</th>
+                  <th className="px-4 py-2 text-left font-medium">
+                    <Tip label="The document name — click to view details">
+                      <span>Name</span>
+                    </Tip>
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium">
+                    <Tip label="Processing status — pending, processing, ready, or failed">
+                      <span>Status</span>
+                    </Tip>
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    <Tip label="Number of text chunks this document was split into for vector search">
+                      <span>Chunks</span>
+                    </Tip>
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium">
+                    <Tip label="When this document was uploaded">
+                      <span>Uploaded</span>
+                    </Tip>
+                  </th>
                   <th className="px-4 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>

@@ -566,6 +566,172 @@ describe('CapabilitiesTable', () => {
     });
   });
 
+  // ── Agent-list Popover ─────────────────────────────────────────────────────
+
+  describe('agent-list popover', () => {
+    // Fixture: two agents linked to cap-1 ("Alpha Search")
+    const TWO_AGENTS = [
+      { id: 'agent-aa', name: 'Agent Amber', slug: 'agent-amber' },
+      { id: 'agent-bb', name: 'Agent Bravo', slug: 'agent-bravo' },
+    ];
+
+    // Fixture: one agent linked to cap-1 (singular header test)
+    const ONE_AGENT = [{ id: 'agent-solo', name: 'Solo Bot', slug: 'solo-bot' }];
+
+    function setupWithAgents(agents: typeof TWO_AGENTS) {
+      // All three capabilities share the same agent list for simplicity;
+      // the tests only care about cap-1 ("Alpha Search").
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/agents')) {
+          return Promise.resolve(makeAgentCountResponse(agents));
+        }
+        return Promise.resolve(makeCapabilitiesListResponse());
+      });
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+    }
+
+    it('trigger button renders the agent count', async () => {
+      // Arrange + Act
+      setupWithAgents(TWO_AGENTS);
+
+      // Assert: wait for lazy fetch to complete and buttons to appear
+      await waitFor(() => {
+        // Each row will show a trigger like "2 →" once agents load
+        const triggers = screen.getAllByRole('button', { name: /→/ });
+        expect(triggers.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // The count shown in the first trigger should be the agent count
+      const trigger = screen.getAllByRole('button', { name: /→/ })[0];
+      expect(trigger).toHaveTextContent('2');
+    });
+
+    it('clicking the trigger opens the popover and reveals linked agent names', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      setupWithAgents(TWO_AGENTS);
+
+      // All 3 rows get the same mock response, so 3 triggers appear.
+      // Click the first one (cap-1 "Alpha Search").
+      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
+      expect(triggers.length).toBeGreaterThanOrEqual(1);
+
+      // Act: open the popover
+      await user.click(triggers[0]);
+
+      // Assert: agent names are now visible
+      // Radix Popover renders content via a portal into document.body;
+      // screen queries search the whole document so no special scoping needed.
+      await waitFor(() => {
+        expect(screen.getByText('Agent Amber')).toBeInTheDocument();
+        expect(screen.getByText('Agent Bravo')).toBeInTheDocument();
+      });
+    });
+
+    it('each agent row renders both name and slug and links to /admin/orchestration/agents/{id}', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      setupWithAgents(TWO_AGENTS);
+
+      // All 3 rows share the same mock agent list; click the first trigger.
+      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
+      expect(triggers.length).toBeGreaterThanOrEqual(1);
+
+      // Act
+      await user.click(triggers[0]);
+
+      // Assert names and slugs are present in the opened popover
+      await waitFor(() => {
+        expect(screen.getByText('Agent Amber')).toBeInTheDocument();
+        expect(screen.getByText('agent-amber')).toBeInTheDocument();
+        expect(screen.getByText('Agent Bravo')).toBeInTheDocument();
+        expect(screen.getByText('agent-bravo')).toBeInTheDocument();
+      });
+
+      // Assert each agent name is wrapped in (or is a descendant of) a link to the right href
+      const amberLink = screen.getByText('Agent Amber').closest('a');
+      expect(amberLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-aa');
+
+      const bravoLink = screen.getByText('Agent Bravo').closest('a');
+      expect(bravoLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-bb');
+    });
+
+    it('header uses singular "agent" when count is 1', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      setupWithAgents(ONE_AGENT);
+
+      // All 3 rows share the same mock; click the first trigger.
+      const triggers = await screen.findAllByRole('button', { name: /1 →/ });
+      expect(triggers.length).toBeGreaterThanOrEqual(1);
+
+      // Act
+      await user.click(triggers[0]);
+
+      // Assert: header reads "1 agent using Alpha Search" (no trailing 's')
+      await waitFor(() => {
+        expect(screen.getByText(/1 agent using/)).toBeInTheDocument();
+      });
+      // Confirm "agents" (plural) is NOT used
+      expect(screen.queryByText(/1 agents using/)).not.toBeInTheDocument();
+    });
+
+    it('header uses plural "agents" when count is greater than 1', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      setupWithAgents(TWO_AGENTS);
+
+      // All 3 rows share the same mock; click the first trigger.
+      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
+      expect(triggers.length).toBeGreaterThanOrEqual(1);
+
+      // Act
+      await user.click(triggers[0]);
+
+      // Assert: header reads "2 agents using Alpha Search"
+      await waitFor(() => {
+        expect(screen.getByText(/2 agents using/)).toBeInTheDocument();
+      });
+    });
+
+    it('renders plain "0" without a Popover trigger when agent count is zero', async () => {
+      // Arrange: agent fetch returns empty array → source renders '0' as plain text, not a button
+      // (source line 433-434: agents.length === 0 → '0')
+      mockFetch.mockImplementation((url: RequestInfo | URL) => {
+        const urlStr = toUrlString(url);
+        if (urlStr.includes('/agents')) {
+          return Promise.resolve(makeAgentCountResponse([]));
+        }
+        return Promise.resolve(makeCapabilitiesListResponse());
+      });
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      // Assert: plain "0" text is present once agents have loaded
+      await waitFor(() => {
+        const zeros = screen.getAllByText('0');
+        expect(zeros.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Assert: no Popover trigger button (→) is rendered when count is zero
+      expect(screen.queryByRole('button', { name: /→/ })).not.toBeInTheDocument();
+    });
+  });
+
   // ── Pagination boundary ────────────────────────────────────────────────────
 
   describe('pagination boundary behaviour', () => {

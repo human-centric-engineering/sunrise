@@ -89,9 +89,10 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
     <div className="space-y-2">
       <div className="flex items-center gap-1">
         <span className="text-sm font-medium">Upload Document</span>
-        <FieldHelp>
-          Upload markdown or text files to the knowledge base. Accepted formats: .md, .markdown,
-          .txt. Maximum size: 10 MB. PDF and HTML support is planned for a future release.
+        <FieldHelp title="Upload a document">
+          Plain text and Markdown files work best because they can be cleanly split into searchable
+          chunks. PDFs and Word documents aren&apos;t supported yet because their formatting makes
+          reliable text extraction difficult. Maximum size: 10 MB per file.
         </FieldHelp>
       </div>
 
