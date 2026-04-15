@@ -10,7 +10,7 @@ Admin list/create/edit flows for `AiProviderConfig`. Landed in Phase 4 Session 4
 | `/admin/orchestration/providers/new`  | `app/admin/orchestration/providers/new/page.tsx`  | Create shell                         |
 | `/admin/orchestration/providers/[id]` | `app/admin/orchestration/providers/[id]/page.tsx` | Edit shell, `notFound()` on missing  |
 
-All three are async server components via `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to an empty grid and are logged with `logger.error`.
+All three are async server components that query Prisma directly (see `.context/architecture/data-fetching.md`). Fetch failures fall back to an empty grid and are logged with `logger.error`.
 
 ## List page — cards, not a table
 

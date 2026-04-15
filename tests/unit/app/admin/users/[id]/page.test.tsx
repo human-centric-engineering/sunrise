@@ -15,7 +15,7 @@
  * - Handles notFound when user is not found
  * - Generates correct metadata
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise-tweaks/app/admin/users/[id]/page.tsx
+ * @see app/admin/users/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -41,6 +41,14 @@ vi.mock('@/lib/auth/utils', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
 vi.mock('@/lib/env', () => ({
   env: { BETTER_AUTH_URL: 'http://localhost:3000' },
 }));
@@ -50,9 +58,9 @@ vi.mock('@/components/ui/client-date', () => ({
   ClientDate: ({ date }: { date: Date }) => <span>{date.toLocaleDateString()}</span>,
 }));
 
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { getServerSession } from '@/lib/auth/utils';
+import { prisma } from '@/lib/db/client';
 
 /**
  * Test Suite: Admin User Profile Page
@@ -60,15 +68,8 @@ import { getServerSession } from '@/lib/auth/utils';
  * Tests the async Server Component that displays read-only user profile.
  */
 describe('AdminUserProfilePage', () => {
-  /**
-   * Mock fetch globally for API calls
-   */
-  const mockFetch = vi.fn();
-  const originalFetch = global.fetch;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    global.fetch = mockFetch as any;
 
     // Default: Authenticated session
     vi.mocked(getServerSession).mockResolvedValue(
@@ -76,18 +77,10 @@ describe('AdminUserProfilePage', () => {
         user: { id: 'admin-id', email: 'admin@example.com', role: 'ADMIN' },
       }) as any
     );
-
-    // Default: Cookies setup
-    vi.mocked(cookies).mockResolvedValue({
-      getAll: () => [
-        { name: 'session', value: 'session-token' },
-        { name: 'auth', value: 'auth-token' },
-      ],
-    } as any);
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   /**
@@ -131,35 +124,24 @@ describe('AdminUserProfilePage', () => {
   }
 
   /**
-   * Helper: Mock successful API response
+   * Helper: Mock successful prisma response
    */
-  function mockUserApiResponse(user: AdminUser) {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        success: true,
-        data: {
-          ...user,
-          createdAt: user.createdAt.toISOString(),
-          updatedAt: user.updatedAt.toISOString(),
-        },
-      }),
-    } as Response);
+  function mockUserPrismaResponse(user: AdminUser) {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(user as any);
   }
 
   /**
-   * Helper: Mock failed API response
+   * Helper: Mock prisma returning null (user not found)
    */
-  function mockUserApiError(status = 404) {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status,
-      json: async () => ({
-        success: false,
-        error: { message: 'User not found' },
-      }),
-    } as Response);
+  function mockUserNotFound() {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+  }
+
+  /**
+   * Helper: Mock prisma throwing an error
+   */
+  function mockUserPrismaError() {
+    vi.mocked(prisma.user.findUnique).mockRejectedValue(new Error('Database error'));
   }
 
   /**
@@ -196,21 +178,17 @@ describe('AdminUserProfilePage', () => {
     it('should fetch user data when session exists', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
       const Component = await AdminUserProfilePage({ params });
       render(Component);
 
-      // Assert: Verify fetch was called with correct URL and headers
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/v1/users/user-123',
+      // Assert: Verify prisma was called with correct id
+      expect(prisma.user.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          headers: {
-            Cookie: 'session=session-token; auth=auth-token',
-          },
-          cache: 'no-store',
+          where: { id: 'user-123' },
         })
       );
     });
@@ -220,9 +198,9 @@ describe('AdminUserProfilePage', () => {
    * User Not Found Tests
    */
   describe('user not found', () => {
-    it('should call notFound when API returns 404', async () => {
-      // Arrange: API returns 404
-      mockUserApiError(404);
+    it('should call notFound when prisma returns null', async () => {
+      // Arrange: prisma returns null
+      mockUserNotFound();
       const params = Promise.resolve({ id: 'nonexistent' });
 
       // Act & Assert
@@ -230,26 +208,9 @@ describe('AdminUserProfilePage', () => {
       expect(notFound).toHaveBeenCalled();
     });
 
-    it('should call notFound when API returns success: false', async () => {
-      // Arrange: API returns success: false
-      mockFetch.mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          success: false,
-          error: { message: 'User not found' },
-        }),
-      } as Response);
-      const params = Promise.resolve({ id: 'user-123' });
-
-      // Act & Assert
-      await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
-    });
-
-    it('should call notFound when fetch throws', async () => {
-      // Arrange: Fetch throws error
-      mockFetch.mockRejectedValue(new Error('Network error'));
+    it('should call notFound when prisma throws', async () => {
+      // Arrange: prisma throws error
+      mockUserPrismaError();
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act & Assert
@@ -265,7 +226,7 @@ describe('AdminUserProfilePage', () => {
     it('should render user profile with all fields', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -287,7 +248,7 @@ describe('AdminUserProfilePage', () => {
     it('should render avatar component', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -302,7 +263,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createFullMockUser();
       mockUser.emailVerified = true;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -318,7 +279,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createFullMockUser();
       mockUser.bio = 'This is my bio.\nMultiline text.';
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -334,7 +295,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createFullMockUser();
       mockUser.timezone = 'America/New_York';
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -348,7 +309,7 @@ describe('AdminUserProfilePage', () => {
     it('should display formatted dates', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -368,7 +329,7 @@ describe('AdminUserProfilePage', () => {
     it('should render user profile with minimal fields', async () => {
       // Arrange
       const mockUser = createMinimalMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -385,7 +346,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.emailVerified = false;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -401,7 +362,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.bio = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -416,7 +377,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.phone = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -433,7 +394,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.location = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -449,7 +410,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.timezone = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -464,7 +425,7 @@ describe('AdminUserProfilePage', () => {
     it('should display user role correctly', async () => {
       // Arrange
       const mockUser = createMinimalMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -479,7 +440,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createMinimalMockUser();
       mockUser.image = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -500,7 +461,7 @@ describe('AdminUserProfilePage', () => {
       const mockUser = createMinimalMockUser();
       mockUser.name = 'John Doe';
       mockUser.image = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -516,7 +477,7 @@ describe('AdminUserProfilePage', () => {
       const mockUser = createMinimalMockUser();
       mockUser.name = 'Madonna';
       mockUser.image = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -532,7 +493,7 @@ describe('AdminUserProfilePage', () => {
       const mockUser = createMinimalMockUser();
       mockUser.name = 'John Peter Smith Johnson';
       mockUser.image = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -548,7 +509,7 @@ describe('AdminUserProfilePage', () => {
       const mockUser = createMinimalMockUser();
       mockUser.name = 'john doe';
       mockUser.image = null;
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-456' });
 
       // Act
@@ -567,7 +528,7 @@ describe('AdminUserProfilePage', () => {
     it('should render "Back to Users" link', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -583,7 +544,7 @@ describe('AdminUserProfilePage', () => {
     it('should render "Edit User" link with correct href', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -604,7 +565,7 @@ describe('AdminUserProfilePage', () => {
     it('should render Profile Details card', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -618,7 +579,7 @@ describe('AdminUserProfilePage', () => {
     it('should render System Info card', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -633,7 +594,7 @@ describe('AdminUserProfilePage', () => {
     it('should display all profile detail fields', async () => {
       // Arrange
       const mockUser = createFullMockUser();
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -658,7 +619,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createFullMockUser();
       mockUser.role = 'ADMIN';
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act
@@ -673,7 +634,7 @@ describe('AdminUserProfilePage', () => {
       // Arrange
       const mockUser = createFullMockUser();
       mockUser.role = 'USER';
-      mockUserApiResponse(mockUser);
+      mockUserPrismaResponse(mockUser);
       const params = Promise.resolve({ id: 'user-123' });
 
       // Act

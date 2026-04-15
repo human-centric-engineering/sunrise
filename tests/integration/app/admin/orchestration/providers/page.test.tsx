@@ -5,10 +5,10 @@
  * `app/admin/orchestration/providers/page.tsx`.
  *
  * Test Coverage:
- * - Renders heading with valid serverFetch response
+ * - Renders heading with valid prisma response
  * - Renders each provider card with correct names
  * - "+ Add provider" link present
- * - Graceful no-throw when fetch rejects
+ * - Graceful no-throw when prisma rejects
  *
  * @see app/admin/orchestration/providers/page.tsx
  */
@@ -18,9 +18,16 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiProviderConfig: {
+      findMany: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  isApiKeyEnvVarSet: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -63,11 +70,7 @@ vi.mock('@/lib/api/client', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-function makeProvider(
-  id: string,
-  name: string,
-  opts: { apiKeyPresent: boolean; isLocal?: boolean }
-) {
+function makeProviderRow(id: string, name: string, opts: { isLocal?: boolean } = {}) {
   return {
     id,
     name,
@@ -77,19 +80,18 @@ function makeProvider(
     baseUrl: null,
     isActive: true,
     isLocal: opts.isLocal ?? false,
-    apiKeyPresent: opts.apiKeyPresent,
     createdBy: 'system',
-    createdAt: new Date('2025-01-01').toISOString(),
-    updatedAt: new Date('2025-01-01').toISOString(),
+    createdAt: new Date('2025-01-01'),
+    updatedAt: new Date('2025-01-01'),
     deletedAt: null,
     metadata: {},
   };
 }
 
-const MOCK_PROVIDERS = [
-  makeProvider('prov-1', 'Anthropic', { apiKeyPresent: true }),
-  makeProvider('prov-2', 'OpenAI', { apiKeyPresent: false }),
-  makeProvider('prov-3', 'Ollama', { apiKeyPresent: false, isLocal: true }),
+const MOCK_PROVIDER_ROWS = [
+  makeProviderRow('prov-1', 'Anthropic'),
+  makeProviderRow('prov-2', 'OpenAI'),
+  makeProviderRow('prov-3', 'Ollama', { isLocal: true }),
 ];
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -104,12 +106,10 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders "Providers" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(MOCK_PROVIDER_ROWS as any);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -119,12 +119,10 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders each provider name in a card', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(MOCK_PROVIDER_ROWS as any);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -138,12 +136,10 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders "+ Add provider" link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(MOCK_PROVIDER_ROWS as any);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -154,9 +150,9 @@ describe('ProvidersListPage (server component)', () => {
     });
   });
 
-  it('renders empty state when fetch returns not ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders empty state when prisma returns empty array', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([]);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -166,9 +162,9 @@ describe('ProvidersListPage (server component)', () => {
     expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
   });
 
-  it('does not throw when fetch rejects', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+  it('does not throw when prisma rejects', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(new Error('Database error'));
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 

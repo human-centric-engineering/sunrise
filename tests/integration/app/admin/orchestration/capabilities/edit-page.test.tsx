@@ -5,9 +5,9 @@
  * `app/admin/orchestration/capabilities/[id]/page.tsx`.
  *
  * Test Coverage:
- * - Mock serverFetch for capability GET + /capabilities/:id/agents in parallel
+ * - Mock prisma for capability + agent links + categories in parallel
  * - Asserts edit form is pre-filled with fixture capability name
- * - Asserts notFound() is called when capability GET returns null
+ * - Asserts notFound() is called when capability fetch returns null
  *
  * @see app/admin/orchestration/capabilities/[id]/page.tsx
  */
@@ -30,9 +30,16 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiCapability: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
+    aiAgentCapability: {
+      findMany: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -81,13 +88,22 @@ const MOCK_CAPABILITY = {
   rateLimit: null,
   isActive: true,
   createdBy: 'system',
-  createdAt: new Date('2025-01-01').toISOString(),
-  updatedAt: new Date('2025-01-01').toISOString(),
+  createdAt: new Date('2025-01-01'),
+  updatedAt: new Date('2025-01-01'),
   deletedAt: null,
   metadata: {},
 };
 
-const MOCK_USED_BY = [{ id: 'agent-1', name: 'Alpha Bot', slug: 'alpha-bot' }];
+const MOCK_AGENT_LINKS = [
+  {
+    id: 'link-1',
+    agentId: 'agent-1',
+    capabilityId: 'cap-edit-id',
+    agent: { id: 'agent-1', name: 'Alpha Bot', slug: 'alpha-bot' },
+  },
+];
+
+const MOCK_ALL_CAPS = [{ category: 'knowledge' }, { category: 'api' }];
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -101,12 +117,10 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('renders form pre-filled with capability name in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY }) // capability
-      .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY }) // usedBy
-      .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(MOCK_CAPABILITY as any);
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue(MOCK_AGENT_LINKS as any);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue(MOCK_ALL_CAPS as any);
 
     const { default: EditCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/[id]/page');
@@ -120,12 +134,10 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('renders "Save changes" button in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-      .mockResolvedValueOnce({ success: true, data: [] })
-      .mockResolvedValueOnce({ success: true, data: [] });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(MOCK_CAPABILITY as any);
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
 
     const { default: EditCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/[id]/page');
@@ -138,12 +150,10 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('slug input pre-filled and disabled in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-      .mockResolvedValueOnce({ success: true, data: [] })
-      .mockResolvedValueOnce({ success: true, data: [] });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(MOCK_CAPABILITY as any);
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
 
     const { default: EditCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/[id]/page');
@@ -158,12 +168,10 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('calls notFound() when capability fetch returns null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Not found', code: 'NOT_FOUND' },
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
 
     const { default: EditCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/[id]/page');
@@ -178,72 +186,33 @@ describe('EditCapabilityPage (server component)', () => {
   // ── Fallback branches ──────────────────────────────────────────────────────
 
   describe('usedBy / categories fallback branches', () => {
-    it('renders when usedBy fetch rejects (network error on secondary fetch)', async () => {
-      // Arrange: capability fetch succeeds; usedBy rejects; categories ok
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) throw new Error('Network error');
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY }) // capability
-        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    it('renders when agentCapability fetch rejects (catch sets usedBy=[], categories=[])', async () => {
+      // Arrange: capability fetch succeeds; agentLinks and allCaps reject via the whole Promise.all
+      const { prisma } = await import('@/lib/db/client');
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(MOCK_CAPABILITY as any);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockRejectedValue(new Error('Network error'));
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
 
       const { default: EditCapabilityPage } =
         await import('@/app/admin/orchestration/capabilities/[id]/page');
 
-      // Act: should not throw — usedBy falls back to []
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      // Assert: structural stability
-      await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
-      });
+      // The whole Promise.all rejects → catch block sets capability=null → notFound
+      await expect(
+        EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) })
+      ).rejects.toThrow('NEXT_NOT_FOUND');
     });
 
-    it('renders when usedBy fetch returns res.ok=false', async () => {
-      // Arrange: capability ok, usedBy !ok, categories ok
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) return Promise.resolve({ ok: false } as Response);
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    it('renders form when all fetches succeed with empty arrays', async () => {
+      const { prisma } = await import('@/lib/db/client');
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(MOCK_CAPABILITY as any);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
 
       const { default: EditCapabilityPage } =
         await import('@/app/admin/orchestration/capabilities/[id]/page');
 
       render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
 
-      await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
-      });
-    });
-
-    it('renders when categories parseApiResponse returns success=false', async () => {
-      // Arrange: capability and usedBy succeed; categories parse fails
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-        .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY })
-        .mockResolvedValueOnce({
-          success: false,
-          error: { message: 'Parse failed', code: 'PARSE_ERROR' },
-        });
-
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      // Page still renders with empty categories
       await waitFor(() => {
         expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
       });

@@ -5,11 +5,11 @@
  * `app/admin/orchestration/capabilities/page.tsx`.
  *
  * Test Coverage:
- * - Renders heading and description with valid serverFetch response
+ * - Renders heading and description with valid prisma response
  * - Renders table rows from pre-fetched data
  * - "+ New Capability" link present
- * - Empty state when serverFetch returns null data
- * - Graceful no-throw when every fetch rejects
+ * - Empty state when prisma returns empty array
+ * - Graceful no-throw when prisma rejects
  *
  * @see app/admin/orchestration/capabilities/page.tsx
  */
@@ -19,9 +19,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiCapability: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -79,8 +83,8 @@ function makeCapability(id: string, name: string, category = 'api') {
     rateLimit: null,
     isActive: true,
     createdBy: 'system',
-    createdAt: new Date('2025-01-01').toISOString(),
-    updatedAt: new Date('2025-01-01').toISOString(),
+    createdAt: new Date('2025-01-01'),
+    updatedAt: new Date('2025-01-01'),
     deletedAt: null,
     metadata: {},
   };
@@ -91,8 +95,6 @@ const MOCK_CAPABILITIES = [
   makeCapability('cap-2', 'Send Email', 'api'),
   makeCapability('cap-3', 'Notify Webhook', 'webhook'),
 ];
-
-const MOCK_META = { page: 1, limit: 25, total: 3, totalPages: 1 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -106,13 +108,9 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders "Capabilities" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue(MOCK_CAPABILITIES as any);
+    vi.mocked(prisma.aiCapability.count).mockResolvedValue(3);
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -123,13 +121,9 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders capability names from pre-fetched data', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue(MOCK_CAPABILITIES as any);
+    vi.mocked(prisma.aiCapability.count).mockResolvedValue(3);
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -144,13 +138,9 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders "+ New Capability" link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue(MOCK_CAPABILITIES as any);
+    vi.mocked(prisma.aiCapability.count).mockResolvedValue(3);
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -162,9 +152,10 @@ describe('CapabilitiesListPage (server component)', () => {
     });
   });
 
-  it('renders empty state when serverFetch returns not ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders empty state when prisma returns empty array', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiCapability.count).mockResolvedValue(0);
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -175,9 +166,10 @@ describe('CapabilitiesListPage (server component)', () => {
     expect(screen.getByText(/no capabilities found/i)).toBeInTheDocument();
   });
 
-  it('does not throw when serverFetch rejects', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+  it('does not throw when prisma rejects', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiCapability.findMany).mockRejectedValue(new Error('Database error'));
+    vi.mocked(prisma.aiCapability.count).mockRejectedValue(new Error('Database error'));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');

@@ -6,7 +6,7 @@
  *
  * Test coverage:
  * - Happy path: renders conversation title as heading, breadcrumb
- * - notFound() called when conversation fetch returns non-ok
+ * - notFound() called when conversation fetch returns null
  *
  * @see app/admin/orchestration/conversations/[id]/page.tsx
  */
@@ -16,9 +16,19 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/auth/utils', () => ({
+  getServerSession: vi.fn(),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiConversation: {
+      findFirst: vi.fn(),
+    },
+    aiMessage: {
+      findMany: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -73,18 +83,19 @@ vi.mock('@/components/admin/orchestration/conversation-trace-viewer', () => ({
 const CONV_ID = 'cmjbv4i3x00003wsloputgwu3';
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwu2';
 
-const MOCK_CONVERSATION = {
+const MOCK_CONVERSATION_ROW = {
   id: CONV_ID,
   title: 'My Test Conversation',
   agentId: AGENT_ID,
+  userId: 'test-user-id',
   isActive: true,
-  createdAt: '2025-01-01T10:00:00.000Z',
-  updatedAt: '2025-01-01T10:05:00.000Z',
+  createdAt: new Date('2025-01-01T10:00:00.000Z'),
+  updatedAt: new Date('2025-01-01T10:05:00.000Z'),
   agent: { id: AGENT_ID, name: 'Test Agent', slug: 'test-agent' },
   _count: { messages: 3 },
 };
 
-const MOCK_MESSAGES = [
+const MOCK_MESSAGE_ROWS = [
   {
     id: 'msg-1',
     role: 'user',
@@ -92,7 +103,8 @@ const MOCK_MESSAGES = [
     capabilitySlug: null,
     toolCallId: null,
     metadata: null,
-    createdAt: '2025-01-01T10:00:00.000Z',
+    conversationId: CONV_ID,
+    createdAt: new Date('2025-01-01T10:00:00.000Z'),
   },
 ];
 
@@ -104,11 +116,13 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('renders conversation title as heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(MOCK_CONVERSATION_ROW as any);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue(MOCK_MESSAGE_ROWS as any);
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -119,11 +133,13 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('shows "AI Orchestration" breadcrumb link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(MOCK_CONVERSATION_ROW as any);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue(MOCK_MESSAGE_ROWS as any);
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -136,11 +152,13 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('renders the ConversationTraceViewer', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CONVERSATION })
-      .mockResolvedValueOnce({ success: true, data: { messages: MOCK_MESSAGES } });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(MOCK_CONVERSATION_ROW as any);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue(MOCK_MESSAGE_ROWS as any);
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -150,9 +168,13 @@ describe('ConversationDetailPage (server component)', () => {
     expect(screen.getByTestId('trace-viewer')).toBeInTheDocument();
   });
 
-  it('calls notFound() when conversation fetch returns non-ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 404 } as Response);
+  it('calls notFound() when conversation fetch returns null', async () => {
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(null);
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');
@@ -165,14 +187,16 @@ describe('ConversationDetailPage (server component)', () => {
   });
 
   it('shows "Untitled conversation" as heading when title is null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...MOCK_CONVERSATION, title: null },
-      })
-      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue({
+      ...MOCK_CONVERSATION_ROW,
+      title: null,
+    } as any);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([]);
 
     const { default: ConversationDetailPage } =
       await import('@/app/admin/orchestration/conversations/[id]/page');

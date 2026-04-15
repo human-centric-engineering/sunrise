@@ -6,8 +6,8 @@
  *
  * Test Coverage:
  * - Renders evaluation title as heading when found
- * - Calls notFound() when fetch returns ok: false
- * - Calls notFound() when serverFetch rejects
+ * - Calls notFound() when prisma returns null
+ * - Calls notFound() when prisma rejects
  *
  * @see app/admin/orchestration/evaluations/[id]/page.tsx
  */
@@ -30,9 +30,16 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/auth/utils', () => ({
+  getServerSession: vi.fn(),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiEvaluationSession: {
+      findFirst: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -52,15 +59,18 @@ vi.mock('@/lib/logging', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-const MOCK_EVALUATION = {
+const MOCK_EVALUATION_ROW = {
   id: 'eval-edit-id',
   title: 'My Tone Check',
   description: 'Checks the tone of responses',
   status: 'draft',
   summary: null,
   improvementSuggestions: null,
+  agentId: 'agent-1',
+  userId: 'test-user-id',
   agent: { id: 'agent-1', name: 'Bot Alpha', slug: 'bot-alpha' },
-  createdAt: new Date('2025-01-01').toISOString(),
+  createdAt: new Date('2025-01-01'),
+  updatedAt: new Date('2025-01-01'),
   completedAt: null,
   metadata: null,
 };
@@ -87,12 +97,12 @@ describe('EvaluationDetailPage (server component)', () => {
 
   it('renders evaluation title as heading when found', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: MOCK_EVALUATION,
-    });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiEvaluationSession.findFirst).mockResolvedValue(MOCK_EVALUATION_ROW as any);
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');
@@ -106,14 +116,14 @@ describe('EvaluationDetailPage (server component)', () => {
     });
   });
 
-  it('calls notFound() when fetch returns ok: false', async () => {
+  it('calls notFound() when prisma returns null', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Not found', code: 'NOT_FOUND' },
-    });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'test-user-id', role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiEvaluationSession.findFirst).mockResolvedValue(null);
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');
@@ -127,10 +137,10 @@ describe('EvaluationDetailPage (server component)', () => {
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
-  it('calls notFound() when serverFetch rejects', async () => {
-    // Arrange
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+  it('calls notFound() when session is missing (userId is undefined)', async () => {
+    // Arrange: no session → userId is undefined → evaluation stays null
+    const { getServerSession } = await import('@/lib/auth/utils');
+    vi.mocked(getServerSession).mockResolvedValue(null);
 
     const { default: EvaluationDetailPage } =
       await import('@/app/admin/orchestration/evaluations/[id]/page');

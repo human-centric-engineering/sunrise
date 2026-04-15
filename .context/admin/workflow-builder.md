@@ -23,7 +23,7 @@ Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand
 | `/admin/orchestration/workflows/new`  | `app/admin/orchestration/workflows/new/page.tsx`  | Empty builder — create mode                     |
 | `/admin/orchestration/workflows/[id]` | `app/admin/orchestration/workflows/[id]/page.tsx` | Hydrated builder — edit mode                    |
 
-All three are async server components. The list page calls `serverFetch(API.ADMIN.ORCHESTRATION.WORKFLOWS + '?page=1&limit=25')` with a null-safe fallback — failures surface as an empty state, never a thrown error. The edit page calls `serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id))` and hands off to `notFound()` on any non-OK response.
+All three are async server components that query Prisma directly (see `.context/architecture/data-fetching.md`). Failures surface as an empty state or `notFound()`, never a thrown error.
 
 ## Layout
 

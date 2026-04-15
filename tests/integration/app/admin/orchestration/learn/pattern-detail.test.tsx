@@ -12,9 +12,8 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/orchestration/knowledge/search', () => ({
+  getPatternDetail: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -102,12 +101,8 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders pattern title', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    const { getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
+    vi.mocked(getPatternDetail).mockResolvedValue(MOCK_DETAIL as any);
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -118,12 +113,8 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders breadcrumb with Learning link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    const { getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
+    vi.mocked(getPatternDetail).mockResolvedValue(MOCK_DETAIL as any);
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -134,12 +125,8 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders content sections', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_DETAIL,
-    });
+    const { getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
+    vi.mocked(getPatternDetail).mockResolvedValue(MOCK_DETAIL as any);
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');
@@ -151,8 +138,8 @@ describe('PatternDetailPage (server component)', () => {
   });
 
   it('renders not-found when pattern does not exist', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    const { getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
+    vi.mocked(getPatternDetail).mockResolvedValue({ patternName: '', chunks: [], totalTokens: 0 });
 
     const { default: PatternDetailPage } =
       await import('@/app/admin/orchestration/learn/patterns/[number]/page');

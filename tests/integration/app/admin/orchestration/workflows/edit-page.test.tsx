@@ -5,9 +5,9 @@
  * `app/admin/orchestration/workflows/[id]/page.tsx`.
  *
  * Test Coverage (5.1a carry-over):
- * - Happy path: serverFetch returns a valid workflow → builder is rendered,
+ * - Happy path: prisma returns a valid workflow → builder is rendered,
  *   notFound is NOT called
- * - Failure path: serverFetch returns ok=false → notFound is called
+ * - Failure path: prisma returns null → notFound is called
  *
  * Test Coverage (5.1b additions):
  * - Clicking Save calls apiClient.patch directly (no dialog in edit mode)
@@ -43,9 +43,12 @@ vi.mock('@xyflow/react', () => ({
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiWorkflow: {
+      findUnique: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -125,8 +128,8 @@ const TWO_STEP_WORKFLOW = {
   isTemplate: false,
   metadata: null,
   createdBy: 'user-1',
-  createdAt: new Date('2025-01-01').toISOString(),
-  updatedAt: new Date('2025-01-01').toISOString(),
+  createdAt: new Date('2025-01-01'),
+  updatedAt: new Date('2025-01-01'),
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -142,12 +145,8 @@ describe('EditWorkflowPage (server component)', () => {
   });
 
   it('renders the WorkflowBuilder and does NOT call notFound on happy path', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(TWO_STEP_WORKFLOW as any);
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -158,9 +157,9 @@ describe('EditWorkflowPage (server component)', () => {
     expect(notFoundMock).not.toHaveBeenCalled();
   });
 
-  it('calls notFound when serverFetch returns ok=false', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('calls notFound when prisma returns null', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(null);
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -176,13 +175,9 @@ describe('EditWorkflowPage (server component)', () => {
     expect(caught?.message).toBe('NEXT_NOT_FOUND');
   });
 
-  it('calls notFound when parseApiResponse returns success=false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Not found' },
-    });
+  it('calls notFound when prisma rejects', async () => {
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiWorkflow.findUnique).mockRejectedValue(new Error('Database error'));
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -200,12 +195,8 @@ describe('EditWorkflowPage (server component)', () => {
 
   it('5.1b: clicking Save calls apiClient.patch directly (no dialog in edit mode)', async () => {
     const user = userEvent.setup();
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(TWO_STEP_WORKFLOW as any);
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =
@@ -225,12 +216,8 @@ describe('EditWorkflowPage (server component)', () => {
 
   it('5.1b: PATCH body workflowDefinition contains the serialised steps', async () => {
     const user = userEvent.setup();
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(TWO_STEP_WORKFLOW as any);
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =

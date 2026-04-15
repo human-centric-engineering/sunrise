@@ -37,7 +37,7 @@ Every fetch is **null-safe**. A failing API renders an empty state, never throws
 | Recent activity (conversations) | `GET /admin/orchestration/conversations?limit=10`       | `getRecentActivity()`                                    |
 | Recent activity (executions)    | `GET /admin/orchestration/executions?limit=10`          | `getRecentActivity()` (501 stub — treated as empty list) |
 
-All calls go through `serverFetch()` + `parseApiResponse()` — never raw `fetch`. Cookie forwarding is automatic.
+All queries use Prisma directly or shared helpers (see `.context/architecture/data-fetching.md`) — never `serverFetch()` from server components.
 
 ## Error handling
 

@@ -5,10 +5,10 @@
  * `app/admin/orchestration/evaluations/page.tsx`.
  *
  * Test Coverage:
- * - Renders heading and description with valid serverFetch response
+ * - Renders heading and description with valid prisma response
  * - Renders evaluation titles from pre-fetched data
- * - Graceful empty state when serverFetch returns not ok
- * - No throw when serverFetch rejects
+ * - Graceful empty state when prisma returns empty arrays
+ * - No throw when prisma rejects
  *
  * @see app/admin/orchestration/evaluations/page.tsx
  */
@@ -18,9 +18,16 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiEvaluationSession: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
+    aiAgent: {
+      findMany: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -55,9 +62,15 @@ function makeEvaluation(id: string, title: string) {
     status: 'draft',
     description: 'Test evaluation',
     agentId: 'agent-1',
+    userId: 'user-1',
+    summary: null,
+    improvementSuggestions: null,
     agent: { id: 'agent-1', name: 'Test Agent', slug: 'test-agent' },
     _count: { logs: 3 },
-    createdAt: new Date('2025-01-01').toISOString(),
+    createdAt: new Date('2025-01-01'),
+    updatedAt: new Date('2025-01-01'),
+    completedAt: null,
+    metadata: null,
   };
 }
 
@@ -65,13 +78,6 @@ const MOCK_EVALUATIONS = [
   makeEvaluation('eval-1', 'Tone Check'),
   makeEvaluation('eval-2', 'Safety Audit'),
 ];
-
-const MOCK_META = {
-  page: 1,
-  limit: 25,
-  total: 2,
-  totalPages: 1,
-};
 
 const MOCK_AGENTS = [
   { id: 'agent-1', name: 'Test Agent' },
@@ -91,11 +97,10 @@ describe('EvaluationsListPage (server component)', () => {
 
   it('renders Evaluations heading and description', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_EVALUATIONS, meta: MOCK_META })
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENTS, meta: undefined });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockResolvedValue(MOCK_EVALUATIONS as any);
+    vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(2);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(MOCK_AGENTS as any);
 
     // Import the page after mocks are set up
     const { default: EvaluationsListPage } =
@@ -113,11 +118,10 @@ describe('EvaluationsListPage (server component)', () => {
 
   it('renders evaluation titles from pre-fetched data', async () => {
     // Arrange
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_EVALUATIONS, meta: MOCK_META })
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENTS, meta: undefined });
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockResolvedValue(MOCK_EVALUATIONS as any);
+    vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(2);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(MOCK_AGENTS as any);
 
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');
@@ -132,10 +136,12 @@ describe('EvaluationsListPage (server component)', () => {
     });
   });
 
-  it('renders empty state gracefully when serverFetch returns not ok', async () => {
+  it('renders empty state gracefully when prisma returns empty arrays', async () => {
     // Arrange
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');
@@ -148,10 +154,12 @@ describe('EvaluationsListPage (server component)', () => {
     expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
   });
 
-  it('does not throw when serverFetch rejects', async () => {
+  it('does not throw when prisma rejects', async () => {
     // Arrange
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockRejectedValue(new Error('Database error'));
+    vi.mocked(prisma.aiEvaluationSession.count).mockRejectedValue(new Error('Database error'));
+    vi.mocked(prisma.aiAgent.findMany).mockRejectedValue(new Error('Database error'));
 
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');

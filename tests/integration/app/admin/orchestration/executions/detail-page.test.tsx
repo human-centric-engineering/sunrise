@@ -6,7 +6,7 @@
  *
  * Test coverage:
  * - Happy path: renders truncated execution ID as heading, breadcrumb
- * - notFound() called when execution fetch returns non-ok
+ * - notFound() called when execution fetch returns null
  *
  * @see app/admin/orchestration/executions/[id]/page.tsx
  */
@@ -16,9 +16,16 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+vi.mock('@/lib/auth/utils', () => ({
+  getServerSession: vi.fn(),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiWorkflowExecution: {
+      findUnique: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -72,10 +79,12 @@ vi.mock('@/components/admin/orchestration/execution-detail-view', () => ({
 // Use a real CUID-length id so the truncation slice renders correctly
 const EXEC_ID = 'cmjbv4i3x00003wsloputgwu9';
 const WORKFLOW_ID = 'cmjbv4i3x00003wsloputgwu2';
+const USER_ID = 'test-user-id';
 
-const MOCK_EXECUTION = {
+const MOCK_EXECUTION_ROW = {
   id: EXEC_ID,
   workflowId: WORKFLOW_ID,
+  userId: USER_ID,
   status: 'completed',
   totalTokensUsed: 1500,
   totalCostUsd: 0.075,
@@ -84,9 +93,10 @@ const MOCK_EXECUTION = {
   inputData: { prompt: 'hello' },
   outputData: { result: 'world' },
   errorMessage: null,
-  startedAt: '2025-01-01T10:00:00.000Z',
-  completedAt: '2025-01-01T10:01:30.000Z',
-  createdAt: '2025-01-01T10:00:00.000Z',
+  executionTrace: [], // executionTraceSchema parses this as an array
+  startedAt: new Date('2025-01-01T10:00:00.000Z'),
+  completedAt: new Date('2025-01-01T10:01:30.000Z'),
+  createdAt: new Date('2025-01-01T10:00:00.000Z'),
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -97,12 +107,12 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('renders execution heading with truncated ID', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: USER_ID, role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(MOCK_EXECUTION_ROW as any);
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -117,12 +127,12 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('shows "AI Orchestration" breadcrumb link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: USER_ID, role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(MOCK_EXECUTION_ROW as any);
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -135,12 +145,12 @@ describe('ExecutionDetailPage (server component)', () => {
   });
 
   it('renders the ExecutionDetailView', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: true,
-      data: { execution: MOCK_EXECUTION, trace: [] },
-    });
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: USER_ID, role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(MOCK_EXECUTION_ROW as any);
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -150,9 +160,13 @@ describe('ExecutionDetailPage (server component)', () => {
     expect(screen.getByTestId('execution-detail-view')).toBeInTheDocument();
   });
 
-  it('calls notFound() when execution fetch returns non-ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 404 } as Response);
+  it('calls notFound() when execution fetch returns null', async () => {
+    const { getServerSession } = await import('@/lib/auth/utils');
+    const { prisma } = await import('@/lib/db/client');
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: USER_ID, role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(null);
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
@@ -164,13 +178,10 @@ describe('ExecutionDetailPage (server component)', () => {
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
-  it('calls notFound() when parseApiResponse returns success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValueOnce({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Not found' },
-    });
+  it('calls notFound() when session is missing (userId is undefined)', async () => {
+    // No session → userId undefined → data stays null → notFound()
+    const { getServerSession } = await import('@/lib/auth/utils');
+    vi.mocked(getServerSession).mockResolvedValue(null);
 
     const { default: ExecutionDetailPage } =
       await import('@/app/admin/orchestration/executions/[id]/page');
