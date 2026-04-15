@@ -6,12 +6,16 @@
  * - Blocks are grouped under four category headers: Agents, Decisions, Inputs, Outputs
  * - Dragstart sets dataTransfer application/reactflow to the step type string
  * - "Learn more" links point to /admin/orchestration/learning/patterns/<patternNumber>
+ * - Info button renders next to the "Patterns" heading
+ * - Clicking the Info button opens PatternCoverageDialog with title "Pattern Coverage"
+ * - PatternCoverageDialog is not visible before the Info button is clicked
  *
  * @see components/admin/orchestration/workflow-builder/pattern-palette.tsx
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
 import { STEP_REGISTRY } from '@/lib/orchestration/engine/step-registry';
@@ -149,6 +153,43 @@ describe('PatternPalette', () => {
           `/admin/orchestration/learning/patterns/${entry.patternNumber}`
         );
       }
+    });
+  });
+
+  describe('Info button and PatternCoverageDialog', () => {
+    it('renders the Info button next to the "Patterns" heading', () => {
+      render(<PatternPalette />);
+
+      // Arrange: palette is rendered
+      // Act/Assert: the ghost icon button with the tooltip title is present
+      const infoButton = screen.getByRole('button', {
+        name: /how patterns map to step types/i,
+      });
+
+      expect(infoButton).toBeInTheDocument();
+    });
+
+    it('PatternCoverageDialog is not visible before the Info button is clicked', () => {
+      render(<PatternPalette />);
+
+      // The dialog title should not be in the DOM when coverageOpen is false
+      expect(screen.queryByText('Pattern Coverage')).not.toBeInTheDocument();
+    });
+
+    it('clicking the Info button opens PatternCoverageDialog with title "Pattern Coverage"', async () => {
+      const user = userEvent.setup();
+      render(<PatternPalette />);
+
+      // Arrange: locate the Info button
+      const infoButton = screen.getByRole('button', {
+        name: /how patterns map to step types/i,
+      });
+
+      // Act: click the Info button to set coverageOpen to true
+      await user.click(infoButton);
+
+      // Assert: the dialog title is now visible
+      expect(screen.getByText('Pattern Coverage')).toBeInTheDocument();
     });
   });
 });
