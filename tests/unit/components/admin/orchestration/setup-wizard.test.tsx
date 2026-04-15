@@ -55,7 +55,7 @@ describe('SetupWizard', () => {
     expect(screen.getByRole('button', { name: /continue to provider setup/i })).toBeInTheDocument();
   });
 
-  it('Step 1 "Skip & continue" advances to step 2 and persists progress', async () => {
+  it('Step 1 "Continue to provider setup" advances to step 2 and persists progress', async () => {
     vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
     const user = userEvent.setup();
 

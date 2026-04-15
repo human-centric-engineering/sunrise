@@ -176,7 +176,7 @@ describe('workflowDefinitionToFlow', () => {
     expect(entryNode?.position).toEqual({ x: 0, y: 0 });
   });
 
-  it('auto-layouts next step at (270,40) in a linear chain (staggered)', () => {
+  it('auto-layouts next step at (220,40) in a linear chain (staggered)', () => {
     const { nodes } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
 
     const stepB = nodes.find((n) => n.id === 'step-b');
