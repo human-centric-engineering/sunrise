@@ -4,14 +4,14 @@ Workflows are DAGs (directed acyclic graphs) of steps executed by the `Orchestra
 
 ## Quick Reference
 
-| Concept                | Detail                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Step types             | 9: `llm_call`, `tool_call`, `chain`, `route`, `parallel`, `reflect`, `plan`, `human_approval`, `rag_retrieve` |
-| Templates              | 5 built-in: Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning         |
-| Error strategies       | 4: `retry`, `fallback`, `skip`, `fail` (default: `fail`)                                                      |
-| Validator              | `validateWorkflow()` — pure function, no DB, no I/O                                                           |
-| Engine                 | `OrchestrationEngine.execute()` — returns `AsyncIterable<ExecutionEvent>`                                     |
-| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`                                    |
+| Concept                | Detail                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step types             | 12: `llm_call`, `tool_call`, `chain`, `route`, `parallel`, `reflect`, `plan`, `human_approval`, `rag_retrieve`, `guard`, `evaluate`, `external_call` |
+| Templates              | 5 built-in: Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning                                                |
+| Error strategies       | 4: `retry`, `fallback`, `skip`, `fail` (default: `fail`)                                                                                             |
+| Validator              | `validateWorkflow()` — pure function, no DB, no I/O                                                                                                  |
+| Engine                 | `OrchestrationEngine.execute()` — returns `AsyncIterable<ExecutionEvent>`                                                                            |
+| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`                                                                           |
 
 ## Workflow Definition Structure
 
@@ -27,7 +27,7 @@ interface WorkflowDefinition {
 interface WorkflowStep {
   id: string; // Unique within the workflow
   name: string; // Human-readable label
-  type: WorkflowStepType; // One of the 9 step types
+  type: WorkflowStepType; // One of the 12 step types
   config: Record<string, unknown>; // Type-specific configuration
   nextSteps: ConditionalEdge[]; // Outgoing edges
 }
@@ -51,17 +51,20 @@ interface ConditionalEdge {
 
 ### Decision Steps
 
-| Type             | Label          | Purpose                                      | Key Config                                                   | Default Config                                                      |
-| ---------------- | -------------- | -------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- |
-| `route`          | Route          | Classify input and branch to different paths | `classificationPrompt`, `routes`                             | `{ classificationPrompt: '', routes: [] }`                          |
-| `human_approval` | Human Approval | Pause workflow for human review              | `prompt` (required), `timeoutMinutes`, `notificationChannel` | `{ prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' }` |
+| Type             | Label          | Purpose                                      | Key Config                                                     | Default Config                                                      |
+| ---------------- | -------------- | -------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `route`          | Route          | Classify input and branch to different paths | `classificationPrompt`, `routes`                               | `{ classificationPrompt: '', routes: [] }`                          |
+| `human_approval` | Human Approval | Pause workflow for human review              | `prompt` (required), `timeoutMinutes`, `notificationChannel`   | `{ prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' }` |
+| `guard`          | Guard          | Safety gate — LLM or regex rule check        | `rules`, `mode` (`llm`/`regex`), `failAction` (`block`/`flag`) | `{ rules: '', mode: 'llm', failAction: 'block' }`                   |
+| `evaluate`       | Evaluate       | Score output against a rubric                | `rubric`, `scaleMin`, `scaleMax`, `threshold`                  | `{ rubric: '', scaleMin: 0, scaleMax: 10, threshold: 7 }`           |
 
 ### Input Steps
 
-| Type           | Label        | Purpose                           | Key Config                             | Default Config                                     |
-| -------------- | ------------ | --------------------------------- | -------------------------------------- | -------------------------------------------------- |
-| `tool_call`    | Tool Call    | Execute a registered capability   | `capabilitySlug` (required)            | `{ capabilitySlug: '' }`                           |
-| `rag_retrieve` | RAG Retrieve | Search knowledge base for context | `query`, `topK`, `similarityThreshold` | `{ query: '', topK: 5, similarityThreshold: 0.7 }` |
+| Type            | Label         | Purpose                           | Key Config                                                                        | Default Config                                                                                   |
+| --------------- | ------------- | --------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `tool_call`     | Tool Call     | Execute a registered capability   | `capabilitySlug` (required)                                                       | `{ capabilitySlug: '' }`                                                                         |
+| `rag_retrieve`  | RAG Retrieve  | Search knowledge base for context | `query`, `topK`, `similarityThreshold`                                            | `{ query: '', topK: 5, similarityThreshold: 0.7 }`                                               |
+| `external_call` | External Call | HTTP call to an external service  | `url`, `method`, `headers`, `bodyTemplate`, `timeoutMs`, `authType`, `authSecret` | `{ url: '', method: 'POST', headers: {}, bodyTemplate: '', timeoutMs: 10000, authType: 'none' }` |
 
 ### Output Steps
 
@@ -71,10 +74,13 @@ interface ConditionalEdge {
 
 ### Validator-Required Config
 
-The validator enforces required config for two step types:
+The validator enforces required config for these step types:
 
 - `human_approval` must have `config.prompt` (error: `MISSING_APPROVAL_PROMPT`)
 - `tool_call` must have `config.capabilitySlug` (error: `MISSING_CAPABILITY_SLUG`)
+- `guard` must have `config.rules` (error: `MISSING_GUARD_RULES`)
+- `evaluate` must have `config.rubric` (error: `MISSING_EVALUATE_RUBRIC`)
+- `external_call` must have `config.url` (error: `MISSING_EXTERNAL_URL`)
 
 All other step types have no validator-enforced config requirements.
 

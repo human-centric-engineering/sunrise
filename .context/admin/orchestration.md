@@ -11,7 +11,7 @@ lib/orchestration/          ← Platform-agnostic core (NEVER imports Next.js)
 ├── capabilities/           ← Tool dispatcher, built-in capabilities, rate limiting
 ├── chat/                   ← Streaming chat handler, context builder, input guard
 ├── workflows/              ← DAG validator, step types, templates
-├── engine/                 ← Runtime executor, 9 step executors, event stream
+├── engine/                 ← Runtime executor, 12 step executors, event stream
 ├── evaluations/            ← Evaluation session completion handler
 └── seed/                   ← Dev seed data for providers / agents
 
@@ -90,7 +90,7 @@ Capabilities are tools an agent can call — function definitions with execution
 
 ### Workflows
 
-Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 9 step types are supported, and 5 built-in templates provide starting points.
+Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 12 step types are supported, and 5 built-in templates provide starting points.
 
 - [How to design workflows](./.context/admin/orchestration-workflows-guide.md)
 - [Workflow builder UI](./.context/admin/workflow-builder.md)

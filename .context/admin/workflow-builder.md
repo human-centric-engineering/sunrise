@@ -66,7 +66,7 @@ interface StepRegistryEntry {
 }
 ```
 
-**Initial nine entries** (Session 5.1a):
+**Twelve entries:**
 
 | Type             | Label          | Category | Outputs | Pattern |
 | ---------------- | -------------- | -------- | ------- | ------- |
@@ -79,6 +79,9 @@ interface StepRegistryEntry {
 | `plan`           | Plan           | agent    | 1       | 7       |
 | `human_approval` | Human Approval | decision | 1       | 8       |
 | `rag_retrieve`   | RAG Retrieve   | input    | 1       | 9       |
+| `guard`          | Guard          | decision | 2       | 18      |
+| `evaluate`       | Evaluate       | decision | 1       | 19      |
+| `external_call`  | External Call  | input    | 1       | 15      |
 
 **Adding a new step type:** append an entry to `STEP_REGISTRY`. The palette, the `PatternNode`, and any future registry-driven consumer will pick it up automatically — no new component, no new JSX.
 
@@ -137,19 +140,22 @@ Structure (top to bottom):
 
 ### Block editors
 
-All nine editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
+All twelve editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
 
-| Type             | Editor                      | Fields (default)                                                                                                                   |
-| ---------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                |
-| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                      |
-| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                            |
-| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                              |
-| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                           |
-| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                    |
-| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                  |
-| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed) |
-| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                             |
+| Type             | Editor                      | Fields (default)                                                                                                                     |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                  |
+| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                        |
+| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                              |
+| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                                |
+| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                             |
+| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                      |
+| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                    |
+| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)   |
+| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                               |
+| `guard`          | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                        |
+| `evaluate`       | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 0), `scaleMax` (number, 10), `threshold` (number, 7)                                        |
+| `external_call`  | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input) |
 
 **Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
 
@@ -297,7 +303,7 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - Full list table with search, pagination, active switch, delete.
 - Drag from palette, drop, snap-to-grid, connect handles, click-to-select, rename, delete.
 - Hydrated builder on `/[id]` from the stored `WorkflowDefinition`, including layout.
-- Per-step config editors for all nine step types (5.1b).
+- Per-step config editors for all twelve step types (5.1b).
 - Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
 - Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
 - 5 built-in templates loadable from the toolbar dropdown, with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).

@@ -144,6 +144,9 @@ export const KNOWN_STEP_TYPES = [
   'human_approval',
   'rag_retrieve',
   'llm_call',
+  'guard',
+  'evaluate',
+  'external_call',
 ] as const;
 
 /** A conditional edge connecting workflow steps */

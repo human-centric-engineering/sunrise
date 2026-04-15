@@ -66,9 +66,9 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
     number: 18,
     name: 'Guardrails & Safety',
     tier: 'Foundation',
-    coveredBy: [],
-    coverageNote: 'Gap — no dedicated guard step. Currently requires LLM Call + Route workaround.',
-    isGap: true,
+    coveredBy: ['Guard'],
+    coverageNote: 'Direct match — validate input or output against safety rules.',
+    isGap: false,
   },
   // Intermediate
   {
@@ -156,9 +156,9 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
     number: 15,
     name: 'Inter-Agent Communication (A2A)',
     tier: 'Advanced',
-    coveredBy: [],
-    coverageNote: 'Gap — no step for external HTTP or agent-to-agent calls.',
-    isGap: true,
+    coveredBy: ['External Call'],
+    coverageNote: 'Direct match — call external HTTP endpoints or agents.',
+    isGap: false,
   },
   {
     number: 16,
@@ -180,9 +180,9 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
     number: 19,
     name: 'Evaluation & Monitoring',
     tier: 'Advanced',
-    coveredBy: ['Reflect'],
-    coverageNote: 'Gap — Reflect is close but lacks dedicated scoring semantics.',
-    isGap: true,
+    coveredBy: ['Evaluate'],
+    coverageNote: 'Direct match — score output quality against a rubric.',
+    isGap: false,
   },
   {
     number: 20,
@@ -222,7 +222,7 @@ export function PatternCoverageDialog({ open, onOpenChange }: PatternCoverageDia
         <DialogHeader>
           <DialogTitle>Pattern Coverage</DialogTitle>
           <DialogDescription>
-            How the 9 workflow step types map to all 21 agentic design patterns.
+            How the 12 workflow step types map to all 21 agentic design patterns.
           </DialogDescription>
         </DialogHeader>
 
@@ -274,10 +274,11 @@ export function PatternCoverageDialog({ open, onOpenChange }: PatternCoverageDia
             );
           })}
 
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-800 dark:bg-amber-950/40">
-            <p className="text-xs font-medium text-amber-900 dark:text-amber-100">
-              3 patterns are flagged as gaps — Guardrails, Inter-Agent Communication, and
-              Evaluation. These are candidates for dedicated step types in a future release.
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-800 dark:bg-emerald-950/40">
+            <p className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
+              All 21 design patterns are covered by the 12 available step types, either as direct
+              matches or through composition. Patterns marked &ldquo;Engine&rdquo; are handled by
+              the orchestration runtime rather than individual workflow steps.
             </p>
           </div>
         </div>

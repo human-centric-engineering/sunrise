@@ -35,3 +35,6 @@ export { ToolCallEditor } from './tool-call-editor';
 export { PlanEditor } from './plan-editor';
 export { HumanApprovalEditor } from './human-approval-editor';
 export { RagRetrieveEditor } from './rag-retrieve-editor';
+export { GuardEditor } from './guard-editor';
+export { EvaluateEditor } from './evaluate-editor';
+export { ExternalCallEditor } from './external-call-editor';

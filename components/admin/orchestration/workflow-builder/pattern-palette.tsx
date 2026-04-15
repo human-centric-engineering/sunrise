@@ -15,7 +15,6 @@
  */
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { Info } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -30,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 
 import { PatternCoverageDialog } from './pattern-coverage-dialog';
+import { PatternLearnMoreDialog } from './pattern-learn-more-dialog';
 
 /** Short descriptions shown under each category heading in the palette. */
 const CATEGORY_HINTS: Record<StepCategory, string> = {
@@ -44,12 +44,15 @@ function onDragStart(event: React.DragEvent<HTMLDivElement>, type: string) {
   event.dataTransfer.effectAllowed = 'move';
 }
 
-function PaletteBlock({ entry }: { entry: StepRegistryEntry }) {
+function PaletteBlock({
+  entry,
+  onLearnMore,
+}: {
+  entry: StepRegistryEntry;
+  onLearnMore?: (patternNumber: number) => void;
+}) {
   const colours = STEP_CATEGORY_COLOURS[entry.category];
   const Icon = entry.icon;
-  const learnMoreHref = entry.patternNumber
-    ? `/admin/orchestration/learning/patterns/${entry.patternNumber}`
-    : null;
 
   return (
     <div
@@ -71,14 +74,17 @@ function PaletteBlock({ entry }: { entry: StepRegistryEntry }) {
         <div className="flex-1 text-sm font-medium">{entry.label}</div>
       </div>
       <p className="text-muted-foreground mt-1 line-clamp-2 text-[11px]">{entry.description}</p>
-      {learnMoreHref && (
-        <Link
-          href={learnMoreHref}
+      {entry.patternNumber && onLearnMore && (
+        <button
+          type="button"
           className="mt-1 inline-block text-[11px] underline opacity-0 transition-opacity group-hover:opacity-100"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onLearnMore(entry.patternNumber!);
+          }}
         >
           Learn more
-        </Link>
+        </button>
       )}
     </div>
   );
@@ -86,6 +92,7 @@ function PaletteBlock({ entry }: { entry: StepRegistryEntry }) {
 
 export function PatternPalette() {
   const [coverageOpen, setCoverageOpen] = useState(false);
+  const [learnMorePattern, setLearnMorePattern] = useState<number | null>(null);
 
   const byCategory: Record<StepCategory, StepRegistryEntry[]> = {
     agent: [],
@@ -128,7 +135,7 @@ export function PatternPalette() {
               </p>
               <div className="space-y-2">
                 {entries.map((entry) => (
-                  <PaletteBlock key={entry.type} entry={entry} />
+                  <PaletteBlock key={entry.type} entry={entry} onLearnMore={setLearnMorePattern} />
                 ))}
               </div>
             </section>
@@ -140,6 +147,13 @@ export function PatternPalette() {
       </p>
 
       <PatternCoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} />
+      <PatternLearnMoreDialog
+        open={learnMorePattern !== null}
+        patternNumber={learnMorePattern}
+        onOpenChange={(open) => {
+          if (!open) setLearnMorePattern(null);
+        }}
+      />
     </aside>
   );
 }

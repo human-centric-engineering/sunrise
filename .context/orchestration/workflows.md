@@ -71,6 +71,9 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | `CYCLE_DETECTED`          | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.              |
 | `MISSING_APPROVAL_PROMPT` | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.   |
 | `MISSING_CAPABILITY_SLUG` | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler. |
+| `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
+| `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
+| `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
 
 ### Example error payload
 
@@ -105,7 +108,7 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 
 Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
 
-**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 9 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
+**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 12 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
 **What it defers:** Chain sub-step editor and inline edge-condition editing are future work.
 
