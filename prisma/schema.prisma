@@ -501,3 +501,19 @@ model AiOrchestrationSettings {
 
   @@map("ai_orchestration_settings")
 }
+
+/// Tracks which seed units have been applied, keyed by unit name.
+///
+/// Each entry in `prisma/seeds/` is hashed by source content; the runner
+/// skips units whose hash matches the stored `contentHash`, and re-runs
+/// units whose file has changed. This lets teammates pull new/edited
+/// seeds and apply them incrementally without manual coordination.
+model SeedHistory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  contentHash String
+  appliedAt   DateTime @default(now())
+  durationMs  Int
+
+  @@map("seed_history")
+}

@@ -97,13 +97,15 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs -f web
 ```
 
-### 5. Run Database Migrations
+Migrations apply automatically via the `migrator` service: it runs `prisma migrate deploy` once against the healthy `db`, exits, and the `web` service waits on `service_completed_successfully` before starting. No manual migration step is needed.
+
+Inspect migration status without applying:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml run --rm migrator npx prisma migrate status
 ```
 
-### 6. Verify Deployment
+### 5. Verify Deployment
 
 ```bash
 curl http://localhost:3000/api/health
@@ -230,11 +232,9 @@ cd sunrise
 # Pull latest changes
 git pull origin main
 
-# Rebuild and restart
+# Rebuild and restart — the migrator service re-runs `prisma migrate deploy`
+# automatically before `web` starts, so new migrations apply without extra steps.
 docker compose -f docker-compose.prod.yml up -d --build
-
-# Run any new migrations
-docker compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
 
 # Verify
 curl http://localhost:3000/api/health
@@ -420,9 +420,11 @@ Auto-restarts on failure but not if manually stopped with `docker compose down`.
 depends_on:
   db:
     condition: service_healthy
+  migrator:
+    condition: service_completed_successfully
 ```
 
-Web service waits for database health check to pass before starting.
+`web` starts only after (1) `db` passes its health check and (2) the run-once `migrator` service exits successfully. The `migrator` service builds the same image as `web`, runs `npx prisma migrate deploy`, and exits — so `web` never serves traffic against a stale schema. If migrations fail, `web` does not start.
 
 **Environment variables:**
 

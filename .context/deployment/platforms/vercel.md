@@ -68,24 +68,17 @@ STORAGE_PROVIDER=vercel-blob  # Options: s3, vercel-blob, local
 2. Copy connection string to `DATABASE_URL`
 3. Ensure SSL is enabled for production
 
-### 4. Run Migrations
+### 4. Configure Migrations
 
-After first deployment, run migrations via Vercel CLI:
+In Vercel dashboard > Project Settings > General > **Build Command**, override the default with:
 
-```bash
-vercel env pull .env.local
-npx prisma migrate deploy
+```
+npm run build && npm run db:migrate:deploy
 ```
 
-Or use a build script (add to `package.json`):
+This runs `prisma migrate deploy` after `next build` succeeds but before the deployment is promoted — so the DB schema is always ahead of (or equal to) the code serving traffic. Write backward-compatible migrations so a partial failure between build and promotion is safe.
 
-```json
-{
-  "scripts": {
-    "postbuild": "prisma migrate deploy"
-  }
-}
-```
+**Why not `postbuild`?** `postbuild` fires inside `npm run build`, which also runs in CI and Docker builds — neither has a real production `DATABASE_URL`. Using Vercel's build command keeps the migration scoped to actual deployments.
 
 ### 5. Deploy
 
@@ -169,8 +162,8 @@ Vercel handles infrastructure health monitoring automatically. The `/api/health`
 
 ### Migrations Not Running
 
-- Add `postbuild` script as shown above
-- Or run manually via Vercel CLI after deployment
+- Verify Build Command in Vercel is `npm run build && npm run db:migrate:deploy`
+- Or run manually: `vercel env pull .env.local && npx prisma migrate deploy`
 
 ## Cost Considerations
 

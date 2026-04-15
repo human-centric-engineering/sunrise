@@ -31,51 +31,37 @@ graph LR
 
 ### Development Commands
 
+| Command                  | Purpose                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `npm run db:migrate:dev` | Create + apply a migration from schema changes (dev only)     |
+| `npm run db:reset`       | Drop DB, re-migrate from scratch, re-run seeds                |
+| `npm run db:seed`        | Apply new/changed seed units (see [seeding.md](./seeding.md)) |
+| `npm run db:generate`    | Regenerate Prisma Client without touching migrations          |
+| `npm run db:studio`      | Open Prisma Studio                                            |
+
 ```bash
-# Create migration from schema changes
-npx prisma migrate dev --name add_user_role
-
-# Creates:
-# - prisma/migrations/20250112000000_add_user_role/migration.sql
-# - Applies migration to database
-# - Generates Prisma Client
-
-# Reset database (WARNING: deletes all data)
-npx prisma migrate reset
-
-# Apply pending migrations without creating new ones
-npx prisma migrate dev
-
-# Generate Prisma Client only (no migrations)
-npx prisma generate
+# Most common flow: edit schema.prisma, then…
+npm run db:migrate:dev -- --name add_user_role
+# Creates prisma/migrations/<timestamp>_add_user_role/migration.sql,
+# applies it, and regenerates the Prisma Client.
 ```
 
 ### Production Commands
 
-```bash
-# Deploy migrations to production
-npx prisma migrate deploy
-
-# Check migration status
-npx prisma migrate status
-
-# Resolve failed migrations
-npx prisma migrate resolve --rolled-back 20250112000000_migration_name
-npx prisma migrate resolve --applied 20250112000000_migration_name
-```
-
-### Database Commands
+| Command                     | Purpose                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------ |
+| `npm run db:migrate:deploy` | Apply all pending migrations (runs in CI, compose migrator, Vercel, Render, Railway) |
+| `npm run db:migrate:status` | Report pending / applied migrations without making changes                           |
 
 ```bash
-# Push schema changes without creating migration (prototyping)
-npx prisma db push
-
-# Pull schema from existing database
-npx prisma db pull
-
-# Seed database with initial data
-npx prisma db seed
+# Resolve a failed migration (rare — only needed if a deploy died partway)
+npx prisma migrate resolve --rolled-back <migration_name>
+npx prisma migrate resolve --applied <migration_name>
 ```
+
+### Prohibited
+
+`prisma db push` is not available as a script. It bypasses migration history and makes dev/prod schemas diverge silently. Always use `db:migrate:dev` so every schema change is a versioned, reviewable file.
 
 ## Migration File Structure
 
@@ -287,110 +273,11 @@ npx prisma migrate dev
 
 ## Data Migrations
 
-### Seed File
+### Seeds
 
-The seed file uses Prisma 7's PostgreSQL adapter pattern and creates test users plus default feature flags.
+Seed data is managed by the content-hash-based runner in `prisma/runner.ts` — each unit under `prisma/seeds/NNN-slug.ts` is idempotent, re-runs only when its source changes, and tracks state in the `SeedHistory` table. `prisma migrate reset` automatically re-seeds via the `migrations.seed` hook in `prisma.config.ts`.
 
-**Important notes:**
-
-- **better-auth handles passwords separately** — users are created without a password field in the seed
-- **Uses `deleteMany` + `create` pattern** — clears existing data in development before seeding (not upsert)
-- **Seeds feature flags** — creates default feature flags from `lib/feature-flags/config.ts`
-- **Uses structured logging** — uses `logger` from `@/lib/logging`, not `console.log`
-
-```typescript
-// prisma/seed.ts
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import pg from 'pg';
-import { logger } from '../lib/logging';
-import { DEFAULT_FLAGS } from '../lib/feature-flags/config';
-
-const { Pool } = pg;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-
-const prisma = new PrismaClient({ adapter });
-
-async function main() {
-  logger.info('Seeding database...');
-
-  // Clear existing data (in development only)
-  if (process.env.NODE_ENV === 'development') {
-    logger.info('Clearing existing data...');
-    await prisma.verification.deleteMany();
-    await prisma.session.deleteMany();
-    await prisma.account.deleteMany();
-    await prisma.user.deleteMany();
-    await prisma.featureFlag.deleteMany();
-  }
-
-  // Create test users (2 users: test + admin)
-  logger.info('Creating test users...');
-
-  const testUser = await prisma.user.create({
-    data: {
-      email: 'test@example.com',
-      name: 'Test User',
-      emailVerified: true,
-      role: 'USER',
-    },
-  });
-
-  const adminUser = await prisma.user.create({
-    data: {
-      email: 'admin@example.com',
-      name: 'Admin User',
-      emailVerified: true,
-      role: 'ADMIN',
-    },
-  });
-
-  logger.info('Created test user', { email: testUser.email });
-  logger.info('Created admin user', { email: adminUser.email });
-
-  // Seed default feature flags
-  logger.info('Seeding feature flags...');
-
-  const { count } = await prisma.featureFlag.createMany({
-    data: DEFAULT_FLAGS.map((flag) => ({
-      name: flag.name,
-      description: flag.description,
-      enabled: flag.enabled,
-      metadata: flag.metadata,
-    })),
-  });
-  logger.info(`Created ${count} feature flags`);
-
-  logger.info('Seeding complete!');
-}
-
-main()
-  .catch((e) => {
-    logger.error('Seeding failed', e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
-```
-
-**Run Seed**:
-
-```bash
-npx prisma db seed
-```
-
-**Configure in package.json**:
-
-```json
-{
-  "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
-  }
-}
-```
+See [seeding.md](./seeding.md) for the full authoring guide, operational flows, and embeddings opt-in path.
 
 ### Custom Data Migrations
 
@@ -621,28 +508,20 @@ npx prisma generate
 
 **Trade-offs**: Less control than raw SQL, learning curve for complex scenarios
 
-### db push vs. migrate dev
+### Why we removed `db push`
 
-**Decision**: Use `migrate dev` for tracked changes, `db push` for prototyping only
+**Decision**: `prisma db push` is not exposed as a script and should not be used.
 **Rationale**:
 
-- `migrate dev`: Creates versioned migrations (production-ready)
-- `db push`: Quick iteration without migration files (prototype only)
+- Bypasses migration history — changes made via `db push` are invisible to `prisma migrate status` and never propagate to teammates or production.
+- Two developers running `db push` in parallel silently diverge their schemas.
+- The cost of `db:migrate:dev` is ~2 seconds and produces a reviewable SQL file.
 
-**Trade-offs**: `db push` can be faster during early development but loses history
+**Trade-off**: Prototyping a single field is marginally slower. Accepted — the previous dev's untracked push cost more than every migration we've ever written.
 
 ### Seed Data Strategy
 
-**Decision**: Seed file with 2 test users (test + admin) and default feature flags
-**Rationale**:
-
-- Admin user needed for first login
-- Test user for development testing
-- Feature flags seeded from centralized config (`lib/feature-flags/config.ts`)
-- Uses `deleteMany` + `create` pattern (not upsert) for clean reseeding
-- better-auth handles passwords separately, so users created without password field
-
-**Trade-offs**: Must maintain seed script as schema evolves; `deleteMany` pattern requires correct deletion order for foreign key constraints
+**Decision**: Content-hash-based seed units in `prisma/seeds/`, tracked by `SeedHistory`. See [seeding.md](./seeding.md).
 
 ## PostgreSQL Extensions
 
@@ -679,7 +558,7 @@ Some features require PostgreSQL extensions to be installed on the server before
 SELECT * FROM pg_available_extensions WHERE name = 'vector';
 ```
 
-If the migration fails with `extension "vector" is not available`, install pgvector on the server and re-run `npm run db:migrate`.
+If the migration fails with `extension "vector" is not available`, install pgvector on the server and re-run `npm run db:migrate:deploy`.
 
 ## Related Documentation
 

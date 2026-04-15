@@ -52,9 +52,27 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
 
-    # Environment variables needed for Prisma generate (postinstall) and build
+    # Postgres service exercises migrations and seeds against a real DB so
+    # broken migrations / seed units fail CI at PR time. pgvector image
+    # matches production so the vector extension is available.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sunrise_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Environment variables needed for Prisma generate (postinstall), migrations, seeds, and build
     env:
-      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise'
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
       BETTER_AUTH_URL: 'http://localhost:3000'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
@@ -71,6 +89,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      - name: Run seeds
+        run: npm run db:seed
 
       - name: Type check
         run: npm run type-check

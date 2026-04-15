@@ -61,7 +61,11 @@ npm run dev                    # Start dev server
 npm run validate               # Type-check + lint + format
 
 # Database
-npm run db:migrate             # Create and apply migration
+npm run db:migrate:dev         # Create and apply migration (dev only)
+npm run db:migrate:deploy      # Apply pending migrations (prod / CI)
+npm run db:migrate:status      # Show migration status
+npm run db:seed                # Apply new/changed seed units
+npm run db:reset               # Drop, re-migrate, re-seed from scratch
 npm run db:studio              # Open Prisma Studio
 
 # Testing
@@ -191,7 +195,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | Architecture            | `.context/architecture/`                             | System design, deployment                           |
 | Authentication          | `.context/auth/`                                     | better-auth, sessions, guards                       |
 | API                     | `.context/api/`                                      | Endpoints, responses, client                        |
-| Database                | `.context/database/`                                 | Prisma schema, migrations                           |
+| Database                | `.context/database/`                                 | Prisma schema, migrations, seeding                  |
 | Security                | `.context/security/`                                 | Rate limiting, headers, CORS                        |
 | Logging                 | `.context/logging/`                                  | Structured logging, request ctx                     |
 | Testing                 | `.context/testing/`                                  | Patterns, mocking, async                            |

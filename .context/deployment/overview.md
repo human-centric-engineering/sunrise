@@ -51,30 +51,31 @@ Internet → HTTPS → [Reverse Proxy] → Next.js Container → PostgreSQL
 
 ## Migration Strategy
 
-Migrations run **at deployment time**, not during Docker build:
+Single production command: `prisma migrate deploy` (exposed as `npm run db:migrate:deploy`). It runs **before traffic shifts**, never during Docker build (no DB exists) and never concurrent with app startup (replica race).
 
-```bash
-# After container starts
-docker compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
-```
+| Platform             | How migrations run                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| Docker (self-hosted) | `migrator` compose service runs once; `web` waits via `service_completed_successfully`     |
+| Vercel               | Build command: `npm run build && npm run db:migrate:deploy`                                |
+| Render / Railway     | Platform **Pre-Deploy Command**: `npm run db:migrate:deploy`                               |
+| CI                   | `.github/workflows/ci.yml` runs `db:migrate:deploy` + `db:seed` against a Postgres service |
 
-**Why?** Database doesn't exist during build. Migration files are included in the image; execution happens when you deploy.
-
-See [Architecture Decisions](../architecture/decisions.md#database-migrations-at-deploy-time) for rationale.
+The runtime image ships the Prisma CLI and `prisma/migrations/` so `prisma migrate deploy` works anywhere the image runs. Authoring discipline lives in [`database/migrations.md`](../database/migrations.md) — always write backward-compatible migrations so a deploy that fails partway leaves the old code compatible with the new schema.
 
 ## CI/CD Integration
 
-**GitHub Actions example:**
+For self-hosted Docker deploys, the compose file handles migrations automatically:
 
 ```yaml
 - name: Deploy
   run: |
     docker compose -f docker-compose.prod.yml up -d --build
-    docker compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy
-    docker compose -f docker-compose.prod.yml exec -T web curl -f http://localhost:3000/api/health
+    # migrator service runs `prisma migrate deploy` and exits before web starts
+    docker compose -f docker-compose.prod.yml exec -T web \
+      curl -f http://localhost:3000/api/health
 ```
 
-Use `-T` flag for non-interactive CI environments.
+For Vercel / Render / Railway, migrations run via the platform's build or pre-deploy hook — see each platform guide.
 
 ## Health Checks
 
