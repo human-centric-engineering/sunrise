@@ -6,6 +6,15 @@ const nextConfig = {
   // Strict mode for React
   reactStrictMode: true,
 
+  // Disable the client-side Router Cache for dynamic pages. Without this,
+  // Next.js caches RSC payloads on the client during navigation, causing
+  // stale data (e.g. empty tables) when navigating back to list pages.
+  experimental: {
+    staleTimes: {
+      dynamic: 0,
+    },
+  },
+
   // Prevent Next.js from bundling Prisma's WASM query compiler.
   // Without this, Turbopack/webpack breaks the WASM module loading.
   serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg'],

@@ -104,6 +104,13 @@ export function EvaluationsTable({
   const [listError, setListError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Sync local state when server-rendered props change (e.g. navigating
+  // back to this page delivers fresh data from the server component).
+  useEffect(() => {
+    setEvaluations(initialEvaluations);
+    setMeta(initialMeta);
+  }, [initialEvaluations, initialMeta]);
+
   useEffect(() => {
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
