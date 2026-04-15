@@ -15,7 +15,7 @@ How the seed runner works and how to author new seed units.
 ### 1. Clean install
 
 ```bash
-npm run db:migrate     # Migrations to head
+npm run db:migrate:deploy  # Migrations to head
 npm run db:seed        # All 7 units apply, SeedHistory records each
 ```
 

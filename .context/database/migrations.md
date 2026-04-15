@@ -558,7 +558,7 @@ Some features require PostgreSQL extensions to be installed on the server before
 SELECT * FROM pg_available_extensions WHERE name = 'vector';
 ```
 
-If the migration fails with `extension "vector" is not available`, install pgvector on the server and re-run `npm run db:migrate`.
+If the migration fails with `extension "vector" is not available`, install pgvector on the server and re-run `npm run db:migrate:deploy`.
 
 ## Related Documentation
 
