@@ -78,7 +78,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: LinkIcon,
     inputs: 1,
     outputs: 1,
-    patternNumber: 2,
+    patternNumber: 1,
     defaultConfig: { steps: [] },
   },
   {
@@ -89,7 +89,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitBranch,
     inputs: 1,
     outputs: 2,
-    patternNumber: 3,
+    patternNumber: 2,
     defaultConfig: { classificationPrompt: '', routes: [] },
   },
   {
@@ -100,7 +100,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitFork,
     inputs: 1,
     outputs: 3,
-    patternNumber: 4,
+    patternNumber: 3,
     defaultConfig: { branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' },
   },
   {
@@ -111,7 +111,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: MessageSquareCode,
     inputs: 1,
     outputs: 1,
-    patternNumber: 5,
+    patternNumber: 4,
     defaultConfig: { critiquePrompt: '', maxIterations: 3 },
   },
   {
@@ -122,7 +122,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Wrench,
     inputs: 1,
     outputs: 1,
-    patternNumber: 6,
+    patternNumber: 5,
     defaultConfig: { capabilitySlug: '' },
   },
   {
@@ -133,7 +133,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: BrainCircuit,
     inputs: 1,
     outputs: 1,
-    patternNumber: 7,
+    patternNumber: 6,
     defaultConfig: { objective: '', maxSubSteps: 5 },
   },
   {
@@ -144,7 +144,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: UserCheck,
     inputs: 1,
     outputs: 1,
-    patternNumber: 8,
+    patternNumber: 13,
     defaultConfig: { prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' },
   },
   {
@@ -155,7 +155,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Search,
     inputs: 1,
     outputs: 1,
-    patternNumber: 9,
+    patternNumber: 14,
     defaultConfig: { query: '', topK: 5, similarityThreshold: 0.7 },
   },
   {

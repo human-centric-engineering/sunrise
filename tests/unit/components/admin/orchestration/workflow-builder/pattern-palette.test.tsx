@@ -142,6 +142,34 @@ describe('PatternPalette', () => {
         expect(button?.textContent).toMatch(/learn more/i);
       }
     });
+
+    it('each step type maps to the correct design pattern number', () => {
+      // Canonical mapping: step type → knowledge base pattern number.
+      // If this test fails, someone changed a patternNumber in the
+      // registry without verifying it still points to the right pattern.
+      const expectedMapping: Record<string, number> = {
+        llm_call: 1, // Prompt Chaining
+        chain: 1, // Prompt Chaining
+        route: 2, // Routing
+        parallel: 3, // Parallelisation
+        reflect: 4, // Reflection
+        tool_call: 5, // Tool Use
+        plan: 6, // Planning
+        human_approval: 13, // Human-in-the-Loop
+        rag_retrieve: 14, // Knowledge Retrieval (RAG)
+        guard: 18, // Guardrails & Safety
+        evaluate: 19, // Evaluation & Monitoring
+        external_call: 15, // Inter-Agent Communication (A2A)
+      };
+
+      for (const entry of STEP_REGISTRY) {
+        if (entry.patternNumber === undefined) continue;
+        expect(
+          entry.patternNumber,
+          `${entry.type} should link to pattern ${expectedMapping[entry.type]}`
+        ).toBe(expectedMapping[entry.type]);
+      }
+    });
   });
 
   describe('Info button and PatternCoverageDialog', () => {
