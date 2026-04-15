@@ -72,7 +72,7 @@ describe('ImportAgentsDialog', () => {
     render(<ImportAgentsDialog open={true} onOpenChange={vi.fn()} onImported={vi.fn()} />);
 
     // Act: upload a JSON file
-    const fileInput = screen.getByLabelText(/bundle file/i);
+    const fileInput = document.getElementById('import-agents-file')!;
     const file = makeJsonFile([{ name: 'Test Agent', slug: 'test-agent' }]);
     await user.upload(fileInput, file);
 
@@ -104,7 +104,7 @@ describe('ImportAgentsDialog', () => {
     render(<ImportAgentsDialog open={true} onOpenChange={vi.fn()} onImported={onImported} />);
 
     // Act: upload file and switch to overwrite
-    const fileInput = screen.getByLabelText(/bundle file/i);
+    const fileInput = document.getElementById('import-agents-file')!;
     const file = makeJsonFile([{ name: 'Agent', slug: 'agent' }]);
     await user.upload(fileInput, file);
 
@@ -136,7 +136,7 @@ describe('ImportAgentsDialog', () => {
     render(<ImportAgentsDialog open={true} onOpenChange={vi.fn()} onImported={onImported} />);
 
     // Act: upload file and submit with default (skip)
-    const fileInput = screen.getByLabelText(/bundle file/i);
+    const fileInput = document.getElementById('import-agents-file')!;
     await user.upload(fileInput, makeJsonFile([{ name: 'Agent', slug: 'agent' }]));
     await user.click(screen.getByRole('button', { name: /^import$/i }));
 
@@ -168,7 +168,7 @@ describe('ImportAgentsDialog', () => {
 
     // Act
     await user.upload(
-      screen.getByLabelText(/bundle file/i),
+      document.getElementById('import-agents-file')!,
       makeJsonFile([{ name: 'Agent', slug: 'agent' }])
     );
     await user.click(screen.getByRole('button', { name: /^import$/i }));
@@ -204,7 +204,7 @@ describe('ImportAgentsDialog', () => {
     const invalidFile = new File(['not valid json {{{{'], 'bad.json', {
       type: 'application/json',
     });
-    await user.upload(screen.getByLabelText(/bundle file/i), invalidFile);
+    await user.upload(document.getElementById('import-agents-file')!, invalidFile);
     await user.click(screen.getByRole('button', { name: /^import$/i }));
 
     // Assert: client-side error shown

@@ -52,7 +52,7 @@ describe('SetupWizard', () => {
       expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/What are you building\?/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /skip.*continue/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to provider setup/i })).toBeInTheDocument();
   });
 
   it('Step 1 "Skip & continue" advances to step 2 and persists progress', async () => {
@@ -63,7 +63,7 @@ describe('SetupWizard', () => {
 
     await waitFor(() => expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: /skip.*continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue to provider setup/i }));
 
     await waitFor(() => expect(screen.getByText(/Step 2 of 5/i)).toBeInTheDocument());
 
