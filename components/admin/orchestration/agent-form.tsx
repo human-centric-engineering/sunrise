@@ -82,7 +82,7 @@ export interface ModelOption {
 export interface AgentFormProps {
   mode: 'create' | 'edit';
   agent?: AiAgent;
-  providers: AiProviderConfig[] | null;
+  providers: (AiProviderConfig & { apiKeyPresent?: boolean })[] | null;
   models: ModelOption[] | null;
 }
 
@@ -357,7 +357,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                     <SelectItem key={p.id} value={p.slug}>
                       <span className="flex items-center gap-2">
                         {p.name}
-                        {p.apiKeyEnvVar ? (
+                        {p.apiKeyPresent ? (
                           <span className="text-xs text-green-600">● key set</span>
                         ) : (
                           <span className="text-xs text-red-600">● no key</span>

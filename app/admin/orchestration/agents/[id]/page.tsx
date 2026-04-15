@@ -6,6 +6,7 @@ import { AgentForm, type ModelOption } from '@/components/admin/orchestration/ag
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getAvailableModels } from '@/lib/orchestration/llm/model-registry';
+import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 
 export const metadata: Metadata = {
   title: 'Edit agent · AI Orchestration',
@@ -27,7 +28,11 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   try {
     [agent, providers, models] = await Promise.all([
       prisma.aiAgent.findUnique({ where: { id } }),
-      prisma.aiProviderConfig.findMany({ orderBy: { createdAt: 'desc' } }),
+      prisma.aiProviderConfig
+        .findMany({ orderBy: { createdAt: 'desc' } })
+        .then((rows) =>
+          rows.map((r) => ({ ...r, apiKeyPresent: isApiKeyEnvVarSet(r.apiKeyEnvVar) }))
+        ),
       Promise.resolve(getAvailableModels()),
     ]);
   } catch (err) {
