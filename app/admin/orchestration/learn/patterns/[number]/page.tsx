@@ -3,27 +3,17 @@ import Link from 'next/link';
 
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { logger } from '@/lib/logging';
-import type { AiKnowledgeChunk } from '@/types/orchestration';
-
-interface PatternDetail {
-  patternName: string | null;
-  chunks: AiKnowledgeChunk[];
-  totalTokens: number;
-}
 
 interface PageProps {
   params: Promise<{ number: string }>;
 }
 
-async function getPatternDetail(num: number): Promise<PatternDetail | null> {
+async function fetchPatternDetail(num: number) {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<PatternDetail>(res);
-    return body.success ? body.data : null;
+    const detail = await getPatternDetail(num);
+    return detail.chunks.length > 0 ? detail : null;
   } catch (err) {
     logger.error('pattern detail page: fetch failed', err);
     return null;
@@ -35,7 +25,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const num = parseInt(rawNum, 10);
   if (isNaN(num)) return { title: 'Pattern Not Found · AI Orchestration' };
 
-  const detail = await getPatternDetail(num);
+  const detail = await fetchPatternDetail(num);
   return {
     title: detail?.patternName
       ? `${detail.patternName} · Learning · AI Orchestration`
@@ -73,7 +63,7 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
-  const detail = await getPatternDetail(num);
+  const detail = await fetchPatternDetail(num);
 
   if (!detail || detail.chunks.length === 0) {
     return (

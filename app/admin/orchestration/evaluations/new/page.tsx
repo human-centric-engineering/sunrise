@@ -2,8 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { EvaluationForm } from '@/components/admin/orchestration/evaluation-form';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
@@ -16,20 +15,18 @@ interface AgentOption {
   name: string;
 }
 
-async function getAgents(): Promise<AgentOption[]> {
+export default async function NewEvaluationPage() {
+  let agents: AgentOption[];
   try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentOption[]>(res);
-    return body.success ? body.data : [];
+    agents = await prisma.aiAgent.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 100,
+    });
   } catch (err) {
     logger.error('new evaluation page: agent fetch failed', err);
-    return [];
+    agents = [];
   }
-}
-
-export default async function NewEvaluationPage() {
-  const agents = await getAgents();
 
   return (
     <div className="space-y-6">

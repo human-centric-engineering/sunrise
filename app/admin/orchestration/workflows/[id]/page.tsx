@@ -2,10 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { AiWorkflow } from '@/types/prisma';
 
 export const metadata: Metadata = {
   title: 'Edit workflow · AI Orchestration',
@@ -20,21 +18,17 @@ export const metadata: Metadata = {
  * `workflowDefinition` JSON and lays the DAG out via the pure-TS
  * `workflowDefinitionToFlow` mapper.
  */
-async function getWorkflow(id: string): Promise<AiWorkflow | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<AiWorkflow>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('edit workflow page: fetch failed', err, { id });
-    return null;
-  }
-}
-
 export default async function EditWorkflowPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const workflow = await getWorkflow(id);
+
+  let workflow;
+  try {
+    workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  } catch (err) {
+    logger.error('edit workflow page: fetch failed', err, { id });
+    workflow = null;
+  }
+
   if (!workflow) notFound();
 
   return <WorkflowBuilder mode="edit" workflow={workflow} />;

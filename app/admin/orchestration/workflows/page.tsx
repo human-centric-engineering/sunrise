@@ -3,9 +3,7 @@ import Link from 'next/link';
 
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
 import { FieldHelp } from '@/components/ui/field-help';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { parsePaginationMeta } from '@/lib/validations/common';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { AiWorkflow } from '@/types/prisma';
 import type { PaginationMeta } from '@/types/api';
@@ -22,32 +20,21 @@ const EMPTY_META: PaginationMeta = {
   totalPages: 1,
 };
 
-/**
- * Admin — Workflows list page (Phase 5 Session 5.1a).
- *
- * Server shell that pre-renders the first page of workflows via
- * `serverFetch` and hands the result to `<WorkflowsTable>` for
- * client-side search / sort / pagination / mutations. Fetch failures
- * never throw — the table renders an empty-state banner.
- */
-async function getWorkflows(): Promise<{ workflows: AiWorkflow[]; meta: PaginationMeta }> {
+export default async function WorkflowsListPage() {
+  let workflows: AiWorkflow[];
+  let meta: PaginationMeta;
   try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`);
-    if (!res.ok) return { workflows: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiWorkflow[]>(res);
-    if (!body.success) return { workflows: [], meta: EMPTY_META };
-    return {
-      workflows: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
+    const [rows, total] = await Promise.all([
+      prisma.aiWorkflow.findMany({ orderBy: { createdAt: 'desc' }, take: 25 }),
+      prisma.aiWorkflow.count(),
+    ]);
+    workflows = rows;
+    meta = { page: 1, limit: 25, total, totalPages: Math.ceil(total / 25) || 1 };
   } catch (err) {
     logger.error('workflows list page: initial fetch failed', err);
-    return { workflows: [], meta: EMPTY_META };
+    workflows = [];
+    meta = EMPTY_META;
   }
-}
-
-export default async function WorkflowsListPage() {
-  const { workflows, meta } = await getWorkflows();
 
   return (
     <div className="space-y-6">

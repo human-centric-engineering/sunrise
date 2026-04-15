@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
-import { API } from '@/lib/api/endpoints';
 import { LogsViewer } from '@/components/admin/logs-viewer';
-import type { LogEntry } from '@/types/admin';
+import { getLogEntries } from '@/lib/admin/logs';
 import type { PaginationMeta } from '@/types/api';
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -13,55 +11,18 @@ export const metadata: Metadata = {
 };
 
 /**
- * Fetch logs from API
- */
-async function getLogs(): Promise<{
-  logs: LogEntry[];
-  meta: PaginationMeta;
-}> {
-  try {
-    const res = await serverFetch(API.ADMIN.LOGS + `?limit=${DEFAULT_PAGE_LIMIT}`);
-
-    if (!res.ok) {
-      return {
-        logs: [],
-        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-      };
-    }
-
-    const data = await parseApiResponse<LogEntry[]>(res);
-
-    if (!data.success) {
-      return {
-        logs: [],
-        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-      };
-    }
-
-    return {
-      logs: data.data,
-      meta: (data.meta as PaginationMeta) || {
-        page: 1,
-        limit: DEFAULT_PAGE_LIMIT,
-        total: data.data.length,
-        totalPages: 1,
-      },
-    };
-  } catch {
-    return {
-      logs: [],
-      meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-    };
-  }
-}
-
-/**
  * Admin Logs Page (Phase 4.4)
  *
  * Application logs viewer with filtering and search.
  */
-export default async function AdminLogsPage() {
-  const { logs, meta } = await getLogs();
+export default function AdminLogsPage() {
+  const { entries: logs, total } = getLogEntries({ limit: DEFAULT_PAGE_LIMIT });
+  const meta: PaginationMeta = {
+    page: 1,
+    limit: DEFAULT_PAGE_LIMIT,
+    total,
+    totalPages: Math.ceil(total / DEFAULT_PAGE_LIMIT),
+  };
 
   return (
     <div className="space-y-6">

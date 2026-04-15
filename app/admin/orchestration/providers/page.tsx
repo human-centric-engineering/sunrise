@@ -3,8 +3,8 @@ import Link from 'next/link';
 
 import { ProvidersList, type ProviderRow } from '@/components/admin/orchestration/providers-list';
 import { FieldHelp } from '@/components/ui/field-help';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { prisma } from '@/lib/db/client';
+import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
@@ -12,28 +12,18 @@ export const metadata: Metadata = {
   description: 'LLM provider configurations — status, keys, and model catalogues.',
 };
 
-/**
- * Admin — Providers list page (Phase 4 Session 4.3).
- *
- * Thin async server shell. Fetches the provider list (every row
- * hydrated with `apiKeyPresent: boolean` on the backend) and hands
- * it to `<ProvidersList>`. Fetch failures never throw — the list
- * renders empty so the page remains usable.
- */
-async function getProviders(): Promise<ProviderRow[]> {
+export default async function ProvidersListPage() {
+  let providers: ProviderRow[];
   try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<ProviderRow[]>(res);
-    return body.success ? body.data : [];
+    const rows = await prisma.aiProviderConfig.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    providers = rows.map((r) => ({ ...r, apiKeyPresent: isApiKeyEnvVarSet(r.apiKeyEnvVar) }));
   } catch (err) {
     logger.error('providers list page: initial fetch failed', err);
-    return [];
+    providers = [];
   }
-}
-
-export default async function ProvidersListPage() {
-  const providers = await getProviders();
 
   return (
     <div className="space-y-6">

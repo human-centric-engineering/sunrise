@@ -3,8 +3,7 @@ import Link from 'next/link';
 
 import { LearningTabs } from '@/components/admin/orchestration/learn/learning-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { listPatterns } from '@/lib/orchestration/knowledge/search';
 import { logger } from '@/lib/logging';
 import type { PatternSummary } from '@/types/orchestration';
 
@@ -13,20 +12,14 @@ export const metadata: Metadata = {
   description: 'Explore agentic design patterns and test your knowledge.',
 };
 
-async function getPatterns(): Promise<PatternSummary[]> {
+export default async function LearnPage() {
+  let patterns: PatternSummary[];
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<PatternSummary[]>(res);
-    return body.success ? body.data : [];
+    patterns = await listPatterns();
   } catch (err) {
     logger.error('learn page: pattern fetch failed', err);
-    return [];
+    patterns = [];
   }
-}
-
-export default async function LearnPage() {
-  const patterns = await getPatterns();
 
   return (
     <div className="space-y-6">

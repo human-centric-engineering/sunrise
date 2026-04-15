@@ -3,8 +3,7 @@ import Link from 'next/link';
 
 import { KnowledgeView } from '@/components/admin/orchestration/knowledge/knowledge-view';
 import { FieldHelp } from '@/components/ui/field-help';
-import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
@@ -13,20 +12,18 @@ export const metadata: Metadata = {
   description: 'Manage documents, seed patterns, and test knowledge base search.',
 };
 
-async function getDocuments(): Promise<AiKnowledgeDocument[]> {
+export default async function KnowledgeBasePage() {
+  let documents: AiKnowledgeDocument[];
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AiKnowledgeDocument[]>(res);
-    return body.success ? body.data : [];
+    documents = await prisma.aiKnowledgeDocument.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { _count: { select: { chunks: true } } },
+    });
   } catch (err) {
     logger.error('knowledge page: document fetch failed', err);
-    return [];
+    documents = [];
   }
-}
-
-export default async function KnowledgeBasePage() {
-  const documents = await getDocuments();
 
   return (
     <div className="space-y-6">

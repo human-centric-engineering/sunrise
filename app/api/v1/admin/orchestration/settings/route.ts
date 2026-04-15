@@ -23,51 +23,13 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
+import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
 import {
-  storedDefaultModelsSchema,
-  updateOrchestrationSettingsSchema,
-} from '@/lib/validations/orchestration';
-import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
-
-/**
- * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.defaultModels`
- * into a `Record<string, string>` via Zod. Anything that isn't a plain object of
- * string values collapses to `{}` so callers can safely spread / lookup keys.
- */
-function parseStoredDefaults(raw: Prisma.JsonValue | null | undefined): Record<string, string> {
-  const parsed = storedDefaultModelsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : {};
-}
-
-/**
- * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
- * filling in any task keys the stored JSON is missing from the registry
- * defaults.
- */
-function hydrate(row: {
-  id: string;
-  slug: string;
-  defaultModels: Prisma.JsonValue;
-  globalMonthlyBudgetUsd: number | null;
-  createdAt: Date;
-  updatedAt: Date;
-}): OrchestrationSettings {
-  const computed = computeDefaultModelMap();
-  const stored = parseStoredDefaults(row.defaultModels);
-  const merged: Record<TaskType, string> = { ...computed };
-  for (const key of TASK_TYPES) {
-    const val = stored[key];
-    if (typeof val === 'string' && val.length > 0) merged[key] = val;
-  }
-  return {
-    id: row.id,
-    slug: 'global',
-    defaultModels: merged,
-    globalMonthlyBudgetUsd: row.globalMonthlyBudgetUsd,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
+  getOrchestrationSettings,
+  hydrateSettings,
+  parseStoredDefaults,
+} from '@/lib/orchestration/settings';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 export const GET = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
@@ -75,20 +37,11 @@ export const GET = withAdminAuth(async (request) => {
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   const log = await getRouteLogger(request);
-  const defaults = computeDefaultModelMap();
-  const row = await prisma.aiOrchestrationSettings.upsert({
-    where: { slug: 'global' },
-    create: {
-      slug: 'global',
-      defaultModels: defaults as unknown as Prisma.InputJsonValue,
-      globalMonthlyBudgetUsd: null,
-    },
-    update: {},
-  });
+  const settings = await getOrchestrationSettings();
   log.info('Orchestration settings fetched', {
-    hasGlobalCap: row.globalMonthlyBudgetUsd !== null,
+    hasGlobalCap: settings.globalMonthlyBudgetUsd !== null,
   });
-  return successResponse(hydrate(row));
+  return successResponse(settings);
 });
 
 export const PATCH = withAdminAuth(async (request, session) => {
@@ -147,5 +100,5 @@ export const PATCH = withAdminAuth(async (request, session) => {
     globalCapSet: row.globalMonthlyBudgetUsd !== null,
   });
 
-  return successResponse(hydrate(row));
+  return successResponse(hydrateSettings(row));
 });

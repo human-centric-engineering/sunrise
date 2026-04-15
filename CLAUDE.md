@@ -39,6 +39,7 @@ Instructions for Claude Code when working in this repository.
 
 - **API-first** — implement API endpoints before UI; every capability must be API-accessible
 - **Server components by default** — add `'use client'` only when needed
+- **Server components query directly** — never call your own API routes via `serverFetch()` from server components. Use Prisma or shared helper functions directly. API routes exist for client-side code only. See `.context/architecture/data-fetching.md`
 - **Contextual help on form fields** — every non-trivial form field gets a `<FieldHelp>` ⓘ popover; see `.context/ui/contextual-help.md`
 
 ## MCP Integration
@@ -126,7 +127,7 @@ import { logger } from '../../lib/logging'; // ❌
 | Rate limiting | `authLimiter`, `apiLimiter`, etc.      | `lib/security/rate-limit.ts`     |
 | Client IP     | `getClientIP()`                        | `lib/security/ip.ts`             |
 | Sanitization  | `escapeHtml()`, `sanitizeUrl()`        | `lib/security/sanitize.ts`       |
-| Server fetch  | `serverFetch()`                        | `lib/api/server-fetch.ts`        |
+| Server fetch  | `serverFetch()` _(client/API only)_    | `lib/api/server-fetch.ts`        |
 | Logging       | `logger.info()`, `logger.error()`      | `lib/logging/index.ts`           |
 | Local storage | `useLocalStorage()`                    | `lib/hooks/use-local-storage.ts` |
 | Wizard state  | `useWizard()`                          | `lib/hooks/use-wizard.ts`        |
@@ -192,7 +193,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 
 | Domain                  | Path                                                 | Key Content                                         |
 | ----------------------- | ---------------------------------------------------- | --------------------------------------------------- |
-| Architecture            | `.context/architecture/`                             | System design, deployment                           |
+| Architecture            | `.context/architecture/`                             | System design, deployment, data fetching            |
 | Authentication          | `.context/auth/`                                     | better-auth, sessions, guards                       |
 | API                     | `.context/api/`                                      | Endpoints, responses, client                        |
 | Database                | `.context/database/`                                 | Prisma schema, migrations, seeding                  |
