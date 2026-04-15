@@ -27,6 +27,8 @@ npm run db:reset       # Drops, re-migrates, re-seeds (via prisma migrate reset 
 
 Never wipes data silently on a regular `db:seed`. The destructive path is explicit and opt-in.
 
+> **CI runs this too.** `.github/workflows/ci.yml` boots a pgvector Postgres service and runs `db:migrate:deploy` + `db:seed` on every PR, so a broken seed unit fails CI rather than landing on `main`.
+
 ### 3. Incremental additive seeding (team flow)
 
 ```bash

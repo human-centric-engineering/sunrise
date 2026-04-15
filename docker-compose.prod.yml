@@ -30,6 +30,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     networks:
       - sunrise-network
     healthcheck:
@@ -44,6 +46,31 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # Run-once migration service.
+  # Applies pending Prisma migrations against `db` and exits. `web` waits
+  # for this to complete successfully before starting, so the app never
+  # serves traffic against a stale schema. Builds the same image as `web`
+  # — the Dockerfile ships the Prisma CLI + migration files in the runner.
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=${DATABASE_URL}
+        - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+        - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+    container_name: sunrise-migrator
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sunrise-network
+    restart: 'no'
 
   # PostgreSQL database
   db:
@@ -115,17 +142,14 @@ networks:
 # 2. Build and start all services:
 #    docker-compose -f docker-compose.prod.yml up -d --build
 #
-# 3. IMPORTANT: Run database migrations (creates tables):
-#    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+#    The `migrator` service runs automatically before `web` starts, applying
+#    any pending Prisma migrations via `prisma migrate deploy`. No manual
+#    migration step is required — `web` will not start if migrations fail.
 #
-#    Note: This step is REQUIRED on first deployment and whenever the schema changes.
-#    The migration files are included in the Docker image but need to be executed
-#    against the running database. This is the standard production pattern.
-#
-# 4. (Optional) Seed the database with test data:
+# 3. (Optional) Seed the database with test data:
 #    docker-compose -f docker-compose.prod.yml exec web npm run db:seed
 #
-# 5. Verify deployment:
+# 4. Verify deployment:
 #    curl http://localhost:3000/api/health
 #    # Should return: {"status":"ok","database":{"connected":true}}
 #
@@ -141,8 +165,12 @@ networks:
 # Restart a service:
 #    docker-compose -f docker-compose.prod.yml restart web
 #
-# Run new migrations (after schema changes):
-#    docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+# Apply new migrations (after pulling code with new schema changes):
+#    docker-compose -f docker-compose.prod.yml up -d --build
+#    # The `migrator` service re-runs automatically on each `up --build`.
+#
+# Check migration status without applying:
+#    docker-compose -f docker-compose.prod.yml run --rm migrator npx prisma migrate status
 #
 # Stop all services:
 #    docker-compose -f docker-compose.prod.yml down
@@ -155,7 +183,7 @@ networks:
 # For automated deployments, include these steps in your deployment script:
 #
 #   docker-compose -f docker-compose.prod.yml up -d --build
-#   docker-compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy
+#   # Migrations apply automatically via the `migrator` service before `web` starts.
 #   docker-compose -f docker-compose.prod.yml exec -T web curl -f http://localhost:3000/api/health
 #
 # The -T flag is needed for non-interactive environments (CI/CD pipelines)

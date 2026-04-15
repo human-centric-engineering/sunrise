@@ -60,21 +60,17 @@ STORAGE_PROVIDER=s3  # Options: s3, vercel-blob, local
 
 ### 4. Run Database Migrations
 
-Option A: Via Railway CLI
+In Railway dashboard > Service > Settings > Deploy > **Pre-Deploy Command**:
 
 ```bash
-railway run npx prisma migrate deploy
+npm run db:migrate:deploy
 ```
 
-Option B: Add to Dockerfile (recommended)
+Railway runs this against the built image before routing traffic, so schema changes land before dependent code. The runtime image bundles the Prisma CLI + `prisma/migrations/`, so no extra setup is needed. Leave the Start Command at the Dockerfile default (`node server.js`).
 
-The production Dockerfile already includes migrations directory. Add a deploy command:
+Write backward-compatible migrations (see [database/migrations.md](../../database/migrations.md)) so a deploy failure between migration and promotion is safe.
 
-```bash
-# In Railway dashboard > Service > Settings > Deploy
-# Set Start Command to:
-npx prisma migrate deploy && node server.js
-```
+Ad-hoc from a workstation: `railway run npm run db:migrate:deploy`.
 
 ### 5. Generate Domain
 

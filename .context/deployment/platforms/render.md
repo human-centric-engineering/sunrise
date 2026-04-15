@@ -82,18 +82,15 @@ Render checks for HTTP 200 OK response. The app returns 503 if the database is d
 
 ### 5. Run Database Migrations
 
-Option A: Add to build command
-
-In Web Service > Settings > Build Command:
+In Web Service > Settings > **Pre-Deploy Command**:
 
 ```bash
-npm run build && npx prisma migrate deploy
+npm run db:migrate:deploy
 ```
 
-Option B: Via Render Shell
+Render runs this against the built image before switching traffic, so schema changes land before code that depends on them. The runtime image bundles the Prisma CLI + `prisma/migrations/`, so no extra setup is needed.
 
-1. Go to Web Service > Shell
-2. Run: `npx prisma migrate deploy`
+Write backward-compatible migrations (see [database/migrations.md](../../database/migrations.md)) so a failed deploy between migration and promotion is safe.
 
 ### 6. Deploy
 
