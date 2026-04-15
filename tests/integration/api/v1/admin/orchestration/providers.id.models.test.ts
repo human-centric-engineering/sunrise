@@ -41,13 +41,14 @@ const mockListModels = vi.fn();
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(() => Promise.resolve({ listModels: mockListModels })),
+  isApiKeyEnvVarSet: vi.fn(() => true),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -94,6 +95,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: API key is present. Individual tests override when needed.
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
   });
 
   describe('Authentication & Authorization', () => {
@@ -132,6 +135,23 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
 
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe('API key missing', () => {
+    it('returns 422 when the provider API key env var is not set', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProviderRow() as never);
+      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(response.status).toBe(422);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('API_KEY_MISSING');
+      // Should NOT attempt the live API call
+      expect(mockListModels).not.toHaveBeenCalled();
     });
   });
 
