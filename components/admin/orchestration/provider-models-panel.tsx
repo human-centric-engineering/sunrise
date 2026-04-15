@@ -49,15 +49,18 @@ export interface ProviderModelsPanelProps {
   providerId: string;
   providerName: string;
   isLocal: boolean;
+  /** Whether the provider's API key env var is set. When false, skips the live fetch. */
+  apiKeyPresent?: boolean;
 }
 
 export function ProviderModelsPanel({
   providerId,
   providerName,
   isLocal,
+  apiKeyPresent = true,
 }: ProviderModelsPanelProps) {
   const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(apiKeyPresent);
   const [error, setError] = useState<string | null>(null);
 
   const fetchModels = useCallback(async () => {
@@ -77,8 +80,9 @@ export function ProviderModelsPanel({
   }, [providerId]);
 
   useEffect(() => {
+    if (!apiKeyPresent) return;
     void fetchModels();
-  }, [fetchModels]);
+  }, [fetchModels, apiKeyPresent]);
 
   return (
     <div className="space-y-3">
@@ -89,21 +93,30 @@ export function ProviderModelsPanel({
             {isLocal ? 'Local provider — pricing not applicable.' : 'Live model catalogue.'}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void fetchModels()}
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          Refresh models
-        </Button>
+        {apiKeyPresent && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchModels()}
+            disabled={loading}
+          >
+            {loading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            Refresh models
+          </Button>
+        )}
       </div>
+
+      {!apiKeyPresent && (
+        <div className="text-muted-foreground py-6 text-center text-sm">
+          No API key configured for this provider. Set the environment variable and restart to fetch
+          the live model catalogue.
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
