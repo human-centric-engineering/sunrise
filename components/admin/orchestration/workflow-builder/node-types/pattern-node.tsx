@@ -30,7 +30,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
     <div
       data-testid={`pattern-node-${data.type}`}
       className={cn(
-        'flex min-w-[180px] items-center gap-3 rounded-lg border-2 px-3 py-2 shadow-sm transition-shadow',
+        'flex max-w-[160px] min-w-[140px] flex-col items-center gap-2 rounded-lg border-2 px-3 py-3 shadow-sm transition-shadow',
         colours.bg,
         colours.border,
         colours.text,
@@ -57,8 +57,8 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
         <Icon className="h-4 w-4" />
       </div>
 
-      <div className="flex-1">
-        <div className="text-sm font-semibold">{data.label}</div>
+      <div className="text-center">
+        <div className="text-sm leading-tight font-semibold">{data.label}</div>
         <div className="text-muted-foreground font-mono text-[10px] uppercase">{data.type}</div>
       </div>
 

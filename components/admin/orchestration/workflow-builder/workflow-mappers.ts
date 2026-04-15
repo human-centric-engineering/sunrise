@@ -35,8 +35,10 @@ export type PatternNode = Node<PatternNodeData, 'pattern'>;
 
 const NODE_TYPE = 'pattern' as const;
 const LAYOUT_KEY = '_layout';
-const AUTO_LAYOUT_X_STEP = 260;
-const AUTO_LAYOUT_Y_STEP = 140;
+const AUTO_LAYOUT_X_STEP = 220;
+const AUTO_LAYOUT_Y_STEP = 150;
+/** Alternate vertical offset per level to create a zigzag effect. */
+const AUTO_LAYOUT_Y_STAGGER = 40;
 
 interface StoredLayout {
   x: number;
@@ -111,13 +113,15 @@ function autoLayout(definition: WorkflowDefinition): Map<string, XYPosition> {
   }
 
   // Stack vertically within each level using first-seen order.
+  // Odd levels are offset vertically to create a zigzag/staggered effect.
   const indexInLevel = new Map<number, number>();
   for (const step of definition.steps) {
     const level = levels.get(step.id) ?? orphanLevel;
     const idx = indexInLevel.get(level) ?? 0;
+    const stagger = level % 2 === 1 ? AUTO_LAYOUT_Y_STAGGER : 0;
     positions.set(step.id, {
       x: level * AUTO_LAYOUT_X_STEP,
-      y: idx * AUTO_LAYOUT_Y_STEP,
+      y: idx * AUTO_LAYOUT_Y_STEP + stagger,
     });
     indexInLevel.set(level, idx + 1);
   }
