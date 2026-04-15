@@ -74,6 +74,22 @@ export function TemplateDescriptionDialog({
             </div>
           </div>
 
+          {template.useCases.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                Use cases
+              </p>
+              <ul className="space-y-1.5 text-sm">
+                {template.useCases.map((uc) => (
+                  <li key={uc.title}>
+                    <span className="font-medium">{uc.title}</span>
+                    <span className="text-muted-foreground"> — {uc.scenario}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
               Flow

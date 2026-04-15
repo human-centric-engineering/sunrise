@@ -23,6 +23,23 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
   ],
   flowSummary:
     'A Plan step breaks the brief into stages, a Parallel step fans out to a research call and an audience-analysis call at the same time, both results feed an outline generator, which hands off to a drafting call, and a Reflect step iterates draft → critique → revise until the quality bar is met.',
+  useCases: [
+    {
+      title: 'SEO blog production',
+      scenario:
+        'Plan a keyword-targeted article, research the topic and analyse search intent in parallel, outline, draft, and iterate until quality meets brand guidelines.',
+    },
+    {
+      title: 'Product launch announcements',
+      scenario:
+        'Plan the announcement structure, parallel-research competitive positioning and audience segments, draft the announcement, and reflect until messaging is crisp.',
+    },
+    {
+      title: 'Internal knowledge base articles',
+      scenario:
+        'Plan documentation structure from a feature spec, parallel-research technical details and user pain points, draft, and refine via a critique loop.',
+    },
+  ],
   workflowDefinition: {
     entryStepId: 'plan_outline',
     errorStrategy: 'retry',

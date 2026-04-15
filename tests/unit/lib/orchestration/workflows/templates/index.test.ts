@@ -32,8 +32,8 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
 ]);
 
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
-  it('exports five built-in templates', () => {
-    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(5);
+  it('exports eight built-in templates', () => {
+    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(8);
   });
 
   it('has unique slugs across all templates', () => {
@@ -97,6 +97,49 @@ describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
     '%s: at least one pattern is declared',
     (_name, template) => {
       expect(template.patterns.length).toBeGreaterThan(0);
+    }
+  );
+
+  it.each(BUILTIN_WORKFLOW_TEMPLATES.map((t) => [t.name, t] as const))(
+    '%s: has at least two use cases',
+    (_name, template) => {
+      expect(template.useCases.length).toBeGreaterThanOrEqual(2);
+    }
+  );
+
+  it.each(BUILTIN_WORKFLOW_TEMPLATES.map((t) => [t.name, t] as const))(
+    '%s: every guard step has non-empty rules',
+    (_name, template) => {
+      for (const step of template.workflowDefinition.steps) {
+        if (step.type !== 'guard') continue;
+        const rules = (step.config as { rules?: unknown }).rules;
+        expect(typeof rules).toBe('string');
+        expect((rules as string).trim().length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it.each(BUILTIN_WORKFLOW_TEMPLATES.map((t) => [t.name, t] as const))(
+    '%s: every evaluate step has non-empty rubric',
+    (_name, template) => {
+      for (const step of template.workflowDefinition.steps) {
+        if (step.type !== 'evaluate') continue;
+        const rubric = (step.config as { rubric?: unknown }).rubric;
+        expect(typeof rubric).toBe('string');
+        expect((rubric as string).trim().length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it.each(BUILTIN_WORKFLOW_TEMPLATES.map((t) => [t.name, t] as const))(
+    '%s: every external_call step has non-empty url',
+    (_name, template) => {
+      for (const step of template.workflowDefinition.steps) {
+        if (step.type !== 'external_call') continue;
+        const url = (step.config as { url?: unknown }).url;
+        expect(typeof url).toBe('string');
+        expect((url as string).trim().length).toBeGreaterThan(0);
+      }
     }
   );
 });

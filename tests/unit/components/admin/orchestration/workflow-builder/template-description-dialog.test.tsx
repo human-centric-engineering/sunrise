@@ -29,6 +29,13 @@ const SAMPLE_TEMPLATE: WorkflowTemplate = {
     { number: 14, name: 'RAG' },
   ],
   flowSummary: 'Route the request and retrieve grounding context before replying.',
+  useCases: [
+    {
+      title: 'Helpdesk triage',
+      scenario: 'Route tickets by category and retrieve resolution docs.',
+    },
+    { title: 'FAQ chatbot', scenario: 'Answer questions using the knowledge base.' },
+  ],
   workflowDefinition: {
     entryStepId: 'entry',
     errorStrategy: 'fail',

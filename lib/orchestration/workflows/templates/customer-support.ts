@@ -26,6 +26,23 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
   ],
   flowSummary:
     'An LLM classifies the inbound request, a Route step splits self-serve tickets from ones that need a human, the self-serve branch retrieves help docs and searches the knowledge base, an LLM drafts a response, and the whole pipeline pauses for human approval before anything is sent.',
+  useCases: [
+    {
+      title: 'E-commerce returns processing',
+      scenario:
+        'Classify return requests by reason (damaged, wrong item, changed mind), retrieve return policy docs, draft a response with next steps, and require human approval before sending.',
+    },
+    {
+      title: 'SaaS billing inquiries',
+      scenario:
+        'Triage billing questions vs. cancellation risks, pull account docs from the knowledge base, draft a personalised retention or resolution reply, and get team lead sign-off.',
+    },
+    {
+      title: 'Healthcare patient portal',
+      scenario:
+        'Route patient messages (appointment, prescription, clinical), retrieve relevant care guidelines, draft a compliant response, and require clinician approval before replying.',
+    },
+  ],
   workflowDefinition: {
     entryStepId: 'classify',
     errorStrategy: 'fail',

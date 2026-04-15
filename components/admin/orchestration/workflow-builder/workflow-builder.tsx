@@ -43,6 +43,7 @@ import { BuilderToolbar } from './builder-toolbar';
 import { ExecutionInputDialog } from './execution-input-dialog';
 import { ExecutionPanel } from './execution-panel';
 import { PatternPalette } from './pattern-palette';
+import { TemplateBanner } from './template-banner';
 import { TemplateDescriptionDialog } from './template-description-dialog';
 import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
 import { WorkflowCanvas } from './workflow-canvas';
@@ -384,6 +385,10 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
+
+      {workflow?.isTemplate && workflow.slug && (
+        <TemplateBanner slug={workflow.slug} isTemplate={workflow.isTemplate} />
+      )}
 
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />

@@ -26,6 +26,23 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
   ],
   flowSummary:
     'A Plan step produces a research plan, a RAG Retrieve step pulls relevant prior art from the knowledge base, a Parallel step fans out to three specialist LLM calls (history, current state, future outlook), their outputs converge at a synthesis LLM call, and a Reflect step checks the report before it is returned.',
+  useCases: [
+    {
+      title: 'Competitive intelligence reports',
+      scenario:
+        'Plan research scope, retrieve prior competitive analyses, parallel-analyse competitor history, current positioning, and future strategy, then synthesise and quality-check.',
+    },
+    {
+      title: 'M&A due diligence',
+      scenario:
+        'Plan investigation areas, retrieve prior deal analyses, fan out to financial history, current operations, and market outlook specialists, and synthesise a due-diligence memo.',
+    },
+    {
+      title: 'Technology landscape analysis',
+      scenario:
+        'Plan evaluation criteria, retrieve prior tech assessments, parallel-analyse historical evolution, current state-of-art, and emerging trends, and synthesise a technology radar.',
+    },
+  ],
   workflowDefinition: {
     entryStepId: 'plan_research',
     errorStrategy: 'retry',

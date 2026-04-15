@@ -11,14 +11,17 @@
  * will flag invalid DAGs on save.
  */
 
+import { CODE_REVIEW_TEMPLATE } from './code-review';
 import { CONTENT_PIPELINE_TEMPLATE } from './content-pipeline';
 import { CONVERSATIONAL_LEARNING_TEMPLATE } from './conversational-learning';
 import { CUSTOMER_SUPPORT_TEMPLATE } from './customer-support';
+import { DATA_PIPELINE_TEMPLATE } from './data-pipeline';
+import { OUTREACH_SAFETY_TEMPLATE } from './outreach-safety';
 import { RESEARCH_AGENT_TEMPLATE } from './research-agent';
 import { SAAS_BACKEND_TEMPLATE } from './saas-backend';
 import type { WorkflowTemplate } from './types';
 
-export type { WorkflowTemplate, WorkflowTemplatePattern } from './types';
+export type { WorkflowTemplate, WorkflowTemplatePattern, WorkflowTemplateUseCase } from './types';
 
 export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   CUSTOMER_SUPPORT_TEMPLATE,
@@ -26,4 +29,7 @@ export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   SAAS_BACKEND_TEMPLATE,
   RESEARCH_AGENT_TEMPLATE,
   CONVERSATIONAL_LEARNING_TEMPLATE,
+  DATA_PIPELINE_TEMPLATE,
+  OUTREACH_SAFETY_TEMPLATE,
+  CODE_REVIEW_TEMPLATE,
 ];

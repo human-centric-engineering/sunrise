@@ -215,7 +215,31 @@ describe('runExtraChecks', () => {
       expect(missing[0].stepId).toBe('n1');
     });
 
-    it('does NOT flag chain or parallel (no required config in 5.1b)', () => {
+    it('flags guard with empty rules', () => {
+      const nodes = [makeNode('n1', 'guard', { rules: '' }, 'Guard')];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].stepId).toBe('n1');
+    });
+
+    it('flags evaluate with empty rubric', () => {
+      const nodes = [makeNode('n1', 'evaluate', { rubric: '' }, 'Evaluate')];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].stepId).toBe('n1');
+    });
+
+    it('flags external_call with empty url', () => {
+      const nodes = [makeNode('n1', 'external_call', { url: '' }, 'External')];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].stepId).toBe('n1');
+    });
+
+    it('does NOT flag chain or parallel (no required config)', () => {
       const nodes = [
         makeNode('n1', 'chain', {}, 'Chain'),
         makeNode('n2', 'parallel', {}, 'Parallel'),

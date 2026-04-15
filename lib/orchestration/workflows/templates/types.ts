@@ -17,6 +17,14 @@
 
 import type { WorkflowDefinition } from '@/types/orchestration';
 
+/** A concrete business scenario the template can solve. */
+export interface WorkflowTemplateUseCase {
+  /** Short title, e.g. "E-commerce returns processing". */
+  title: string;
+  /** 1-2 sentence description of the business problem. */
+  scenario: string;
+}
+
 /** A single agentic pattern referenced by a template (for display). */
 export interface WorkflowTemplatePattern {
   /** Pattern number from the agent-architect skill (1–21). */
@@ -46,6 +54,8 @@ export interface WorkflowTemplate {
    * Kept intentionally short (one paragraph) so the dialog is scannable.
    */
   flowSummary: string;
+  /** Concrete business scenarios this template addresses — shown in the description dialog. */
+  useCases: readonly WorkflowTemplateUseCase[];
   /** The full DAG loaded onto the canvas when the user picks this template. */
   workflowDefinition: WorkflowDefinition;
 }

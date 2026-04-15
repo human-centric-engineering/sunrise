@@ -27,6 +27,23 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
   ],
   flowSummary:
     'A Tool Call loads conversation context from the knowledge base, an LLM understands the user turn, a second LLM reasons about the appropriate action, another Tool Call fetches supporting facts about an agentic pattern, an LLM composes the reply, and a final LLM scores the reply so the outcome can feed a learning loop.',
+  useCases: [
+    {
+      title: 'Employee onboarding assistant',
+      scenario:
+        'Load new-hire context, understand their question about company processes, reason about the best resource, look up the relevant policy, and compose a friendly answer.',
+    },
+    {
+      title: 'Language tutoring bot',
+      scenario:
+        'Load learner history, understand the practice request, reason about appropriate difficulty, fetch grammar or vocabulary reference, and compose a lesson response.',
+    },
+    {
+      title: 'Technical support chatbot',
+      scenario:
+        'Load prior ticket context, understand the issue, reason about troubleshooting steps, look up product documentation, and compose a diagnostic reply.',
+    },
+  ],
   workflowDefinition: {
     entryStepId: 'load_context',
     errorStrategy: 'fail',
