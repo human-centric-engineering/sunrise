@@ -48,10 +48,11 @@ Source: `prisma/runner.ts`
 
 1. Discovers files under `prisma/seeds/` matching `^\d{3}-[a-z0-9-]+\.ts$`, sorted lexicographically.
 2. For each file:
-   - Computes sha256 of file contents.
+   - Dynamic-imports the file to read the exported `SeedUnit`.
+   - Computes sha256 of the seed file's source, then appends the contents of any files declared in `hashInputs` (in declared order) before finalising the hash. This lets a unit that wraps external data (e.g. a JSON file) re-run when that data changes.
    - Looks up `SeedHistory` by `name` (= filename sans `.ts`).
    - If stored `contentHash` matches → skip, log `⏭`.
-   - Otherwise → dynamic-imports the file, invokes its `SeedUnit.run({ prisma, logger })`, upserts `SeedHistory` with new hash and `durationMs`.
+   - Otherwise → invokes `SeedUnit.run({ prisma, logger })`, upserts `SeedHistory` with new hash and `durationMs`.
 3. Errors from a unit propagate and exit non-zero. Successful earlier units remain in `SeedHistory`, so a re-run resumes at the failing unit.
 
 ## Authoring a New Seed Unit
@@ -99,6 +100,20 @@ if (!admin) throw new Error('No admin user found — ensure 001-test-users runs 
 **Use the context.** The runner injects `prisma` and `logger`. Do **not** import `prisma` from `@/lib/db/client` or instantiate your own — use the ones passed to `run()`.
 
 **Current schema only.** Always author against the latest schema. If a migration changes a column that an existing seed referenced, update that seed file — its hash changes and it re-runs.
+
+**Declare external data dependencies.** If your unit reads a data file that lives outside the seed file itself (e.g. a JSON payload, a CSV), list the paths in `hashInputs` (relative to the seed file). The runner folds each file's contents into the hash so edits to the data trigger a re-run. Without this, the wrapper's hash is unchanged and the unit silently skips.
+
+```typescript
+const unit: SeedUnit = {
+  name: '008-example',
+  hashInputs: ['../../lib/example/data.json'], // re-run when data.json changes
+  async run({ prisma, logger }) {
+    /* ... */
+  },
+};
+```
+
+Missing `hashInput` files throw a clear error naming the unit and path — they are not optional.
 
 ### Anti-Patterns
 
@@ -168,8 +183,8 @@ FROM seed_history ORDER BY name;
 
 ## Known Quirks
 
-- **Whole-file hashing.** Any edit to a seed file — including whitespace — triggers a re-run on next `db:seed`. This is safe because units are idempotent `upsert`s, just slightly noisier.
-- **Unit 007 uses the module prisma client.** `007-knowledge-chunks.ts` delegates to `seedChunks()` in `lib/orchestration/knowledge/seeder.ts`, which imports `prisma` from `@/lib/db/client` rather than the context-supplied one. This is intentional — the helper is also used by admin HTTP endpoints — and works fine because both point at the same database.
+- **Whole-file hashing.** Any edit to a seed file — including whitespace — triggers a re-run on next `db:seed`. Same for any file listed in `hashInputs`. Safe because units are idempotent `upsert`s, just slightly noisier.
+- **Unit 007 uses the module prisma client.** `007-knowledge-chunks.ts` delegates to `seedChunks()` in `lib/orchestration/knowledge/seeder.ts`, which imports `prisma` from `@/lib/db/client` rather than the context-supplied one. This is intentional — the helper is also used by admin HTTP endpoints — and works fine because both point at the same database. Unit 007 also declares `hashInputs: ['../../lib/orchestration/seed/chunks.json']` so edits to the parsed knowledge-base data trigger a re-run.
 
 ## Key Files
 
