@@ -56,6 +56,14 @@ vi.mock('@xyflow/react', async () => {
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiCapability: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+  },
+}));
+
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
     post: vi.fn(),

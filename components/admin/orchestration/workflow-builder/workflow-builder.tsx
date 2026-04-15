@@ -66,6 +66,8 @@ export interface WorkflowBuilderProps {
   workflow?: AiWorkflow | null;
   /** Pre-populate the canvas from a WorkflowDefinition (e.g. from advisor). */
   initialDefinition?: WorkflowDefinition;
+  /** Server-prefetched capabilities for the Tool Call block editor. */
+  initialCapabilities?: CapabilityOption[];
 }
 
 interface InitialState {
@@ -104,7 +106,12 @@ function initialState(
   return { nodes, edges, name: workflow.name, details: baseDetails };
 }
 
-function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBuilderProps) {
+function WorkflowBuilderInner({
+  mode,
+  workflow,
+  initialDefinition,
+  initialCapabilities,
+}: WorkflowBuilderProps) {
   const router = useRouter();
   const seed = useMemo(
     () => initialState(workflow, initialDefinition),
@@ -126,8 +133,11 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Capabilities for the Tool Call editor — fetched once on mount.
-  const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>([]);
+  // Capabilities for the Tool Call editor — server-prefetched via props,
+  // with a client-side fallback if the page didn't provide them.
+  const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>(
+    initialCapabilities ?? []
+  );
 
   // Execution flow state.
   const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -143,7 +153,9 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
   const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
 
+  // Fallback: fetch capabilities client-side only if not prefetched.
   useEffect(() => {
+    if (initialCapabilities && initialCapabilities.length > 0) return;
     let cancelled = false;
     void apiClient
       .get<CapabilityOption[]>(API.ADMIN.ORCHESTRATION.CAPABILITIES, {
@@ -160,7 +172,7 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialCapabilities]);
 
   // Debounced live validation. Runs both the authoritative backend-aligned
   // validator and the FE-only extra checks, merges their errors, and

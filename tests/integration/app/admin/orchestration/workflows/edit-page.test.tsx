@@ -48,6 +48,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: {
       findUnique: vi.fn(),
     },
+    aiCapability: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 

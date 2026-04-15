@@ -22,8 +22,16 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
   const { id } = await params;
 
   let workflow;
+  let capabilities;
   try {
-    workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+    [workflow, capabilities] = await Promise.all([
+      prisma.aiWorkflow.findUnique({ where: { id } }),
+      prisma.aiCapability.findMany({
+        select: { id: true, slug: true, name: true, description: true },
+        orderBy: { name: 'asc' },
+        take: 100,
+      }),
+    ]);
   } catch (err) {
     logger.error('edit workflow page: fetch failed', err, { id });
     workflow = null;
@@ -31,5 +39,5 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
 
   if (!workflow) notFound();
 
-  return <WorkflowBuilder mode="edit" workflow={workflow} />;
+  return <WorkflowBuilder mode="edit" workflow={workflow} initialCapabilities={capabilities} />;
 }

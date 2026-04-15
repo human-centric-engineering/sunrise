@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
+import { prisma } from '@/lib/db/client';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const metadata: Metadata = {
@@ -35,5 +36,17 @@ export default async function NewWorkflowPage({
     }
   }
 
-  return <WorkflowBuilder mode="create" initialDefinition={initialDefinition} />;
+  const capabilities = await prisma.aiCapability.findMany({
+    select: { id: true, slug: true, name: true, description: true },
+    orderBy: { name: 'asc' },
+    take: 100,
+  });
+
+  return (
+    <WorkflowBuilder
+      mode="create"
+      initialDefinition={initialDefinition}
+      initialCapabilities={capabilities}
+    />
+  );
 }
