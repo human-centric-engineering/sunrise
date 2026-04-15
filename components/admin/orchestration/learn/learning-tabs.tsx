@@ -1,15 +1,17 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sparkles, Trophy } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { API } from '@/lib/api/endpoints';
 import type { PatternSummary } from '@/types/orchestration';
 
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
+import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
 import { PatternCardGrid } from './pattern-card-grid';
 
 interface LearningTabsProps {
@@ -62,10 +64,27 @@ function extractWorkflowDefinition(text: string): string | null {
   return null;
 }
 
+interface EmbeddingStatus {
+  total: number;
+  embedded: number;
+  pending: number;
+  hasActiveProvider: boolean;
+}
+
 export function LearningTabs({ patterns }: LearningTabsProps) {
   const router = useRouter();
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
+  const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
+
+  useEffect(() => {
+    fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { data?: EmbeddingStatus } | null) => {
+        if (body?.data) setEmbeddingStatus(body.data);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleStreamComplete = useCallback((fullText: string) => {
     const definition = extractWorkflowDefinition(fullText);
@@ -102,6 +121,13 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
 
       <TabsContent value="advisor" className="mt-4">
         <div className="flex flex-col gap-3">
+          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
+            <EmbeddingStatusBanner
+              total={embeddingStatus.total}
+              embedded={embeddingStatus.embedded}
+              hasActiveProvider={embeddingStatus.hasActiveProvider}
+            />
+          )}
           <ChatInterface
             agentSlug="pattern-advisor"
             embedded
@@ -124,6 +150,13 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
 
       <TabsContent value="quiz" className="mt-4">
         <div className="flex flex-col gap-3">
+          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.pending > 0 && (
+            <EmbeddingStatusBanner
+              total={embeddingStatus.total}
+              embedded={embeddingStatus.embedded}
+              hasActiveProvider={embeddingStatus.hasActiveProvider}
+            />
+          )}
           {quizScore && (
             <div className="flex items-center gap-2">
               <Trophy className="text-muted-foreground h-4 w-4" aria-hidden="true" />

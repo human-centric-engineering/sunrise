@@ -13,6 +13,7 @@ import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { FieldHelp } from '@/components/ui/field-help';
 import { cn } from '@/lib/utils';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
@@ -113,7 +114,16 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium">Status</CardTitle>
+            <CardTitle className="text-xs font-medium">
+              Status{' '}
+              <FieldHelp title="Execution statuses">
+                <strong>Pending</strong> — queued, not yet started. <strong>Running</strong> —
+                engine is processing steps. <strong>Completed</strong> — all steps finished
+                successfully. <strong>Failed</strong> — a step threw an error.{' '}
+                <strong>Paused for approval</strong> — waiting for a human to approve a capability
+                call.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <Badge variant={STATUS_BADGE[execution.status] ?? 'outline'}>
@@ -123,7 +133,13 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium">Total Tokens</CardTitle>
+            <CardTitle className="text-xs font-medium">
+              Total Tokens{' '}
+              <FieldHelp title="What are tokens?">
+                Tokens are the units LLMs use to measure text — roughly ¾ of a word. Each workflow
+                step consumes tokens; the total here is the sum across all steps.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <span className="text-lg font-bold">{execution.totalTokensUsed.toLocaleString()}</span>
@@ -139,7 +155,13 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium">Budget</CardTitle>
+            <CardTitle className="text-xs font-medium">
+              Budget{' '}
+              <FieldHelp title="Budget usage">
+                The dollar cap for this execution. The bar shows how much has been spent: green ≤
+                70%, amber 70–90%, red &gt; 90%.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {execution.budgetLimitUsd !== null ? (

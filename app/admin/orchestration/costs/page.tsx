@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -118,7 +119,30 @@ export default async function CostsPage() {
   return (
     <div className="space-y-8">
       <header>
-        <h1 className="text-2xl font-semibold">Costs &amp; Budget</h1>
+        <h1 className="text-2xl font-semibold">
+          Costs &amp; Budget{' '}
+          <FieldHelp
+            title="What is costs & budget?"
+            contentClassName="w-96 max-h-80 overflow-y-auto"
+          >
+            <p>
+              This tracks the dollar cost of every LLM API call your agents and workflows make. It
+              aggregates spending by agent, model, and time period so you can see where your AI
+              budget goes.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How it works</p>
+            <p>
+              Each API call records the token count and the model&apos;s per-token price. The system
+              totals these into daily, weekly, and monthly figures. Budget alerts fire when spending
+              crosses warning or critical thresholds you configure.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              View spend trends, per-agent and per-model breakdowns, configure alert thresholds, and
+              set default budget caps for new agents.
+            </p>
+          </FieldHelp>
+        </h1>
         <p className="text-muted-foreground text-sm">
           Spend for the rolling month, per-agent utilisation, and orchestration defaults.
         </p>

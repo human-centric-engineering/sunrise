@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { ExecutionDetailView } from '@/components/admin/orchestration/execution-detail-view';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -64,7 +65,27 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
           {' / '}
           <span className="text-foreground">{id.slice(0, 8)}…</span>
         </nav>
-        <h1 className="text-2xl font-semibold">Execution {id.slice(0, 8)}…</h1>
+        <h1 className="text-2xl font-semibold">
+          Execution {id.slice(0, 8)}…{' '}
+          <FieldHelp title="What is an execution?" contentClassName="w-96 max-h-80 overflow-y-auto">
+            <p>
+              An execution is a single run of a workflow. It records every step the engine processed
+              — inputs, outputs, tokens, cost, and errors. Think of a workflow as a blueprint and an
+              execution as one run of that blueprint.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How to read it</p>
+            <p>
+              The trace shows steps in order. Each step displays its type, the data it received,
+              what it produced, and how long it took. Failed steps include the error message and
+              which step in the chain broke.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              Inspect the step-by-step trace, see total cost and token usage, and diagnose where a
+              workflow succeeded or failed.
+            </p>
+          </FieldHelp>
+        </h1>
       </header>
 
       <ExecutionDetailView execution={data.execution} trace={data.trace} />

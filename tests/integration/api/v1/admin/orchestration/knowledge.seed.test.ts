@@ -8,7 +8,7 @@
  * Key security assertions:
  * - Admin auth required (401/403 otherwise)
  * - Rate limited (adminLimiter)
- * - seedFromChunksJson is called with a path ending in lib/orchestration/seed/chunks.json
+ * - seedChunks is called with path ending in lib/orchestration/seed/chunks.json
  * - Response contains { seeded: true }
  */
 
@@ -32,7 +32,7 @@ vi.mock('next/headers', () => ({
 }));
 
 vi.mock('@/lib/orchestration/knowledge/seeder', () => ({
-  seedFromChunksJson: vi.fn(),
+  seedChunks: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -47,7 +47,7 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
-import { seedFromChunksJson } from '@/lib/orchestration/knowledge/seeder';
+import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
   describe('Successful seeding', () => {
     it('returns 200 with { seeded: true }', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(seedFromChunksJson).mockResolvedValue(undefined);
+      vi.mocked(seedChunks).mockResolvedValue(undefined);
 
       const response = await POST(makeRequest());
 
@@ -103,14 +103,14 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
       expect(data.data.seeded).toBe(true);
     });
 
-    it('calls seedFromChunksJson with path ending in lib/orchestration/seed/chunks.json', async () => {
+    it('calls seedChunks with path ending in lib/orchestration/seed/chunks.json', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(seedFromChunksJson).mockResolvedValue(undefined);
+      vi.mocked(seedChunks).mockResolvedValue(undefined);
 
       await POST(makeRequest());
 
-      expect(vi.mocked(seedFromChunksJson)).toHaveBeenCalledOnce();
-      const calledWith = vi.mocked(seedFromChunksJson).mock.calls[0][0];
+      expect(vi.mocked(seedChunks)).toHaveBeenCalledOnce();
+      const calledWith = vi.mocked(seedChunks).mock.calls[0][0];
       expect(calledWith).toMatch(/lib[/\\]orchestration[/\\]seed[/\\]chunks\.json$/);
     });
   });
@@ -118,7 +118,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
   describe('Rate limiting', () => {
     it('calls adminLimiter.check on POST', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(seedFromChunksJson).mockResolvedValue(undefined);
+      vi.mocked(seedChunks).mockResolvedValue(undefined);
 
       await POST(makeRequest());
 
@@ -132,7 +132,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
       const response = await POST(makeRequest());
 
       expect(response.status).toBe(429);
-      expect(vi.mocked(seedFromChunksJson)).not.toHaveBeenCalled();
+      expect(vi.mocked(seedChunks)).not.toHaveBeenCalled();
     });
   });
 });

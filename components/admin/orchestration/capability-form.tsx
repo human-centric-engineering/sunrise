@@ -472,11 +472,11 @@ export function CapabilityForm({
   const executionHandlerHelp = (() => {
     switch (currentExecutionType) {
       case 'internal':
-        return 'The class name registered in lib/orchestration/capabilities/built-in/ (e.g. SearchKnowledgeCapability).';
+        return "The name of the built-in code class that runs this capability (e.g. SearchKnowledgeCapability). These are registered in the app's source code by a developer.";
       case 'api':
-        return 'The full HTTP URL this capability POSTs to. Must be reachable from the app server.';
+        return "The full URL of the external service to call (e.g. https://api.example.com/lookup). The system sends the capability's parameters as JSON and waits for the response. The URL must be reachable from your server.";
       case 'webhook':
-        return 'The full HTTP URL to fire-and-forget POST to. No response body is read.';
+        return 'The full URL to notify (e.g. https://hooks.slack.com/services/...). The system sends the parameters as JSON but does not wait for a reply — useful for notifications and background triggers.';
     }
   })();
 
@@ -518,9 +518,24 @@ export function CapabilityForm({
       <Tabs defaultValue="basic" className="w-full">
         <TabsList className="w-full justify-start">
           <TabsTrigger value="basic">Basic</TabsTrigger>
-          <TabsTrigger value="function">Function Definition</TabsTrigger>
-          <TabsTrigger value="execution">Execution</TabsTrigger>
-          <TabsTrigger value="safety">Safety</TabsTrigger>
+          <TabsTrigger
+            value="function"
+            title="Describe what arguments this capability accepts so the AI knows how to call it"
+          >
+            Function Definition
+          </TabsTrigger>
+          <TabsTrigger
+            value="execution"
+            title="Choose how and where this capability runs when called"
+          >
+            Execution
+          </TabsTrigger>
+          <TabsTrigger
+            value="safety"
+            title="Approval gates and rate limits to control when and how often this capability can run"
+          >
+            Safety
+          </TabsTrigger>
         </TabsList>
 
         {/* ================= TAB 1 — BASIC ================= */}
@@ -529,11 +544,9 @@ export function CapabilityForm({
             <Label htmlFor="name">
               Name{' '}
               <FieldHelp title="Capability name">
-                A human-readable label. Shown in the admin list and in the agent&apos;s capabilities
-                tab. Defaults to empty.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                A human-readable label shown in the admin list and when attaching capabilities to
+                agents. For example, &quot;Search knowledge base&quot; or &quot;Create support
+                ticket&quot;.
               </FieldHelp>
             </Label>
             <Input id="name" {...register('name')} placeholder="Search knowledge base" />
@@ -544,11 +557,9 @@ export function CapabilityForm({
             <Label htmlFor="slug">
               Slug{' '}
               <FieldHelp title="URL-safe identifier">
-                The stable identifier used by agents and the dispatcher. Auto-generated from the
-                name on first type. Lowercase letters, numbers, and hyphens only.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                A permanent ID for this capability, used in URLs and when attaching it to agents.
+                Auto-generated from the name. Lowercase letters, numbers, and hyphens only. Cannot
+                be changed after creation.
               </FieldHelp>
             </Label>
             <Input
@@ -574,8 +585,9 @@ export function CapabilityForm({
             <Label htmlFor="description">
               Description{' '}
               <FieldHelp title="What this capability does">
-                One or two sentences. Shown to other admins and used by the LLM to decide when to
-                call the tool. Keep it concrete.
+                A short summary for other admins in this list. This is separate from the function
+                description on the next tab (which the AI reads) — but it helps to keep both
+                aligned.
               </FieldHelp>
             </Label>
             <Textarea
@@ -673,14 +685,30 @@ export function CapabilityForm({
             <div>
               <Label>
                 Function definition{' '}
-                <FieldHelp title="OpenAI-compatible tool schema">
-                  The schema the LLM sees when deciding whether to call this tool. Visual Builder
-                  lets you configure name, description, and typed parameters. JSON Editor is an
-                  escape hatch for complex shapes.
+                <FieldHelp title="What is this?" contentClassName="w-96 max-h-80 overflow-y-auto">
+                  <p>
+                    This tells the AI what your capability does and what information it needs. Think
+                    of it like a form: you give the capability a name, a description the AI reads to
+                    decide when to use it, and a list of parameters (the inputs it expects).
+                  </p>
+                  <p className="mt-2">
+                    For example, a &quot;search knowledge base&quot; capability might need a{' '}
+                    <code>query</code> parameter (the search text) and an optional{' '}
+                    <code>limit</code> parameter (how many results to return).
+                  </p>
+                  <p className="text-foreground mt-2 font-medium">Two editing modes</p>
+                  <p>
+                    <strong>Visual</strong> — a simple table where you add parameters one by one.
+                    Best for most capabilities.
+                    <br />
+                    <strong>JSON</strong> — edit the raw schema directly. Use this only if you need
+                    advanced features like nested objects or enums.
+                  </p>
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-xs">
-                Use the visual builder for most cases. Switch to JSON for enums or nested objects.
+                Describe what this capability does and what inputs it needs, so the AI knows when
+                and how to call it.
               </p>
             </div>
             <div className="flex gap-1">
@@ -720,7 +748,14 @@ export function CapabilityForm({
           {fnMode === 'visual' ? (
             <div className="space-y-4">
               <div className="grid gap-2">
-                <Label htmlFor="fnName">Function name</Label>
+                <Label htmlFor="fnName">
+                  Function name{' '}
+                  <FieldHelp title="Function name">
+                    A machine-readable identifier the AI uses to call this capability. Use lowercase
+                    with underscores (e.g. <code>search_knowledge_base</code>,{' '}
+                    <code>create_ticket</code>).
+                  </FieldHelp>
+                </Label>
                 <Input
                   id="fnName"
                   value={fnName}
@@ -730,28 +765,52 @@ export function CapabilityForm({
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="fnDesc">Function description</Label>
+                <Label htmlFor="fnDesc">
+                  Function description{' '}
+                  <FieldHelp title="Function description">
+                    A plain-English sentence the AI reads to decide when this capability is
+                    relevant. Be specific — e.g. &quot;Search the help docs knowledge base and
+                    return matching articles&quot; rather than &quot;Search stuff&quot;.
+                  </FieldHelp>
+                </Label>
                 <Textarea
                   id="fnDesc"
                   rows={2}
                   value={fnDescription}
                   onChange={(e) => setFnDescription(e.target.value)}
-                  placeholder="Semantic search over the agentic patterns knowledge base."
+                  placeholder="Search the help docs knowledge base and return matching articles."
                 />
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Parameters</Label>
+                  <Label>
+                    Parameters{' '}
+                    <FieldHelp title="What are parameters?">
+                      Parameters are the inputs your capability needs when the AI calls it. For
+                      example, a search capability needs a <code>query</code> parameter. Mark a
+                      parameter as &quot;Required&quot; if the AI must always provide it.
+                    </FieldHelp>
+                  </Label>
                   <Button type="button" size="sm" variant="outline" onClick={addRow}>
                     <Plus className="mr-2 h-4 w-4" />
                     Add parameter
                   </Button>
                 </div>
                 {rows.length === 0 ? (
-                  <p className="text-muted-foreground text-sm italic">No parameters yet.</p>
+                  <p className="text-muted-foreground text-sm italic">
+                    No parameters defined yet. Click &quot;Add parameter&quot; to describe the
+                    inputs this capability needs.
+                  </p>
                 ) : (
                   <div className="space-y-2">
+                    <div className="text-muted-foreground grid grid-cols-[1fr_120px_2fr_80px_40px] gap-2 px-2 text-[10px] font-medium tracking-wide uppercase">
+                      <span>Name</span>
+                      <span>Type</span>
+                      <span>Description</span>
+                      <span>Required</span>
+                      <span />
+                    </div>
                     {rows.map((row, idx) => (
                       <div
                         key={idx}
@@ -789,7 +848,7 @@ export function CapabilityForm({
                             onCheckedChange={(v) => updateRow(idx, { required: v })}
                             aria-label="Required"
                           />
-                          <span className="text-muted-foreground text-xs">req</span>
+                          <span className="sr-only">Required</span>
                         </div>
                         <Button
                           type="button"
@@ -822,7 +881,14 @@ export function CapabilityForm({
 
           {/* Live preview — always visible */}
           <div>
-            <Label>Live preview</Label>
+            <Label>
+              Live preview{' '}
+              <FieldHelp title="What is this?">
+                This is the machine-readable version of your function definition — the exact data
+                the AI receives. You don&apos;t need to edit this directly; it updates automatically
+                as you fill in the fields above.
+              </FieldHelp>
+            </Label>
             <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded-md border p-3 text-xs">
               {parsedFn ? JSON.stringify(parsedFn, null, 2) : '(empty)'}
             </pre>
@@ -834,12 +900,33 @@ export function CapabilityForm({
           <div className="grid gap-2">
             <Label htmlFor="executionType">
               Execution type{' '}
-              <FieldHelp title="How the capability runs">
-                <strong>internal</strong> — a TypeScript class in this app.
-                <br />
-                <strong>api</strong> — POST to an HTTP endpoint and read the response.
-                <br />
-                <strong>webhook</strong> — fire-and-forget POST, no response read.
+              <FieldHelp
+                title="How the capability runs"
+                contentClassName="w-96 max-h-80 overflow-y-auto"
+              >
+                <p>
+                  This controls where and how the capability&apos;s code actually runs when the AI
+                  triggers it.
+                </p>
+                <p className="mt-2">
+                  <strong>Internal</strong> — built-in code that runs inside this application. Use
+                  this for capabilities that are part of Sunrise itself, like searching the
+                  knowledge base or estimating costs. You enter the name of the code class (e.g.{' '}
+                  <code>SearchKnowledgeCapability</code>).
+                </p>
+                <p className="mt-2">
+                  <strong>API</strong> — sends a request to an external web service and waits for
+                  the response. Use this when you need data back — for example, calling a CRM to
+                  look up a customer, or querying a weather service. You enter the full URL (e.g.{' '}
+                  <code>https://api.example.com/lookup</code>).
+                </p>
+                <p className="mt-2">
+                  <strong>Webhook</strong> — sends a request to an external URL but does{' '}
+                  <em>not</em> wait for a reply. Use this for notifications or triggers where you
+                  just need to tell another system that something happened — for example, posting a
+                  message to Slack or starting a background job. The AI continues the conversation
+                  immediately without waiting.
+                </p>
               </FieldHelp>
             </Label>
             <Select
@@ -883,9 +970,10 @@ export function CapabilityForm({
           <div className="grid gap-2">
             <Label htmlFor="execConfig">
               Execution config (JSON, optional){' '}
-              <FieldHelp title="Handler-specific config">
-                Free-form JSON object passed to the handler at call time. Shape depends on the
-                execution type. Leave empty for none.
+              <FieldHelp title="Extra settings for the handler" contentClassName="w-80">
+                Optional settings passed to the handler every time it runs. For example, you might
+                set a timeout, authentication headers, or a default result limit. The available keys
+                depend on the handler — leave empty if you don&apos;t need any.
               </FieldHelp>
             </Label>
             <Textarea
@@ -906,14 +994,19 @@ export function CapabilityForm({
             <div className="space-y-0.5">
               <Label htmlFor="requiresApproval">
                 Requires approval{' '}
-                <FieldHelp title="Human-in-the-loop gate">
-                  When enabled, the agent will pause and ask a human to approve before running this
-                  capability. Use for irreversible actions like sending email, charging cards, or
-                  writing to production systems. Default: off.
+                <FieldHelp title="Human-in-the-loop gate" contentClassName="w-80">
+                  When turned on, the AI will pause the conversation and wait for a human to approve
+                  before this capability actually runs. The workflow or chat enters a &quot;paused
+                  for approval&quot; state until someone clicks approve or reject.
+                  <br />
+                  <br />
+                  Turn this on for anything with real-world consequences you can&apos;t undo —
+                  sending emails, charging credit cards, deleting records, or writing to production
+                  systems.
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-sm">
-                Safe default for irreversible side effects.
+                Requires a human to approve each call before it executes.
               </p>
             </div>
             <Switch
@@ -926,9 +1019,10 @@ export function CapabilityForm({
           <div className="grid gap-2">
             <Label htmlFor="rateLimit">
               Rate limit (calls per minute){' '}
-              <FieldHelp title="Upper bound on call rate">
-                Maximum calls per minute across all agents. Leave empty for no limit. Default: no
-                limit.
+              <FieldHelp title="Rate limit" contentClassName="w-80">
+                The maximum number of times this capability can be called per minute, across all
+                agents combined. This prevents runaway usage — for example, if an AI enters a loop
+                calling the same tool repeatedly. Leave empty for no limit.
               </FieldHelp>
             </Label>
             <Input

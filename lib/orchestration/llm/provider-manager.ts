@@ -28,6 +28,7 @@ import { getBreaker } from './circuit-breaker';
 import { OpenAiCompatibleProvider } from './openai-compatible';
 import { ProviderError, type LlmProvider, type ProviderTestResult } from './provider';
 import type { ProviderConfig } from './types';
+import { VoyageProvider } from './voyage';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -245,6 +246,22 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
     });
   }
 
+  if (config.providerType === 'voyage') {
+    if (!apiKey) {
+      throw new ProviderError(
+        `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
+        { code: 'missing_api_key', retriable: false }
+      );
+    }
+    return new VoyageProvider({
+      name: config.name,
+      type: 'voyage',
+      apiKey,
+      baseUrl: config.baseUrl ?? undefined,
+      isLocal: false,
+    });
+  }
+
   if (config.providerType === 'openai-compatible') {
     if (!config.baseUrl) {
       throw new ProviderError(`Provider "${config.slug}" is openai-compatible but has no baseUrl`, {
@@ -294,6 +311,9 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
 function buildProviderFromInMemoryConfig(config: ProviderConfig): LlmProvider {
   if (config.type === 'anthropic') {
     return new AnthropicProvider(config);
+  }
+  if (config.type === 'voyage') {
+    return new VoyageProvider(config);
   }
   // Both 'openai' and 'openai-compatible' resolve to the OpenAI-compatible provider.
   // 'openai' is collapsed to the public api.openai.com base URL when not provided.

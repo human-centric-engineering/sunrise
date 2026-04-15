@@ -46,9 +46,11 @@
 **Setup steps:**
 
 1. Seed the knowledge base: `POST /knowledge/seed`
-2. Create the agent via API or UI
-3. Attach `search_knowledge_base` via `POST /agents/{id}/capabilities`
-4. Test via the agent's Test Chat tab
+2. Add an embedding provider — **Voyage AI** (free tier) is the recommended starting point: create a provider with `providerType: 'voyage'` and env var `VOYAGE_API_KEY`
+3. Generate embeddings: `POST /knowledge/embed`
+4. Create the agent via API or UI
+5. Attach `search_knowledge_base` via `POST /agents/{id}/capabilities`
+6. Test via the agent's Test Chat tab
 
 ---
 
@@ -130,7 +132,7 @@ plan → parallel(research, audience analysis) → outline → draft → reflect
 **Key config:**
 
 - Reflect step: `maxIterations: 3` to prevent infinite revision loops
-- Parallel step: `stragglerStrategy: "wait_all"` to ensure both branches complete
+- Parallel step: `stragglerStrategy: "wait-all"` to ensure both branches complete
 - Error strategy: `retry` with `retryCount: 2` for transient LLM failures
 
 ---

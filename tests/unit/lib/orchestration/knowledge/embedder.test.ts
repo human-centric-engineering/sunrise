@@ -156,6 +156,137 @@ describe('resolveProvider (via embedText)', () => {
     expect(body.model).toBe('text-embedding-3-small');
   });
 
+  it('should use voyage provider with null apiKey when apiKeyEnvVar is not set', async () => {
+    const voyageProvider = makeProvider({
+      id: 'voyage-1',
+      providerType: 'voyage',
+      baseUrl: 'https://api.voyageai.com/v1',
+      apiKeyEnvVar: null,
+      isLocal: false,
+    });
+
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
+
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+
+    await embedText('hello');
+
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
+      string,
+      { body: string; headers: Record<string, string> },
+    ];
+
+    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
+    // No Authorization header when apiKeyEnvVar is null
+    expect(calledOptions.headers['Authorization']).toBeUndefined();
+    // Voyage-specific body params present
+    const body = JSON.parse(calledOptions.body) as { model: string; input_type: string };
+    expect(body.model).toBe('voyage-3');
+    expect(body.input_type).toBe('document');
+  });
+
+  it('should read apiKey from env when voyage provider has apiKeyEnvVar set', async () => {
+    const voyageProvider = makeProvider({
+      id: 'voyage-2',
+      providerType: 'voyage',
+      baseUrl: 'https://api.voyageai.com/v1',
+      apiKeyEnvVar: 'VOYAGE_API_KEY',
+      isLocal: false,
+    });
+
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
+
+    process.env['VOYAGE_API_KEY'] = 'voyage-key-123';
+
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+
+    await embedText('hello');
+
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
+      string,
+      { headers: Record<string, string> },
+    ];
+
+    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
+    expect(calledOptions.headers['Authorization']).toBe('Bearer voyage-key-123');
+  });
+
+  it('should read apiKey from env when local provider has apiKeyEnvVar set', async () => {
+    const localProvider = makeProvider({
+      id: 'local-2',
+      isLocal: true,
+      providerType: 'openai-compatible',
+      baseUrl: 'http://ollama.local/v1',
+      apiKeyEnvVar: 'LOCAL_KEY',
+    });
+
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([localProvider] as never);
+
+    process.env['LOCAL_KEY'] = 'local-secret-456';
+
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+
+    await embedText('hello');
+
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
+      string,
+      { headers: Record<string, string> },
+    ];
+
+    expect(calledUrl).toBe('http://ollama.local/v1/embeddings');
+    expect(calledOptions.headers['Authorization']).toBe('Bearer local-secret-456');
+  });
+
+  it('should read apiKey from env when openai-compatible provider has apiKeyEnvVar set', async () => {
+    const openaiCompatProvider = makeProvider({
+      id: 'oai-compat-2',
+      providerType: 'openai-compatible',
+      baseUrl: 'https://proxy.example.com/v1',
+      apiKeyEnvVar: 'CUSTOM_OAI_KEY',
+      isLocal: false,
+    });
+
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([openaiCompatProvider] as never);
+
+    process.env['CUSTOM_OAI_KEY'] = 'custom-oai-789';
+
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+
+    await embedText('hello');
+
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
+      string,
+      { headers: Record<string, string> },
+    ];
+
+    expect(calledUrl).toBe('https://proxy.example.com/v1/embeddings');
+    expect(calledOptions.headers['Authorization']).toBe('Bearer custom-oai-789');
+  });
+
+  it('should use openai-compatible provider with null apiKey when apiKeyEnvVar is not set', async () => {
+    const openaiCompatProvider = makeProvider({
+      id: 'oai-compat-1',
+      providerType: 'openai-compatible',
+      baseUrl: 'https://proxy.example.com/v1',
+      apiKeyEnvVar: null,
+      isLocal: false,
+    });
+
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([openaiCompatProvider] as never);
+
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+
+    await embedText('hello');
+
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
+      string,
+      { headers: Record<string, string> },
+    ];
+
+    expect(calledUrl).toBe('https://proxy.example.com/v1/embeddings');
+    expect(calledOptions.headers['Authorization']).toBeUndefined();
+  });
+
   it('should fall back to OpenAI direct when no providers are configured', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
 
@@ -302,6 +433,14 @@ describe('embedText', () => {
     await expect(embedText('test')).rejects.toThrow(
       'Embedding API error (429): Rate limit exceeded'
     );
+  });
+
+  it('should use raw response text when error body is not valid JSON', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+
+    mockFetch.mockResolvedValue(new Response('upstream crashed', { status: 502 }));
+
+    await expect(embedText('test')).rejects.toThrow('Embedding API error (502): upstream crashed');
   });
 
   it('should re-sort response data by index to maintain input order', async () => {

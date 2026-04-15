@@ -46,8 +46,8 @@ export async function searchKnowledge(
 ): Promise<KnowledgeSearchResult[]> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
 
-  // Generate query embedding
-  const queryEmbedding = await embedText(query);
+  // Generate query embedding (pass 'query' input type for Voyage optimisation)
+  const queryEmbedding = await embedText(query, 'query');
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
   // Build WHERE clauses for metadata filters

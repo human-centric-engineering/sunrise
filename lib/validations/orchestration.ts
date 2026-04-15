@@ -698,7 +698,7 @@ export const costQuerySchema = z.object({
 // ============================================================================
 
 /** Provider type enum */
-const providerTypeSchema = z.enum(['anthropic', 'openai-compatible']);
+const providerTypeSchema = z.enum(['anthropic', 'openai-compatible', 'voyage']);
 
 /**
  * Provider config schema (POST /api/v1/admin/orchestration/providers)

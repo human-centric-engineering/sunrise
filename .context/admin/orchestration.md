@@ -111,7 +111,7 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 
 ## API Reference
 
-41 endpoints under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
+48 endpoints under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
 
 | Area          | Endpoints | Purpose                                                         |
 | ------------- | --------- | --------------------------------------------------------------- |
@@ -157,6 +157,23 @@ Settings are cached for 30s. The PATCH route invalidates the cache immediately.
 - **Chat rate limit**: 20/min per user ID (on top of 30/min per IP admin limiter)
 
 See [`.context/orchestration/resilience.md`](./.context/orchestration/resilience.md) for details.
+
+### Choosing an Embedding Provider
+
+The knowledge base requires an **embedding provider** — a model that converts text into numerical vectors for similarity search. This is separate from the chat model.
+
+**Anthropic (Claude) does not offer an embeddings API.** You need a dedicated embedding provider alongside your Anthropic chat provider.
+
+| Provider                    | Model                  | Dims      | Schema-Compatible         | Cost/1M | Free Tier         |
+| --------------------------- | ---------------------- | --------- | ------------------------- | ------- | ----------------- |
+| **Voyage AI** (recommended) | voyage-3               | 1024→1536 | Yes                       | $0.06   | 200M tokens/month |
+| OpenAI                      | text-embedding-3-small | 1536      | Yes                       | $0.02   | No                |
+| OpenAI                      | text-embedding-3-large | 3072→1536 | Yes                       | $0.13   | No                |
+| Ollama                      | nomic-embed-text       | 768       | No (schema change needed) | Free    | Yes (local)       |
+
+"Schema-Compatible" means the model can produce 1536-dimension vectors matching the `AiKnowledgeChunk.embedding vector(1536)` column.
+
+The static registry is at `lib/orchestration/llm/embedding-models.ts` and served via `GET /api/v1/admin/orchestration/embedding-models`.
 
 ## Related Documentation
 

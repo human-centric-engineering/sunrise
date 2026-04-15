@@ -163,6 +163,7 @@ describe('AgentForm — General tab', () => {
         systemInstructionsHistory: [],
         metadata: {},
         deletedAt: null,
+        fallbackProviders: [],
       };
 
       // Act

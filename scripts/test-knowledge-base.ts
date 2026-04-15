@@ -1,4 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/explicit-function-return-type -- CLI script */
+/* eslint-disable no-console, @typescript-eslint/explicit-function-return-type -- CLI script */
 /**
  * Test script for the knowledge base seeder and search.
  *
@@ -13,10 +13,12 @@
 import { resolve } from 'path';
 import { readFile } from 'fs/promises';
 import { createHash } from 'crypto';
+import { z } from 'zod';
 import { config } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import { seedChunkSchema } from '@/lib/orchestration/knowledge/seeder';
 
 // Load env from .env.local
 config({ path: resolve(__dirname, '../.env.local') });
@@ -27,26 +29,6 @@ const prisma = new PrismaClient({ adapter });
 
 const DOCUMENT_NAME = 'Agentic Design Patterns';
 const CHUNKS_PATH = resolve(__dirname, '../lib/orchestration/seed/chunks.json');
-
-interface SeedChunk {
-  id: string;
-  chunk_id: number;
-  content: string;
-  metadata: {
-    type: string;
-    section?: string;
-    section_title?: string;
-    pattern_number?: number;
-    pattern_name?: string;
-    pattern_id?: string;
-    category?: string;
-    complexity?: string;
-    related_patterns?: string[];
-    keywords?: string;
-    source?: string;
-  };
-  estimated_tokens: number;
-}
 
 async function ensureTestUser(): Promise<string> {
   const existing = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
@@ -80,7 +62,16 @@ async function seedWithoutEmbeddings(): Promise<void> {
 
   // Read chunks
   const raw = await readFile(CHUNKS_PATH, 'utf-8');
-  const chunks: SeedChunk[] = JSON.parse(raw);
+  const parsed: unknown = JSON.parse(raw);
+  const result = z.array(seedChunkSchema).safeParse(parsed);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue?.path.join('.') ?? '<root>';
+    throw new Error(
+      `Invalid chunks.json at ${CHUNKS_PATH}: ${issue?.message ?? 'validation failed'} (at ${path})`
+    );
+  }
+  const chunks = result.data;
   console.log(`  Loaded ${chunks.length} chunks from chunks.json`);
 
   // Create document

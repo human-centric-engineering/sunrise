@@ -60,6 +60,13 @@ Every capability must be API-accessible before any UI is built. All API endpoint
 
 Scope all agent data by `userId`. Organisation scoping can be added later.
 
+## Future Work
+
+- **Variable embedding dimensions** — allow the `AiKnowledgeChunk.embedding` column to support non-1536 dimensions, enabling local models (768-dim) without schema changes
+- **Quarterly registry review** — update `lib/orchestration/llm/embedding-models.ts` pricing and add new models
+- **Auto-detect embedding capability** — probe provider `/models` endpoint to discover embedding support automatically
+- **Cohere native adapter** — Cohere's embeddings API uses `input_type` and `embedding_types` params that differ from OpenAI; a dedicated adapter would unlock full Cohere support
+
 ## Key Reference Documents
 
 - [Orchestration overview](../../.context/admin/orchestration.md) — main entry point

@@ -84,6 +84,89 @@ describe('getProvider', () => {
     expect(provider).toBeInstanceOf(AnthropicProvider);
   });
 
+  it('throws unsafe_base_url with retriable=false when SSRF guard rejects baseUrl (RFC1918 private range)', async () => {
+    // Arrange: a DB row that passed Zod at write-time but contains a private-range
+    // baseUrl — simulates a direct DB write or a PATCH that flipped isLocal without
+    // re-validating the URL. Defense-in-depth re-check in buildProviderFromConfig
+    // must catch it.
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeRow({
+        name: 'Bad OpenAI',
+        slug: 'bad-openai',
+        providerType: 'openai-compatible',
+        baseUrl: 'http://10.0.0.1/v1',
+        apiKeyEnvVar: 'OPENAI_API_KEY',
+        isLocal: false,
+      })
+    );
+
+    // Act + Assert
+    await expect(getProvider('bad-openai')).rejects.toMatchObject({
+      code: 'unsafe_base_url',
+      retriable: false,
+    });
+    // Defense-in-depth path must also log the rejection
+    expect(logger.error).toHaveBeenCalledWith(
+      'Provider baseUrl rejected by SSRF guard at build time',
+      expect.objectContaining({ provider: 'bad-openai' })
+    );
+  });
+
+  it('throws unsafe_base_url for AWS link-local metadata endpoint (169.254.169.254)', async () => {
+    // Arrange: cloud-metadata IP — always blocked regardless of isLocal flag
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeRow({
+        name: 'AWS Meta',
+        slug: 'aws-meta',
+        providerType: 'openai-compatible',
+        baseUrl: 'http://169.254.169.254/v1',
+        apiKeyEnvVar: 'OPENAI_API_KEY',
+        isLocal: false,
+      })
+    );
+
+    await expect(getProvider('aws-meta')).rejects.toMatchObject({
+      code: 'unsafe_base_url',
+      retriable: false,
+    });
+  });
+
+  it('throws missing_api_key for openai-compatible when isLocal=false and env var is unset', async () => {
+    // Arrange: safe public baseUrl, non-local, but apiKeyEnvVar not in process.env
+    delete process.env.OPENAI_API_KEY;
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeRow({
+        name: 'OpenAI',
+        slug: 'openai',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKeyEnvVar: 'OPENAI_API_KEY',
+        isLocal: false,
+      })
+    );
+
+    await expect(getProvider('openai')).rejects.toMatchObject({
+      code: 'missing_api_key',
+      retriable: false,
+    });
+  });
+
+  it('throws unknown_provider_type with retriable=false for an unrecognised providerType', async () => {
+    // Arrange: a row with a providerType that did not exist when this code was
+    // compiled — e.g. a future migration that adds a new flavor before the
+    // factory switch-chain is updated.
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeRow({
+        providerType: 'totally-made-up',
+      })
+    );
+
+    await expect(getProvider('anthropic')).rejects.toMatchObject({
+      code: 'unknown_provider_type',
+      retriable: false,
+    });
+  });
+
   it('builds OpenAiCompatibleProvider for providerType=openai-compatible', async () => {
     (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeRow({

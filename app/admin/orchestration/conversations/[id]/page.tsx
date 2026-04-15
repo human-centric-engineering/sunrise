@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { ConversationTraceViewer } from '@/components/admin/orchestration/conversation-trace-viewer';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -79,7 +80,29 @@ export default async function ConversationDetailPage({
           {' / '}
           <span className="text-foreground">{conversation.title ?? 'Untitled'}</span>
         </nav>
-        <h1 className="text-2xl font-semibold">{conversation.title ?? 'Untitled conversation'}</h1>
+        <h1 className="text-2xl font-semibold">
+          {conversation.title ?? 'Untitled conversation'}{' '}
+          <FieldHelp
+            title="What is a conversation?"
+            contentClassName="w-96 max-h-80 overflow-y-auto"
+          >
+            <p>
+              A conversation is a recorded session between a user and an agent. It contains the
+              complete message history — user prompts, assistant responses, and tool call results —
+              giving you a full trace of how the agent reasoned and acted.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How to read it</p>
+            <p>
+              Messages appear chronologically. Tool-call messages show which capability was invoked
+              and what data came back. Each message includes token counts and timestamps.
+            </p>
+            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p>
+              Review the full message trace, inspect tool calls, and understand how the agent
+              handled this interaction.
+            </p>
+          </FieldHelp>
+        </h1>
         <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-4 text-sm">
           {conversation.agent && <span>Agent: {conversation.agent.name}</span>}
           <span>Created: {new Date(conversation.createdAt).toLocaleDateString()}</span>

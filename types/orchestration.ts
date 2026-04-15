@@ -319,12 +319,25 @@ export interface SystemInstructionsHistoryEntry {
 // Message Metadata
 // ============================================================================
 
-/** Structured metadata stored in AiMessage.metadata */
+/**
+ * Structured metadata stored in `AiMessage.metadata`.
+ *
+ * Shape varies by message role:
+ * - `assistant` messages carry `tokenUsage`, `modelUsed`, `latencyMs`, `costUsd`
+ * - `tool` messages carry `toolCall` and `result`
+ *
+ * All fields are optional and JSON-serializable so the object can be
+ * written directly to a Prisma `Json` column without runtime conversion.
+ */
 export interface MessageMetadata {
+  // Present on assistant messages
   tokenUsage?: TokenUsage;
   modelUsed?: string;
   latencyMs?: number;
   costUsd?: number;
+  // Present on tool messages
+  toolCall?: { id: string; name: string; arguments: unknown };
+  result?: unknown;
 }
 
 // ============================================================================
