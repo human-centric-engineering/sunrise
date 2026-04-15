@@ -17,6 +17,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 
+import { Tip } from '@/components/ui/tooltip';
 import {
   Table,
   TableBody,
@@ -98,25 +99,37 @@ export function PerAgentCostTable({ rows }: PerAgentCostTableProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Agent</TableHead>
-                <TableHead className="text-right">
-                  <button
-                    type="button"
-                    className="font-medium hover:underline"
-                    onClick={() => setSortKey('spend')}
-                  >
-                    Spend{sortKey === 'spend' ? ' ↓' : ''}
-                  </button>
+                <TableHead>
+                  <Tip label="The agent incurring LLM costs">
+                    <span>Agent</span>
+                  </Tip>
                 </TableHead>
-                <TableHead className="text-right">Budget</TableHead>
-                <TableHead title="Percentage of monthly budget spent — green ≤ 50%, amber 50–80%, red > 80%">
-                  <button
-                    type="button"
-                    className="font-medium hover:underline"
-                    onClick={() => setSortKey('utilisation')}
-                  >
-                    Utilisation{sortKey === 'utilisation' ? ' ↓' : ''}
-                  </button>
+                <TableHead className="text-right">
+                  <Tip label="Sort by month-to-date LLM spend">
+                    <button
+                      type="button"
+                      className="font-medium hover:underline"
+                      onClick={() => setSortKey('spend')}
+                    >
+                      Spend{sortKey === 'spend' ? ' ↓' : ''}
+                    </button>
+                  </Tip>
+                </TableHead>
+                <TableHead className="text-right">
+                  <Tip label="Monthly budget cap in USD — blank means no limit">
+                    <span>Budget</span>
+                  </Tip>
+                </TableHead>
+                <TableHead>
+                  <Tip label="Percentage of monthly budget spent — green ≤ 50%, amber 50–80%, red > 80%">
+                    <button
+                      type="button"
+                      className="font-medium hover:underline"
+                      onClick={() => setSortKey('utilisation')}
+                    >
+                      Utilisation{sortKey === 'utilisation' ? ' ↓' : ''}
+                    </button>
+                  </Tip>
                 </TableHead>
               </TableRow>
             </TableHeader>

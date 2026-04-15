@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tip } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -280,29 +281,43 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
           <TableHeader>
             <TableRow>
               <TableHead>
-                <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
-                  Name
-                  {renderSortIcon('name')}
-                </Button>
+                <Tip label="Sort by workflow name">
+                  <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
+                    Name
+                    {renderSortIcon('name')}
+                  </Button>
+                </Tip>
               </TableHead>
-              <TableHead title="URL-safe identifier used in API calls and URLs">Slug</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead
-                className="text-center"
-                title="Number of pattern blocks (steps) in this workflow"
-              >
-                Patterns
+              <TableHead>
+                <Tip label="URL-safe identifier used in API calls and URLs">
+                  <span>Slug</span>
+                </Tip>
               </TableHead>
-              <TableHead
-                className="text-center"
-                title='Templates appear in the "Use template" menu when creating new workflows'
-              >
-                Template
+              <TableHead>
+                <Tip label="A short summary of what this workflow does">
+                  <span>Description</span>
+                </Tip>
               </TableHead>
-              <TableHead className="text-right" title="Total times this workflow has been executed">
-                Runs
+              <TableHead className="text-center">
+                <Tip label="Number of pattern blocks (steps) in this workflow">
+                  <span>Patterns</span>
+                </Tip>
               </TableHead>
-              <TableHead className="text-center">Status</TableHead>
+              <TableHead className="text-center">
+                <Tip label="Templates appear in the 'Use template' menu when creating new workflows">
+                  <span>Template</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Total times this workflow has been executed">
+                  <span>Runs</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-center">
+                <Tip label="Whether this workflow is active and available for execution">
+                  <span>Status</span>
+                </Tip>
+              </TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>

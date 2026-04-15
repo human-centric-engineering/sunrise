@@ -35,6 +35,8 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tip } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -335,26 +337,43 @@ export function CapabilitiesTable({
           <TableHeader>
             <TableRow>
               <TableHead>
-                <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
-                  Name
-                  {renderSortIcon('name')}
-                </Button>
+                <Tip label="Sort by capability name">
+                  <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
+                    Name
+                    {renderSortIcon('name')}
+                  </Button>
+                </Tip>
               </TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead title="How the capability runs: internal (TypeScript handler in this app), api (HTTP POST, waits for response), or webhook (fire-and-forget POST)">
-                Exec type
+              <TableHead>
+                <Tip label="Grouping category for organising capabilities (e.g. api, search, comms)">
+                  <span>Category</span>
+                </Tip>
               </TableHead>
-              <TableHead title="When set, a human must approve each call before it executes — use for high-risk actions like sending emails or writing to production">
-                Approval
+              <TableHead>
+                <Tip label="How the capability runs: internal (TypeScript handler), api (HTTP POST), or webhook (fire-and-forget)">
+                  <span>Exec type</span>
+                </Tip>
               </TableHead>
-              <TableHead
-                className="text-right"
-                title="Maximum calls per minute across all agents — blank means no limit"
-              >
-                Rate/min
+              <TableHead>
+                <Tip label="When set, a human must approve each call before it executes — use for high-risk actions">
+                  <span>Approval</span>
+                </Tip>
               </TableHead>
-              <TableHead className="text-right">Agents</TableHead>
-              <TableHead className="text-center">Status</TableHead>
+              <TableHead className="text-right">
+                <Tip label="Maximum calls per minute across all agents — blank means no limit">
+                  <span>Rate/min</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Number of agents that have this capability attached">
+                  <span>Agents</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-center">
+                <Tip label="Whether this capability is active and available for agents to call">
+                  <span>Status</span>
+                </Tip>
+              </TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
@@ -414,12 +433,36 @@ export function CapabilitiesTable({
                       ) : agents.length === 0 ? (
                         '0'
                       ) : (
-                        <Link
-                          href={`/admin/orchestration/agents?capability=${cap.slug}`}
-                          className="hover:underline"
-                        >
-                          {agents.length} →
-                        </Link>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button className="cursor-pointer tabular-nums hover:underline">
+                              {agents.length} →
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-64 p-0" align="end">
+                            <div className="border-b px-3 py-2">
+                              <p className="text-sm font-medium">
+                                {agents.length} agent{agents.length !== 1 ? 's' : ''} using{' '}
+                                <span className="font-semibold">{cap.name}</span>
+                              </p>
+                            </div>
+                            <ul className="max-h-48 overflow-y-auto py-1">
+                              {agents.map((agent) => (
+                                <li key={agent.id}>
+                                  <Link
+                                    href={`/admin/orchestration/agents/${agent.id}`}
+                                    className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                  >
+                                    <span className="truncate">{agent.name}</span>
+                                    <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                      {agent.slug}
+                                    </span>
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          </PopoverContent>
+                        </Popover>
                       )}
                     </TableCell>
                     <TableCell className="text-center">

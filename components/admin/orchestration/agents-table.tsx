@@ -69,6 +69,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tip } from '@/components/ui/tooltip';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
@@ -447,45 +448,58 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 />
               </TableHead>
               <TableHead>
-                <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
-                  Name
-                  {renderSortIcon('name')}
-                </Button>
+                <Tip label="Sort by agent name">
+                  <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
+                    Name
+                    {renderSortIcon('name')}
+                  </Button>
+                </Tip>
               </TableHead>
-              <TableHead title="URL-safe identifier used in API calls and URLs">Slug</TableHead>
-              <TableHead
-                className="text-right"
-                title="Number of capabilities (tools) attached to this agent"
-              >
-                Caps
+              <TableHead>
+                <Tip label="URL-safe identifier used in API calls and URLs">
+                  <span>Slug</span>
+                </Tip>
               </TableHead>
-              <TableHead
-                className="text-right"
-                title="Total conversations this agent has participated in"
-              >
-                Convs
+              <TableHead className="text-right">
+                <Tip label="Number of capabilities (tools) attached to this agent">
+                  <span>Caps</span>
+                </Tip>
               </TableHead>
-              <TableHead>Provider</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead
-                className="text-right"
-                title="Temperature — controls response creativity (0 = deterministic, 2 = most creative)"
-              >
-                Temp
+              <TableHead className="text-right">
+                <Tip label="Total conversations this agent has participated in">
+                  <span>Convs</span>
+                </Tip>
               </TableHead>
-              <TableHead
-                className="text-right"
-                title="Monthly budget cap in USD — blank means no limit"
-              >
-                Budget
+              <TableHead>
+                <Tip label="The LLM service powering this agent (e.g. Anthropic, OpenAI, Ollama)">
+                  <span>Provider</span>
+                </Tip>
               </TableHead>
-              <TableHead
-                className="text-right"
-                title="Spend month-to-date — total LLM cost this calendar month (UTC)"
-              >
-                Spend MTD
+              <TableHead>
+                <Tip label="The specific model this agent uses for chat responses">
+                  <span>Model</span>
+                </Tip>
               </TableHead>
-              <TableHead className="text-center">Status</TableHead>
+              <TableHead className="text-right">
+                <Tip label="Temperature — controls response creativity (0 = deterministic, 2 = most creative)">
+                  <span>Temp</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Monthly budget cap in USD — blank means no limit">
+                  <span>Budget</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-right">
+                <Tip label="Spend month-to-date — total LLM cost this calendar month (UTC)">
+                  <span>Spend MTD</span>
+                </Tip>
+              </TableHead>
+              <TableHead className="text-center">
+                <Tip label="Whether this agent is active and available for chat">
+                  <span>Status</span>
+                </Tip>
+              </TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
