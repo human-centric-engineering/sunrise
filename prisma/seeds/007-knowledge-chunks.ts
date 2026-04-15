@@ -13,6 +13,8 @@ import type { SeedUnit } from '../runner';
  */
 const unit: SeedUnit = {
   name: '007-knowledge-chunks',
+  // Fold the chunk data file into the content hash so edits re-trigger this unit.
+  hashInputs: ['../../lib/orchestration/seed/chunks.json'],
   async run({ logger }) {
     logger.info('📖 Seeding knowledge base chunks...');
 

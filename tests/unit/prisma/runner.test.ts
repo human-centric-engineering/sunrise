@@ -314,6 +314,77 @@ describe('runSeeds()', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it('should fold declared hashInputs into the content hash so data edits trigger re-runs', async () => {
+    // Arrange — seed file declares a sibling data file via hashInputs
+    const dataFilename = 'data.json';
+    const initialData = '{"v":1}';
+    const updatedData = '{"v":2}';
+    await writeFile(join(tmpDir, dataFilename), initialData, 'utf-8');
+
+    const seedSource = `export default { name: 'withdata', hashInputs: ['./${dataFilename}'], async run() {} };\n`;
+    await writeFile(join(tmpDir, '001-withdata.ts'), seedSource, 'utf-8');
+
+    const initialHash = sha256(seedSource + '\n' + initialData);
+
+    // Store already has the initial combined hash → first run should skip
+    const { prisma, upsert } = makeFakePrisma([
+      {
+        id: 'id-001-withdata',
+        name: '001-withdata',
+        contentHash: initialHash,
+        appliedAt: new Date(),
+        durationMs: 1,
+      },
+    ]);
+
+    // Act 1 — unchanged data: skip
+    await runSeeds(prisma, tmpDir);
+    expect(upsert).not.toHaveBeenCalled();
+
+    // Act 2 — change the referenced data file, re-run
+    await writeFile(join(tmpDir, dataFilename), updatedData, 'utf-8');
+    await runSeeds(prisma, tmpDir);
+
+    // Assert — unit re-ran with a hash that folds in the updated data
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(upsert).mock.calls[0][0];
+    expect(call.where.name).toBe('001-withdata');
+    expect(call.update.contentHash).toBe(sha256(seedSource + '\n' + updatedData));
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should throw a descriptive error when a declared hashInput file is missing', async () => {
+    // Arrange — seed declares a hashInput that doesn't exist on disk
+    const seedSource = `export default { name: 'missingdata', hashInputs: ['./nope.json'], async run() {} };\n`;
+    await writeFile(join(tmpDir, '001-missingdata.ts'), seedSource, 'utf-8');
+
+    const { prisma, upsert } = makeFakePrisma();
+
+    // Act & Assert — error names the unit and the missing file
+    await expect(runSeeds(prisma, tmpDir)).rejects.toThrow(/001-missingdata/);
+    await expect(runSeeds(prisma, tmpDir)).rejects.toThrow(/nope\.json/);
+    expect(upsert).not.toHaveBeenCalled();
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should hash only the seed file source when hashInputs is absent (backward compat)', async () => {
+    // Arrange — classic seed with no hashInputs
+    const { prisma, upsert } = makeFakePrisma();
+    const source = await writeSeedFile(tmpDir, '001-plain.ts', 'plain');
+
+    // Act
+    await runSeeds(prisma, tmpDir);
+
+    // Assert — hash matches the bare sha256 of the source file
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(upsert).mock.calls[0][0];
+    expect(call.create.contentHash).toBe(sha256(source));
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
   it('should execute seeds in strict lexicographic order (010 after 009)', async () => {
     // Arrange — filenames chosen so 010 sorts after 009 lexicographically
     const { prisma, upsert } = makeFakePrisma();
