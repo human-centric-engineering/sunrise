@@ -746,7 +746,7 @@ Empty body. Re-runs the chunker + embedder on an existing document — use it af
 curl -X POST /api/v1/admin/orchestration/knowledge/seed
 ```
 
-Empty body. Resolves `path.join(process.cwd(), 'lib/orchestration/seed/chunks.json')` and calls `seedFromChunksJson`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
+Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedFromChunksJson`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
 
 ## Conversations
 

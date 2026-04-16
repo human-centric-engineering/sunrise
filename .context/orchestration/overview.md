@@ -14,7 +14,7 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 | `lib/orchestration/chat/`         | Streaming chat handler, context builder, message composition                                                   | Phase 2c ✓  |
 | `lib/orchestration/workflows/`    | DAG validator (authoring-time structural checks)                                                               | Phase 3.2 ✓ |
 | `lib/orchestration/engine/`       | Runtime executor — `OrchestrationEngine`, executor registry, 12 step executors, event stream                   | Phase 5.2 ✓ |
-| `lib/orchestration/seed/`         | Dev seed data for providers / agents                                                                           | Phase 1 ✓   |
+| `prisma/seeds/data/`              | Dev seed data for providers / agents                                                                           | Phase 1 ✓   |
 | `lib/orchestration/evaluations/`  | Evaluation session completion handler (bounded prompt, sanitized errors)                                       | Phase 3.4 ✓ |
 | `app/api/v1/admin/orchestration/` | Admin CRUD + runtime routes (chat stream, knowledge, conversations, costs, evaluations, live workflow execute) | Phase 5.2 ✓ |
 

@@ -1,9 +1,9 @@
 /**
- * Built-in workflow templates.
+ * Built-in workflow templates — seed data.
  *
- * Imported by both the admin builder toolbar (so the "Use template"
- * dropdown is zero-latency and offline) and `prisma/seed.ts` (so every
- * template is upserted as an `AiWorkflow` row with `isTemplate: true`).
+ * Consumed by `prisma/seeds/004-builtin-templates.ts` which upserts each
+ * template as an `AiWorkflow` row with `isTemplate: true`. The UI reads
+ * templates via the workflows API, not from this module.
  *
  * Adding a new template: create a new file, import it here, and append it
  * to `BUILTIN_WORKFLOW_TEMPLATES`. The seed is idempotent and the unit

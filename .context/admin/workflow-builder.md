@@ -241,7 +241,7 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 Session 5.1c ships 5 built-in composition recipes lifted verbatim from `.claude/skills/agent-architect/SKILL.md`. The dropdown loads them directly from a pure-TS module — there is **no** network call.
 
-**Module layout** (all under `lib/orchestration/workflows/templates/`):
+**Module layout** (all under `prisma/seeds/data/templates/`):
 
 | File                         | Template                                                   | Patterns                                                         |
 | ---------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |

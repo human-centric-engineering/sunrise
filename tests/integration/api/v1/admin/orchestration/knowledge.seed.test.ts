@@ -8,7 +8,7 @@
  * Key security assertions:
  * - Admin auth required (401/403 otherwise)
  * - Rate limited (adminLimiter)
- * - seedChunks is called with path ending in lib/orchestration/seed/chunks.json
+ * - seedChunks is called with path ending in prisma/seeds/data/chunks/chunks.json
  * - Response contains { seeded: true }
  */
 
@@ -103,7 +103,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
       expect(data.data.seeded).toBe(true);
     });
 
-    it('calls seedChunks with path ending in lib/orchestration/seed/chunks.json', async () => {
+    it('calls seedChunks with path ending in prisma/seeds/data/chunks/chunks.json', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(seedChunks).mockResolvedValue(undefined);
 
@@ -111,7 +111,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
 
       expect(vi.mocked(seedChunks)).toHaveBeenCalledOnce();
       const calledWith = vi.mocked(seedChunks).mock.calls[0][0];
-      expect(calledWith).toMatch(/lib[/\\]orchestration[/\\]seed[/\\]chunks\.json$/);
+      expect(calledWith).toMatch(/prisma[/\\]seeds[/\\]data[/\\]chunks[/\\]chunks\.json$/);
     });
   });
 

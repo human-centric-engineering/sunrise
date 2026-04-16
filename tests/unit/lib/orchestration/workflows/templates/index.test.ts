@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 import {
   runExtraChecks,

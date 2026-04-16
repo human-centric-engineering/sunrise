@@ -56,8 +56,9 @@ import {
   type PatternNode,
 } from './workflow-mappers';
 import type { CapabilityOption } from './block-editors';
-import type { WorkflowTemplate } from '@/lib/orchestration/workflows/templates';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import type { TemplateItem } from './template-types';
+import { toTemplateItem } from './template-types';
+import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
 
@@ -68,6 +69,16 @@ export interface WorkflowBuilderProps {
   initialDefinition?: WorkflowDefinition;
   /** Server-prefetched capabilities for the Tool Call block editor. */
   initialCapabilities?: CapabilityOption[];
+  /** Server-prefetched templates for the "Use template" dropdown. */
+  initialTemplates?: Array<{
+    slug: string;
+    name: string;
+    description: string;
+    workflowDefinition: unknown;
+    patternsUsed: number[];
+    isTemplate: boolean;
+    metadata: unknown;
+  }>;
 }
 
 interface InitialState {
@@ -111,6 +122,7 @@ function WorkflowBuilderInner({
   workflow,
   initialDefinition,
   initialCapabilities,
+  initialTemplates,
 }: WorkflowBuilderProps) {
   const router = useRouter();
   const seed = useMemo(
@@ -147,10 +159,16 @@ function WorkflowBuilderInner({
     budgetLimitUsd?: number;
   } | null>(null);
 
+  // Map server-prefetched templates to TemplateItem[].
+  const templates = useMemo<readonly TemplateItem[]>(
+    () => (initialTemplates ?? []).map(toTemplateItem),
+    [initialTemplates]
+  );
+
   // Template selection state. `pendingTemplate` drives the description
   // dialog — a null value hides it. The dialog confirms before the canvas
   // is actually replaced so we don't clobber in-progress work.
-  const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
+  const [pendingTemplate, setPendingTemplate] = useState<TemplateItem | null>(null);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
 
   // Fallback: fetch capabilities client-side only if not prefetched.
@@ -275,7 +293,7 @@ function WorkflowBuilderInner({
   // Template selection
   // ------------------------------------------------------------------
 
-  const handleTemplateSelect = useCallback((template: WorkflowTemplate) => {
+  const handleTemplateSelect = useCallback((template: TemplateItem) => {
     setPendingTemplate(template);
     setTemplateDialogOpen(true);
   }, []);
@@ -393,13 +411,19 @@ function WorkflowBuilderInner({
         onSave={handleSave}
         onExecute={handleExecute}
         onTemplateSelect={handleTemplateSelect}
+        templates={templates}
         templatesDisabled={mode === 'edit'}
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
 
-      {workflow?.isTemplate && workflow.slug && (
-        <TemplateBanner slug={workflow.slug} isTemplate={workflow.isTemplate} />
+      {workflow?.isTemplate && (
+        <TemplateBanner
+          name={workflow.name}
+          description={workflow.description}
+          isTemplate={workflow.isTemplate}
+          metadata={(workflow.metadata as unknown as WorkflowTemplateMetadata) ?? null}
+        />
       )}
 
       <div ref={summaryPanelRef}>

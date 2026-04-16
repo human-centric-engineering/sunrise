@@ -110,7 +110,28 @@ vi.mock('next/navigation', () => ({
 
 import { apiClient } from '@/lib/api/client';
 import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
-import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
+
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
+
+const MOCK_TEMPLATE = {
+  slug: 'tpl-customer-support',
+  name: 'Customer Support',
+  description: 'Multi-channel support automation',
+  workflowDefinition: {
+    entryStepId: 's1',
+    errorStrategy: 'fail',
+    steps: [
+      { id: 's1', name: 'Entry', type: 'llm_call', config: { prompt: 'Hello' }, nextSteps: [] },
+    ],
+  },
+  patternsUsed: [1, 2],
+  isTemplate: true,
+  metadata: {
+    flowSummary: 'A flow',
+    useCases: [{ title: 'Triage', scenario: 'Route tickets' }],
+    patterns: [{ number: 1, name: 'Chain' }],
+  },
+};
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -119,7 +140,10 @@ describe('NewWorkflowPage', () => {
     vi.clearAllMocks();
     vi.mocked(apiClient.get).mockResolvedValue([]);
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    // Page calls getCapabilities() + getTemplates() in parallel — both use parseApiResponse
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [MOCK_TEMPLATE] }); // templates
   });
 
   afterEach(() => {
@@ -224,9 +248,8 @@ describe('NewWorkflowPage', () => {
 
     // Open the Use template dropdown and pick the first template.
     await user.click(screen.getByRole('button', { name: /use template/i }));
-    const template = BUILTIN_WORKFLOW_TEMPLATES[0];
     const item = await screen.findByRole('menuitem', {
-      name: new RegExp(template.name, 'i'),
+      name: new RegExp(MOCK_TEMPLATE.name, 'i'),
       hidden: true,
     });
     await user.click(item);
@@ -256,9 +279,11 @@ describe('NewWorkflowPage', () => {
       name: string;
       workflowDefinition: { steps: unknown[]; entryStepId: string };
     };
-    expect(body.name).toBe(template.name);
-    expect(body.workflowDefinition.steps).toHaveLength(template.workflowDefinition.steps.length);
-    expect(body.workflowDefinition.entryStepId).toBe(template.workflowDefinition.entryStepId);
+    expect(body.name).toBe(MOCK_TEMPLATE.name);
+    expect(body.workflowDefinition.steps).toHaveLength(
+      MOCK_TEMPLATE.workflowDefinition.steps.length
+    );
+    expect(body.workflowDefinition.entryStepId).toBe(MOCK_TEMPLATE.workflowDefinition.entryStepId);
   });
 
   it('confirming dialog with empty canvas shows an inline error (no nodes to save)', async () => {

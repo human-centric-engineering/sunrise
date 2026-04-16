@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
+import {
+  WorkflowBuilder,
+  type WorkflowBuilderProps,
+} from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -45,10 +48,33 @@ async function getCapabilities(): Promise<CapabilityOption[]> {
   }
 }
 
+async function getTemplates(): Promise<unknown[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<unknown[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('edit workflow page: templates fetch failed', err);
+    return [];
+  }
+}
+
 export default async function EditWorkflowPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [workflow, capabilities] = await Promise.all([getWorkflow(id), getCapabilities()]);
+  const [workflow, capabilities, templates] = await Promise.all([
+    getWorkflow(id),
+    getCapabilities(),
+    getTemplates(),
+  ]);
   if (!workflow) notFound();
 
-  return <WorkflowBuilder mode="edit" workflow={workflow} initialCapabilities={capabilities} />;
+  return (
+    <WorkflowBuilder
+      mode="edit"
+      workflow={workflow}
+      initialCapabilities={capabilities}
+      initialTemplates={templates as WorkflowBuilderProps['initialTemplates']}
+    />
+  );
 }

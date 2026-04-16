@@ -18,24 +18,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { TemplateDescriptionDialog } from '@/components/admin/orchestration/workflow-builder/template-description-dialog';
-import type { WorkflowTemplate } from '@/lib/orchestration/workflows/templates';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
 
-const SAMPLE_TEMPLATE: WorkflowTemplate = {
+const SAMPLE_TEMPLATE: TemplateItem = {
   slug: 'tpl-sample',
   name: 'Sample Template',
-  shortDescription: 'A compact sample used by the dialog unit test.',
-  patterns: [
-    { number: 2, name: 'Routing' },
-    { number: 14, name: 'RAG' },
-  ],
-  flowSummary: 'Route the request and retrieve grounding context before replying.',
-  useCases: [
-    {
-      title: 'Helpdesk triage',
-      scenario: 'Route tickets by category and retrieve resolution docs.',
-    },
-    { title: 'FAQ chatbot', scenario: 'Answer questions using the knowledge base.' },
-  ],
+  description: 'A compact sample used by the dialog unit test.',
   workflowDefinition: {
     entryStepId: 'entry',
     errorStrategy: 'fail',
@@ -47,6 +35,22 @@ const SAMPLE_TEMPLATE: WorkflowTemplate = {
         config: { prompt: 'Hello', modelOverride: '', temperature: 0.5 },
         nextSteps: [],
       },
+    ],
+  },
+  patternsUsed: [2, 14],
+  isTemplate: true,
+  metadata: {
+    flowSummary: 'Route the request and retrieve grounding context before replying.',
+    useCases: [
+      {
+        title: 'Helpdesk triage',
+        scenario: 'Route tickets by category and retrieve resolution docs.',
+      },
+      { title: 'FAQ chatbot', scenario: 'Answer questions using the knowledge base.' },
+    ],
+    patterns: [
+      { number: 2, name: 'Routing' },
+      { number: 14, name: 'RAG' },
     ],
   },
 };
@@ -72,8 +76,8 @@ describe('TemplateDescriptionDialog', () => {
     renderDialog();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Sample Template')).toBeInTheDocument();
-    expect(screen.getByText(SAMPLE_TEMPLATE.shortDescription)).toBeInTheDocument();
-    expect(screen.getByText(SAMPLE_TEMPLATE.flowSummary)).toBeInTheDocument();
+    expect(screen.getByText(SAMPLE_TEMPLATE.description)).toBeInTheDocument();
+    expect(screen.getByText(SAMPLE_TEMPLATE.metadata!.flowSummary)).toBeInTheDocument();
   });
 
   it('renders a badge per pattern', () => {

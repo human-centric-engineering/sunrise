@@ -454,6 +454,59 @@ export interface PatternSummary {
   chunkCount: number;
 }
 
+// ============================================================================
+// Workflow Template Types (seed data + UI)
+// ============================================================================
+
+/** A concrete business scenario a workflow template can solve. */
+export interface WorkflowTemplateUseCase {
+  /** Short title, e.g. "E-commerce returns processing". */
+  title: string;
+  /** 1-2 sentence description of the business problem. */
+  scenario: string;
+}
+
+/** A single agentic pattern referenced by a template (for display). */
+export interface WorkflowTemplatePattern {
+  /** Pattern number from the agent-architect skill (1–21). */
+  number: number;
+  /** Human-readable name, e.g. "Routing", "Human-in-the-Loop". */
+  name: string;
+}
+
+/**
+ * Static description + DAG for a built-in workflow template.
+ *
+ * The `slug` doubles as the `AiWorkflow.slug` when the seeder upserts
+ * this template into the database.
+ */
+export interface WorkflowTemplate {
+  /** URL-safe unique identifier. Used as `AiWorkflow.slug` by the seeder. */
+  slug: string;
+  /** Friendly title shown in the dropdown + description dialog. */
+  name: string;
+  /** One-sentence summary used as `AiWorkflow.description` on seed. */
+  shortDescription: string;
+  /** Patterns referenced by this recipe — rendered as badges. */
+  patterns: readonly WorkflowTemplatePattern[];
+  /** Short prose describing the flow. */
+  flowSummary: string;
+  /** Concrete business scenarios this template addresses. */
+  useCases: readonly WorkflowTemplateUseCase[];
+  /** The full DAG loaded onto the canvas when the user picks this template. */
+  workflowDefinition: WorkflowDefinition;
+}
+
+/**
+ * Template-intrinsic metadata stored in `AiWorkflow.metadata` Json column.
+ * Populated by the 004 seed unit and served to the UI via the workflows API.
+ */
+export interface WorkflowTemplateMetadata {
+  flowSummary: string;
+  useCases: readonly { title: string; scenario: string }[];
+  patterns: readonly { number: number; name: string }[];
+}
+
 // Re-export Prisma model types for convenience
 export type {
   AiAgent,

@@ -39,7 +39,7 @@ The separation is:
 | Workflows     | `lib/orchestration/workflows/`    | 4     | DAG validator, step types, templates                    |
 | Engine        | `lib/orchestration/engine/`       | 5     | Runtime executor, 9 step executors, event stream        |
 | Evaluations   | `lib/orchestration/evaluations/`  | 6     | Evaluation session completion handler                   |
-| Seed          | `lib/orchestration/seed/`         | 1     | Dev seed data for providers / agents                    |
+| Seed          | `prisma/seeds/data/`              | 1     | Dev seed data for providers / agents                    |
 
 ## Key File Paths
 

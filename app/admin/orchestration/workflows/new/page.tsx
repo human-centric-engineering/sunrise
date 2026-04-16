@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 
-import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
+import {
+  WorkflowBuilder,
+  type WorkflowBuilderProps,
+} from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -20,6 +23,18 @@ async function getCapabilities(): Promise<CapabilityOption[]> {
     return body.success ? body.data : [];
   } catch (err) {
     logger.error('new workflow page: capabilities fetch failed', err);
+    return [];
+  }
+}
+
+async function getTemplates(): Promise<unknown[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<unknown[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('new workflow page: templates fetch failed', err);
     return [];
   }
 }
@@ -51,13 +66,14 @@ export default async function NewWorkflowPage({
     }
   }
 
-  const capabilities = await getCapabilities();
+  const [capabilities, templates] = await Promise.all([getCapabilities(), getTemplates()]);
 
   return (
     <WorkflowBuilder
       mode="create"
       initialDefinition={initialDefinition}
       initialCapabilities={capabilities}
+      initialTemplates={templates as WorkflowBuilderProps['initialTemplates']}
     />
   );
 }

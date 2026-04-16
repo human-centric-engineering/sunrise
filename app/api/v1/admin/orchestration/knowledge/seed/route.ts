@@ -4,7 +4,7 @@
  * POST /api/v1/admin/orchestration/knowledge/seed
  *
  * Triggers `seedChunks` against the canonical chunks.json bundled
- * at `lib/orchestration/seed/chunks.json`. Inserts chunk rows with
+ * at `prisma/seeds/data/chunks/chunks.json`. Inserts chunk rows with
  * embedding=null and sets the document status to 'ready' so the
  * Learning Patterns UI works immediately. Embeddings are generated
  * separately via the /embed endpoint.
@@ -31,7 +31,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
 
-  const chunksPath = path.join(process.cwd(), 'lib/orchestration/seed/chunks.json');
+  const chunksPath = path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json');
 
   log.info('Knowledge seed started', { chunksPath, adminId: session.user.id });
 

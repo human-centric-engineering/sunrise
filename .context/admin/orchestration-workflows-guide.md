@@ -126,7 +126,7 @@ Variables read from a frozen snapshot of `ExecutionContext`, so any step that co
 
 ## Built-in Templates
 
-Five templates ship in `lib/orchestration/workflows/templates/`. They are loaded into the workflow builder's "Use template" dropdown (zero-latency, no network call) and seeded as `AiWorkflow` rows with `isTemplate: true`.
+Five templates ship in `prisma/seeds/data/templates/`. They are loaded into the workflow builder's "Use template" dropdown (zero-latency, no network call) and seeded as `AiWorkflow` rows with `isTemplate: true`.
 
 ### `tpl-customer-support` — Customer Support
 
@@ -168,7 +168,7 @@ Interactive learning flow with knowledge retrieval and adaptive questioning.
 
 **Via the API:** Templates are seeded as `AiWorkflow` rows. Fetch them with `GET /api/v1/admin/orchestration/workflows` and use their `workflowDefinition` as a starting point.
 
-**Adding a new template:** Create a new file in `lib/orchestration/workflows/templates/`, export a `WorkflowTemplate` object, import it in `templates/index.ts`, and append it to `BUILTIN_WORKFLOW_TEMPLATES`. The seed is idempotent and the unit test will flag invalid DAGs.
+**Adding a new template:** Create a new file in `prisma/seeds/data/templates/`, export a `WorkflowTemplate` object, import it in `templates/index.ts`, and append it to `BUILTIN_WORKFLOW_TEMPLATES`. The seed is idempotent and the unit test will flag invalid DAGs.
 
 ## Validation
 
