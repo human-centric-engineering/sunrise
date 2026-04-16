@@ -88,6 +88,15 @@ export const PATCH = withAdminAuth(async (request, session) => {
         ? Prisma.JsonNull
         : (body.searchConfig as unknown as Prisma.InputJsonValue);
   }
+  if (body.defaultApprovalTimeoutMs !== undefined) {
+    updateData.defaultApprovalTimeoutMs = body.defaultApprovalTimeoutMs;
+  }
+  if (body.approvalDefaultAction !== undefined) {
+    updateData.approvalDefaultAction = body.approvalDefaultAction;
+  }
+  if (body.inputGuardMode !== undefined) {
+    updateData.inputGuardMode = body.inputGuardMode;
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },

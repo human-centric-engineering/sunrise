@@ -59,6 +59,9 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   globalMonthlyBudgetUsd: 500,
   searchConfig: null,
   lastSeededAt: null,
+  defaultApprovalTimeoutMs: null,
+  approvalDefaultAction: 'deny',
+  inputGuardMode: 'log_only',
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

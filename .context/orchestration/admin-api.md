@@ -27,6 +27,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config        |
 | `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider        |
 | `/api/v1/admin/orchestration/providers/:id/models`            | GET                | Ask the provider directly what models it exposes     |
+| `/api/v1/admin/orchestration/providers/:id/health`            | GET, POST          | Read / reset circuit breaker state for a provider    |
 | `/api/v1/admin/orchestration/models`                          | GET                | Aggregated model registry (all providers)            |
 | `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                              |
 | `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow               |
@@ -327,7 +328,7 @@ No DNS resolution happens at validate-time — defending against DNS rebinding w
 curl '/api/v1/admin/orchestration/providers?isActive=true&providerType=anthropic&q=claude'
 ```
 
-Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent`.
+Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent` and `circuitBreaker: { state, failureCount, openedAt, config }` (from in-memory breaker state, defaults to `{ state: 'closed', failureCount: 0 }` if no breaker exists).
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/providers \
@@ -367,6 +368,24 @@ curl /api/v1/admin/orchestration/providers/<id>/models
 ```
 
 Calls `getProvider(slug).listModels()` live — this is "what does _this_ provider say it has", distinct from the aggregated registry below. Failures return 503 via a typed error so callers can differentiate transient provider outages from 404s.
+
+### Provider health (circuit breaker)
+
+```bash
+# Read breaker state
+curl /api/v1/admin/orchestration/providers/<id>/health
+
+# Reset the breaker (rate-limited)
+curl -X POST /api/v1/admin/orchestration/providers/<id>/health
+```
+
+GET returns the circuit breaker status for the provider: `{ state, failureCount, openedAt, config }`. When no breaker exists yet (provider has never been called), returns a default closed state.
+
+POST resets the breaker to closed (useful after a provider outage is resolved). Rate-limited by `adminLimiter`.
+
+### Per-provider timeout
+
+Providers support optional `timeoutMs` (1,000–300,000 ms) and `maxRetries` (0–10) fields set via POST/PATCH. Resolution order in `buildProviderFromConfig()`: `config.timeoutMs` → `LOCAL_TIMEOUT_MS` (if `isLocal`) → `DEFAULT_TIMEOUT_MS`. These are passed to the provider SDK constructor.
 
 ### Aggregated model registry
 
@@ -1097,6 +1116,9 @@ Returns the hydrated singleton. Missing task keys are filled in from `computeDef
     "globalMonthlyBudgetUsd": null,
     "searchConfig": null,
     "lastSeededAt": "2026-04-15T12:00:00.000Z",
+    "defaultApprovalTimeoutMs": null,
+    "approvalDefaultAction": "deny",
+    "inputGuardMode": "log_only",
     "createdAt": "2026-04-11T00:00:00.000Z",
     "updatedAt": "2026-04-11T00:00:00.000Z"
   }
@@ -1119,6 +1141,9 @@ Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`
 - `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
 - `searchConfig` — optional object `{ keywordBoostWeight: number, vectorWeight: number }` or `null` to reset to defaults. `keywordBoostWeight` must be between -0.2 and 0 (non-positive, reduces cosine distance for keyword matches). `vectorWeight` must be between 0.1 and 2.0 (multiplier on vector similarity score).
 - `lastSeededAt` — read-only, set automatically by the knowledge seeder; not accepted in PATCH
+- `defaultApprovalTimeoutMs` — optional `number | null`, positive int ≤ 3,600,000. Global fallback timeout for capability approval gates. When a capability has no `approvalTimeoutMs`, this value is used.
+- `approvalDefaultAction` — `'deny' | 'allow' | null`. What happens when an approval gate times out. Default: `'deny'`.
+- `inputGuardMode` — `'log_only' | 'warn_and_continue' | 'block'`. Controls the input guard behavior when prompt injection is detected. `log_only` silently logs (default), `warn_and_continue` yields a warning event to the client, `block` returns an error and stops processing.
 - At least one field must be present (empty PATCH rejected)
 
 On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` so the next chat turn picks up the new defaults immediately (otherwise the 30s TTL cache would delay the change).

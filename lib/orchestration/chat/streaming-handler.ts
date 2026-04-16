@@ -29,6 +29,7 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from './input-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
@@ -37,7 +38,13 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from './context-builder';
 import { buildMessages } from './message-builder';
-import { MAX_TOOL_ITERATIONS, type ChatRequest, type ChatStream } from './types';
+import { summarizeMessages } from './summarizer';
+import {
+  MAX_HISTORY_MESSAGES,
+  MAX_TOOL_ITERATIONS,
+  type ChatRequest,
+  type ChatStream,
+} from './types';
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
 export class ChatError extends Error {
@@ -121,7 +128,7 @@ export class StreamingChatHandler {
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
 
-      // Input guard — log-only, never blocks
+      // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
         logger.warn('Potential prompt injection detected', {
@@ -130,6 +137,61 @@ export class StreamingChatHandler {
           patterns: scanResult.patterns,
           // Never log message content
         });
+
+        let guardMode: string = 'log_only';
+        try {
+          const settings = await getOrchestrationSettings();
+          guardMode = settings.inputGuardMode;
+        } catch {
+          // Settings unavailable — fall back to log_only
+        }
+
+        if (guardMode === 'block') {
+          yield errorEvent('input_blocked', 'Message blocked by security policy.');
+          return;
+        }
+        if (guardMode === 'warn_and_continue') {
+          yield {
+            type: 'warning',
+            code: 'input_flagged',
+            message: 'Your message was flagged for review but processing continues.',
+          };
+        }
+      }
+
+      // Rolling summary — when history exceeds the window, summarize
+      // the oldest messages and persist the summary for future turns.
+      let conversationSummary: string | undefined;
+      const historyRows = history.map((m) => ({
+        role: m.role,
+        content: m.content,
+        toolCallId: m.toolCallId,
+      }));
+
+      if (historyRows.length > MAX_HISTORY_MESSAGES) {
+        const droppedCount = historyRows.length - MAX_HISTORY_MESSAGES;
+        const droppedMessages = historyRows.slice(0, droppedCount);
+        const lastDroppedId = history[droppedCount - 1]?.id ?? null;
+
+        // Reuse existing summary if it covers all dropped messages
+        if (conversation.summary && conversation.summaryUpToMessageId === lastDroppedId) {
+          conversationSummary = conversation.summary;
+        } else {
+          yield { type: 'status', message: 'Summarizing conversation history...' };
+          const fallbackSlugs = Array.isArray((agent as Record<string, unknown>).fallbackProviders)
+            ? ((agent as Record<string, unknown>).fallbackProviders as string[])
+            : [];
+          conversationSummary = await summarizeMessages(
+            droppedMessages,
+            agent.provider,
+            fallbackSlugs
+          );
+          // Persist for future turns
+          await prisma.aiConversation.update({
+            where: { id: conversation.id },
+            data: { summary: conversationSummary, summaryUpToMessageId: lastDroppedId },
+          });
+        }
       }
 
       const contextBlock =
@@ -140,12 +202,9 @@ export class StreamingChatHandler {
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
         contextBlock,
-        history: history.map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolCallId: m.toolCallId,
-        })),
+        history: historyRows,
         newUserMessage: request.message,
+        conversationSummary,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);

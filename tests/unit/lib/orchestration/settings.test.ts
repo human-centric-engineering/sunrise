@@ -53,6 +53,9 @@ function makeRow(
     globalMonthlyBudgetUsd: number | null;
     searchConfig: Prisma.JsonValue | null;
     lastSeededAt: Date | null;
+    defaultApprovalTimeoutMs: number | null;
+    approvalDefaultAction: string | null;
+    inputGuardMode: string | null;
   }> = {}
 ) {
   return {
@@ -67,6 +70,9 @@ function makeRow(
     globalMonthlyBudgetUsd: null as number | null,
     searchConfig: null as Prisma.JsonValue | null,
     lastSeededAt: null as Date | null,
+    defaultApprovalTimeoutMs: null as number | null,
+    approvalDefaultAction: 'deny' as string | null,
+    inputGuardMode: 'log_only' as string | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

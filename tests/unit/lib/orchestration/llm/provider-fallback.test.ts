@@ -52,6 +52,8 @@ function makeConfig(slug: string) {
     isLocal: false,
     isActive: true,
     metadata: null,
+    timeoutMs: null,
+    maxRetries: null,
     createdBy: 'user-1',
     createdAt: new Date(),
     updatedAt: new Date(),

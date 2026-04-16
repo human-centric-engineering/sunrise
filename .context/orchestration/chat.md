@@ -54,6 +54,7 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
 | `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
 | `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
+| `summarizeMessages`    | function | Budget-tier LLM summary of messages older than the truncation window        |
 | `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
 | `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
 | `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
@@ -139,6 +140,34 @@ Reasoning plus acting is a reflex loop.
 
 **Invalidation:** `invalidateContext(type, id)` drops a single entry. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
 
+## Rolling Conversation Summary
+
+When conversation history exceeds `MAX_HISTORY_MESSAGES` (20), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+
+**How it works:**
+
+1. After loading history, if `history.length > MAX_HISTORY_MESSAGES`, the handler checks whether a persisted summary exists on `AiConversation.summary` and whether it's stale (via `summaryUpToMessageId`).
+2. If stale or missing: yields a `{ type: 'status', message: 'Summarizing conversation history...' }` event, calls `summarizeMessages()` on the dropped portion, and persists the result.
+3. The summary is passed to `buildMessages()` which emits it as a `[Conversation summary of N earlier messages]` system message instead of the old `[... N older messages omitted ...]` marker.
+
+**Budget:** Uses the `routing` task-type model (budget-tier, e.g. Haiku) via `getDefaultModelForTask('routing')`. Cost is logged as a `CHAT` operation with `agentId: 'system'`.
+
+**Failure:** If summarization fails (provider down, LLM error), the handler falls back to the old truncation marker. Summarization never blocks the main chat flow.
+
+**Staleness:** A summary is considered stale when `summaryUpToMessageId` is null or messages exist beyond that point in the dropped window. Once generated, the summary is reused until new messages push past the window again.
+
+## Input Guard Modes
+
+The input guard (`scanForInjection`) behavior is now configurable via `OrchestrationSettings.inputGuardMode`:
+
+| Mode                 | Behavior on flagged input                                                  |
+| -------------------- | -------------------------------------------------------------------------- |
+| `log_only` (default) | Logs the detection, continues processing                                   |
+| `warn_and_continue`  | Logs + yields `{ type: 'warning', code: 'input_flagged' }` event to client |
+| `block`              | Yields `{ type: 'error', code: 'input_blocked' }` and stops processing     |
+
+In all modes, unflagged input proceeds normally. The mode is read from the cached settings singleton (30s TTL), so changes via PATCH `/settings` take effect within 30 seconds.
+
 ## Error Codes
 
 Every terminal `error` event carries one of these stable `code` values:
@@ -149,6 +178,7 @@ Every terminal `error` event carries one of these stable `code` values:
 | `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                                                                        |
 | `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
 | `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                                                                        |
+| `input_blocked`          | Input guard in `block` mode flagged the message                 | Admin has configured strict input filtering — message rejected by security policy                                        |
 | `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.

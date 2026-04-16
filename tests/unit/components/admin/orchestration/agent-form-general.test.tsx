@@ -66,6 +66,8 @@ const MOCK_PROVIDERS = [
     updatedAt: new Date(),
     baseUrl: null,
     metadata: {},
+    timeoutMs: null,
+    maxRetries: null,
   },
 ];
 
