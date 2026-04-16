@@ -12,6 +12,8 @@ import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { searchConfigSchema, storedDefaultModelsSchema } from '@/lib/validations/orchestration';
 import {
   TASK_TYPES,
+  type ApprovalDefaultAction,
+  type InputGuardMode,
   type OrchestrationSettings,
   type SearchConfig,
   type TaskType,
@@ -43,6 +45,9 @@ export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): Sea
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
  * filling in any task keys the stored JSON is missing from the registry defaults.
  */
+const VALID_APPROVAL_ACTIONS = new Set<ApprovalDefaultAction>(['deny', 'allow']);
+const VALID_GUARD_MODES = new Set<InputGuardMode>(['log_only', 'warn_and_continue', 'block']);
+
 export function hydrateSettings(row: {
   id: string;
   slug: string;
@@ -50,6 +55,9 @@ export function hydrateSettings(row: {
   globalMonthlyBudgetUsd: number | null;
   searchConfig: Prisma.JsonValue | null;
   lastSeededAt: Date | null;
+  defaultApprovalTimeoutMs: number | null;
+  approvalDefaultAction: string | null;
+  inputGuardMode: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -60,6 +68,10 @@ export function hydrateSettings(row: {
     const val = stored[key];
     if (typeof val === 'string' && val.length > 0) merged[key] = val;
   }
+
+  const approvalAction = row.approvalDefaultAction as ApprovalDefaultAction | null;
+  const guardMode = row.inputGuardMode as InputGuardMode | null;
+
   return {
     id: row.id,
     slug: 'global',
@@ -67,6 +79,10 @@ export function hydrateSettings(row: {
     globalMonthlyBudgetUsd: row.globalMonthlyBudgetUsd,
     searchConfig: parseSearchConfig(row.searchConfig),
     lastSeededAt: row.lastSeededAt,
+    defaultApprovalTimeoutMs: row.defaultApprovalTimeoutMs,
+    approvalDefaultAction:
+      approvalAction && VALID_APPROVAL_ACTIONS.has(approvalAction) ? approvalAction : null,
+    inputGuardMode: guardMode && VALID_GUARD_MODES.has(guardMode) ? guardMode : 'log_only',
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -86,6 +102,9 @@ export async function getOrchestrationSettings(): Promise<OrchestrationSettings>
       globalMonthlyBudgetUsd: null,
       searchConfig: Prisma.JsonNull,
       lastSeededAt: null,
+      defaultApprovalTimeoutMs: null,
+      approvalDefaultAction: 'deny',
+      inputGuardMode: 'log_only',
     },
     update: {},
   });

@@ -98,6 +98,9 @@ function makeSettingsRow(
     globalMonthlyBudgetUsd: number | null;
     searchConfig: unknown;
     lastSeededAt: Date | null;
+    defaultApprovalTimeoutMs: number | null;
+    approvalDefaultAction: string | null;
+    inputGuardMode: string | null;
   }> = {}
 ) {
   return {
@@ -112,6 +115,9 @@ function makeSettingsRow(
     globalMonthlyBudgetUsd: null as number | null,
     searchConfig: null as unknown,
     lastSeededAt: null as Date | null,
+    defaultApprovalTimeoutMs: null as number | null,
+    approvalDefaultAction: 'deny' as string | null,
+    inputGuardMode: 'log_only' as string | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -353,6 +359,55 @@ describe('Admin Orchestration — /settings', () => {
       }>(res);
       expect(body.data.searchConfig).toEqual(config);
       expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
+    });
+
+    it('updates defaultApprovalTimeoutMs', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ defaultApprovalTimeoutMs: 30_000 }) as never
+      );
+
+      const res = await PATCH(makePatch({ defaultApprovalTimeoutMs: 30_000 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { defaultApprovalTimeoutMs: number | null } }>(res);
+      expect(body.data.defaultApprovalTimeoutMs).toBe(30_000);
+      expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
+    });
+
+    it('updates approvalDefaultAction to allow', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ approvalDefaultAction: 'allow' }) as never
+      );
+
+      const res = await PATCH(makePatch({ approvalDefaultAction: 'allow' }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { approvalDefaultAction: string | null } }>(res);
+      expect(body.data.approvalDefaultAction).toBe('allow');
+    });
+
+    it('updates inputGuardMode to block', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ inputGuardMode: 'block' }) as never
+      );
+
+      const res = await PATCH(makePatch({ inputGuardMode: 'block' }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { inputGuardMode: string } }>(res);
+      expect(body.data.inputGuardMode).toBe('block');
+    });
+
+    it('updates inputGuardMode to warn_and_continue', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ inputGuardMode: 'warn_and_continue' }) as never
+      );
+
+      const res = await PATCH(makePatch({ inputGuardMode: 'warn_and_continue' }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { inputGuardMode: string } }>(res);
+      expect(body.data.inputGuardMode).toBe('warn_and_continue');
     });
 
     it('clears searchConfig when set to null', async () => {

@@ -440,6 +440,12 @@ export interface SearchConfig {
   vectorWeight: number;
 }
 
+/** Action taken when an approval gate times out. */
+export type ApprovalDefaultAction = 'deny' | 'allow';
+
+/** Input guard behaviour for prompt injection detection. */
+export type InputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -452,6 +458,12 @@ export interface OrchestrationSettings {
   searchConfig: SearchConfig | null;
   /** Timestamp of the last successful knowledge-base seed. */
   lastSeededAt: Date | null;
+  /** Default timeout (ms) for approval gates, or `null` to disable. */
+  defaultApprovalTimeoutMs: number | null;
+  /** Action when approval gate times out. */
+  approvalDefaultAction: ApprovalDefaultAction | null;
+  /** Input guard behaviour for prompt injection detection. */
+  inputGuardMode: InputGuardMode;
   createdAt: Date;
   updatedAt: Date;
 }

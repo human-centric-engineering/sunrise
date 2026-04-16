@@ -243,6 +243,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       type: 'anthropic',
       apiKey,
       isLocal: config.isLocal,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 
@@ -259,6 +261,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       apiKey,
       baseUrl: config.baseUrl ?? undefined,
       isLocal: false,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 
@@ -299,6 +303,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       baseUrl: config.baseUrl,
       ...(apiKey !== undefined ? { apiKey } : {}),
       isLocal: config.isLocal,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 

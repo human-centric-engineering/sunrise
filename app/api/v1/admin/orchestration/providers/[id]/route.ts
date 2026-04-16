@@ -74,6 +74,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.isLocal !== undefined) data.isLocal = body.isLocal;
   if (body.isActive !== undefined) data.isActive = body.isActive;
   if (body.metadata !== undefined) data.metadata = body.metadata as Prisma.InputJsonValue;
+  if (body.timeoutMs !== undefined) data.timeoutMs = body.timeoutMs;
+  if (body.maxRetries !== undefined) data.maxRetries = body.maxRetries;
 
   try {
     const updated = await prisma.aiProviderConfig.update({ where: { id }, data });

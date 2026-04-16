@@ -94,6 +94,7 @@ export const POST = withAdminAuth(async (request, session) => {
         executionHandler: body.executionHandler,
         executionConfig: (body.executionConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         requiresApproval: body.requiresApproval,
+        approvalTimeoutMs: body.approvalTimeoutMs ?? null,
         rateLimit: body.rateLimit ?? null,
         isActive: body.isActive,
         metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,

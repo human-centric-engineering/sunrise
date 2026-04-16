@@ -128,6 +128,68 @@ describe('buildMessages', () => {
     });
   });
 
+  // ── conversationSummary integration ──────────────────────────────────────
+
+  it('uses conversation summary instead of marker when history exceeds cap', () => {
+    const history = Array.from({ length: MAX_HISTORY_MESSAGES + 3 }, (_, i) => ({
+      role: 'user',
+      content: `msg ${i}`,
+    }));
+
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'new',
+      conversationSummary: 'User asked about deployment; assistant explained Docker.',
+    });
+
+    const summaryMsg = messages.find((m) => m.content.includes('Conversation summary'));
+    expect(summaryMsg).toBeDefined();
+    expect(summaryMsg?.role).toBe('system');
+    expect(summaryMsg?.content).toContain('3 earlier messages');
+    expect(summaryMsg?.content).toContain('User asked about deployment');
+
+    // Old marker should NOT appear
+    expect(messages.find((m) => m.content.includes('older messages omitted'))).toBeUndefined();
+  });
+
+  it('ignores conversationSummary when history is within the cap', () => {
+    const history = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ];
+
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'new',
+      conversationSummary: 'Some summary that should not appear.',
+    });
+
+    expect(messages.find((m) => m.content.includes('Conversation summary'))).toBeUndefined();
+    expect(messages.find((m) => m.content.includes('Some summary'))).toBeUndefined();
+  });
+
+  it('falls back to old marker when history exceeds cap but no summary provided', () => {
+    const history = Array.from({ length: MAX_HISTORY_MESSAGES + 2 }, (_, i) => ({
+      role: 'user',
+      content: `msg ${i}`,
+    }));
+
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'new',
+    });
+
+    const marker = messages.find((m) => m.content.includes('older messages omitted'));
+    expect(marker).toBeDefined();
+    expect(marker?.content).toContain('2 older messages omitted');
+  });
+
   it('coerces unknown roles to user and warns', () => {
     const messages = buildMessages({
       systemInstructions: 'sys',

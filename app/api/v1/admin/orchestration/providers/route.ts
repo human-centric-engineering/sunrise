@@ -22,6 +22,7 @@ import {
   isApiKeyEnvVarSet,
   clearCache as clearProviderCache,
 } from '@/lib/orchestration/llm/provider-manager';
+import { getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth(async (request, _session) => {
@@ -58,6 +59,10 @@ export const GET = withAdminAuth(async (request, _session) => {
   const data = rows.map((config) => ({
     ...config,
     apiKeyPresent: isApiKeyEnvVarSet(config.apiKeyEnvVar),
+    circuitBreaker: getCircuitBreakerStatus(config.slug) ?? {
+      state: 'closed' as const,
+      failureCount: 0,
+    },
   }));
 
   log.info('Providers listed', { count: rows.length, total, page, limit });
@@ -84,6 +89,8 @@ export const POST = withAdminAuth(async (request, session) => {
         isLocal: body.isLocal,
         isActive: body.isActive,
         metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        timeoutMs: body.timeoutMs ?? null,
+        maxRetries: body.maxRetries ?? null,
         createdBy: session.user.id,
       },
     });

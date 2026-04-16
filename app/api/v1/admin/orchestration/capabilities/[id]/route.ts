@@ -75,6 +75,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.executionConfig = body.executionConfig as Prisma.InputJsonValue;
   }
   if (body.requiresApproval !== undefined) data.requiresApproval = body.requiresApproval;
+  if (body.approvalTimeoutMs !== undefined) data.approvalTimeoutMs = body.approvalTimeoutMs;
   if (body.rateLimit !== undefined) data.rateLimit = body.rateLimit;
   if (body.isActive !== undefined) data.isActive = body.isActive;
   if (body.metadata !== undefined) {

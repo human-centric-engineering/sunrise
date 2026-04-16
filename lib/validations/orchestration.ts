@@ -260,6 +260,14 @@ export const createCapabilitySchema = z.object({
 
   requiresApproval: z.boolean().default(false),
 
+  approvalTimeoutMs: z
+    .number()
+    .int('Approval timeout must be an integer')
+    .positive('Approval timeout must be positive')
+    .max(3_600_000, 'Approval timeout must be at most 1 hour')
+    .nullable()
+    .optional(),
+
   rateLimit: z
     .number()
     .int('Rate limit must be an integer')
@@ -319,6 +327,14 @@ export const updateCapabilitySchema = z.object({
   executionConfig: z.record(z.string(), z.unknown()).optional(),
 
   requiresApproval: z.boolean().optional(),
+
+  approvalTimeoutMs: z
+    .number()
+    .int('Approval timeout must be an integer')
+    .positive('Approval timeout must be positive')
+    .max(3_600_000, 'Approval timeout must be at most 1 hour')
+    .nullable()
+    .optional(),
 
   rateLimit: z
     .number()
@@ -767,6 +783,20 @@ export const providerConfigSchema = z
     isActive: z.boolean().default(true),
 
     metadata: metadataSchema,
+
+    timeoutMs: z
+      .number()
+      .int('Timeout must be an integer')
+      .min(1000, 'Timeout must be at least 1 second')
+      .max(300_000, 'Timeout must be at most 5 minutes')
+      .optional(),
+
+    maxRetries: z
+      .number()
+      .int('Max retries must be an integer')
+      .min(0, 'Max retries must be non-negative')
+      .max(10, 'Max retries must be at most 10')
+      .optional(),
   })
   .superRefine(refineProviderBaseUrl);
 
@@ -808,6 +838,22 @@ export const updateProviderConfigSchema = z
     isActive: z.boolean().optional(),
 
     metadata: metadataSchema,
+
+    timeoutMs: z
+      .number()
+      .int('Timeout must be an integer')
+      .min(1000, 'Timeout must be at least 1 second')
+      .max(300_000, 'Timeout must be at most 5 minutes')
+      .nullable()
+      .optional(),
+
+    maxRetries: z
+      .number()
+      .int('Max retries must be an integer')
+      .min(0, 'Max retries must be non-negative')
+      .max(10, 'Max retries must be at most 10')
+      .nullable()
+      .optional(),
   })
   .superRefine(refineProviderBaseUrl);
 
@@ -1120,12 +1166,24 @@ export const updateOrchestrationSettingsSchema = z
       .nullable()
       .optional(),
     searchConfig: searchConfigSchema.nullable().optional(),
+    defaultApprovalTimeoutMs: z
+      .number()
+      .int()
+      .positive('Approval timeout must be positive')
+      .max(3_600_000, 'Approval timeout must be at most 1 hour')
+      .nullable()
+      .optional(),
+    approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
+    inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   })
   .refine(
     (v) =>
       v.defaultModels !== undefined ||
       v.globalMonthlyBudgetUsd !== undefined ||
-      v.searchConfig !== undefined,
+      v.searchConfig !== undefined ||
+      v.defaultApprovalTimeoutMs !== undefined ||
+      v.approvalDefaultAction !== undefined ||
+      v.inputGuardMode !== undefined,
     {
       message: 'At least one field must be provided',
     }
