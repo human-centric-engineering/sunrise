@@ -4,10 +4,9 @@ import { notFound } from 'next/navigation';
 
 import { ExecutionDetailView } from '@/components/admin/orchestration/execution-detail-view';
 import { FieldHelp } from '@/components/ui/field-help';
-import { getServerSession } from '@/lib/auth/utils';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { executionTraceSchema } from '@/lib/validations/orchestration';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -36,41 +35,21 @@ interface ExecutionResponse {
   trace: ExecutionTraceEntry[];
 }
 
-export default async function ExecutionDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const session = await getServerSession();
-  const userId = session?.user?.id;
-
-  let data: ExecutionResponse | null = null;
-
+async function getExecution(id: string): Promise<ExecutionResponse | null> {
   try {
-    if (userId) {
-      const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
-      if (execution && execution.userId === userId) {
-        const trace = executionTraceSchema.parse(execution.executionTrace);
-        data = {
-          execution: {
-            id: execution.id,
-            workflowId: execution.workflowId,
-            status: execution.status,
-            totalTokensUsed: execution.totalTokensUsed,
-            totalCostUsd: execution.totalCostUsd,
-            budgetLimitUsd: execution.budgetLimitUsd ?? null,
-            currentStep: execution.currentStep ? parseInt(execution.currentStep, 10) : null,
-            inputData: execution.inputData,
-            outputData: execution.outputData,
-            errorMessage: execution.errorMessage,
-            startedAt: execution.startedAt?.toISOString() ?? null,
-            completedAt: execution.completedAt?.toISOString() ?? null,
-            createdAt: execution.createdAt.toISOString(),
-          },
-          trace,
-        };
-      }
-    }
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.executionById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ExecutionResponse>(res);
+    return body.success ? body.data : null;
   } catch (err) {
     logger.error('execution detail page: fetch failed', err, { id });
+    return null;
   }
+}
+
+export default async function ExecutionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const data = await getExecution(id);
 
   if (!data) notFound();
 

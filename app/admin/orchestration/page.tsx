@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import type { AiConversation, AiWorkflowExecution } from '@prisma/client';
 
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
 import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
@@ -19,21 +20,135 @@ import {
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
 import { FieldHelp } from '@/components/ui/field-help';
-import { getServerSession } from '@/lib/auth/utils';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import {
-  getCostSummary,
-  getBudgetAlerts,
-  type CostSummary,
-} from '@/lib/orchestration/llm/cost-reports';
-import { getAvailableModels } from '@/lib/orchestration/llm/model-registry';
+import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
   title: 'AI Orchestration',
   description: 'Overview of agents, workflows, costs, and recent activity.',
 };
+
+/**
+ * Admin Orchestration dashboard (Phase 4 Session 4.1)
+ *
+ * Thin server component that fetches a handful of summary endpoints in
+ * parallel and lays them out as four stats cards, a budget-alerts strip,
+ * a quick-actions row, and a recent-activity feed. Every fetch is
+ * `null`-safe — an API failure renders an empty state instead of
+ * throwing, matching `app/admin/overview/page.tsx`.
+ *
+ * Any feature that needs client interactivity (the Setup Guide wizard)
+ * lives in a small client island; the rest is fully server-rendered.
+ */
+
+/**
+ * Type guard: is this `meta` object a pagination meta with a numeric `total`?
+ *
+ * `APIResponse.meta` is typed as `PaginationMeta | Record<string, unknown>`,
+ * so we narrow at the read site instead of asserting.
+ */
+function hasNumericTotal(meta: unknown): meta is { total: number } {
+  return (
+    typeof meta === 'object' &&
+    meta !== null &&
+    'total' in meta &&
+    typeof (meta as { total: unknown }).total === 'number'
+  );
+}
+
+async function getCostSummary(): Promise<CostSummary | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<CostSummary>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load cost summary', err);
+    return null;
+  }
+}
+
+async function getBudgetAlerts(): Promise<BudgetAlert[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<{ alerts: BudgetAlert[] }>(res);
+    return body.success ? body.data.alerts : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load budget alerts', err);
+    return null;
+  }
+}
+
+async function getPaginatedTotal(path: string): Promise<number | null> {
+  try {
+    const res = await serverFetch(`${path}?page=1&limit=1`);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<unknown[]>(res);
+    if (!body.success) return null;
+    return hasNumericTotal(body.meta) ? body.meta.total : 0;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load count', err, { path });
+    return null;
+  }
+}
+
+async function getRecentActivity(): Promise<RecentActivityItem[] | null> {
+  try {
+    const [conversationsRes, executionsRes] = await Promise.all([
+      serverFetch(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
+      serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
+    ]);
+
+    const conversations: AiConversation[] = conversationsRes.ok
+      ? await readPaginatedOrEmpty<AiConversation>(conversationsRes)
+      : [];
+    // Executions endpoint is a 501 stub until Session 5.2 — treat any
+    // non-200 response as an empty list rather than surfacing an error.
+    const executions: AiWorkflowExecution[] = executionsRes.ok
+      ? await readPaginatedOrEmpty<AiWorkflowExecution>(executionsRes)
+      : [];
+
+    const items: RecentActivityItem[] = [
+      ...conversations.map(
+        (c): RecentActivityItem => ({
+          kind: 'conversation',
+          id: c.id,
+          title: c.title ?? 'Untitled conversation',
+          timestamp: (c.updatedAt ?? c.createdAt).toString(),
+          href: `/admin/orchestration/conversations/${c.id}`,
+        })
+      ),
+      ...executions.map(
+        (e): RecentActivityItem => ({
+          kind: 'execution',
+          id: e.id,
+          title: `Execution ${e.id.slice(0, 8)}`,
+          subtitle: e.status,
+          timestamp: (
+            (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
+          ).toString(),
+          href: `/admin/orchestration/executions/${e.id}`,
+        })
+      ),
+    ];
+
+    // Merge + sort newest-first. Invalid timestamps sort to the bottom.
+    items.sort((a, b) => {
+      const ta = new Date(a.timestamp).getTime();
+      const tb = new Date(b.timestamp).getTime();
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+
+    return items;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load recent activity', err);
+    return null;
+  }
+}
 
 interface DashboardStats {
   activeConversations: number;
@@ -43,118 +158,40 @@ interface DashboardStats {
   topCapabilities: CapabilityUsage[];
 }
 
-async function getRecentActivity(userId: string): Promise<RecentActivityItem[]> {
-  const [conversations, executions] = await Promise.all([
-    prisma.aiConversation.findMany({
-      where: { userId },
-      orderBy: { updatedAt: 'desc' },
-      take: 10,
-    }),
-    prisma.aiWorkflowExecution.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    }),
-  ]);
-
-  const items: RecentActivityItem[] = [
-    ...conversations.map(
-      (c): RecentActivityItem => ({
-        kind: 'conversation',
-        id: c.id,
-        title: c.title ?? 'Untitled conversation',
-        timestamp: (c.updatedAt ?? c.createdAt).toString(),
-        href: `/admin/orchestration/conversations/${c.id}`,
-      })
-    ),
-    ...executions.map(
-      (e): RecentActivityItem => ({
-        kind: 'execution',
-        id: e.id,
-        title: `Execution ${e.id.slice(0, 8)}`,
-        subtitle: e.status,
-        timestamp: (
-          (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
-        ).toString(),
-        href: `/admin/orchestration/executions/${e.id}`,
-      })
-    ),
-  ];
-
-  items.sort((a, b) => {
-    const ta = new Date(a.timestamp).getTime();
-    const tb = new Date(b.timestamp).getTime();
-    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-  });
-
-  return items;
+async function getDashboardStats(): Promise<DashboardStats | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<DashboardStats>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load observability stats', err);
+    return null;
+  }
 }
 
-async function getDashboardStats(userId: string): Promise<DashboardStats | null> {
-  const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setUTCHours(0, 0, 0, 0);
-  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+async function getModels(): Promise<ModelInfo[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ModelInfo[]>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load models', err);
+    return null;
+  }
+}
 
-  const [
-    activeConversations,
-    todayRequests,
-    totalExecutions24h,
-    failedExecutions24h,
-    recentErrors,
-    topCapabilities,
-  ] = await Promise.all([
-    prisma.aiConversation.count({
-      where: { userId, isActive: true },
-    }),
-    prisma.aiCostLog.count({
-      where: { createdAt: { gte: todayStart } },
-    }),
-    prisma.aiWorkflowExecution.count({
-      where: { userId, createdAt: { gte: twentyFourHoursAgo } },
-    }),
-    prisma.aiWorkflowExecution.count({
-      where: { userId, status: 'failed', createdAt: { gte: twentyFourHoursAgo } },
-    }),
-    prisma.aiWorkflowExecution.findMany({
-      where: { userId, status: 'failed' },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-      select: { id: true, errorMessage: true, workflowId: true, createdAt: true },
-    }),
-    prisma.aiMessage.groupBy({
-      by: ['capabilitySlug'],
-      where: {
-        capabilitySlug: { not: null },
-        conversation: { userId },
-      },
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: 10,
-    }),
-  ]);
-
-  const errorRate = totalExecutions24h === 0 ? 0 : failedExecutions24h / totalExecutions24h;
-
-  return {
-    activeConversations,
-    todayRequests,
-    errorRate,
-    recentErrors: recentErrors.map((e) => ({
-      ...e,
-      createdAt: e.createdAt.toISOString(),
-    })),
-    topCapabilities: topCapabilities.map((row) => ({
-      slug: row.capabilitySlug as string,
-      count: row._count.id,
-    })),
-  };
+async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
+  try {
+    const body = await parseApiResponse<T[]>(res);
+    return body.success ? body.data : [];
+  } catch {
+    return [];
+  }
 }
 
 export default async function OrchestrationDashboardPage() {
-  const session = await getServerSession();
-  const userId = session?.user?.id;
-
   const [
     costSummary,
     budgetAlerts,
@@ -165,32 +202,14 @@ export default async function OrchestrationDashboardPage() {
     dashboardStats,
     models,
   ] = await Promise.all([
-    getCostSummary().catch((err) => {
-      logger.error('orchestration dashboard: failed to load cost summary', err);
-      return null as CostSummary | null;
-    }),
-    getBudgetAlerts().catch((err) => {
-      logger.error('orchestration dashboard: failed to load budget alerts', err);
-      return null;
-    }),
-    prisma.aiAgent.count().catch(() => null),
-    prisma.aiWorkflow.count().catch(() => null),
-    userId
-      ? prisma.aiConversation.count({ where: { userId } }).catch(() => null)
-      : Promise.resolve(null),
-    userId
-      ? getRecentActivity(userId).catch((err) => {
-          logger.error('orchestration dashboard: failed to load recent activity', err);
-          return null;
-        })
-      : Promise.resolve(null),
-    userId
-      ? getDashboardStats(userId).catch((err) => {
-          logger.error('orchestration dashboard: failed to load observability stats', err);
-          return null;
-        })
-      : Promise.resolve(null),
-    Promise.resolve(getAvailableModels()).catch(() => null as ModelInfo[] | null),
+    getCostSummary(),
+    getBudgetAlerts(),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
+    getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
+    getRecentActivity(),
+    getDashboardStats(),
+    getModels(),
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;

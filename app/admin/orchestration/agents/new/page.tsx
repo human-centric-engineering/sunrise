@@ -2,10 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AgentForm, type ModelOption } from '@/components/admin/orchestration/agent-form';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { getAvailableModels } from '@/lib/orchestration/llm/model-registry';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import type { AiProviderConfig } from '@/types/prisma';
 
 export const metadata: Metadata = {
   title: 'New agent · AI Orchestration',
@@ -21,22 +21,42 @@ export const metadata: Metadata = {
  * free-text inputs with a warning banner, never throwing.
  */
 
-export default async function NewAgentPage() {
-  let providers, models: ModelOption[] | null;
+interface ModelsResponse {
+  models: Array<{ provider: string; id: string; tier?: string }>;
+}
+
+async function getProviders(): Promise<AiProviderConfig[] | null> {
   try {
-    [providers, models] = await Promise.all([
-      prisma.aiProviderConfig
-        .findMany({ orderBy: { createdAt: 'desc' } })
-        .then((rows) =>
-          rows.map((r) => ({ ...r, apiKeyPresent: isApiKeyEnvVarSet(r.apiKeyEnvVar) }))
-        ),
-      Promise.resolve(getAvailableModels()),
-    ]);
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.PROVIDERS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<AiProviderConfig[]>(res);
+    return body.success ? body.data : null;
   } catch (err) {
-    logger.error('new agent page: fetch failed', err);
-    providers = null;
-    models = null;
+    logger.error('new agent page: provider fetch failed', err);
+    return null;
   }
+}
+
+async function getModels(): Promise<ModelOption[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ModelsResponse | ModelOption[]>(res);
+    if (!body.success) return null;
+    // The registry endpoint returns either `{ models: [...] }` or a flat
+    // array depending on version — accept both shapes.
+    const data = body.data;
+    if (Array.isArray(data)) return data;
+    if (data && 'models' in data && Array.isArray(data.models)) return data.models;
+    return null;
+  } catch (err) {
+    logger.error('new agent page: model registry fetch failed', err);
+    return null;
+  }
+}
+
+export default async function NewAgentPage() {
+  const [providers, models] = await Promise.all([getProviders(), getModels()]);
 
   return (
     <div className="space-y-6">

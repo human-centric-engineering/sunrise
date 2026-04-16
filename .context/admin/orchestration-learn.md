@@ -74,7 +74,7 @@ Fetches from `GET /api/v1/admin/orchestration/knowledge/patterns/:number`. Rende
 
 ## Data flow
 
-1. Server page calls `listPatterns()` / `getPatternDetail()` directly (see `.context/architecture/data-fetching.md`)
+1. Server page calls `serverFetch()` → API route → `listPatterns()` / `getPatternDetail()`
 2. Passes data to client component islands as props
 3. Fetch failures return empty arrays — pages always render
 

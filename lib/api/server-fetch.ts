@@ -51,16 +51,6 @@ export function getBaseUrl(): string {
 /**
  * Fetch an internal API route from a server component with cookie forwarding.
  *
- * **WARNING: Do NOT use this to call this app's own API routes from server
- * components.** Self-referential HTTP calls break async context isolation
- * under concurrent SSR, causing intermittent auth failures. Query Prisma
- * or call helper functions directly instead.
- * See `.context/architecture/data-fetching.md` for details.
- *
- * This function is appropriate for:
- * - Client-initiated fetches that happen to run on the server
- * - Calling external third-party APIs with cookie forwarding
- *
  * - Automatically forwards the current request's cookies
  * - Constructs absolute URL from the relative path
  * - Disables caching by default (server components should see fresh data)
@@ -68,6 +58,22 @@ export function getBaseUrl(): string {
  * @param path - Relative API path (e.g. "/api/v1/admin/stats")
  * @param init - Optional fetch init (merged with cookie headers)
  * @returns Fetch Response
+ *
+ * @example
+ * ```typescript
+ * // Simple GET
+ * const res = await serverFetch('/api/v1/admin/stats');
+ *
+ * // With query params
+ * const res = await serverFetch('/api/v1/users?limit=20&sortBy=createdAt');
+ *
+ * // POST with body
+ * const res = await serverFetch('/api/v1/users/invite', {
+ *   method: 'POST',
+ *   headers: { 'Content-Type': 'application/json' },
+ *   body: JSON.stringify({ email: 'user@example.com' }),
+ * });
+ * ```
  */
 export async function serverFetch(path: string, init?: RequestInit): Promise<Response> {
   const cookieHeader = await getCookieHeader();

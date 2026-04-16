@@ -5,7 +5,7 @@
  * `app/admin/orchestration/providers/[id]/page.tsx`.
  *
  * Test Coverage:
- * - Mock prisma for provider GET
+ * - Mock serverFetch for provider GET
  * - Asserts notFound() called when GET returns null
  * - Asserts form is pre-filled with fixture provider name
  *
@@ -30,16 +30,9 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiProviderConfig: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
-
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn(),
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -74,7 +67,7 @@ vi.mock('@/lib/api/client', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-const MOCK_PROVIDER_ROW = {
+const MOCK_PROVIDER = {
   id: 'prov-edit-id',
   name: 'My Anthropic Provider',
   slug: 'my-anthropic-provider',
@@ -83,9 +76,10 @@ const MOCK_PROVIDER_ROW = {
   baseUrl: null,
   isActive: true,
   isLocal: false,
+  apiKeyPresent: true,
   createdBy: 'system',
-  createdAt: new Date('2025-01-01'),
-  updatedAt: new Date('2025-01-01'),
+  createdAt: new Date('2025-01-01').toISOString(),
+  updatedAt: new Date('2025-01-01').toISOString(),
   deletedAt: null,
   metadata: {},
 };
@@ -102,10 +96,9 @@ describe('EditProviderPage (server component)', () => {
   });
 
   it('renders form pre-filled with provider name', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
-    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(MOCK_PROVIDER_ROW as any);
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: MOCK_PROVIDER });
 
     const { default: EditProviderPage } =
       await import('@/app/admin/orchestration/providers/[id]/page');
@@ -119,10 +112,9 @@ describe('EditProviderPage (server component)', () => {
   });
 
   it('renders "Save changes" button in edit mode', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
-    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(MOCK_PROVIDER_ROW as any);
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: MOCK_PROVIDER });
 
     const { default: EditProviderPage } =
       await import('@/app/admin/orchestration/providers/[id]/page');
@@ -135,10 +127,9 @@ describe('EditProviderPage (server component)', () => {
   });
 
   it('slug input is pre-filled and disabled in edit mode', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    const { isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
-    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(MOCK_PROVIDER_ROW as any);
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: MOCK_PROVIDER });
 
     const { default: EditProviderPage } =
       await import('@/app/admin/orchestration/providers/[id]/page');
@@ -153,8 +144,12 @@ describe('EditProviderPage (server component)', () => {
   });
 
   it('calls notFound() when provider fetch returns null', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(null);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: false,
+      error: { message: 'Not found', code: 'NOT_FOUND' },
+    });
 
     const { default: EditProviderPage } =
       await import('@/app/admin/orchestration/providers/[id]/page');

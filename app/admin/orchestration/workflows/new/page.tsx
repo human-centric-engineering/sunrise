@@ -1,13 +1,28 @@
 import type { Metadata } from 'next';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import { prisma } from '@/lib/db/client';
+import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export const metadata: Metadata = {
   title: 'New workflow · AI Orchestration',
   description: 'Design a new AI workflow from pattern blocks.',
 };
+
+async function getCapabilities(): Promise<CapabilityOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<CapabilityOption[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('new workflow page: capabilities fetch failed', err);
+    return [];
+  }
+}
 
 /**
  * Admin — New workflow builder page.
@@ -36,11 +51,7 @@ export default async function NewWorkflowPage({
     }
   }
 
-  const capabilities = await prisma.aiCapability.findMany({
-    select: { id: true, slug: true, name: true, description: true },
-    orderBy: { name: 'asc' },
-    take: 100,
-  });
+  const capabilities = await getCapabilities();
 
   return (
     <WorkflowBuilder

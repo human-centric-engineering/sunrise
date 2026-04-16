@@ -2,8 +2,11 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import { prisma } from '@/lib/db/client';
+import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import type { AiWorkflow } from '@/types/prisma';
 
 export const metadata: Metadata = {
   title: 'Edit workflow · AI Orchestration',
@@ -18,25 +21,33 @@ export const metadata: Metadata = {
  * `workflowDefinition` JSON and lays the DAG out via the pure-TS
  * `workflowDefinitionToFlow` mapper.
  */
-export default async function EditWorkflowPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  let workflow;
-  let capabilities;
+async function getWorkflow(id: string): Promise<AiWorkflow | null> {
   try {
-    [workflow, capabilities] = await Promise.all([
-      prisma.aiWorkflow.findUnique({ where: { id } }),
-      prisma.aiCapability.findMany({
-        select: { id: true, slug: true, name: true, description: true },
-        orderBy: { name: 'asc' },
-        take: 100,
-      }),
-    ]);
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<AiWorkflow>(res);
+    return body.success ? body.data : null;
   } catch (err) {
     logger.error('edit workflow page: fetch failed', err, { id });
-    workflow = null;
+    return null;
   }
+}
 
+async function getCapabilities(): Promise<CapabilityOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<CapabilityOption[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('edit workflow page: capabilities fetch failed', err);
+    return [];
+  }
+}
+
+export default async function EditWorkflowPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const [workflow, capabilities] = await Promise.all([getWorkflow(id), getCapabilities()]);
   if (!workflow) notFound();
 
   return <WorkflowBuilder mode="edit" workflow={workflow} initialCapabilities={capabilities} />;

@@ -2,8 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CapabilityForm } from '@/components/admin/orchestration/capability-form';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import type { AiCapability } from '@/types/prisma';
 
 export const metadata: Metadata = {
   title: 'New capability · AI Orchestration',
@@ -18,17 +20,21 @@ export const metadata: Metadata = {
  * are already in use. Fetch failure falls back to an empty category
  * list; the form still works (admins can enter a new category).
  */
-export default async function NewCapabilityPage() {
-  let availableCategories: string[];
+async function getAvailableCategories(): Promise<string[]> {
   try {
-    const allCaps = await prisma.aiCapability.findMany({ select: { category: true } });
-    availableCategories = Array.from(
-      new Set(allCaps.map((c) => c.category).filter(Boolean))
-    ).sort();
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<AiCapability[]>(res);
+    if (!body.success) return [];
+    return Array.from(new Set(body.data.map((c) => c.category).filter(Boolean))).sort();
   } catch (err) {
     logger.error('new capability page: categories fetch failed', err);
-    availableCategories = [];
+    return [];
   }
+}
+
+export default async function NewCapabilityPage() {
+  const availableCategories = await getAvailableCategories();
 
   return (
     <div className="space-y-6">

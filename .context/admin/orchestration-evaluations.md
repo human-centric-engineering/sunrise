@@ -10,7 +10,7 @@ Admin list/create/run flows for `AiEvaluationSession`. Landed in Phase 7 Session
 | `/admin/orchestration/evaluations/new`  | `app/admin/orchestration/evaluations/new/page.tsx`  | Create form, prefetches agents         |
 | `/admin/orchestration/evaluations/[id]` | `app/admin/orchestration/evaluations/[id]/page.tsx` | Runner/viewer, `notFound()` on missing |
 
-All three are async server components that query Prisma directly (see `.context/architecture/data-fetching.md`). Fetch failures fall back to empty state or `notFound()`.
+All three are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to empty state or `notFound()`.
 
 ## List page
 

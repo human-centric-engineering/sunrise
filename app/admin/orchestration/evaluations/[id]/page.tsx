@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { EvaluationRunner } from '@/components/admin/orchestration/evaluation-runner';
-import { getServerSession } from '@/lib/auth/utils';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
@@ -25,42 +25,25 @@ interface EvaluationSession {
   metadata?: Record<string, unknown> | null;
 }
 
+async function getEvaluation(id: string): Promise<EvaluationSession | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.evaluationById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<EvaluationSession>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('evaluation detail page: fetch failed', err, { id });
+    return null;
+  }
+}
+
 export default async function EvaluationDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const session = await getServerSession();
-  const userId = session?.user?.id;
-
-  let evaluation: EvaluationSession | null = null;
-  try {
-    if (userId) {
-      const row = await prisma.aiEvaluationSession.findFirst({
-        where: { id, userId },
-        include: {
-          agent: { select: { id: true, name: true, slug: true } },
-        },
-      });
-      if (row) {
-        evaluation = {
-          id: row.id,
-          title: row.title,
-          description: row.description,
-          status: row.status,
-          summary: row.summary,
-          improvementSuggestions: row.improvementSuggestions as string[] | null,
-          agent: row.agent,
-          createdAt: row.createdAt.toISOString(),
-          completedAt: row.completedAt?.toISOString() ?? null,
-          metadata: row.metadata as Record<string, unknown> | null,
-        };
-      }
-    }
-  } catch (err) {
-    logger.error('evaluation detail page: fetch failed', err, { id });
-  }
+  const evaluation = await getEvaluation(id);
 
   if (!evaluation) notFound();
 

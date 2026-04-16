@@ -56,12 +56,9 @@ vi.mock('@xyflow/react', async () => {
 
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiCapability: {
-      findMany: vi.fn().mockResolvedValue([]),
-    },
-  },
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -112,6 +109,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { apiClient } from '@/lib/api/client';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -120,6 +118,8 @@ describe('NewWorkflowPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.get).mockResolvedValue([]);
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
   });
 
   afterEach(() => {

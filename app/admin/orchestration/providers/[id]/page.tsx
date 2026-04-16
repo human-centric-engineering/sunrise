@@ -6,32 +6,31 @@ import {
   ProviderForm,
   type ProviderRowWithStatus,
 } from '@/components/admin/orchestration/provider-form';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 
 export const metadata: Metadata = {
   title: 'Edit provider · AI Orchestration',
   description: 'Edit an existing LLM provider configuration.',
 };
 
-export default async function EditProviderPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  let row;
+async function getProvider(id: string): Promise<ProviderRowWithStatus | null> {
   try {
-    row = await prisma.aiProviderConfig.findUnique({ where: { id } });
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.providerById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ProviderRowWithStatus>(res);
+    return body.success ? body.data : null;
   } catch (err) {
     logger.error('edit provider page: provider fetch failed', err, { id });
-    row = null;
+    return null;
   }
+}
 
-  if (!row) notFound();
-
-  const provider: ProviderRowWithStatus = {
-    ...row,
-    apiKeyPresent: isApiKeyEnvVarSet(row.apiKeyEnvVar),
-  };
+export default async function EditProviderPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const provider = await getProvider(id);
+  if (!provider) notFound();
 
   return (
     <div className="space-y-6">

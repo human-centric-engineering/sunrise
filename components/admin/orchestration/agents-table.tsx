@@ -110,13 +110,6 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const [convCounts, setConvCounts] = useState<Record<string, number | null>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync local state when server-rendered props change (e.g. navigating
-  // back to this page delivers fresh data from the server component).
-  useEffect(() => {
-    setAgents(initialAgents);
-    setMeta(initialMeta);
-  }, [initialAgents, initialMeta]);
-
   useEffect(() => {
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);

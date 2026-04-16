@@ -3,7 +3,9 @@ import Link from 'next/link';
 
 import { EvaluationsTable } from '@/components/admin/orchestration/evaluations-table';
 import { FieldHelp } from '@/components/ui/field-help';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
 
@@ -35,39 +37,38 @@ interface AgentOption {
   name: string;
 }
 
-export default async function EvaluationsListPage() {
-  let evaluations: EvaluationListItem[];
-  let meta: PaginationMeta;
-  let agents: AgentOption[];
+async function getEvaluations(): Promise<{
+  evaluations: EvaluationListItem[];
+  meta: PaginationMeta;
+}> {
   try {
-    const [rows, total, agentRows] = await Promise.all([
-      prisma.aiEvaluationSession.findMany({
-        orderBy: { updatedAt: 'desc' },
-        take: 25,
-        include: {
-          agent: { select: { id: true, name: true, slug: true } },
-          _count: { select: { logs: true } },
-        },
-      }),
-      prisma.aiEvaluationSession.count(),
-      prisma.aiAgent.findMany({
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-        take: 100,
-      }),
-    ]);
-    evaluations = rows.map((r) => ({
-      ...r,
-      createdAt: r.createdAt.toISOString(),
-    }));
-    meta = { page: 1, limit: 25, total, totalPages: Math.ceil(total / 25) || 1 };
-    agents = agentRows;
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EVALUATIONS}?page=1&limit=25`);
+    if (!res.ok) return { evaluations: [], meta: EMPTY_META };
+    const body = await parseApiResponse<EvaluationListItem[]>(res);
+    if (!body.success) return { evaluations: [], meta: EMPTY_META };
+    return {
+      evaluations: body.data,
+      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
+    };
   } catch (err) {
     logger.error('evaluations list page: initial fetch failed', err);
-    evaluations = [];
-    meta = EMPTY_META;
-    agents = [];
+    return { evaluations: [], meta: EMPTY_META };
   }
+}
+
+async function getAgents(): Promise<AgentOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<AgentOption[]>(res);
+    return body.success ? body.data : [];
+  } catch {
+    return [];
+  }
+}
+
+export default async function EvaluationsListPage() {
+  const [{ evaluations, meta }, agents] = await Promise.all([getEvaluations(), getAgents()]);
 
   return (
     <div className="space-y-6">

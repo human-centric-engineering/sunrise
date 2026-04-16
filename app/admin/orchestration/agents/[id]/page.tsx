@@ -3,10 +3,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { AgentForm, type ModelOption } from '@/components/admin/orchestration/agent-form';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { getAvailableModels } from '@/lib/orchestration/llm/model-registry';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 export const metadata: Metadata = {
   title: 'Edit agent · AI Orchestration',
@@ -22,25 +22,53 @@ export const metadata: Metadata = {
  * fallbacks.
  */
 
+interface ModelsResponse {
+  models: Array<{ provider: string; id: string; tier?: string }>;
+}
+
+async function getAgent(id: string): Promise<AiAgent | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<AiAgent>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('edit agent page: agent fetch failed', err, { id });
+    return null;
+  }
+}
+
+async function getProviders(): Promise<AiProviderConfig[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.PROVIDERS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<AiProviderConfig[]>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('edit agent page: provider fetch failed', err);
+    return null;
+  }
+}
+
+async function getModels(): Promise<ModelOption[] | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ModelsResponse | ModelOption[]>(res);
+    if (!body.success) return null;
+    const data = body.data;
+    if (Array.isArray(data)) return data;
+    if (data && 'models' in data && Array.isArray(data.models)) return data.models;
+    return null;
+  } catch (err) {
+    logger.error('edit agent page: model registry fetch failed', err);
+    return null;
+  }
+}
+
 export default async function EditAgentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  let agent, providers, models: ModelOption[] | null;
-  try {
-    [agent, providers, models] = await Promise.all([
-      prisma.aiAgent.findUnique({ where: { id } }),
-      prisma.aiProviderConfig
-        .findMany({ orderBy: { createdAt: 'desc' } })
-        .then((rows) =>
-          rows.map((r) => ({ ...r, apiKeyPresent: isApiKeyEnvVarSet(r.apiKeyEnvVar) }))
-        ),
-      Promise.resolve(getAvailableModels()),
-    ]);
-  } catch (err) {
-    logger.error('edit agent page: fetch failed', err, { id });
-    agent = null;
-    providers = null;
-    models = null;
-  }
+  const [agent, providers, models] = await Promise.all([getAgent(id), getProviders(), getModels()]);
 
   if (!agent) notFound();
 

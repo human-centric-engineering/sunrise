@@ -3,7 +3,9 @@ import Link from 'next/link';
 
 import { AgentsTable } from '@/components/admin/orchestration/agents-table';
 import { FieldHelp } from '@/components/ui/field-help';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import type { AiAgent } from '@/types/prisma';
 import type { PaginationMeta } from '@/types/api';
@@ -20,21 +22,32 @@ const EMPTY_META: PaginationMeta = {
   totalPages: 1,
 };
 
-export default async function AgentsListPage() {
-  let agents: AiAgent[];
-  let meta: PaginationMeta;
+/**
+ * Admin — Agents list page (Phase 4 Session 4.2).
+ *
+ * Thin server component that pre-renders the first page of agents via
+ * `serverFetch` and hands the result to `<AgentsTable>` for client-side
+ * search / sort / pagination. Fetch failures never throw — the table
+ * renders an empty-state banner so the page is still usable.
+ */
+async function getAgents(): Promise<{ agents: AiAgent[]; meta: PaginationMeta }> {
   try {
-    const [rows, total] = await Promise.all([
-      prisma.aiAgent.findMany({ orderBy: { createdAt: 'desc' }, take: 25 }),
-      prisma.aiAgent.count(),
-    ]);
-    agents = rows;
-    meta = { page: 1, limit: 25, total, totalPages: Math.ceil(total / 25) || 1 };
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=25`);
+    if (!res.ok) return { agents: [], meta: EMPTY_META };
+    const body = await parseApiResponse<AiAgent[]>(res);
+    if (!body.success) return { agents: [], meta: EMPTY_META };
+    return {
+      agents: body.data,
+      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
+    };
   } catch (err) {
     logger.error('agents list page: initial fetch failed', err);
-    agents = [];
-    meta = EMPTY_META;
+    return { agents: [], meta: EMPTY_META };
   }
+}
+
+export default async function AgentsListPage() {
+  const { agents, meta } = await getAgents();
 
   return (
     <div className="space-y-6">

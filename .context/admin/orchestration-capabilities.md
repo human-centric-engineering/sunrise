@@ -10,7 +10,7 @@ Admin list/create/edit flows for `AiCapability`. Landed in Phase 4 Session 4.3. 
 | `/admin/orchestration/capabilities/new`  | `app/admin/orchestration/capabilities/new/page.tsx`  | Create shell, prefetches category hints |
 | `/admin/orchestration/capabilities/[id]` | `app/admin/orchestration/capabilities/[id]/page.tsx` | Edit shell, `notFound()` on missing     |
 
-All three are async server components that query Prisma directly (see `.context/architecture/data-fetching.md`). Fetch failures are tolerated — the list falls back to an empty state, the edit page falls back to `notFound()`, and real errors are surfaced via `logger.error` (never `console.*`).
+All three are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures are tolerated — the list falls back to an empty state, the edit page falls back to `notFound()`, and real errors are surfaced via `logger.error` (never `console.*`).
 
 ## List page
 

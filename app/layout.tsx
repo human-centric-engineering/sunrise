@@ -48,7 +48,7 @@ export default async function RootLayout({
           }}
         />
       </head>
-      <body suppressHydrationWarning>
+      <body>
         <ErrorHandlingProvider>
           <ConsentProvider>
             <AnalyticsProvider>

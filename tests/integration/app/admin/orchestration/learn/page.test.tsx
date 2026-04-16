@@ -13,8 +13,9 @@ import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/orchestration/knowledge/search', () => ({
-  listPatterns: vi.fn(),
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -77,8 +78,12 @@ describe('LearnPage (server component)', () => {
   });
 
   it('renders "Learning" heading', async () => {
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockResolvedValue(MOCK_PATTERNS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -88,8 +93,12 @@ describe('LearnPage (server component)', () => {
   });
 
   it('renders pattern cards with names', async () => {
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockResolvedValue(MOCK_PATTERNS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -99,9 +108,9 @@ describe('LearnPage (server component)', () => {
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
-  it('renders empty state when listPatterns returns empty array', async () => {
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockResolvedValue([]);
+  it('renders empty state when fetch returns not ok', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -111,9 +120,9 @@ describe('LearnPage (server component)', () => {
     expect(screen.getByText(/no patterns found/i)).toBeInTheDocument();
   });
 
-  it('does not throw when listPatterns rejects', async () => {
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockRejectedValue(new Error('Search error'));
+  it('does not throw when fetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -130,8 +139,12 @@ describe('LearnPage (server component)', () => {
 
   it('advisor tab renders ChatInterface component', async () => {
     const user = userEvent.setup();
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockResolvedValue(MOCK_PATTERNS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
@@ -144,8 +157,12 @@ describe('LearnPage (server component)', () => {
 
   it('quiz tab renders ChatInterface component', async () => {
     const user = userEvent.setup();
-    const { listPatterns } = await import('@/lib/orchestration/knowledge/search');
-    vi.mocked(listPatterns).mockResolvedValue(MOCK_PATTERNS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_PATTERNS,
+    });
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 

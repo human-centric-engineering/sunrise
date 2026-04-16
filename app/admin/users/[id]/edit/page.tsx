@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 import { getServerSession } from '@/lib/auth/utils';
-import { prisma } from '@/lib/db/client';
-import { logger } from '@/lib/logging';
 import { UserEditForm } from '@/components/admin/user-edit-form';
 import type { AdminUser } from '@/types/admin';
 
@@ -18,28 +18,38 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+/**
+ * Fetch user by ID from API
+ */
 async function getUser(id: string): Promise<AdminUser | null> {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        emailVerified: true,
-        image: true,
-        bio: true,
-        phone: true,
-        timezone: true,
-        location: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-    return user as AdminUser | null;
-  } catch (err) {
-    logger.error('admin user edit page: fetch failed', err, { id });
+    const res = await serverFetch(API.USERS.byId(id));
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await parseApiResponse<AdminUser>(res);
+
+    if (!data.success) {
+      return null;
+    }
+
+    return {
+      id: data.data.id,
+      name: data.data.name,
+      email: data.data.email,
+      emailVerified: data.data.emailVerified,
+      image: data.data.image,
+      role: data.data.role,
+      bio: data.data.bio ?? null,
+      createdAt: new Date(data.data.createdAt),
+      updatedAt: new Date(data.data.updatedAt),
+      phone: data.data.phone ?? null,
+      timezone: data.data.timezone ?? null,
+      location: data.data.location ?? null,
+    };
+  } catch {
     return null;
   }
 }

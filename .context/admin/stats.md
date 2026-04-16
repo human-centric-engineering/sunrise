@@ -167,30 +167,25 @@ graph TD
 
 ## Server-Side Data Fetching
 
-The page queries Prisma directly instead of calling its own API routes (see `.context/architecture/data-fetching.md`). An inline `getStats()` helper runs parallel Prisma queries:
+The page uses the `serverFetch` utility for authenticated server-side requests:
 
 ```typescript
-import { prisma } from '@/lib/db/client';
-import { getDatabaseHealth } from '@/lib/db/health';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { API } from '@/lib/api/endpoints';
 
 async function getStats(): Promise<SystemStats | null> {
   try {
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [totalUsers, verifiedUsers, recentSignups, usersByRole, dbHealth] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { emailVerified: true } }),
-      prisma.user.count({ where: { createdAt: { gte: twentyFourHoursAgo } } }),
-      prisma.user.groupBy({ by: ['role'], _count: { role: true } }),
-      getDatabaseHealth(),
-    ]);
-    // ... assemble SystemStats
+    const res = await serverFetch(API.ADMIN.STATS);
+    if (!res.ok) return null;
+    const data = await parseApiResponse<SystemStats>(res);
+    return data.success ? data.data : null;
   } catch {
     return null;
   }
 }
 ```
 
-The API route (`GET /api/v1/admin/stats`) is preserved for client-side consumers but is not called from this server component.
+**Note**: `serverFetch` handles cookie forwarding internally, so you don't need to manually extract and forward cookies from the cookie store.
 
 ## Error Handling
 

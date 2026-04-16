@@ -4,8 +4,8 @@ import { notFound } from 'next/navigation';
 
 import { ConversationTraceViewer } from '@/components/admin/orchestration/conversation-trace-viewer';
 import { FieldHelp } from '@/components/ui/field-help';
-import { getServerSession } from '@/lib/auth/utils';
-import { prisma } from '@/lib/db/client';
+import { API } from '@/lib/api/endpoints';
+import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
@@ -34,57 +34,37 @@ interface ConversationMessage {
   createdAt: string;
 }
 
+async function getConversation(id: string): Promise<ConversationDetail | null> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.conversationById(id));
+    if (!res.ok) return null;
+    const body = await parseApiResponse<ConversationDetail>(res);
+    return body.success ? body.data : null;
+  } catch (err) {
+    logger.error('conversation detail page: fetch failed', err, { id });
+    return null;
+  }
+}
+
+async function getMessages(id: string): Promise<ConversationMessage[]> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.conversationMessages(id));
+    if (!res.ok) return [];
+    const body = await parseApiResponse<{ messages: ConversationMessage[] }>(res);
+    return body.success ? body.data.messages : [];
+  } catch (err) {
+    logger.error('conversation detail page: messages fetch failed', err, { id });
+    return [];
+  }
+}
+
 export default async function ConversationDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const session = await getServerSession();
-  const userId = session?.user?.id;
-
-  let conversation: ConversationDetail | null = null;
-  let messages: ConversationMessage[] = [];
-
-  try {
-    if (userId) {
-      const row = await prisma.aiConversation.findFirst({
-        where: { id, userId },
-        include: {
-          agent: { select: { id: true, name: true, slug: true } },
-          _count: { select: { messages: true } },
-        },
-      });
-      if (row) {
-        conversation = {
-          id: row.id,
-          title: row.title,
-          agentId: row.agentId,
-          isActive: row.isActive,
-          createdAt: row.createdAt.toISOString(),
-          updatedAt: row.updatedAt.toISOString(),
-          agent: row.agent,
-          _count: row._count,
-        };
-
-        const rawMessages = await prisma.aiMessage.findMany({
-          where: { conversationId: id },
-          orderBy: { createdAt: 'asc' },
-        });
-        messages = rawMessages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          capabilitySlug: m.capabilitySlug,
-          toolCallId: m.toolCallId,
-          metadata: m.metadata as Record<string, unknown> | null,
-          createdAt: m.createdAt.toISOString(),
-        }));
-      }
-    }
-  } catch (err) {
-    logger.error('conversation detail page: fetch failed', err, { id });
-  }
+  const [conversation, messages] = await Promise.all([getConversation(id), getMessages(id)]);
 
   if (!conversation) notFound();
 

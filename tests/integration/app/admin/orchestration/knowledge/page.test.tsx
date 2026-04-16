@@ -12,12 +12,9 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiKnowledgeDocument: {
-      findMany: vi.fn(),
-    },
-  },
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -51,24 +48,24 @@ const MOCK_DOCUMENTS = [
     name: 'Agentic Design Patterns',
     fileName: 'patterns.md',
     fileHash: 'abc123',
+    chunkCount: 42,
     status: 'ready',
     errorMessage: null,
     uploadedBy: 'user-1',
-    createdAt: new Date('2025-01-01'),
-    updatedAt: new Date('2025-01-01'),
-    _count: { chunks: 42 },
+    createdAt: new Date('2025-01-01').toISOString(),
+    updatedAt: new Date('2025-01-01').toISOString(),
   },
   {
     id: 'doc-2',
     name: 'Custom Knowledge',
     fileName: 'custom.txt',
     fileHash: 'def456',
+    chunkCount: 0,
     status: 'processing',
     errorMessage: null,
     uploadedBy: 'user-1',
-    createdAt: new Date('2025-01-02'),
-    updatedAt: new Date('2025-01-02'),
-    _count: { chunks: 0 },
+    createdAt: new Date('2025-01-02').toISOString(),
+    updatedAt: new Date('2025-01-02').toISOString(),
   },
 ];
 
@@ -84,8 +81,12 @@ describe('KnowledgeBasePage (server component)', () => {
   });
 
   it('renders "Knowledge Base" heading', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue(MOCK_DOCUMENTS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_DOCUMENTS,
+    });
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -95,8 +96,12 @@ describe('KnowledgeBasePage (server component)', () => {
   });
 
   it('renders document names and status badges', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue(MOCK_DOCUMENTS as any);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_DOCUMENTS,
+    });
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -108,9 +113,9 @@ describe('KnowledgeBasePage (server component)', () => {
     expect(screen.getByText('Processing')).toBeInTheDocument();
   });
 
-  it('renders empty state when prisma returns empty array', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([]);
+  it('renders empty state when fetch returns not ok', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 
@@ -120,9 +125,9 @@ describe('KnowledgeBasePage (server component)', () => {
     expect(screen.getByText(/no documents yet/i)).toBeInTheDocument();
   });
 
-  it('does not throw when prisma rejects', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockRejectedValue(new Error('Database error'));
+  it('does not throw when fetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
 

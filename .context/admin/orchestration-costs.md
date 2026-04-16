@@ -26,7 +26,7 @@ Admin page at `/admin/orchestration/costs`. Surfaces every spend / budget signal
 
 ## Data sources
 
-The server shell fires six parallel null-safe queries via Prisma and shared helpers (see `.context/architecture/data-fetching.md`). Any failure renders an empty state in its section — the page never throws.
+The server shell fires six parallel null-safe fetches via `serverFetch()`. Any upstream failure renders an empty state in its section — the page never throws.
 
 | Section                | Endpoint                                                    | Notes                                                  |
 | ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |

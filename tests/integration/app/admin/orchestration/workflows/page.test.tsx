@@ -5,9 +5,9 @@
  * `app/admin/orchestration/workflows/page.tsx`.
  *
  * Test Coverage:
- * - Renders heading and description with valid prisma response
+ * - Renders heading and description with valid serverFetch response
  * - With 3 workflows in the response, the table renders 3 rows
- * - Rejecting prisma → table renders empty state, logger.error called
+ * - Rejecting fetch → table renders empty state, logger.error called
  *
  * @see app/admin/orchestration/workflows/page.tsx
  */
@@ -17,13 +17,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiWorkflow: {
-      findMany: vi.fn(),
-      count: vi.fn(),
-    },
-  },
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -63,8 +59,8 @@ function makeWorkflow(id: string, name: string) {
     isTemplate: false,
     metadata: null,
     createdBy: 'user-1',
-    createdAt: new Date('2025-01-01'),
-    updatedAt: new Date('2025-01-01'),
+    createdAt: new Date('2025-01-01').toISOString(),
+    updatedAt: new Date('2025-01-01').toISOString(),
   };
 }
 
@@ -73,6 +69,13 @@ const MOCK_WORKFLOWS = [
   makeWorkflow('wf-2', 'Beta Flow'),
   makeWorkflow('wf-3', 'Gamma Flow'),
 ];
+
+const MOCK_META = {
+  page: 1,
+  limit: 25,
+  total: 3,
+  totalPages: 1,
+};
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -86,9 +89,13 @@ describe('WorkflowsListPage (server component)', () => {
   });
 
   it('renders the Workflows heading', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue(MOCK_WORKFLOWS as any);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(3);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_WORKFLOWS,
+      meta: MOCK_META,
+    });
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
@@ -98,9 +105,13 @@ describe('WorkflowsListPage (server component)', () => {
   });
 
   it('renders 3 workflow names from the pre-fetched data', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue(MOCK_WORKFLOWS as any);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(3);
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: MOCK_WORKFLOWS,
+      meta: MOCK_META,
+    });
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
@@ -113,10 +124,9 @@ describe('WorkflowsListPage (server component)', () => {
     });
   });
 
-  it('renders empty state gracefully when prisma returns empty array', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(0);
+  it('renders empty state gracefully when serverFetch returns not ok', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
 
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');
 
@@ -126,10 +136,9 @@ describe('WorkflowsListPage (server component)', () => {
     expect(screen.getByText(/no workflows found/i)).toBeInTheDocument();
   });
 
-  it('does not throw and calls logger.error when prisma rejects', async () => {
-    const { prisma } = await import('@/lib/db/client');
-    vi.mocked(prisma.aiWorkflow.findMany).mockRejectedValue(new Error('Database error'));
-    vi.mocked(prisma.aiWorkflow.count).mockRejectedValue(new Error('Database error'));
+  it('does not throw and calls logger.error when serverFetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { logger } = await import('@/lib/logging');
     const { default: WorkflowsListPage } = await import('@/app/admin/orchestration/workflows/page');

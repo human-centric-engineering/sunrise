@@ -10,7 +10,7 @@ Admin list/create/edit flows for `AiAgent`. Landed in Phase 4 Session 4.2.
 | `/admin/orchestration/agents/new`  | `app/admin/orchestration/agents/new/page.tsx`  | Create shell, prefetches providers  |
 | `/admin/orchestration/agents/[id]` | `app/admin/orchestration/agents/[id]/page.tsx` | Edit shell, `notFound()` on missing |
 
-All three are async server components that query Prisma directly (see `.context/architecture/data-fetching.md`). They never throw — any fetch failure falls back to an empty state or `notFound()`, and real errors are logged with `logger.error`.
+All three are async server components using `serverFetch()` + `parseApiResponse()`. They never throw — any upstream fetch failure falls back to an empty state or `notFound()`, and real errors are logged with `logger.error`.
 
 ## List page
 

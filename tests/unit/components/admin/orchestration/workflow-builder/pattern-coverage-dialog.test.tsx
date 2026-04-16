@@ -5,8 +5,8 @@
  * - Renders dialog title when open=true
  * - All 3 tier headings (Foundation, Intermediate, Advanced) are visible
  * - All 21 patterns render (verified by #N markers)
- * - Exactly 3 "Gap" badges are present (patterns #18, #15, #19)
- * - Amber footer callout mentions "3 patterns" and the 3 gap names
+ * - No "Gap" badges are present (all patterns covered or engine-level)
+ * - Emerald footer callout confirms all 21 patterns are covered
  * - Clicking Close calls onOpenChange(false)
  * - Dialog content is absent when open=false
  *
@@ -70,26 +70,21 @@ describe('PatternCoverageDialog', () => {
     }
   });
 
-  // ─── Gap Badges ──────────────────────────────────────────────────────────────
+  // ─── No Gaps ─────────────────────────────────────────────────────────────────
 
-  it('renders exactly 3 "Gap" badges for the three gap patterns', () => {
+  it('renders no "Gap" badges — all patterns are covered or engine-level', () => {
     render(<PatternCoverageDialog {...defaultProps} />);
 
-    const gapBadges = screen.getAllByText('Gap');
-    expect(gapBadges).toHaveLength(3);
+    expect(screen.queryAllByText('Gap')).toHaveLength(0);
   });
 
-  // ─── Amber Footer Callout ────────────────────────────────────────────────────
+  // ─── Emerald Footer Callout ─────────────────────────────────────────────────
 
-  it('amber footer callout mentions "3 patterns" and all three gap pattern names', () => {
+  it('footer callout confirms all 21 patterns are covered', () => {
     render(<PatternCoverageDialog {...defaultProps} />);
 
-    // The footer paragraph contains the canonical gap description
-    const callout = screen.getByText(/3 patterns are flagged as gaps/i);
+    const callout = screen.getByText(/all 21 design patterns are covered/i);
     expect(callout).toBeInTheDocument();
-    expect(callout.textContent).toMatch(/Guardrails/);
-    expect(callout.textContent).toMatch(/Inter-Agent Communication/);
-    expect(callout.textContent).toMatch(/Evaluation/);
   });
 
   // ─── Close Button ────────────────────────────────────────────────────────────

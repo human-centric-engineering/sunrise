@@ -137,54 +137,87 @@ export function ProfileForm({ user }) {
 
 ## Server Components
 
-Server components query Prisma or shared helper functions directly — they must **not** call their own API routes via `serverFetch()`. Self-referential HTTP calls create disconnected async contexts that break auth under concurrent SSR. See `.context/architecture/data-fetching.md`.
+Use `serverFetch` for API calls from server components. It forwards cookies for authentication.
 
 ### Basic Usage
 
 ```typescript
 // app/(protected)/dashboard/page.tsx
-import { prisma } from '@/lib/db/client';
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import type { SystemStats } from '@/types/admin';
 
 export default async function DashboardPage() {
-  const stats = await getStats(); // inline helper using Prisma directly
+  const res = await serverFetch('/api/v1/admin/stats');
+  const { data: stats } = await parseApiResponse<SystemStats>(res);
 
   return <StatsDisplay stats={stats} />;
 }
-
-async function getStats() {
-  try {
-    const [totalUsers, verifiedUsers] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { emailVerified: true } }),
-    ]);
-    return { totalUsers, verifiedUsers };
-  } catch {
-    return null;
-  }
-}
 ```
 
-### With Shared Helpers
-
-When a helper already exists in `lib/`, use it directly:
+### With Query Parameters
 
 ```typescript
-import { getCostSummary, getBudgetAlerts } from '@/lib/orchestration/llm/cost-reports';
-
-const [summary, alerts] = await Promise.all([getCostSummary(), getBudgetAlerts()]);
+const res = await serverFetch('/api/v1/users?limit=20&sortBy=createdAt');
+const { data: users } = await parseApiResponse<User[]>(res);
 ```
 
-### When `serverFetch()` IS Appropriate
-
-`serverFetch()` is for calling **external** APIs from server components where you need cookie forwarding or auth header injection. It must not be used to call this app's own `/api/...` routes from server components.
+### POST from Server
 
 ```typescript
-// ✅ External API call
-const res = await serverFetch('https://external-service.com/api/data');
-
-// ❌ Self-referential call — use Prisma directly
-const res = await serverFetch('/api/v1/admin/stats');
+const res = await serverFetch('/api/v1/users/invite', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: 'user@example.com', role: 'USER' }),
+});
 ```
+
+### Server Fetch Helpers
+
+The `serverFetch` module provides helpers for internal API calls:
+
+```typescript
+import { serverFetch, parseApiResponse, getCookieHeader, getBaseUrl } from '@/lib/api/server-fetch';
+```
+
+**`getCookieHeader()`** - Serializes all cookies from the current request for forwarding:
+
+```typescript
+const cookieHeader = await getCookieHeader();
+// Returns: "session_token=abc; other=xyz"
+```
+
+**`getBaseUrl()`** - Gets the app base URL for constructing absolute URLs:
+
+```typescript
+const baseUrl = getBaseUrl();
+// Returns: "http://localhost:3000" or production URL
+```
+
+### Response Parsing
+
+Use `parseApiResponse()` to validate API responses follow the expected discriminated union format:
+
+```typescript
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+
+const res = await serverFetch('/api/v1/users/me');
+const { data: user } = await parseApiResponse<User>(res);
+```
+
+**What it validates:**
+
+- Response body is an object with boolean `success` field
+- When `success: true`, `data` field is present
+- When `success: false`, `error` object is present
+
+**Error behavior:**
+
+- Throws `Error` if body is not an object
+- Throws `Error` if `success` field is missing or not boolean
+- Throws `Error` if `success: true` but `data` is missing
+- Throws `Error` if `success: false` but `error` is missing
+
+**When to use:** Always pair with `serverFetch` in server components instead of unsafe `as` casts on JSON responses.
 
 ## API Route Implementation
 
