@@ -412,8 +412,11 @@ export class OrchestrationEngine {
       if (!row) {
         throw new Error(`Execution row ${options.resumeFromExecutionId} not found`);
       }
-      const trace = Array.isArray(row.executionTrace)
-        ? (row.executionTrace as unknown as ExecutionTraceEntry[])
+      const rawTrace = row.executionTrace;
+      const trace: ExecutionTraceEntry[] = Array.isArray(rawTrace)
+        ? (rawTrace.filter(
+            (entry) => entry !== null && typeof entry === 'object' && 'stepId' in (entry as object)
+          ) as unknown as ExecutionTraceEntry[])
         : [];
       const ctx = createContext({
         executionId: row.id,

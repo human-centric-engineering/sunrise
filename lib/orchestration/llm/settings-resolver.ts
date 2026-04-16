@@ -16,6 +16,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { parseStoredDefaults } from '@/lib/orchestration/settings';
 import { computeDefaultModelMap } from './model-registry';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
@@ -49,11 +50,11 @@ export async function getDefaultModelForTask(task: TaskType): Promise<string> {
     return settingsCache.defaults[task];
   }
 
-  let stored: Record<string, unknown> | null = null;
+  let stored: Record<string, string> = {};
   try {
     const row = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
-    if (row && row.defaultModels && typeof row.defaultModels === 'object') {
-      stored = row.defaultModels as Record<string, unknown>;
+    if (row) {
+      stored = parseStoredDefaults(row.defaultModels);
     }
   } catch (err) {
     logger.warn('getDefaultModelForTask: singleton read failed, using computed defaults', {
@@ -63,11 +64,9 @@ export async function getDefaultModelForTask(task: TaskType): Promise<string> {
 
   const computed = computeDefaultModelMap();
   const merged: Record<TaskType, string> = { ...computed };
-  if (stored) {
-    for (const key of TASK_TYPES) {
-      const val = stored[key];
-      if (typeof val === 'string' && val.length > 0) merged[key] = val;
-    }
+  for (const key of TASK_TYPES) {
+    const val = stored[key];
+    if (typeof val === 'string' && val.length > 0) merged[key] = val;
   }
 
   settingsCache = { defaults: merged, fetchedAt: now };

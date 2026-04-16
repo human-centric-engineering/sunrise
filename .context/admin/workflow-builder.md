@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **5 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **8 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
 
 **Core files:**
 
@@ -239,21 +239,24 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ## Templates
 
-Session 5.1c ships 5 built-in composition recipes lifted verbatim from `.claude/skills/agent-architect/SKILL.md`. The dropdown loads them directly from a pure-TS module — there is **no** network call.
+8 built-in composition recipes are seeded into the database via `prisma/seeds/004-builtin-templates.ts` and served to the UI through the existing workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). The builder pages prefetch templates server-side and pass them as `initialTemplates` props — the same pattern used for capabilities.
 
-**Module layout** (all under `prisma/seeds/data/templates/`):
+**Seed data** (all under `prisma/seeds/data/templates/`):
 
-| File                         | Template                                                   | Patterns                                                         |
-| ---------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
-| `types.ts`                   | `WorkflowTemplate` shape                                   | —                                                                |
-| `customer-support.ts`        | Customer Support                                           | Routing (2), Retrieval (9), Tool Use (6), HITL (7)               |
-| `content-pipeline.ts`        | Content Pipeline                                           | Planning (5), Parallelisation (3), Reflection (1)                |
-| `saas-backend.ts`            | SaaS Backend                                               | Routing (2), Prompt Chaining (4), Tool Use (6)                   |
-| `research-agent.ts`          | Research Agent                                             | Planning (5), Retrieval (9), Parallelisation (3), Reflection (1) |
-| `conversational-learning.ts` | Conversational Learning                                    | Memory (8), Prompt Chaining (4), Tool Use (6), Reflection (1)    |
-| `index.ts`                   | `BUILTIN_WORKFLOW_TEMPLATES` (readonly array) + re-exports | —                                                                |
+| File                         | Template                                         | Patterns                                                           |
+| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| `types.ts`                   | `WorkflowTemplate` shape                         | —                                                                  |
+| `customer-support.ts`        | Customer Support                                 | Routing (2), Retrieval (9), Tool Use (6), HITL (7)                 |
+| `content-pipeline.ts`        | Content Pipeline                                 | Planning (5), Parallelisation (3), Reflection (1)                  |
+| `saas-backend.ts`            | SaaS Backend                                     | Routing (2), Prompt Chaining (4), Tool Use (6)                     |
+| `research-agent.ts`          | Research Agent                                   | Planning (5), Retrieval (9), Parallelisation (3), Reflection (1)   |
+| `conversational-learning.ts` | Conversational Learning                          | Memory (8), Prompt Chaining (4), Tool Use (6), Reflection (1)      |
+| `code-review.ts`             | Code Review Agent                                | Parallelisation (3), Guard (18), Reflection (1), Evaluate (19)     |
+| `data-pipeline.ts`           | Data Pipeline + Quality Gate                     | External Call (15), Guard (18), Parallelisation (3), Evaluate (19) |
+| `outreach-safety.ts`         | Multi-Channel Outreach                           | Guard (18), Routing (2), Evaluate (19), HITL (7)                   |
+| `index.ts`                   | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                  |
 
-**Template shape:**
+**Template shape** (seed-side `WorkflowTemplate` in `types/orchestration.ts`):
 
 ```ts
 interface WorkflowTemplate {
@@ -262,16 +265,21 @@ interface WorkflowTemplate {
   shortDescription: string;
   patterns: { number: number; name: string }[];
   flowSummary: string;
+  useCases: { title: string; scenario: string }[];
   workflowDefinition: WorkflowDefinition;
 }
 ```
+
+**UI-side type** (`TemplateItem` in `components/.../template-types.ts`):
+
+The `toTemplateItem()` mapper converts an `AiWorkflow` API response into a `TemplateItem`, Zod-parsing `workflowDefinition` and `metadata` JSON columns. The `metadata` column stores `WorkflowTemplateMetadata` (`flowSummary`, `useCases`, `patterns`) populated by the 004 seed unit.
 
 Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_call` references one of the three built-in capability slugs: `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`. Every `llm_call` has a non-empty prompt. Every `route` has ≥2 branches and all parallel branches reconverge — each template passes both `validateWorkflow()` and `runExtraChecks()` out of the box.
 
 ### Dropdown → dialog → canvas
 
-1. **Use template** button in `builder-toolbar.tsx` is a shadcn `DropdownMenu`. It renders one `DropdownMenuItem` per `BUILTIN_WORKFLOW_TEMPLATES` entry showing `name` + `shortDescription`, and calls `onTemplateSelect(template)` on click.
-2. The builder shell opens `TemplateDescriptionDialog` (`components/admin/orchestration/workflow-builder/template-description-dialog.tsx`) — a shadcn `Dialog` displaying name, short description, pattern badges, and flow summary, with a confirm button whose copy flips based on canvas state:
+1. **Use template** button in `builder-toolbar.tsx` is a shadcn `DropdownMenu`. It renders one `DropdownMenuItem` per template (passed via `templates` prop from prefetched API data) showing `name` + `description`, and calls `onTemplateSelect(template)` on click.
+2. The builder shell opens `TemplateDescriptionDialog` (`components/admin/orchestration/workflow-builder/template-description-dialog.tsx`) — a shadcn `Dialog` displaying name, description, pattern badges, use cases, and flow summary, with a confirm button whose copy flips based on canvas state:
    - Empty canvas → **Use this template** (no warning).
    - Canvas with nodes → **Replace canvas with template** plus an amber `role="alert"` warning that loading will replace every node and edge.
 3. Confirming runs `handleTemplateConfirm()`: `workflowDefinitionToFlow(template.workflowDefinition)` produces the new nodes/edges, the shell calls `setNodes` / `setEdges` / `setWorkflowName`, clears selection + save error, and closes the dialog. The mapper is the exact same helper the edit page uses to hydrate an existing workflow, so layout metadata is preserved.
@@ -282,7 +290,7 @@ Templates can only be loaded on a new workflow. In edit mode the shell passes `t
 
 ### DB rows for the list page
 
-`prisma/seed.ts` loops `BUILTIN_WORKFLOW_TEMPLATES` and upserts each as an `AiWorkflow` row with `isTemplate: true`, `isActive: true`, `patternsUsed: patterns.map(p => p.number)`, `createdBy: adminUser.id`, and `update: {}` for idempotency. Re-running `npm run db:seed` is safe — it never overwrites admin edits. These rows give templates a presence in `/admin/orchestration/workflows` (same CRUD as any other workflow); the builder's dropdown does **not** depend on them.
+`prisma/seeds/004-builtin-templates.ts` loops `BUILTIN_WORKFLOW_TEMPLATES` and upserts each as an `AiWorkflow` row with `isTemplate: true`, `isActive: true`, `patternsUsed`, `metadata: { flowSummary, useCases, patterns }`, and `createdBy: adminUser.id`. The `hashInputs` array lists all template source files so edits trigger re-seeding. Re-running `npm run db:seed` is safe — metadata is always overwritten (template-intrinsic, not admin-editable), but admin edits to other fields are preserved. The builder's dropdown depends on the API serving these rows.
 
 ## Layout persistence
 
@@ -306,7 +314,7 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - Per-step config editors for all twelve step types (5.1b).
 - Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
 - Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
-- 5 built-in templates loadable from the toolbar dropdown, with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
+- 8 built-in templates loadable from the toolbar dropdown (served via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
 
 **Deferred:**
 

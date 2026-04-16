@@ -65,7 +65,10 @@ const ROLE_CONFIG: Record<
 function parseMetadata(raw: Record<string, unknown> | null): MessageMetadata {
   if (!raw) return {};
   return {
-    tokenUsage: raw.tokenUsage as MessageMetadata['tokenUsage'] | undefined,
+    tokenUsage:
+      raw.tokenUsage && typeof raw.tokenUsage === 'object'
+        ? (raw.tokenUsage as MessageMetadata['tokenUsage'])
+        : undefined,
     modelUsed: typeof raw.modelUsed === 'string' ? raw.modelUsed : undefined,
     latencyMs: typeof raw.latencyMs === 'number' ? raw.latencyMs : undefined,
     costUsd: typeof raw.costUsd === 'number' ? raw.costUsd : undefined,

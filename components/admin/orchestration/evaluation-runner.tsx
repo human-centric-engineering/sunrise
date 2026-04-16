@@ -143,7 +143,13 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
 
   // Annotation state
   const [annotations, setAnnotations] = useState<Map<number, Annotation>>(() =>
-    deserializeAnnotations(evaluation.metadata as Record<string, unknown> | null)
+    deserializeAnnotations(
+      evaluation.metadata &&
+        typeof evaluation.metadata === 'object' &&
+        !Array.isArray(evaluation.metadata)
+        ? evaluation.metadata
+        : null
+    )
   );
   const [expandedMsg, setExpandedMsg] = useState<number | null>(null);
 

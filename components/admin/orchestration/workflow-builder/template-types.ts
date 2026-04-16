@@ -7,7 +7,16 @@
  * patterns) populated by the 004 seed unit.
  */
 
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
+import { z } from 'zod';
+
+/** Runtime validator for the `metadata` JSON column on template workflows. */
+export const templateMetadataSchema = z.object({
+  flowSummary: z.string(),
+  useCases: z.array(z.object({ title: z.string(), scenario: z.string() })),
+  patterns: z.array(z.object({ number: z.number(), name: z.string() })),
+});
 
 /**
  * A template item for the builder UI. Mapped from an `AiWorkflow` row
@@ -39,13 +48,18 @@ export function toTemplateItem(workflow: {
   isTemplate: boolean;
   metadata: unknown;
 }): TemplateItem {
+  const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const metaResult = templateMetadataSchema.safeParse(workflow.metadata);
+
+  const emptyDef: WorkflowDefinition = { steps: [], entryStepId: '', errorStrategy: 'fail' };
+
   return {
     slug: workflow.slug,
     name: workflow.name,
     description: workflow.description,
-    workflowDefinition: workflow.workflowDefinition as WorkflowDefinition,
+    workflowDefinition: defResult.success ? (defResult.data as WorkflowDefinition) : emptyDef,
     patternsUsed: workflow.patternsUsed,
     isTemplate: workflow.isTemplate,
-    metadata: (workflow.metadata as WorkflowTemplateMetadata) ?? null,
+    metadata: metaResult.success ? (metaResult.data as WorkflowTemplateMetadata) : null,
   };
 }

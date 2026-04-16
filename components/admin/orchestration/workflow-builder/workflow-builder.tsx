@@ -36,6 +36,7 @@ import type { AiWorkflow } from '@prisma/client';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
 import { BlockConfigPanel } from './block-config-panel';
@@ -57,7 +58,7 @@ import {
 } from './workflow-mappers';
 import type { CapabilityOption } from './block-editors';
 import type { TemplateItem } from './template-types';
-import { toTemplateItem } from './template-types';
+import { templateMetadataSchema, toTemplateItem } from './template-types';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
@@ -101,7 +102,8 @@ function initialState(
     return { nodes: [], edges: [], name: 'Untitled workflow', details: null };
   }
 
-  const def = workflow.workflowDefinition as unknown as WorkflowDefinition | null;
+  const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const def = defResult.success ? (defResult.data as WorkflowDefinition) : null;
   const baseDetails: WorkflowDetails = {
     slug: workflow.slug,
     description: workflow.description,
@@ -422,7 +424,11 @@ function WorkflowBuilderInner({
           name={workflow.name}
           description={workflow.description}
           isTemplate={workflow.isTemplate}
-          metadata={(workflow.metadata as unknown as WorkflowTemplateMetadata) ?? null}
+          metadata={
+            (templateMetadataSchema.safeParse(workflow.metadata).data as
+              | WorkflowTemplateMetadata
+              | undefined) ?? null
+          }
         />
       )}
 
