@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies before module import ───────────────────────────────────
 
@@ -38,6 +38,7 @@ import { prisma } from '@/lib/db/client';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   parseStoredDefaults,
+  parseSearchConfig,
   hydrateSettings,
   getOrchestrationSettings,
 } from '@/lib/orchestration/settings';
@@ -50,6 +51,8 @@ function makeRow(
   overrides: Partial<{
     defaultModels: Prisma.JsonValue;
     globalMonthlyBudgetUsd: number | null;
+    searchConfig: Prisma.JsonValue | null;
+    lastSeededAt: Date | null;
   }> = {}
 ) {
   return {
@@ -62,6 +65,8 @@ function makeRow(
       embeddings: 'claude-haiku-4-5',
     } satisfies Prisma.JsonObject,
     globalMonthlyBudgetUsd: null as number | null,
+    searchConfig: null as Prisma.JsonValue | null,
+    lastSeededAt: null as Date | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -123,6 +128,39 @@ describe('parseStoredDefaults', () => {
   });
 });
 
+describe('parseSearchConfig', () => {
+  it('returns a valid SearchConfig when input is well-formed', () => {
+    expect(parseSearchConfig({ keywordBoostWeight: -0.05, vectorWeight: 1.2 })).toEqual({
+      keywordBoostWeight: -0.05,
+      vectorWeight: 1.2,
+    });
+  });
+
+  it('returns null when input is null', () => {
+    expect(parseSearchConfig(null)).toBeNull();
+  });
+
+  it('returns null when input is undefined', () => {
+    expect(parseSearchConfig(undefined)).toBeNull();
+  });
+
+  it('returns null when keywordBoostWeight is out of range (positive)', () => {
+    expect(parseSearchConfig({ keywordBoostWeight: 0.5, vectorWeight: 1.0 })).toBeNull();
+  });
+
+  it('returns null when vectorWeight is out of range (too high)', () => {
+    expect(parseSearchConfig({ keywordBoostWeight: -0.02, vectorWeight: 5.0 })).toBeNull();
+  });
+
+  it('returns null when input is a string', () => {
+    expect(parseSearchConfig('not-an-object')).toBeNull();
+  });
+
+  it('returns null when required fields are missing', () => {
+    expect(parseSearchConfig({ keywordBoostWeight: -0.02 })).toBeNull();
+  });
+});
+
 describe('hydrateSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -141,9 +179,32 @@ describe('hydrateSettings', () => {
     expect(result.id).toBe(row.id);
     expect(result.slug).toBe('global');
     expect(result.globalMonthlyBudgetUsd).toBeNull();
+    expect(result.searchConfig).toBeNull();
+    expect(result.lastSeededAt).toBeNull();
     expect(result.createdAt).toBe(NOW);
     expect(result.updatedAt).toBe(NOW);
     expect(typeof result.defaultModels).toBe('object');
+  });
+
+  it('parses valid searchConfig from stored JSON', () => {
+    const row = makeRow({
+      searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2 },
+    });
+    const result = hydrateSettings(row);
+    expect(result.searchConfig).toEqual({ keywordBoostWeight: -0.05, vectorWeight: 1.2 });
+  });
+
+  it('returns null searchConfig when stored JSON is invalid', () => {
+    const row = makeRow({ searchConfig: 'bad-data' });
+    const result = hydrateSettings(row);
+    expect(result.searchConfig).toBeNull();
+  });
+
+  it('passes through lastSeededAt when set', () => {
+    const seeded = new Date('2026-04-15T12:00:00Z');
+    const row = makeRow({ lastSeededAt: seeded });
+    const result = hydrateSettings(row);
+    expect(result.lastSeededAt).toBe(seeded);
   });
 
   it('stored values override computed defaults for every known task type', () => {
@@ -300,6 +361,8 @@ describe('getOrchestrationSettings', () => {
         create: expect.objectContaining({
           slug: 'global',
           globalMonthlyBudgetUsd: null,
+          searchConfig: Prisma.JsonNull,
+          lastSeededAt: null,
         }),
       })
     );

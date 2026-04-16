@@ -8,13 +8,54 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { embedText } from './embedder';
-import type { KnowledgeSearchResult, PatternSummary } from '@/types/orchestration';
+import type { KnowledgeSearchResult, PatternSummary, SearchConfig } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
 
 /** Default similarity threshold (lower = more similar for cosine distance) */
 const DEFAULT_THRESHOLD = 0.8;
 const DEFAULT_LIMIT = 10;
+
+/** Built-in defaults used when searchConfig is null (no admin override). */
+const DEFAULT_KEYWORD_BOOST: number = -0.02;
+const DEFAULT_KEYWORD_BOOST_STRONG: number = -0.05;
+const DEFAULT_VECTOR_WEIGHT: number = 1.0;
+
+/**
+ * Resolve search weights from the settings singleton, falling back to
+ * built-in defaults when no admin override is stored.
+ */
+async function resolveSearchWeights(): Promise<{
+  keywordBoost: number;
+  keywordBoostStrong: number;
+  vectorWeight: number;
+}> {
+  let config: SearchConfig | null = null;
+  try {
+    const settings = await getOrchestrationSettings();
+    config = settings.searchConfig;
+  } catch {
+    // Settings DB unavailable — use defaults silently
+  }
+
+  if (!config) {
+    return {
+      keywordBoost: DEFAULT_KEYWORD_BOOST,
+      keywordBoostStrong: DEFAULT_KEYWORD_BOOST_STRONG,
+      vectorWeight: DEFAULT_VECTOR_WEIGHT,
+    };
+  }
+
+  // Derive the strong (keyword-match) boost proportionally:
+  // default ratio is -0.05 / -0.02 = 2.5×
+  const ratio = DEFAULT_KEYWORD_BOOST_STRONG / DEFAULT_KEYWORD_BOOST;
+  return {
+    keywordBoost: config.keywordBoostWeight,
+    keywordBoostStrong: config.keywordBoostWeight * ratio,
+    vectorWeight: config.vectorWeight,
+  };
+}
 
 /** Search filter options */
 export interface SearchFilters {
@@ -45,6 +86,8 @@ export async function searchKnowledge(
   threshold: number = DEFAULT_THRESHOLD
 ): Promise<KnowledgeSearchResult[]> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
+
+  const weights = await resolveSearchWeights();
 
   // Generate query embedding (pass 'query' input type for Voyage optimisation)
   const queryEmbedding = await embedText(query, 'query');
@@ -84,7 +127,12 @@ export async function searchKnowledge(
   const whereClause = conditions.join(' AND ');
 
   // Hybrid search: vector similarity + keyword boost
-  // The keyword boost adds a small score bonus for full-text matches
+  // The keyword boost adds a configurable score bonus for full-text matches.
+  // Weights are resolved from AiOrchestrationSettings (admin-tunable) with
+  // built-in defaults when no override is stored.
+  const kwBoostStrong = weights.keywordBoostStrong;
+  const kwBoost = weights.keywordBoost;
+
   const sql = `
     SELECT
       c.id,
@@ -103,10 +151,10 @@ export async function searchKnowledge(
       CASE
         WHEN c.keywords IS NOT NULL
           AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.keywords)
-        THEN -0.05
+        THEN ${kwBoostStrong}
         WHEN c.content IS NOT NULL
           AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.content)
-        THEN -0.02
+        THEN ${kwBoost}
         ELSE 0
       END AS keyword_boost
     FROM ai_knowledge_chunk c
@@ -116,10 +164,10 @@ export async function searchKnowledge(
       CASE
         WHEN c.keywords IS NOT NULL
           AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.keywords)
-        THEN -0.05
+        THEN ${kwBoostStrong}
         WHEN c.content IS NOT NULL
           AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.content)
-        THEN -0.02
+        THEN ${kwBoost}
         ELSE 0
       END
     ) ASC
@@ -160,7 +208,7 @@ export async function searchKnowledge(
     };
     return {
       chunk,
-      similarity: 1 - row.distance + Math.abs(row.keyword_boost),
+      similarity: (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost),
     };
   });
 }

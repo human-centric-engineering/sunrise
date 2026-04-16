@@ -492,12 +492,14 @@ model AiProviderConfig {
 /// Upserted lazily on the first `GET /api/v1/admin/orchestration/settings`
 /// call; never touched by the seeder so admin edits survive deploys.
 model AiOrchestrationSettings {
-  id                     String   @id @default(cuid())
-  slug                   String   @unique @default("global")
+  id                     String    @id @default(cuid())
+  slug                   String    @unique @default("global")
   defaultModels          Json // { routing: string, chat: string, reasoning: string, embeddings: string }
   globalMonthlyBudgetUsd Float?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  searchConfig           Json? // { keywordBoostWeight: number, vectorWeight: number }
+  lastSeededAt           DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@map("ai_orchestration_settings")
 }

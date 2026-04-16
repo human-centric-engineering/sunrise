@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import type { AiKnowledgeDocument, OrchestrationSettings } from '@/types/orchestration';
 
 import { CompareProvidersModal } from './compare-providers-modal';
 import { EmbeddingStatusBanner } from './embedding-status-banner';
@@ -46,6 +46,7 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     router.refresh();
@@ -62,9 +63,21 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
     }
   }, []);
 
+  const fetchLastSeededAt = useCallback(async () => {
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS);
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: OrchestrationSettings };
+      if (body.data?.lastSeededAt) setLastSeededAt(body.data.lastSeededAt as unknown as string);
+    } catch {
+      // Silently ignore — supplementary info
+    }
+  }, []);
+
   useEffect(() => {
     void fetchEmbeddingStatus();
-  }, [fetchEmbeddingStatus]);
+    void fetchLastSeededAt();
+  }, [fetchEmbeddingStatus, fetchLastSeededAt]);
 
   const handleSeed = useCallback(async () => {
     setSeeding(true);
@@ -80,12 +93,13 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
       }
       refresh();
       void fetchEmbeddingStatus();
+      void fetchLastSeededAt();
     } catch {
       setSeedError('Network error — could not reach the server.');
     } finally {
       setSeeding(false);
     }
-  }, [refresh, fetchEmbeddingStatus]);
+  }, [refresh, fetchEmbeddingStatus, fetchLastSeededAt]);
 
   const handleEmbed = useCallback(async () => {
     setEmbedding(true);
@@ -285,6 +299,15 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
             Compare embedding providers →
           </button>
         </div>
+        {lastSeededAt && (
+          <p className="text-muted-foreground text-xs">
+            Last seeded:{' '}
+            {new Date(lastSeededAt).toLocaleString(undefined, {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })}
+          </p>
+        )}
         {seedError && <p className="text-destructive text-sm">{seedError}</p>}
         {embedError && <p className="text-destructive text-sm">{embedError}</p>}
         {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (

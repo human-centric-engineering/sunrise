@@ -9,8 +9,13 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
-import { storedDefaultModelsSchema } from '@/lib/validations/orchestration';
-import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
+import { searchConfigSchema, storedDefaultModelsSchema } from '@/lib/validations/orchestration';
+import {
+  TASK_TYPES,
+  type OrchestrationSettings,
+  type SearchConfig,
+  type TaskType,
+} from '@/types/orchestration';
 
 /**
  * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.defaultModels`
@@ -25,6 +30,16 @@ export function parseStoredDefaults(
 }
 
 /**
+ * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.searchConfig`
+ * into a typed `SearchConfig` via Zod. Returns `null` if the stored value is
+ * absent or invalid — callers should fall back to built-in defaults.
+ */
+export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): SearchConfig | null {
+  const parsed = searchConfigSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
  * filling in any task keys the stored JSON is missing from the registry defaults.
  */
@@ -33,6 +48,8 @@ export function hydrateSettings(row: {
   slug: string;
   defaultModels: Prisma.JsonValue;
   globalMonthlyBudgetUsd: number | null;
+  searchConfig: Prisma.JsonValue | null;
+  lastSeededAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -48,6 +65,8 @@ export function hydrateSettings(row: {
     slug: 'global',
     defaultModels: merged,
     globalMonthlyBudgetUsd: row.globalMonthlyBudgetUsd,
+    searchConfig: parseSearchConfig(row.searchConfig),
+    lastSeededAt: row.lastSeededAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -65,6 +84,8 @@ export async function getOrchestrationSettings(): Promise<OrchestrationSettings>
       slug: 'global',
       defaultModels: defaults as unknown as Prisma.InputJsonValue,
       globalMonthlyBudgetUsd: null,
+      searchConfig: Prisma.JsonNull,
+      lastSeededAt: null,
     },
     update: {},
   });

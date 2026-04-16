@@ -39,5 +39,5 @@ export const POST = withAdminAuth(async (request, session) => {
 
   log.info('Knowledge seed completed', { adminId: session.user.id });
 
-  return successResponse({ seeded: true });
+  return successResponse({ seeded: true, lastSeededAt: new Date().toISOString() });
 });
