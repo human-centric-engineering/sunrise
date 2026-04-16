@@ -7,7 +7,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
-import type { AiWorkflow } from '@/types/prisma';
+import type { AiWorkflowListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
@@ -30,11 +30,11 @@ const EMPTY_META: PaginationMeta = {
  * client-side search / sort / pagination / mutations. Fetch failures
  * never throw — the table renders an empty-state banner.
  */
-async function getWorkflows(): Promise<{ workflows: AiWorkflow[]; meta: PaginationMeta }> {
+async function getWorkflows(): Promise<{ workflows: AiWorkflowListItem[]; meta: PaginationMeta }> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`);
     if (!res.ok) return { workflows: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiWorkflow[]>(res);
+    const body = await parseApiResponse<AiWorkflowListItem[]>(res);
     if (!body.success) return { workflows: [], meta: EMPTY_META };
     return {
       workflows: body.data,

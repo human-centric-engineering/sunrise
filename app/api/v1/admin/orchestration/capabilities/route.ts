@@ -47,15 +47,27 @@ export const GET = withAdminAuth(async (request, _session) => {
     ];
   }
 
-  const [capabilities, total] = await Promise.all([
+  const [rawCapabilities, total] = await Promise.all([
     prisma.aiCapability.findMany({
       where,
       orderBy: { category: 'asc' },
       skip,
       take: limit,
+      include: {
+        agents: {
+          include: {
+            agent: { select: { id: true, name: true, slug: true, isActive: true } },
+          },
+        },
+      },
     }),
     prisma.aiCapability.count({ where }),
   ]);
+
+  const capabilities = rawCapabilities.map(({ agents: links, ...rest }) => ({
+    ...rest,
+    _agents: links.map((l) => l.agent),
+  }));
 
   log.info('Capabilities listed', { count: capabilities.length, total, page, limit });
 

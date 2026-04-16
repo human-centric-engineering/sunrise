@@ -17,6 +17,9 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
+import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
+import { logger } from '@/lib/logging';
+import type { BudgetSummary } from '@/types/orchestration';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -39,15 +42,71 @@ export const GET = withAdminAuth(async (request, _session) => {
     ];
   }
 
-  const [agents, total] = await Promise.all([
+  const [rawAgents, total] = await Promise.all([
     prisma.aiAgent.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
+      include: { _count: { select: { capabilities: true, conversations: true } } },
     }),
     prisma.aiAgent.count({ where }),
   ]);
+
+  let budgetMap: Record<string, BudgetSummary> = {};
+  if (rawAgents.length > 0) {
+    try {
+      const agentIds = rawAgents.map((a) => a.id);
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const [spendGroups, settings] = await Promise.all([
+        prisma.aiCostLog.groupBy({
+          by: ['agentId'],
+          where: { agentId: { in: agentIds }, createdAt: { gte: monthStart } },
+          _sum: { totalCostUsd: true },
+        }),
+        prisma.aiOrchestrationSettings.findUnique({
+          where: { slug: 'global' },
+          select: { globalMonthlyBudgetUsd: true },
+        }),
+      ]);
+
+      let globalCapExceeded = false;
+      const globalCap = settings?.globalMonthlyBudgetUsd ?? null;
+      if (globalCap !== null) {
+        const globalSpent = await getMonthToDateGlobalSpend();
+        globalCapExceeded = globalSpent >= globalCap;
+      }
+
+      const spendByAgent = new Map(spendGroups.map((g) => [g.agentId, g._sum.totalCostUsd ?? 0]));
+
+      budgetMap = Object.fromEntries(
+        rawAgents.map((agent) => {
+          const spent = spendByAgent.get(agent.id) ?? 0;
+          const limit = agent.monthlyBudgetUsd;
+          const withinAgentBudget = limit === null ? true : spent < limit;
+          const summary: BudgetSummary = {
+            withinBudget: withinAgentBudget && !globalCapExceeded,
+            spent,
+            limit: limit ?? null,
+            remaining: limit !== null ? limit - spent : null,
+            ...(globalCapExceeded ? { globalCapExceeded: true } : {}),
+          };
+          return [agent.id, summary];
+        })
+      );
+    } catch (err) {
+      logger.warn('Agents list: batch budget lookup failed, returning null budgets', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const agents = rawAgents.map((agent) => ({
+    ...agent,
+    _budget: budgetMap[agent.id] ?? null,
+  }));
 
   log.info('Agents listed', { count: agents.length, total, page, limit });
 

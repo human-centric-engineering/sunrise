@@ -65,6 +65,8 @@ function makeAgent(id: string, name: string) {
     systemInstructionsHistory: [],
     metadata: {},
     deletedAt: null,
+    _count: { capabilities: 0, conversations: 0 },
+    _budget: null,
   };
 }
 

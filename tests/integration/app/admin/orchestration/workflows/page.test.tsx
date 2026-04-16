@@ -61,6 +61,7 @@ function makeWorkflow(id: string, name: string) {
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01').toISOString(),
     updatedAt: new Date('2025-01-01').toISOString(),
+    _count: { executions: 0 },
   };
 }
 

@@ -14,7 +14,7 @@
  *   - Client-side sort by name or createdAt (server returns createdAt desc).
  */
 
-import type { AiWorkflow } from '@/types/orchestration';
+import type { AiWorkflowListItem } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -68,10 +68,8 @@ import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
-type ExecutionCountEntry = number | null;
-
 export interface WorkflowsTableProps {
-  initialWorkflows: AiWorkflow[];
+  initialWorkflows: AiWorkflowListItem[];
   initialMeta: PaginationMeta;
 }
 
@@ -86,9 +84,8 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AiWorkflow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiWorkflowListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [execCounts, setExecCounts] = useState<Record<string, ExecutionCountEntry>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -96,38 +93,6 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, []);
-
-  // Lazy-fetch execution count per visible workflow.
-  useEffect(() => {
-    if (workflows.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      const entries = await Promise.all(
-        workflows.map(async (wf): Promise<[string, ExecutionCountEntry]> => {
-          try {
-            const res = await fetch(
-              `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?workflowId=${wf.id}&limit=1&page=1`,
-              { credentials: 'same-origin' }
-            );
-            if (!res.ok) return [wf.id, null];
-            const body = await parseApiResponse<unknown[]>(res);
-            if (!body.success) return [wf.id, null];
-            const pMeta = parsePaginationMeta(body.meta);
-            return [wf.id, pMeta?.total ?? null];
-          } catch {
-            return [wf.id, null];
-          }
-        })
-      );
-      if (cancelled) return;
-      setExecCounts(Object.fromEntries(entries));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workflows]);
 
   const fetchWorkflows = useCallback(
     async (
@@ -149,7 +114,7 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
         });
         if (!res.ok) throw new Error('list failed');
 
-        const body = await parseApiResponse<AiWorkflow[]>(res);
+        const body = await parseApiResponse<AiWorkflowListItem[]>(res);
         if (!body.success) throw new Error('list failed');
 
         const next = [...body.data];
@@ -204,25 +169,28 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
     [fetchWorkflows]
   );
 
-  const handleToggleStatus = useCallback(async (workflow: AiWorkflow, nextActive: boolean) => {
-    setWorkflows((prev) =>
-      prev.map((w) => (w.id === workflow.id ? { ...w, isActive: nextActive } : w))
-    );
-    try {
-      await apiClient.patch(API.ADMIN.ORCHESTRATION.workflowById(workflow.id), {
-        body: { isActive: nextActive },
-      });
-    } catch (err) {
+  const handleToggleStatus = useCallback(
+    async (workflow: AiWorkflowListItem, nextActive: boolean) => {
       setWorkflows((prev) =>
-        prev.map((w) => (w.id === workflow.id ? { ...w, isActive: workflow.isActive } : w))
+        prev.map((w) => (w.id === workflow.id ? { ...w, isActive: nextActive } : w))
       );
-      setListError(
-        err instanceof APIClientError
-          ? `Couldn't update "${workflow.name}": ${err.message}`
-          : `Couldn't update "${workflow.name}". Try again.`
-      );
-    }
-  }, []);
+      try {
+        await apiClient.patch(API.ADMIN.ORCHESTRATION.workflowById(workflow.id), {
+          body: { isActive: nextActive },
+        });
+      } catch (err) {
+        setWorkflows((prev) =>
+          prev.map((w) => (w.id === workflow.id ? { ...w, isActive: workflow.isActive } : w))
+        );
+        setListError(
+          err instanceof APIClientError
+            ? `Couldn't update "${workflow.name}": ${err.message}`
+            : `Couldn't update "${workflow.name}". Try again.`
+        );
+      }
+    },
+    []
+  );
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -368,11 +336,7 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {execCounts[workflow.id] === undefined ? (
-                      <span className="text-muted-foreground">…</span>
-                    ) : execCounts[workflow.id] === null ? (
-                      '—'
-                    ) : execCounts[workflow.id] === 0 ? (
+                    {workflow._count.executions === 0 ? (
                       <span className="text-muted-foreground">0</span>
                     ) : (
                       <Link
@@ -380,7 +344,7 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
                         className="hover:underline"
                         title="View executions for this workflow"
                       >
-                        {execCounts[workflow.id]}
+                        {workflow._count.executions}
                       </Link>
                     )}
                   </TableCell>

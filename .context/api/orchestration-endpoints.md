@@ -87,6 +87,8 @@ The rest are admin-global: every admin sees the same data.
 
 List agents (paginated). Query: `page`, `limit`, `isActive`, `provider`, `q`. `q` is a case-insensitive `OR` across `name` / `slug` / `description`.
 
+Each item includes enriched fields inline: `_count: { capabilities, conversations }` and `_budget: { withinBudget, spent, limit, remaining, globalCapExceeded? } | null`. Budget is batch-computed via a single `groupBy` aggregate — no per-row queries. Types: `AiAgentListItem` in `types/orchestration.ts`.
+
 ### `POST /agents`
 
 Create agent. Body validated by `createAgentSchema`. Slug collision → `409 CONFLICT`.
@@ -124,6 +126,8 @@ Versioned bundle format. Import runs in a single transaction with `conflictMode:
 ### `GET /capabilities`
 
 List. Query: `page`, `limit`, `isActive`, `q`.
+
+Each item includes `_agents: Array<{ id, name, slug, isActive }>` — the agents currently using this capability, flattened from the `AiAgentCapability` pivot. Types: `AiCapabilityListItem` in `types/orchestration.ts`.
 
 ### `POST /capabilities`
 
@@ -167,7 +171,7 @@ Aggregated registry across all configured providers. Query: `?refresh=true` to b
 
 ### `GET /workflows` / `POST /workflows`
 
-CRUD. The body is a `WorkflowDefinition` — a DAG of step nodes. Stored as `Json`.
+CRUD. The body is a `WorkflowDefinition` — a DAG of step nodes. Stored as `Json`. Each list item includes `_count: { executions: number }`. Types: `AiWorkflowListItem` in `types/orchestration.ts`.
 
 ### `GET / PATCH / DELETE /workflows/:id`
 

@@ -7,7 +7,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
-import type { AiCapability } from '@/types/prisma';
+import type { AiCapabilityListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
@@ -32,13 +32,13 @@ const EMPTY_META: PaginationMeta = {
  * throw — the table renders an empty state so the page is still usable.
  */
 async function getCapabilities(): Promise<{
-  capabilities: AiCapability[];
+  capabilities: AiCapabilityListItem[];
   meta: PaginationMeta;
 }> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=25`);
     if (!res.ok) return { capabilities: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiCapability[]>(res);
+    const body = await parseApiResponse<AiCapabilityListItem[]>(res);
     if (!body.success) return { capabilities: [], meta: EMPTY_META };
     return {
       capabilities: body.data,

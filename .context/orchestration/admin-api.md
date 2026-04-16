@@ -65,7 +65,7 @@ Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 GET /api/v1/admin/orchestration/agents?page=1&limit=20&isActive=true&provider=anthropic&q=support
 ```
 
-Filters: `isActive` (coerced bool), `provider` (exact match), `q` (case-insensitive `OR` across `name` / `slug` / `description`). Response uses `paginatedResponse` — `{ success, data, meta: { page, limit, total, totalPages } }`.
+Filters: `isActive` (coerced bool), `provider` (exact match), `q` (case-insensitive `OR` across `name` / `slug` / `description`). Response uses `paginatedResponse` — `{ success, data, meta: { page, limit, total, totalPages } }`. Each item includes `_count: { capabilities, conversations }` and `_budget: BudgetSummary | null` (batch-computed via `groupBy` — not per-row). Types: `AiAgentListItem` in `types/orchestration.ts`.
 
 ### Create agent
 
@@ -292,7 +292,7 @@ Returns the minimal agent projection for every agent that currently attaches thi
 
 Consumers:
 
-- **Capabilities list page** — "agents using it" count column (lazy per-row fetch).
+- **Capabilities list page** — `_agents` array is now returned inline on each capability from `GET /capabilities`, so the list page no longer makes per-row requests. This endpoint is still used by the edit page.
 - **Capability edit page** — the Safety tab's "Used by N agents" card, and the delete confirmation dialog (so admins see exactly who breaks when they soft-delete).
 
 ## Providers
@@ -387,7 +387,7 @@ CRUD over `AiWorkflow`, plus a pure-logic DAG `/validate` endpoint and a live SS
 curl '/api/v1/admin/orchestration/workflows?isActive=true&isTemplate=false&q=onboarding'
 ```
 
-Filters: `isActive`, `isTemplate`, `q` (matches `name` / `slug` / `description`). Paginated.
+Filters: `isActive`, `isTemplate`, `q` (matches `name` / `slug` / `description`). Paginated. Each item includes `_count: { executions: number }`. Types: `AiWorkflowListItem` in `types/orchestration.ts`.
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/workflows \

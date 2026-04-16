@@ -18,27 +18,25 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column       | Source                                 | Notes                                                                    |
-| ------------ | -------------------------------------- | ------------------------------------------------------------------------ |
-| Name         | `capability.name`                      | Sort header. Links to edit page                                          |
-| Slug         | `capability.slug`                      | Monospace, muted                                                         |
-| Category     | `capability.category`                  | Sort header. Free-text, shown as plain text                              |
-| Exec type    | `capability.executionType`             | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`             |
-| Approval     | `capability.requiresApproval`          | Amber `Approval` badge when true, `—` otherwise                          |
-| Rate / min   | `capability.rateLimit`                 | Right-aligned; `—` when `null` (no limit)                                |
-| Agents using | `GET /capabilities/:id/agents` per row | **Lazy-fetched after paint** — shows `…` then `N agents`; `—` on failure |
-| Status       | `capability.isActive`                  | `<Switch>` — optimistic PATCH, reverts on failure, shows inline error    |
-| ⋯ Actions    | Dropdown: Edit · Delete                |                                                                          |
+| Column       | Source                                 | Notes                                                                 |
+| ------------ | -------------------------------------- | --------------------------------------------------------------------- |
+| Name         | `capability.name`                      | Sort header. Links to edit page                                       |
+| Slug         | `capability.slug`                      | Monospace, muted                                                      |
+| Category     | `capability.category`                  | Sort header. Free-text, shown as plain text                           |
+| Exec type    | `capability.executionType`             | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`          |
+| Approval     | `capability.requiresApproval`          | Amber `Approval` badge when true, `—` otherwise                       |
+| Rate / min   | `capability.rateLimit`                 | Right-aligned; `—` when `null` (no limit)                             |
+| Agents using | `capability._agents` (inline from API) | Count + popover with agent names/links. `0` when none attached        |
+| Status       | `capability.isActive`                  | `<Switch>` — optimistic PATCH, reverts on failure, shows inline error |
+| ⋯ Actions    | Dropdown: Edit · Delete                |                                                                       |
 
 ### Category filter
 
 Header dropdown (`Select`) populated from a `new Set(rows.map(r => r.category))` plus an "all" option. A change refetches `/capabilities?category=...` server-side. Because the column is free-text on the backend, the dropdown is eventually-consistent — new categories show up after the next list refetch.
 
-### Lazy "agents using it" count
+### Agents-using data
 
-Each visible row triggers a `GET /capabilities/:id/agents` after first paint (the same lazy-budget pattern used by `agents-table.tsx` for `spend MTD`). The response is the full agent projection, so the count is cached alongside the rows — the delete dialog reuses it to list exactly which agents will lose this tool.
-
-If the per-row fetch throws, the cell renders `—` (never blocks the row, never propagates the error).
+The `GET /capabilities` list endpoint returns `_agents: Array<{ id, name, slug, isActive }>` inline on each item (via the `AiAgentCapability` pivot). The table renders the count directly and the popover/delete-dialog use the full array. No per-row fetch required. The standalone `GET /capabilities/:id/agents` endpoint is still used by the capability edit page.
 
 ### Status toggle
 

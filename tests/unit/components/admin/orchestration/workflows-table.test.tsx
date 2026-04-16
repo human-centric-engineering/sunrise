@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event';
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
 import type { PaginationMeta } from '@/types/api';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
-import type { AiWorkflow } from '@prisma/client';
+import type { AiWorkflowListItem } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ vi.mock('@/lib/api/client', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-function makeWorkflow(overrides: Partial<AiWorkflow> = {}): AiWorkflow {
+function makeWorkflow(overrides: Partial<AiWorkflowListItem> = {}): AiWorkflowListItem {
   const id = overrides.id ?? 'cmjbv4i3x00003wslwkflow01';
   return {
     id,
@@ -69,11 +69,12 @@ function makeWorkflow(overrides: Partial<AiWorkflow> = {}): AiWorkflow {
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01T00:00:00Z'),
     updatedAt: new Date('2025-01-01T00:00:00Z'),
+    _count: { executions: 0 },
     ...overrides,
-  } as AiWorkflow;
+  } as AiWorkflowListItem;
 }
 
-const THREE_WORKFLOWS: AiWorkflow[] = [
+const THREE_WORKFLOWS: AiWorkflowListItem[] = [
   makeWorkflow({ id: 'wf-1', name: 'Alpha Flow', slug: 'alpha-flow' }),
   makeWorkflow({ id: 'wf-2', name: 'Beta Flow', slug: 'beta-flow', isActive: false }),
   makeWorkflow({ id: 'wf-3', name: 'Gamma Flow', slug: 'gamma-flow' }),
@@ -88,7 +89,7 @@ const MOCK_META: PaginationMeta = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeWorkflowsListResponse(workflows: AiWorkflow[] = THREE_WORKFLOWS) {
+function makeWorkflowsListResponse(workflows: AiWorkflowListItem[] = THREE_WORKFLOWS) {
   return createMockFetchResponse({
     success: true,
     data: workflows,
@@ -311,108 +312,33 @@ describe('WorkflowsTable', () => {
   // ── Executions column ─────────────────────────────────────────────────────
 
   describe('Executions column', () => {
-    /**
-     * Helper: build a mock fetch that dispatches on URL.
-     *   - URLs containing "/executions" return the given executions response.
-     *   - All other URLs return the standard workflows list response.
-     */
-    function makeDispatchedFetch(execResponse: Response) {
-      return vi.fn<typeof fetch>((input: RequestInfo | URL) => {
-        const url = toUrlString(input);
-        if (url.includes('/executions')) {
-          return Promise.resolve(execResponse);
-        }
-        return Promise.resolve(makeWorkflowsListResponse());
-      });
-    }
-
-    function makeExecCountResponse(total: number) {
-      return createMockFetchResponse({
-        success: true,
-        data: [],
-        meta: { page: 1, limit: 1, total, totalPages: Math.ceil(total / 1) },
-      });
-    }
-
-    it('shows "…" placeholder while execution counts are still loading', async () => {
-      // Return a promise that never resolves for executions so the count stays pending.
-      const pendingExecFetch = vi.fn<typeof fetch>((input: RequestInfo | URL) => {
-        const url = toUrlString(input);
-        if (url.includes('/executions')) {
-          return new Promise<Response>(() => {
-            // intentionally never resolves
-          });
-        }
-        return Promise.resolve(makeWorkflowsListResponse());
-      });
-      mockFetch = pendingExecFetch;
-      global.fetch = mockFetch as typeof fetch;
-
-      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
-
-      // The "…" placeholder must be present before any exec fetch resolves.
-      expect(screen.getAllByText('…').length).toBeGreaterThan(0);
-    });
-
-    it('renders a link with the count when execution count > 0', async () => {
-      mockFetch = makeDispatchedFetch(makeExecCountResponse(42));
-      global.fetch = mockFetch as typeof fetch;
-
+    it('renders a link with the count when execution count > 0', () => {
       render(
         <WorkflowsTable
-          initialWorkflows={[makeWorkflow({ id: 'wf-exec-1', name: 'Exec Flow' })]}
+          initialWorkflows={[
+            makeWorkflow({ id: 'wf-exec-1', name: 'Exec Flow', _count: { executions: 42 } }),
+          ]}
           initialMeta={{ ...MOCK_META, total: 1 }}
         />
       );
 
-      // Wait for the exec count to populate.
-      const link = await screen.findByRole('link', { name: '42' });
+      const link = screen.getByRole('link', { name: '42' });
       expect(link).toHaveAttribute('href', '/admin/orchestration/executions?workflowId=wf-exec-1');
     });
 
-    it('renders muted "0" with no link when execution count is 0', async () => {
-      mockFetch = makeDispatchedFetch(makeExecCountResponse(0));
-      global.fetch = mockFetch as typeof fetch;
-
+    it('renders muted "0" with no link when execution count is 0', () => {
       render(
         <WorkflowsTable
-          initialWorkflows={[makeWorkflow({ id: 'wf-exec-2', name: 'Zero Flow' })]}
+          initialWorkflows={[
+            makeWorkflow({ id: 'wf-exec-2', name: 'Zero Flow', _count: { executions: 0 } }),
+          ]}
           initialMeta={{ ...MOCK_META, total: 1 }}
         />
       );
 
-      await waitFor(() => {
-        expect(screen.getByText('0')).toBeInTheDocument();
-      });
-
-      // Must not be wrapped in a link.
       const zeroEl = screen.getByText('0');
+      expect(zeroEl).toBeInTheDocument();
       expect(zeroEl.closest('a')).toBeNull();
-    });
-
-    it('renders "—" when the execution count fetch fails', async () => {
-      const failedExecFetch = vi.fn<typeof fetch>((input: RequestInfo | URL) => {
-        const url = toUrlString(input);
-        if (url.includes('/executions')) {
-          return Promise.resolve(createMockFetchResponse({ success: false }, 500));
-        }
-        return Promise.resolve(makeWorkflowsListResponse());
-      });
-      mockFetch = failedExecFetch;
-      global.fetch = mockFetch as typeof fetch;
-
-      render(
-        <WorkflowsTable
-          initialWorkflows={[makeWorkflow({ id: 'wf-exec-3', name: 'Fail Flow' })]}
-          initialMeta={{ ...MOCK_META, total: 1 }}
-        />
-      );
-
-      // The component sets null on failure and renders the em-dash literal "—".
-      await waitFor(() => {
-        // Multiple "—" may exist (e.g. description column); at least one must be present.
-        expect(screen.getAllByText('—').length).toBeGreaterThan(0);
-      });
     });
   });
 });

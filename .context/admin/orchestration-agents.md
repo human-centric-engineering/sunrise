@@ -18,18 +18,20 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column    | Source                              | Notes                                              |
-| --------- | ----------------------------------- | -------------------------------------------------- |
-| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                    |
-| Name      | `agent.name`                        | Sort header. Links to edit page                    |
-| Slug      | `agent.slug`                        | Monospace, muted                                   |
-| Provider  | `agent.provider`                    |                                                    |
-| Model     | `agent.model`                       |                                                    |
-| Temp      | `agent.temperature.toFixed(2)`      | Right-aligned, tabular                             |
-| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                    |
-| Spend MTD | `GET /agents/:id/budget` per row    | **Lazy-fetched after paint** — shows `…` then `$X` |
-| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure  |
-| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                    |
+| Column    | Source                              | Notes                                                      |
+| --------- | ----------------------------------- | ---------------------------------------------------------- |
+| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                            |
+| Name      | `agent.name`                        | Sort header. Links to edit page                            |
+| Slug      | `agent.slug`                        | Monospace, muted                                           |
+| Caps      | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0          |
+| Convs     | `agent._count.conversations`        | Inline from list API                                       |
+| Provider  | `agent.provider`                    |                                                            |
+| Model     | `agent.model`                       |                                                            |
+| Temp      | `agent.temperature.toFixed(2)`      | Right-aligned, tabular                                     |
+| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                            |
+| Spend MTD | `agent._budget.spent`               | Inline from list API (batch `groupBy`). `—` when no budget |
+| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure          |
+| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                            |
 
 ### Bulk export
 

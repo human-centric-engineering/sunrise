@@ -83,6 +83,7 @@ function makeCapability(id: string, name: string, category = 'api') {
     updatedAt: new Date('2025-01-01').toISOString(),
     deletedAt: null,
     metadata: {},
+    _agents: [],
   };
 }
 

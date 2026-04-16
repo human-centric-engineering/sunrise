@@ -347,6 +347,39 @@ export interface MessageMetadata {
 // API Input/Output Types
 // ============================================================================
 
+/** Budget snapshot for an agent's month-to-date spend (list-view summary). */
+export interface BudgetSummary {
+  withinBudget: boolean;
+  spent: number;
+  limit: number | null;
+  remaining: number | null;
+  globalCapExceeded?: boolean;
+}
+
+/** Enriched agent row returned by the list endpoint. */
+export type AiAgentListItem = AiAgent & {
+  _count: { capabilities: number; conversations: number };
+  _budget: BudgetSummary | null;
+};
+
+/** Enriched workflow row returned by the list endpoint. */
+export type AiWorkflowListItem = AiWorkflow & {
+  _count: { executions: number };
+};
+
+/** Minimal agent projection nested in capability list items. */
+export interface CapabilityAgentRef {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+}
+
+/** Enriched capability row returned by the list endpoint. */
+export type AiCapabilityListItem = AiCapability & {
+  _agents: CapabilityAgentRef[];
+};
+
 /** Agent with its capabilities loaded */
 export type AgentWithCapabilities = AiAgent & {
   capabilities: Array<{

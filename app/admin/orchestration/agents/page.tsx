@@ -7,7 +7,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
-import type { AiAgent } from '@/types/prisma';
+import type { AiAgentListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
@@ -30,11 +30,11 @@ const EMPTY_META: PaginationMeta = {
  * search / sort / pagination. Fetch failures never throw — the table
  * renders an empty-state banner so the page is still usable.
  */
-async function getAgents(): Promise<{ agents: AiAgent[]; meta: PaginationMeta }> {
+async function getAgents(): Promise<{ agents: AiAgentListItem[]; meta: PaginationMeta }> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=25`);
     if (!res.ok) return { agents: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiAgent[]>(res);
+    const body = await parseApiResponse<AiAgentListItem[]>(res);
     if (!body.success) return { agents: [], meta: EMPTY_META };
     return {
       agents: body.data,

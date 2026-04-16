@@ -20,7 +20,7 @@ import userEvent from '@testing-library/user-event';
 import { AgentsTable } from '@/components/admin/orchestration/agents-table';
 import type { PaginationMeta } from '@/types/api';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
-import type { AiAgent } from '@prisma/client';
+import type { AiAgentListItem } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ vi.mock('@/lib/api/client', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-function makeAgent(overrides: Partial<AiAgent> = {}): AiAgent {
+function makeAgent(overrides: Partial<AiAgentListItem> = {}): AiAgentListItem {
   const id = overrides.id ?? 'cmjbv4i3x00003wsloputgwul';
   return {
     id,
@@ -76,11 +76,13 @@ function makeAgent(overrides: Partial<AiAgent> = {}): AiAgent {
     updatedAt: new Date('2025-01-01T00:00:00Z'),
     systemInstructionsHistory: [],
     metadata: {},
+    _count: { capabilities: 0, conversations: 0 },
+    _budget: null,
     ...overrides,
-  } as AiAgent;
+  } as AiAgentListItem;
 }
 
-const THREE_AGENTS: AiAgent[] = [
+const THREE_AGENTS: AiAgentListItem[] = [
   makeAgent({ id: 'agent-1', name: 'Alpha', slug: 'alpha' }),
   makeAgent({ id: 'agent-2', name: 'Beta', slug: 'beta', isActive: false }),
   makeAgent({ id: 'agent-3', name: 'Gamma', slug: 'gamma' }),
@@ -95,14 +97,7 @@ const MOCK_META: PaginationMeta = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeBudgetFetchResponse() {
-  return createMockFetchResponse({
-    success: true,
-    data: { spent: 12.34, limit: 100, withinBudget: true },
-  });
-}
-
-function makeAgentsListResponse(agents: AiAgent[] = THREE_AGENTS) {
+function makeAgentsListResponse(agents: AiAgentListItem[] = THREE_AGENTS) {
   return createMockFetchResponse({
     success: true,
     data: agents,
@@ -127,14 +122,8 @@ describe('AgentsTable', () => {
     mockFetch = vi.fn<typeof fetch>();
     global.fetch = mockFetch as typeof fetch;
 
-    // Default: budget fetch succeeds for all rows
-    mockFetch.mockImplementation((url: RequestInfo | URL) => {
-      const urlStr = toUrlString(url);
-      if (urlStr.includes('/budget')) {
-        return Promise.resolve(makeBudgetFetchResponse());
-      }
-      return Promise.resolve(makeAgentsListResponse());
-    });
+    // Default: list fetch returns THREE_AGENTS with inline _count and _budget
+    mockFetch.mockImplementation(() => Promise.resolve(makeAgentsListResponse()));
 
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -207,29 +196,36 @@ describe('AgentsTable', () => {
 
   // ── Budget MTD ─────────────────────────────────────────────────────────────
 
-  describe('budget MTD fetch', () => {
-    it('renders em-dash when budget fetch fails', async () => {
-      // Arrange: budget fetches all fail
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) {
-          return Promise.resolve(createMockFetchResponse({}, 500));
-        }
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act
+  describe('budget MTD column', () => {
+    it('renders em-dash in Spend MTD when _budget is null', () => {
+      // Arrange: all agents have _budget: null (default fixture)
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
 
-      // Assert: loading state first (…), then — when request fails
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        // At minimum 3 (one per row, from budget fail)
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
+      // Assert: at least 3 em-dashes (one per row) from null budget
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(3);
 
-      // Critical: no throw
+      // Component must not throw
       expect(screen.getByText('Alpha')).toBeInTheDocument();
+    });
+
+    it('renders formatted spend when _budget is provided', () => {
+      // Arrange: agents with actual budget data
+      const agentsWithBudget: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          slug: 'alpha',
+          _budget: { withinBudget: true, spent: 12.34, limit: 100, remaining: 87.66 },
+        }),
+      ];
+
+      render(
+        <AgentsTable initialAgents={agentsWithBudget} initialMeta={{ ...MOCK_META, total: 1 }} />
+      );
+
+      // Assert: spend renders as formatted dollar amount
+      expect(screen.getByText('$12.34')).toBeInTheDocument();
     });
   });
 
@@ -252,12 +248,9 @@ describe('AgentsTable', () => {
     it('fires refetch after 300ms debounce with search query', async () => {
       // Arrange
       const user = userEvent.setup({ delay: null });
-      // Override with a handler that returns correct shapes for both budget and list
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse([THREE_AGENTS[0]]));
-      });
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(makeAgentsListResponse([THREE_AGENTS[0]]))
+      );
 
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
 
@@ -270,9 +263,9 @@ describe('AgentsTable', () => {
 
       // Assert
       await waitFor(() => {
-        const fetchUrls = mockFetch.mock.calls
-          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/budget'))
-          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
         expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true);
       });
     });
@@ -284,11 +277,7 @@ describe('AgentsTable', () => {
     it('clicking Name header button fetches agents with updated sort', async () => {
       // Arrange
       const user = userEvent.setup();
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse());
-      });
+      mockFetch.mockImplementation(() => Promise.resolve(makeAgentsListResponse()));
 
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
 
@@ -299,12 +288,10 @@ describe('AgentsTable', () => {
       // Act: click to sort
       await user.click(nameBtn);
 
-      // Assert: at least one list fetch was fired (beyond the initial budget fetches)
+      // Assert: at least one list fetch was fired
       await waitFor(() => {
         const listFetches = mockFetch.mock.calls.filter(
-          (call) =>
-            !toUrlString(call[0] as RequestInfo | URL).includes('/budget') &&
-            !toUrlString(call[0] as RequestInfo | URL).includes('/export')
+          (call) => !toUrlString(call[0] as RequestInfo | URL).includes('/export')
         );
         expect(listFetches.length).toBeGreaterThan(0);
       });
@@ -406,7 +393,6 @@ describe('AgentsTable', () => {
 
       mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
         const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
         if (urlStr.includes('/export') && init?.method === 'POST') {
           return Promise.resolve(exportResponse);
         }
@@ -471,11 +457,9 @@ describe('AgentsTable', () => {
       // Arrange
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse(THREE_AGENTS.slice(1)));
-      });
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(makeAgentsListResponse(THREE_AGENTS.slice(1)))
+      );
 
       const user = userEvent.setup();
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
@@ -508,298 +492,121 @@ describe('AgentsTable', () => {
     });
   });
 
-  // ── Lazy-fetched columns: Caps & Convs ────────────────────────────────────
+  // ── Inline Caps & Convs columns ──────────────────────────────────────────
 
-  describe('lazy-fetched columns (Caps & Convs)', () => {
-    /**
-     * Helper: produce a capabilities response whose .data array has `count` items.
-     */
-    function makeCapabilitiesResponse(count: number) {
-      return createMockFetchResponse({
-        success: true,
-        data: Array.from({ length: count }, (_, i) => ({ id: `cap-${i}` })),
-      });
-    }
-
-    /**
-     * Helper: produce a conversations response whose .meta carries `total`.
-     */
-    function makeConversationsResponse(total: number) {
-      return createMockFetchResponse({
-        success: true,
-        data: [],
-        meta: { page: 1, limit: 1, total, totalPages: Math.max(1, total) },
-      });
-    }
-
-    /**
-     * A fetch implementation that properly handles all four URL families:
-     *   /budget          → budget response
-     *   /capabilities   → capabilities response (2 caps by default)
-     *   ?agentId=        → conversations response (5 convs by default)
-     *   everything else  → agents list response
-     */
-    function makeFullMockFetch(opts: { caps?: number; convs?: number } = {}) {
-      const caps = opts.caps ?? 2;
-      const convs = opts.convs ?? 5;
-      return (url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        if (urlStr.includes('/capabilities'))
-          return Promise.resolve(makeCapabilitiesResponse(caps));
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId='))
-          return Promise.resolve(makeConversationsResponse(convs));
-        return Promise.resolve(makeAgentsListResponse());
-      };
-    }
-
-    // ── 1. Successful fetch: counts appear in the correct cells ─────────────
-
-    it('renders capability count as a number after fetch resolves', async () => {
-      // Arrange: capabilities endpoint returns 3 caps for every agent
-      mockFetch.mockImplementation(makeFullMockFetch({ caps: 3, convs: 0 }));
+  describe('inline _count columns (Caps & Convs)', () => {
+    it('renders capability count from _count.capabilities', () => {
+      // Arrange: agents with known capability counts
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          slug: 'alpha',
+          _count: { capabilities: 3, conversations: 0 },
+        }),
+        makeAgent({
+          id: 'agent-2',
+          name: 'Beta',
+          slug: 'beta',
+          _count: { capabilities: 1, conversations: 0 },
+        }),
+        makeAgent({
+          id: 'agent-3',
+          name: 'Gamma',
+          slug: 'gamma',
+          _count: { capabilities: 0, conversations: 0 },
+        }),
+      ];
 
       // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      render(<AgentsTable initialAgents={agents} initialMeta={MOCK_META} />);
 
-      // Assert: three rows each show "3" in the Caps column
-      await waitFor(() => {
-        // getAllByText('3') may also match other columns (e.g. pagination "3 agents")
-        // so we check that the capability links / spans are present
-        const threes = screen.getAllByText('3');
-        // At minimum one instance per row — 3 rows → ≥ 3 occurrences
-        expect(threes.length).toBeGreaterThanOrEqual(3);
-      });
+      // Assert: counts render immediately (no fetch required)
+      expect(screen.getByText('3')).toBeInTheDocument();
+      expect(screen.getByText('1')).toBeInTheDocument();
+      // "0" renders as muted text; getAllByText because count+conv both show 0
+      const zeros = screen.getAllByText('0');
+      expect(zeros.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('renders conversation count as a number after fetch resolves', async () => {
-      // Arrange: conversations endpoint returns total=7 for every agent
-      mockFetch.mockImplementation(makeFullMockFetch({ caps: 0, convs: 7 }));
+    it('renders conversation count from _count.conversations', () => {
+      // Arrange: agents with known conversation counts
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          slug: 'alpha',
+          _count: { capabilities: 0, conversations: 7 },
+        }),
+        makeAgent({
+          id: 'agent-2',
+          name: 'Beta',
+          slug: 'beta',
+          _count: { capabilities: 0, conversations: 7 },
+        }),
+        makeAgent({
+          id: 'agent-3',
+          name: 'Gamma',
+          slug: 'gamma',
+          _count: { capabilities: 0, conversations: 7 },
+        }),
+      ];
 
       // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      render(<AgentsTable initialAgents={agents} initialMeta={MOCK_META} />);
 
-      // Assert: three rows each show "7" in the Convs column (plain number, no link)
-      await waitFor(() => {
-        const sevens = screen.getAllByText('7');
-        expect(sevens.length).toBeGreaterThanOrEqual(3);
-      });
+      // Assert: three rows each show "7" in the Convs column
+      const sevens = screen.getAllByText('7');
+      expect(sevens.length).toBeGreaterThanOrEqual(3);
     });
 
-    it('renders capability count 0 as a muted span after fetch resolves', async () => {
-      // Arrange: capabilities endpoint returns 0 caps for every agent
-      mockFetch.mockImplementation(makeFullMockFetch({ caps: 0, convs: 0 }));
+    it('renders capability count 0 as a muted span (no link)', () => {
+      // Arrange: agent with 0 capabilities
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          slug: 'alpha',
+          _count: { capabilities: 0, conversations: 0 },
+        }),
+      ];
 
       // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
 
-      // Assert: the "0" spans appear (rendered as muted text, not a link)
-      await waitFor(() => {
-        const zeros = screen.getAllByText('0');
-        expect(zeros.length).toBeGreaterThanOrEqual(3);
-      });
+      // Assert: "0" in the Caps column renders without a link
+      const zeros = screen.getAllByText('0');
+      expect(zeros.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('fetches capabilities URL containing the agent id', async () => {
-      // Arrange
-      mockFetch.mockImplementation(makeFullMockFetch({ caps: 1, convs: 0 }));
+    it('renders capability count > 0 as a link to the agent detail page', () => {
+      // Arrange: agent with capabilities
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          slug: 'alpha',
+          _count: { capabilities: 5, conversations: 0 },
+        }),
+      ];
 
       // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
 
-      // Assert: a capabilities request was made for each agent id
-      await waitFor(() => {
-        const capCalls = mockFetch.mock.calls
-          .map((call) => toUrlString(call[0] as RequestInfo | URL))
-          .filter((u) => u.includes('/capabilities'));
-        expect(capCalls.some((u) => u.includes('agent-1'))).toBe(true);
-        expect(capCalls.some((u) => u.includes('agent-2'))).toBe(true);
-        expect(capCalls.some((u) => u.includes('agent-3'))).toBe(true);
-      });
+      // Assert: the capability count renders as a link
+      const link = screen.getByRole('link', { name: '5' });
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveAttribute('href', expect.stringContaining('agent-1'));
     });
 
-    it('fetches conversations URL with agentId query param for each agent', async () => {
-      // Arrange
-      mockFetch.mockImplementation(makeFullMockFetch({ caps: 0, convs: 2 }));
-
-      // Act
+    it('does not make any fetch calls for capabilities or conversations', () => {
+      // Arrange & Act
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
 
-      // Assert: a conversations request was made for each agent id
-      await waitFor(() => {
-        const convCalls = mockFetch.mock.calls
-          .map((call) => toUrlString(call[0] as RequestInfo | URL))
-          .filter((u) => u.includes('/conversations') && u.includes('agentId='));
-        expect(convCalls.some((u) => u.includes('agentId=agent-1'))).toBe(true);
-        expect(convCalls.some((u) => u.includes('agentId=agent-2'))).toBe(true);
-        expect(convCalls.some((u) => u.includes('agentId=agent-3'))).toBe(true);
-      });
-    });
-
-    // ── 2. Failed fetch: cells render the em-dash fallback ──────────────────
-
-    it('renders em-dash in Caps column when capabilities fetch returns non-ok status', async () => {
-      // Arrange: capabilities fetches all return 500
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        if (urlStr.includes('/capabilities'))
-          return Promise.resolve(createMockFetchResponse({}, 500));
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId='))
-          return Promise.resolve(makeConversationsResponse(0));
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert: at least 3 em-dashes (one per row) from failed capabilities
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
-      // Component must not throw
-      expect(screen.getByText('Alpha')).toBeInTheDocument();
-    });
-
-    it('renders em-dash in Caps column when capabilities fetch throws', async () => {
-      // Arrange: capabilities fetch rejects with a network error
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        if (urlStr.includes('/capabilities')) return Promise.reject(new Error('Network error'));
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId='))
-          return Promise.resolve(makeConversationsResponse(0));
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert: em-dashes appear once fetch error is caught
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
-      expect(screen.getByText('Alpha')).toBeInTheDocument();
-    });
-
-    it('renders em-dash in Convs column when conversations fetch returns non-ok status', async () => {
-      // Arrange: conversations fetches all return 500
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        if (urlStr.includes('/capabilities')) return Promise.resolve(makeCapabilitiesResponse(1));
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId='))
-          return Promise.resolve(createMockFetchResponse({}, 500));
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert: em-dashes visible once failed conv fetches settle
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
-      expect(screen.getByText('Alpha')).toBeInTheDocument();
-    });
-
-    it('renders em-dash in Convs column when conversations fetch throws', async () => {
-      // Arrange: conversations fetch rejects
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        if (urlStr.includes('/capabilities')) return Promise.resolve(makeCapabilitiesResponse(1));
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId='))
-          return Promise.reject(new Error('Network error'));
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert: em-dashes visible and no unhandled error
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
-      expect(screen.getByText('Alpha')).toBeInTheDocument();
-    });
-
-    // ── 3. Pre-fetch state: loading ellipsis renders before promises resolve ─
-
-    it('renders loading ellipsis (…) in Caps and Convs cells before fetches resolve', () => {
-      // Arrange: use a never-resolving fetch so promises stay pending
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/capabilities') || urlStr.includes('?agentId='))
-          return new Promise<Response>(() => {
-            // intentionally never resolves — simulates in-flight state
-          });
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act: render synchronously — do NOT await anything
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert: the '…' loading placeholder appears for the pending cells
-      // (capCounts and convCounts are undefined until the fetch effect sets them)
-      const ellipses = screen.getAllByText('…');
-      // 3 agents × 2 columns (Caps + Convs) = 6 ellipses minimum
-      expect(ellipses.length).toBeGreaterThanOrEqual(6);
-    });
-
-    // ── 4. Cancellation: unmount before fetches resolve must not warn/throw ──
-
-    it('does not warn about state updates on unmounted component when unmounted before fetches resolve', async () => {
-      // Arrange: capture console.error to detect act() / unmount warnings
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-      // Fetches that resolve on the next microtask — gives us a window to unmount first
-      let resolveCapabilities: (() => void) | undefined;
-      let resolveConversations: (() => void) | undefined;
-
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/capabilities')) {
-          return new Promise<Response>((resolve) => {
-            resolveCapabilities = () => resolve(makeCapabilitiesResponse(2));
-          });
-        }
-        if (urlStr.includes('?agentId=') || urlStr.includes('&agentId=')) {
-          return new Promise<Response>((resolve) => {
-            resolveConversations = () => resolve(makeConversationsResponse(3));
-          });
-        }
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse());
-      });
-
-      // Act: mount then immediately unmount
-      const { unmount } = render(
-        <AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />
-      );
-      unmount();
-
-      // Now resolve the pending fetches — the cancelled flag should prevent setState
-      resolveCapabilities?.();
-      resolveConversations?.();
-
-      // Let microtasks drain
-      await act(async () => {
-        await Promise.resolve();
-      });
-
-      // Assert: no "Can't perform a React state update on an unmounted component" warnings
-      const stateUpdateWarnings = consoleSpy.mock.calls.filter((args) =>
-        String(args[0]).includes('unmounted')
-      );
-      expect(stateUpdateWarnings).toHaveLength(0);
-
-      consoleSpy.mockRestore();
+      // Assert: no per-row fetch calls for capabilities or conversations
+      const allUrls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
+      expect(allUrls.every((u) => !u.includes('/capabilities'))).toBe(true);
+      expect(allUrls.every((u) => !u.includes('agentId='))).toBe(true);
     });
   });
 
@@ -830,11 +637,7 @@ describe('AgentsTable', () => {
       // Arrange: page 1 of 2
       const meta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
 
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/budget')) return Promise.resolve(makeBudgetFetchResponse());
-        return Promise.resolve(makeAgentsListResponse());
-      });
+      mockFetch.mockImplementation(() => Promise.resolve(makeAgentsListResponse()));
 
       const user = userEvent.setup();
       render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={meta} />);
@@ -847,11 +650,7 @@ describe('AgentsTable', () => {
       // Assert: a list fetch with page=2 was fired
       await waitFor(() => {
         const listFetches = mockFetch.mock.calls
-          .filter(
-            (call) =>
-              !toUrlString(call[0] as RequestInfo | URL).includes('/budget') &&
-              !toUrlString(call[0] as RequestInfo | URL).includes('/export')
-          )
+          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/export'))
           .map((call) => toUrlString(call[0] as RequestInfo | URL));
         expect(listFetches.some((u) => u.includes('page=2'))).toBe(true);
       });
