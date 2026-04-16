@@ -17,7 +17,7 @@
  * our own APIClientError envelope.
  */
 
-import type { AiAgent } from '@prisma/client';
+import type { AiAgent } from '@/types/orchestration';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 

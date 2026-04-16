@@ -31,7 +31,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 
-import type { AiWorkflow } from '@prisma/client';
+import type { AiWorkflow } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';

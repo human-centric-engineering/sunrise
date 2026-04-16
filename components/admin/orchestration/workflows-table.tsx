@@ -14,7 +14,7 @@
  *   - Client-side sort by name or createdAt (server returns createdAt desc).
  */
 
-import type { AiWorkflow } from '@prisma/client';
+import type { AiWorkflow } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';

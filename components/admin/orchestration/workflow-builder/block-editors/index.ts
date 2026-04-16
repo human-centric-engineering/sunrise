@@ -8,7 +8,7 @@
  * source of truth and round-trips through the store.
  */
 
-import type { AiCapability } from '@prisma/client';
+import type { AiCapability } from '@/types/orchestration';
 
 /** Minimal capability shape the tool-call editor needs. */
 export type CapabilityOption = Pick<AiCapability, 'id' | 'slug' | 'name' | 'description'>;

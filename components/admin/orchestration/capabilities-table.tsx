@@ -16,7 +16,7 @@
  * export/import, so there is no standalone bundle format today.
  */
 
-import type { AiCapability } from '@prisma/client';
+import type { AiCapability } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';

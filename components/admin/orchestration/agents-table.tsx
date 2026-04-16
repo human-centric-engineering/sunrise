@@ -19,7 +19,7 @@
  * Delete uses the same inline AlertDialog pattern as UserTable.
  */
 
-import type { AiAgent } from '@prisma/client';
+import type { AiAgent } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
