@@ -137,6 +137,8 @@ const MOCK_SETTINGS: OrchestrationSettings = {
     embeddings: 'claude-haiku-4-5',
   },
   globalMonthlyBudgetUsd: 500,
+  searchConfig: null,
+  lastSeededAt: null,
   createdAt: NOW,
   updatedAt: NOW,
 };

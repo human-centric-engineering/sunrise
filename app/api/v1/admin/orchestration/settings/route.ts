@@ -4,9 +4,10 @@
  * GET   /api/v1/admin/orchestration/settings — read the singleton row (upsert-on-read
  *       with computed defaults from the model registry). Lazy seed: no seeder touches
  *       this row, so admin edits survive re-seeds.
- * PATCH /api/v1/admin/orchestration/settings — partial update of `defaultModels` or
- *       `globalMonthlyBudgetUsd`. Validates every model id against the registry and
- *       invalidates the in-memory cache so the next chat turn picks up the change.
+ * PATCH /api/v1/admin/orchestration/settings — partial update of `defaultModels`,
+ *       `globalMonthlyBudgetUsd`, or `searchConfig`. Validates every model id
+ *       against the registry and invalidates the in-memory cache so the next chat
+ *       turn picks up the change.
  *
  * Authentication: Admin role required. Both GET and PATCH are rate-limited via
  * the shared `adminLimiter` — GET performs an upsert-on-read, so it is a
@@ -81,6 +82,12 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.globalMonthlyBudgetUsd !== undefined) {
     updateData.globalMonthlyBudgetUsd = body.globalMonthlyBudgetUsd;
   }
+  if (body.searchConfig !== undefined) {
+    updateData.searchConfig =
+      body.searchConfig === null
+        ? Prisma.JsonNull
+        : (body.searchConfig as unknown as Prisma.InputJsonValue);
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },
@@ -88,6 +95,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
       slug: 'global',
       defaultModels: mergedDefaults as unknown as Prisma.InputJsonValue,
       globalMonthlyBudgetUsd: body.globalMonthlyBudgetUsd ?? null,
+      searchConfig: body.searchConfig
+        ? (body.searchConfig as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
     },
     update: updateData,
   });

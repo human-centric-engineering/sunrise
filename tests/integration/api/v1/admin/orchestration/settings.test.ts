@@ -93,7 +93,12 @@ import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolv
 const NOW = new Date('2026-04-11T00:00:00.000Z');
 
 function makeSettingsRow(
-  overrides: Partial<{ defaultModels: unknown; globalMonthlyBudgetUsd: number | null }> = {}
+  overrides: Partial<{
+    defaultModels: unknown;
+    globalMonthlyBudgetUsd: number | null;
+    searchConfig: unknown;
+    lastSeededAt: Date | null;
+  }> = {}
 ) {
   return {
     id: 'cmjbv4i3x00003wsloputgwu1',
@@ -105,6 +110,8 @@ function makeSettingsRow(
       embeddings: 'claude-haiku-4-5',
     },
     globalMonthlyBudgetUsd: null as number | null,
+    searchConfig: null as unknown,
+    lastSeededAt: null as Date | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -173,12 +180,16 @@ describe('Admin Orchestration — /settings', () => {
           slug: string;
           defaultModels: Record<string, string>;
           globalMonthlyBudgetUsd: number | null;
+          searchConfig: unknown;
+          lastSeededAt: string | null;
         };
       }>(res);
       expect(body.success).toBe(true);
       expect(body.data.slug).toBe('global');
       expect(body.data.defaultModels.chat).toBe('claude-sonnet-4-6');
       expect(body.data.globalMonthlyBudgetUsd).toBeNull();
+      expect(body.data.searchConfig).toBeNull();
+      expect(body.data.lastSeededAt).toBeNull();
     });
 
     it('fills missing task keys from computed defaults', async () => {
@@ -327,6 +338,34 @@ describe('Admin Orchestration — /settings', () => {
       expect(body.data.defaultModels.routing).toBe('claude-opus-4-6');
       expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
     });
+
+    it('updates searchConfig and invalidates cache', async () => {
+      const config = { keywordBoostWeight: -0.05, vectorWeight: 1.2 };
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ searchConfig: config }) as never
+      );
+
+      const res = await PATCH(makePatch({ searchConfig: config }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{
+        data: { searchConfig: { keywordBoostWeight: number; vectorWeight: number } | null };
+      }>(res);
+      expect(body.data.searchConfig).toEqual(config);
+      expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
+    });
+
+    it('clears searchConfig when set to null', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ searchConfig: null }) as never
+      );
+
+      const res = await PATCH(makePatch({ searchConfig: null }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { searchConfig: unknown } }>(res);
+      expect(body.data.searchConfig).toBeNull();
+    });
   });
 
   describe('PATCH — Validation errors', () => {
@@ -341,6 +380,20 @@ describe('Admin Orchestration — /settings', () => {
 
     it('rejects negative budget (400)', async () => {
       const res = await PATCH(makePatch({ globalMonthlyBudgetUsd: -1 }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects positive keywordBoostWeight (400)', async () => {
+      const res = await PATCH(
+        makePatch({ searchConfig: { keywordBoostWeight: 0.5, vectorWeight: 1.0 } })
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects vectorWeight above max (400)', async () => {
+      const res = await PATCH(
+        makePatch({ searchConfig: { keywordBoostWeight: -0.02, vectorWeight: 5.0 } })
+      );
       expect(res.status).toBe(400);
     });
 

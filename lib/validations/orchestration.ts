@@ -1085,6 +1085,18 @@ export const completeEvaluationBodySchema = z.object({}).passthrough();
  */
 export const storedDefaultModelsSchema = z.record(z.string(), z.string()).catch({});
 
+/** Zod schema for hybrid search weight configuration. */
+export const searchConfigSchema = z.object({
+  keywordBoostWeight: z
+    .number()
+    .min(-0.2, 'Keyword boost must be at least -0.2')
+    .max(0, 'Keyword boost must be non-positive (it reduces cosine distance for matches)'),
+  vectorWeight: z
+    .number()
+    .min(0.1, 'Vector weight must be at least 0.1')
+    .max(2.0, 'Vector weight must be at most 2.0'),
+});
+
 export const updateOrchestrationSettingsSchema = z
   .object({
     defaultModels: z
@@ -1107,10 +1119,17 @@ export const updateOrchestrationSettingsSchema = z
       .max(1_000_000, 'Global monthly budget must be at most $1,000,000')
       .nullable()
       .optional(),
+    searchConfig: searchConfigSchema.nullable().optional(),
   })
-  .refine((v) => v.defaultModels !== undefined || v.globalMonthlyBudgetUsd !== undefined, {
-    message: 'At least one field must be provided',
-  });
+  .refine(
+    (v) =>
+      v.defaultModels !== undefined ||
+      v.globalMonthlyBudgetUsd !== undefined ||
+      v.searchConfig !== undefined,
+    {
+      message: 'At least one field must be provided',
+    }
+  );
 
 // ============================================================================
 // Execution Trace — Prisma Json column parsing

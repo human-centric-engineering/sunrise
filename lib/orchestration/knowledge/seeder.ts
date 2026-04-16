@@ -146,6 +146,14 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     );
   }
 
+  // Record the seed timestamp on the settings singleton (upsert to handle
+  // the case where settings haven't been lazily created yet).
+  await prisma.aiOrchestrationSettings.upsert({
+    where: { slug: 'global' },
+    create: { slug: 'global', defaultModels: {}, lastSeededAt: new Date() },
+    update: { lastSeededAt: new Date() },
+  });
+
   logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
     documentId: document.id,
     chunkCount: chunks.length,

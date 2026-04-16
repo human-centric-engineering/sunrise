@@ -432,6 +432,14 @@ export interface CostSummary {
 export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
+/** Tunable weights for hybrid knowledge-base search. */
+export interface SearchConfig {
+  /** Cosine-distance reduction for keyword-matching chunks (non-positive, e.g. -0.02). */
+  keywordBoostWeight: number;
+  /** Multiplier applied to the vector similarity score (e.g. 1.0). */
+  vectorWeight: number;
+}
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -440,6 +448,10 @@ export interface OrchestrationSettings {
   defaultModels: Record<TaskType, string>;
   /** Month-to-date global spend cap in USD, or `null` to disable. */
   globalMonthlyBudgetUsd: number | null;
+  /** Tunable search weights, or `null` to use built-in defaults. */
+  searchConfig: SearchConfig | null;
+  /** Timestamp of the last successful knowledge-base seed. */
+  lastSeededAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
