@@ -450,6 +450,71 @@ When writing tests:
    - If critical paths are untested, recommend priority
    - If test setup is complex, suggest simplification
 
+## When Tests Fail: Code Bug vs Test Bug
+
+When a test you wrote fails, **do not automatically edit the test to make it pass**. First determine which side is wrong:
+
+### Is the CODE wrong?
+
+Evidence the code has a bug:
+
+- The code's behavior contradicts its own docstring, comment, or function name
+- The code violates a documented API contract (e.g., CLAUDE.md says "return 401 for unauthenticated" but the code returns 403)
+- The code silently swallows errors that should propagate
+- The code has an obvious logic error (wrong comparison operator, missing null check, off-by-one)
+- The code doesn't match the Zod schema it claims to validate against
+
+**Action**: Do NOT fix the source code yourself. Report it clearly:
+
+```
+⚠️ SUSPECTED CODE BUG
+File: lib/auth/guards.ts:42
+Expected: Should return 401 for missing session (per API contract)
+Actual: Returns 403
+Evidence: CLAUDE.md documents withAuth() should return 401 for unauthenticated requests
+```
+
+Write the test with the CORRECT expected behavior (the test will fail). Flag it with a `// BUG:` comment so the issue is visible. Let the user decide whether to fix the code.
+
+### Is the TEST wrong?
+
+Evidence the test expectation is wrong:
+
+- You assumed a return format that the code doesn't use (check actual API response shapes)
+- You mocked a dependency incorrectly (wrong return type, missing fields)
+- You tested an implementation detail that changed, not the contract
+- The code's behavior is intentional and your expectation was based on assumptions
+
+**Action**: Fix the test. This is normal — adjust the expectation to match the code's actual (correct) contract.
+
+### Decision checklist
+
+When a test fails, ask yourself:
+
+1. Does the source code's behavior match its documented intent? → If no, likely a **code bug**
+2. Did I mock dependencies correctly (right types, right return shapes)? → If no, likely a **test bug**
+3. Is the code following the project's patterns (CLAUDE.md, `.context/` docs)? → If no, likely a **code bug**
+4. Am I testing an implementation detail or a behavioral contract? → If implementation detail, likely a **test bug**
+
+**Default assumption**: If unclear, treat the code as correct and fix the test — but add a comment noting the ambiguity so `/test-review` can flag it.
+
+## Working Within the Testing Command Pipeline
+
+This agent is typically spawned by the `/test-write` command as part of a larger workflow:
+
+```
+/test-plan  →  /test-write (spawns you)  →  /test-review  →  /pre-pr
+```
+
+When spawned by `/test-write`, your prompt will include:
+
+- **Specific files** to test with their paths
+- **Behaviors to test** (happy path, errors, edge cases)
+- **Mocking requirements** per file
+- **Coverage targets** per file type
+
+Follow the prompt's file list and behavior requirements — don't add scope beyond what was requested. If you discover code that needs testing but isn't in your assignment, note it in your output so `/test-write` can track it, but don't write tests for it.
+
 ## Important Constraints
 
 - **Never skip error cases** - They're the most important tests
@@ -457,6 +522,7 @@ When writing tests:
 - **Never mock everything** - Integration tests with real implementations are valuable
 - **Never ignore flaky tests** - Fix them or mark them as skip with explanation
 - **Never skip validation** - Tests must pass linting and type-check before completion
+- **Never auto-fix source code** - Report suspected bugs, don't silently fix them
 - **Always use TypeScript** - Type safety in tests prevents bugs
 - **Always follow project patterns** - Match existing test structure and style
 - **Always check documentation** - Use next-devtools MCP for Next.js 16 patterns, Context7 for library docs
