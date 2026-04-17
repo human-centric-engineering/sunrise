@@ -176,11 +176,15 @@ function tryReverseCompile(raw: unknown): ParameterRow[] | null {
   for (const [name, raw] of Object.entries(params.properties)) {
     if (!raw || typeof raw !== 'object') return null;
     const prop = raw as Record<string, unknown>;
+    // Reject truly incompatible shapes (oneOf, enum, nested $ref), but
+    // tolerate extra validation keys (minLength, minimum, etc.) that
+    // the builder strips on save — they're harmless to lose.
+    const incompatible = new Set(['oneOf', 'anyOf', 'allOf', 'enum', '$ref', 'items']);
     const keys = Object.keys(prop);
-    // Only allow the shapes the visual builder emits.
-    const allowedKeys = new Set(['type', 'description']);
-    if (keys.some((k) => !allowedKeys.has(k))) return null;
-    const type = prop.type;
+    if (keys.some((k) => incompatible.has(k))) return null;
+    let type = prop.type;
+    // Treat "integer" as "number" — the builder only offers "number".
+    if (type === 'integer') type = 'number';
     if (
       type !== 'string' &&
       type !== 'number' &&
@@ -717,8 +721,8 @@ export function CapabilityForm({
                     <strong>Builder</strong> — a simple form where you add parameters one by one.
                     Best for most capabilities.
                     <br />
-                    <strong>JSON</strong> — edit the raw schema directly. Use this only if you need
-                    advanced features like nested objects or enums.
+                    <strong>JSON Editor</strong> — edit the raw schema directly. Use this only if
+                    you need advanced features like nested objects or enums.
                   </p>
                 </FieldHelp>
               </Label>
@@ -749,7 +753,7 @@ export function CapabilityForm({
                   switchToJsonMode();
                 }}
               >
-                JSON
+                JSON Editor
               </Button>
             </div>
           </div>
