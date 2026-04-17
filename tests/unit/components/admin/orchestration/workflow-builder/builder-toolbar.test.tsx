@@ -57,6 +57,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     workflowName: 'Test',
     onNameChange: vi.fn(),
     mode: 'create' as const,
+    onCopyJson: vi.fn(),
     onValidate: vi.fn(),
     onSave: vi.fn(),
     onExecute: vi.fn(),

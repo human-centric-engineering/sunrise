@@ -92,6 +92,12 @@ export const API = {
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionApprove: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/approve`,
+      executionCancel: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/cancel`,
+      workflowDefinitionHistory: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/definition-history`,
+      workflowDefinitionRevert: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/definition-revert`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
       conversationById: (id: string): string => `/api/v1/admin/orchestration/conversations/${id}`,

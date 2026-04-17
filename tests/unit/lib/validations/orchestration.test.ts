@@ -59,6 +59,10 @@ import {
   updateEvaluationSchema,
   evaluationLogsQuerySchema,
   completeEvaluationBodySchema,
+  workflowDefinitionSchema,
+  workflowDefinitionHistoryEntrySchema,
+  workflowDefinitionHistorySchema,
+  workflowDefinitionRevertSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -365,10 +369,155 @@ describe('updateWorkflowSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should reject invalid errorStrategy in workflowDefinition update', () => {
+  it('should accept "skip" as a valid errorStrategy in workflowDefinition update', () => {
     const result = updateWorkflowSchema.safeParse({
       workflowDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'skip' },
     });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject unknown errorStrategy values in workflowDefinition update', () => {
+    const result = updateWorkflowSchema.safeParse({
+      workflowDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'explode' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// workflowDefinitionSchema — errorStrategy enum includes 'skip'
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('workflowDefinitionSchema', () => {
+  it('accepts all four error strategies', () => {
+    for (const strategy of ['retry', 'fallback', 'skip', 'fail'] as const) {
+      const result = workflowDefinitionSchema.safeParse({
+        ...VALID_WORKFLOW_DEF,
+        errorStrategy: strategy,
+      });
+      expect(result.success, `expected "${strategy}" to be valid`).toBe(true);
+    }
+  });
+
+  it('rejects an unknown errorStrategy', () => {
+    const result = workflowDefinitionSchema.safeParse({
+      ...VALID_WORKFLOW_DEF,
+      errorStrategy: 'explode',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires at least one step', () => {
+    const result = workflowDefinitionSchema.safeParse({ ...VALID_WORKFLOW_DEF, steps: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires a non-empty entryStepId', () => {
+    const result = workflowDefinitionSchema.safeParse({ ...VALID_WORKFLOW_DEF, entryStepId: '' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// workflowDefinitionHistoryEntrySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('workflowDefinitionHistoryEntrySchema', () => {
+  const VALID_ENTRY = {
+    definition: { steps: [], entryStepId: 'step-1', errorStrategy: 'fail' },
+    changedAt: '2025-06-01T00:00:00.000Z',
+    changedBy: 'cmjbv4i3x00003wsloputgwul',
+  };
+
+  it('accepts a valid history entry', () => {
+    const result = workflowDefinitionHistoryEntrySchema.safeParse(VALID_ENTRY);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when definition is missing', () => {
+    const { definition: _def, ...rest } = VALID_ENTRY;
+    const result = workflowDefinitionHistoryEntrySchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when changedAt is not a datetime string', () => {
+    const result = workflowDefinitionHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      changedAt: 'not-a-date',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when changedBy is empty', () => {
+    const result = workflowDefinitionHistoryEntrySchema.safeParse({
+      ...VALID_ENTRY,
+      changedBy: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when changedBy is missing', () => {
+    const { changedBy: _cb, ...rest } = VALID_ENTRY;
+    const result = workflowDefinitionHistoryEntrySchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// workflowDefinitionHistorySchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('workflowDefinitionHistorySchema', () => {
+  const VALID_ENTRY = {
+    definition: { steps: [] },
+    changedAt: '2025-06-01T00:00:00.000Z',
+    changedBy: 'user-abc',
+  };
+
+  it('accepts an empty array', () => {
+    const result = workflowDefinitionHistorySchema.safeParse([]);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an array of valid entries', () => {
+    const result = workflowDefinitionHistorySchema.safeParse([VALID_ENTRY, VALID_ENTRY]);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when any entry has a missing changedAt', () => {
+    const bad = { definition: {}, changedBy: 'user-abc' };
+    const result = workflowDefinitionHistorySchema.safeParse([VALID_ENTRY, bad]);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// workflowDefinitionRevertSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('workflowDefinitionRevertSchema', () => {
+  it('accepts versionIndex of 0', () => {
+    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 0 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a positive integer versionIndex', () => {
+    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 5 });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a negative versionIndex', () => {
+    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-integer versionIndex', () => {
+    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 1.5 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when versionIndex is missing', () => {
+    const result = workflowDefinitionRevertSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 });

@@ -91,6 +91,7 @@ describe('OrchestrationEngine', () => {
       executionTrace: [],
       totalTokensUsed: 0,
       totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
       budgetLimitUsd: null,
       currentStep: null,
       startedAt: new Date(),
@@ -742,6 +743,7 @@ describe('OrchestrationEngine', () => {
       executionTrace: 'not-an-array', // malformed
       totalTokensUsed: 0,
       totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
       budgetLimitUsd: null,
       currentStep: null,
       startedAt: new Date(),

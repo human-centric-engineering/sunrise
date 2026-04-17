@@ -20,6 +20,14 @@
 import { useState } from 'react';
 import { Check, Copy, Trash2 } from 'lucide-react';
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -161,6 +169,88 @@ export function BlockConfigPanel({
           Configuration
         </h3>
         <BlockEditor node={node} onChange={handleChange} capabilities={capabilities} />
+      </div>
+
+      {/* Error handling overrides */}
+      <div className="mt-2 border-t pt-4">
+        <h3 className="text-muted-foreground mb-3 text-xs font-semibold tracking-wide uppercase">
+          Error handling
+        </h3>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="error-strategy" className="flex items-center">
+              Strategy{' '}
+              <FieldHelp title="Error strategy">
+                Choose how this step handles failures. &ldquo;Inherit&rdquo; uses the workflow-level
+                default. Override per step to retry, fall back to another step, skip, or fail
+                immediately.
+              </FieldHelp>
+            </Label>
+            <Select
+              value={(node.data.config.errorStrategy as string) ?? '__inherit__'}
+              onValueChange={(v) =>
+                handleChange({
+                  errorStrategy: v === '__inherit__' ? undefined : v,
+                  // Clear conditional fields when switching strategy
+                  ...(v !== 'retry' ? { retryCount: undefined } : {}),
+                  ...(v !== 'fallback' ? { fallbackStepId: undefined } : {}),
+                })
+              }
+            >
+              <SelectTrigger id="error-strategy">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__inherit__">Inherit from workflow</SelectItem>
+                <SelectItem value="retry">Retry</SelectItem>
+                <SelectItem value="fallback">Fallback</SelectItem>
+                <SelectItem value="skip">Skip</SelectItem>
+                <SelectItem value="fail">Fail</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {(node.data.config.errorStrategy as string) === 'retry' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="retry-count" className="flex items-center">
+                Retry count{' '}
+                <FieldHelp title="Retry count">
+                  Number of times to retry the step before giving up. Each retry re-executes the
+                  step from scratch.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="retry-count"
+                type="number"
+                min={0}
+                max={10}
+                value={(node.data.config.retryCount as number) ?? 2}
+                onChange={(e) =>
+                  handleChange({ retryCount: Math.min(10, Math.max(0, Number(e.target.value))) })
+                }
+              />
+            </div>
+          )}
+
+          {(node.data.config.errorStrategy as string) === 'fallback' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="fallback-step" className="flex items-center">
+                Fallback step ID{' '}
+                <FieldHelp title="Fallback step">
+                  The ID of the step to execute if this step fails. Must be a valid step in the
+                  workflow.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="fallback-step"
+                value={(node.data.config.fallbackStepId as string) ?? ''}
+                onChange={(e) => handleChange({ fallbackStepId: e.target.value || undefined })}
+                placeholder="e.g. step_summarise_fallback"
+              />
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );

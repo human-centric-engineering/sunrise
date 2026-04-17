@@ -30,6 +30,38 @@ describe('context helpers', () => {
     expect(ctx.totalCostUsd).toBe(0);
   });
 
+  it('createContext defaults defaultErrorStrategy to "fail" when not provided', () => {
+    const ctx = makeCtx();
+    expect(ctx.defaultErrorStrategy).toBe('fail');
+  });
+
+  it('createContext sets defaultErrorStrategy from the param when provided', () => {
+    const ctx = createContext({
+      executionId: 'exec-x',
+      workflowId: 'wf-x',
+      userId: 'user-x',
+      inputData: {},
+      defaultErrorStrategy: 'skip',
+      logger,
+    });
+    expect(ctx.defaultErrorStrategy).toBe('skip');
+  });
+
+  it('createContext accepts all valid defaultErrorStrategy values', () => {
+    const strategies = ['retry', 'fallback', 'skip', 'fail'] as const;
+    for (const strategy of strategies) {
+      const ctx = createContext({
+        executionId: 'exec-x',
+        workflowId: 'wf-x',
+        userId: 'user-x',
+        inputData: {},
+        defaultErrorStrategy: strategy,
+        logger,
+      });
+      expect(ctx.defaultErrorStrategy).toBe(strategy);
+    }
+  });
+
   it('mergeStepResult accumulates tokens + cost and records outputs keyed by step id', () => {
     const ctx = makeCtx();
     mergeStepResult(ctx, 'step1', { output: 'hi', tokensUsed: 10, costUsd: 0.01 });

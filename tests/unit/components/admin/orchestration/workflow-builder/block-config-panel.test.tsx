@@ -91,8 +91,10 @@ describe('BlockConfigPanel', () => {
     it('tool_call: renders the capability select or "No capabilities" message', () => {
       const node = makeNode('tool_call', { capabilitySlug: '' });
       render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
-      // With capabilities provided, should render the Select combobox
-      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      // With capabilities provided, should render the capability Select combobox
+      // (plus the error strategy Select, so there are at least 2 comboboxes)
+      const comboboxes = screen.getAllByRole('combobox');
+      expect(comboboxes.length).toBeGreaterThanOrEqual(2);
     });
 
     it('tool_call with empty capabilities: renders "No capabilities available"', () => {

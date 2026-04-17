@@ -52,10 +52,12 @@ describe('SetupWizard', () => {
       expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/What are you building\?/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /continue to provider setup/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /skip, i'll configure manually/i })
+    ).toBeInTheDocument();
   });
 
-  it('Step 1 "Continue to provider setup" advances to step 2 and persists progress', async () => {
+  it('Step 1 "Skip" advances to step 2 and persists progress', async () => {
     vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
     const user = userEvent.setup();
 
@@ -63,7 +65,7 @@ describe('SetupWizard', () => {
 
     await waitFor(() => expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: /continue to provider setup/i }));
+    await user.click(screen.getByRole('button', { name: /skip, i'll configure manually/i }));
 
     await waitFor(() => expect(screen.getByText(/Step 2 of 5/i)).toBeInTheDocument());
 

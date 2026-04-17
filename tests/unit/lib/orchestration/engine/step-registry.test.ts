@@ -62,6 +62,13 @@ describe('STEP_REGISTRY', () => {
     });
   });
 
+  describe('estimatedDuration', () => {
+    it.each([...STEP_REGISTRY])('$type has a non-empty estimatedDuration string', (entry) => {
+      expect(typeof entry.estimatedDuration).toBe('string');
+      expect(entry.estimatedDuration.trim().length).toBeGreaterThan(0);
+    });
+  });
+
   describe('output counts', () => {
     it('route has 2 outputs', () => {
       const entry = STEP_REGISTRY.find((e) => e.type === 'route');

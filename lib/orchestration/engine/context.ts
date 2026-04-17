@@ -40,6 +40,8 @@ export interface ExecutionContext {
   totalCostUsd: number;
   /** Optional hard cap on `totalCostUsd`. When exceeded, the engine aborts. */
   budgetLimitUsd?: number;
+  /** Workflow-level default error strategy — used when a step doesn't specify its own. */
+  defaultErrorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
   /** External cancellation signal forwarded to provider calls. */
   signal?: AbortSignal;
   /** Child logger scoped to `{ executionId, workflowId }`. */
@@ -55,6 +57,7 @@ export function createContext(params: {
   workflowId: string;
   userId: string;
   inputData: Record<string, unknown>;
+  defaultErrorStrategy?: 'retry' | 'fallback' | 'skip' | 'fail';
   budgetLimitUsd?: number;
   signal?: AbortSignal;
   logger: Logger;
@@ -68,6 +71,7 @@ export function createContext(params: {
     variables: {},
     totalTokensUsed: 0,
     totalCostUsd: 0,
+    defaultErrorStrategy: params.defaultErrorStrategy ?? 'fail',
     budgetLimitUsd: params.budgetLimitUsd,
     signal: params.signal,
     logger: params.logger,

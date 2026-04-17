@@ -249,8 +249,14 @@ export function ExecutionPanel({
   }, [open]);
 
   const handleAbort = useCallback(() => {
+    if (executionId) {
+      // Best-effort: persist cancellation in DB so the engine also stops.
+      apiClient.post(API.ADMIN.ORCHESTRATION.executionCancel(executionId)).catch(() => {
+        /* best-effort */
+      });
+    }
     abortRef.current?.abort();
-  }, []);
+  }, [executionId]);
 
   const handleApprove = useCallback(async () => {
     if (!executionId) return;
