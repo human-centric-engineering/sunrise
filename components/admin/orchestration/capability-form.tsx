@@ -32,7 +32,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -359,6 +359,8 @@ export function CapabilityForm({
         // Only write to form state on success.
         setParsedFn(fn as unknown as CompiledFunctionDef);
         setJsonError(null);
+        // Re-evaluate whether the Builder toggle should be enabled.
+        setVisualDisabled(tryReverseCompile(parsed) === null);
       } catch (err) {
         setJsonError(err instanceof Error ? err.message : 'Invalid JSON');
       }
@@ -395,24 +397,27 @@ export function CapabilityForm({
   };
 
   const switchToVisualMode = () => {
-    // Try to reverse-compile the current JSON. If it fails, show the
-    // banner and keep the admin in JSON mode.
+    // Try to reverse-compile the current JSON. If it fails because the
+    // schema is too complex, show the banner. If JSON is simply invalid,
+    // show a parse error — don't permanently disable the toggle.
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(jsonText || '{}');
-      const rev = tryReverseCompile(parsed);
-      if (rev === null) {
-        setVisualDisabled(true);
-        return;
-      }
-      const fn = parsed as Record<string, unknown>;
-      setFnName(typeof fn.name === 'string' ? fn.name : '');
-      setFnDescription(typeof fn.description === 'string' ? fn.description : '');
-      setRows(rev);
-      setVisualDisabled(false);
-      setFnMode('visual');
+      parsed = JSON.parse(jsonText || '{}');
     } catch {
-      setVisualDisabled(true);
+      setJsonError('Fix the JSON syntax before switching to Builder mode.');
+      return;
     }
+    const rev = tryReverseCompile(parsed);
+    if (rev === null) {
+      setVisualDisabled(true);
+      return;
+    }
+    const fn = parsed as Record<string, unknown>;
+    setFnName(typeof fn.name === 'string' ? fn.name : '');
+    setFnDescription(typeof fn.description === 'string' ? fn.description : '');
+    setRows(rev);
+    setVisualDisabled(false);
+    setFnMode('visual');
   };
 
   const addRow = () => {
@@ -485,7 +490,17 @@ export function CapabilityForm({
       {/* Sticky action bar */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
         <div>
-          <h1 className="text-xl font-semibold">{isEdit ? capability?.name : 'New capability'}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">
+              {isEdit ? capability?.name : 'New capability'}
+            </h1>
+            {isEdit && capability?.isSystem && (
+              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                <Shield className="h-3 w-3" />
+                System
+              </Badge>
+            )}
+          </div>
           {isEdit && <p className="text-muted-foreground font-mono text-xs">{capability?.slug}</p>}
         </div>
         <div className="flex items-center gap-2">
@@ -675,6 +690,7 @@ export function CapabilityForm({
               id="isActive"
               checked={currentIsActive}
               onCheckedChange={(v) => setValue('isActive', v)}
+              disabled={isEdit && capability?.isSystem}
             />
           </div>
         </TabsContent>
@@ -698,7 +714,7 @@ export function CapabilityForm({
                   </p>
                   <p className="text-foreground mt-2 font-medium">Two editing modes</p>
                   <p>
-                    <strong>Visual</strong> — a simple table where you add parameters one by one.
+                    <strong>Builder</strong> — a simple form where you add parameters one by one.
                     Best for most capabilities.
                     <br />
                     <strong>JSON</strong> — edit the raw schema directly. Use this only if you need
@@ -722,7 +738,7 @@ export function CapabilityForm({
                   switchToVisualMode();
                 }}
               >
-                Visual
+                Builder
               </Button>
               <Button
                 type="button"
@@ -740,8 +756,8 @@ export function CapabilityForm({
 
           {visualDisabled && (
             <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              This schema has features the visual builder can&apos;t represent (nested objects,
-              enums, etc.). Stay in JSON mode to edit.
+              This schema has features the Builder can&apos;t represent (nested objects, enums,
+              etc.). Simplify the schema to switch back, or stay in JSON mode to edit.
             </div>
           )}
 
