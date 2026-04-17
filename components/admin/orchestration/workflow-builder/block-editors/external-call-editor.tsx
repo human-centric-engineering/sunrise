@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * External Call step editor — URL, method, headers, body template, auth.
+ * External Call step editor — URL, method, headers, body template, auth,
+ * response size limits.
  */
 
 import { Plus, X } from 'lucide-react';
@@ -16,12 +17,14 @@ import type { EditorProps } from './index';
 
 export interface ExternalCallConfig extends Record<string, unknown> {
   url: string;
-  method: 'GET' | 'POST' | 'PUT';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
   bodyTemplate?: string;
   timeoutMs?: number;
-  authType?: 'none' | 'bearer' | 'api-key';
+  authType?: 'none' | 'bearer' | 'api-key' | 'query-param';
   authSecret?: string;
+  authQueryParam?: string;
+  maxResponseBytes?: number;
 }
 
 export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCallConfig>) {
@@ -71,12 +74,18 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           <select
             id="ext-method"
             value={config.method ?? 'POST'}
-            onChange={(e) => onChange({ method: e.target.value as 'GET' | 'POST' | 'PUT' })}
+            onChange={(e) =>
+              onChange({
+                method: e.target.value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+              })
+            }
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
             <option value="GET">GET</option>
             <option value="POST">POST</option>
             <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
           </select>
         </div>
         <div className="space-y-1.5">
@@ -93,11 +102,27 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
       </div>
 
       <div className="space-y-1.5">
+        <Label htmlFor="ext-max-response" className="flex items-center text-xs">
+          Max response size (bytes){' '}
+          <FieldHelp title="Response size limit">
+            Maximum response body size in bytes. Responses larger than this are rejected to prevent
+            memory issues. Default: 1 MB (1048576 bytes).
+          </FieldHelp>
+        </Label>
+        <Input
+          id="ext-max-response"
+          type="number"
+          value={config.maxResponseBytes ?? 1048576}
+          onChange={(e) => onChange({ maxResponseBytes: parseInt(e.target.value, 10) || 1048576 })}
+        />
+      </div>
+
+      <div className="space-y-1.5">
         <Label className="flex items-center text-xs">
           Headers{' '}
           <FieldHelp title="Custom headers">
             Additional HTTP headers to send with the request. Content-Type is set to
-            application/json by default.
+            application/json by default for non-GET requests.
           </FieldHelp>
         </Label>
         <div className="space-y-2">
@@ -135,7 +160,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
         </div>
       </div>
 
-      {config.method !== 'GET' && (
+      {config.method !== 'GET' && config.method !== 'DELETE' && (
         <div className="space-y-1.5">
           <Label htmlFor="ext-body" className="flex items-center text-xs">
             Body template{' '}
@@ -164,13 +189,16 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
             id="ext-auth-type"
             value={config.authType ?? 'none'}
             onChange={(e) =>
-              onChange({ authType: e.target.value as 'none' | 'bearer' | 'api-key' })
+              onChange({
+                authType: e.target.value as 'none' | 'bearer' | 'api-key' | 'query-param',
+              })
             }
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
             <option value="none">None</option>
             <option value="bearer">Bearer token</option>
-            <option value="api-key">API key</option>
+            <option value="api-key">API key (header)</option>
+            <option value="query-param">API key (query param)</option>
           </select>
         </div>
         {config.authType && config.authType !== 'none' && (
@@ -192,6 +220,24 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           </div>
         )}
       </div>
+      {config.authType === 'query-param' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="ext-auth-query-param" className="flex items-center text-xs">
+            Query parameter name{' '}
+            <FieldHelp title="Query parameter">
+              The name of the query parameter to attach the API key to. Defaults to{' '}
+              <code>api_key</code> if left empty.
+            </FieldHelp>
+          </Label>
+          <Input
+            id="ext-auth-query-param"
+            value={config.authQueryParam ?? ''}
+            onChange={(e) => onChange({ authQueryParam: e.target.value })}
+            placeholder="api_key"
+            className="font-mono text-xs"
+          />
+        </div>
+      )}
     </div>
   );
 }

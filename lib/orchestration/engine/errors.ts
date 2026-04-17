@@ -48,12 +48,19 @@ export class ExecutorError extends Error {
   public readonly stepId: string;
   public readonly code: string;
   public readonly cause?: unknown;
+  /**
+   * Whether the error is transient and the step could succeed on retry.
+   * Used by the engine to decide whether `retry` error strategy applies.
+   * Defaults to `true` for backward compatibility.
+   */
+  public readonly retriable: boolean;
 
-  constructor(stepId: string, code: string, message: string, cause?: unknown) {
+  constructor(stepId: string, code: string, message: string, cause?: unknown, retriable = true) {
     super(message);
     this.name = 'ExecutorError';
     this.stepId = stepId;
     this.code = code;
     this.cause = cause;
+    this.retriable = retriable;
   }
 }

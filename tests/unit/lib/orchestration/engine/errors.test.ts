@@ -47,4 +47,19 @@ describe('ExecutorError', () => {
     const err = new ExecutorError('s2', 'missing', 'Missing config');
     expect(err.cause).toBeUndefined();
   });
+
+  it('defaults retriable to true for backward compatibility', () => {
+    const err = new ExecutorError('s1', 'llm_failed', 'LLM broke');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('accepts explicit retriable=false', () => {
+    const err = new ExecutorError('s1', 'http_error', 'HTTP 404', undefined, false);
+    expect(err.retriable).toBe(false);
+  });
+
+  it('accepts explicit retriable=true', () => {
+    const err = new ExecutorError('s1', 'http_error_retriable', 'HTTP 503', undefined, true);
+    expect(err.retriable).toBe(true);
+  });
 });

@@ -497,7 +497,32 @@ const workflowStepSchema = z.object({
 export const workflowDefinitionSchema = z.object({
   steps: z.array(workflowStepSchema).min(1, 'Workflow must have at least one step'),
   entryStepId: z.string().min(1, 'Entry step ID is required'),
-  errorStrategy: z.enum(['retry', 'fallback', 'fail']),
+  errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']),
+});
+
+/**
+ * A single entry in `AiWorkflow.workflowDefinitionHistory`. Pushed on every
+ * PATCH that actually changes `workflowDefinition`, and on every successful revert.
+ */
+export const workflowDefinitionHistoryEntrySchema = z.object({
+  definition: z.record(z.string(), z.unknown()),
+  changedAt: z.string().datetime(),
+  changedBy: z.string().min(1),
+});
+
+/**
+ * Runtime validator for the full `workflowDefinitionHistory` JSON column.
+ * Use `safeParse` at read time — same pattern as `systemInstructionsHistorySchema`.
+ */
+export const workflowDefinitionHistorySchema = z.array(workflowDefinitionHistoryEntrySchema);
+
+/**
+ * Revert request — `versionIndex` is an index into the history array
+ * (oldest→newest). The endpoint pushes the current definition onto
+ * history before overwriting, so the forward value is never lost.
+ */
+export const workflowDefinitionRevertSchema = z.object({
+  versionIndex: z.number().int().min(0),
 });
 
 /**
@@ -1241,6 +1266,9 @@ export const stepErrorConfigSchema = z.object({
   errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']).optional(),
   retryCount: z.number().int().nonnegative().optional(),
   fallbackStepId: z.string().optional(),
+  /** Per-step execution timeout in milliseconds. When exceeded, the step
+   *  fails with code 'step_timeout'. The error strategy still applies. */
+  timeoutMs: z.number().int().positive().optional(),
 });
 
 export const llmCallConfigSchema = stepErrorConfigSchema.extend({
@@ -1308,12 +1336,16 @@ export const evaluateConfigSchema = stepErrorConfigSchema.extend({
 
 export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   url: z.string().optional(),
-  method: z.enum(['GET', 'POST', 'PUT']).optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
   headers: z.record(z.string(), z.string()).optional(),
   bodyTemplate: z.string().optional(),
   timeoutMs: z.number().optional(),
-  authType: z.enum(['none', 'bearer', 'api-key']).optional(),
+  authType: z.enum(['none', 'bearer', 'api-key', 'query-param']).optional(),
   authSecret: z.string().optional(),
+  /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
+  authQueryParam: z.string().optional(),
+  /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
+  maxResponseBytes: z.number().int().positive().optional(),
 });
 
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
@@ -1348,6 +1380,8 @@ export type UpdateAgentCapabilityInput = z.infer<typeof updateAgentCapabilitySch
 export type ExportAgentsInput = z.infer<typeof exportAgentsSchema>;
 export type AgentBundle = z.infer<typeof agentBundleSchema>;
 export type ImportAgentsInput = z.infer<typeof importAgentsSchema>;
+export type WorkflowDefinitionHistoryEntry = z.infer<typeof workflowDefinitionHistoryEntrySchema>;
+export type WorkflowDefinitionRevertInput = z.infer<typeof workflowDefinitionRevertSchema>;
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;
 export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
