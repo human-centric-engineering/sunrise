@@ -157,9 +157,7 @@ export class StreamingChatHandler {
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
         agent.provider,
-        Array.isArray((agent as Record<string, unknown>).fallbackProviders)
-          ? ((agent as Record<string, unknown>).fallbackProviders as string[])
-          : []
+        agent.fallbackProviders ?? []
       );
       resolvedProviderSlug = usedSlug;
 

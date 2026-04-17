@@ -10,6 +10,19 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { AiWorkflow } from '@/types/prisma';
+import { z } from 'zod';
+
+const templateItemSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  description: z.string(),
+  workflowDefinition: z.unknown(),
+  patternsUsed: z.array(z.number()),
+  isTemplate: z.boolean(),
+  metadata: z.unknown(),
+});
+
+const templateListSchema = z.array(templateItemSchema);
 
 export const metadata: Metadata = {
   title: 'Edit workflow · AI Orchestration',
@@ -48,12 +61,14 @@ async function getCapabilities(): Promise<CapabilityOption[]> {
   }
 }
 
-async function getTemplates(): Promise<unknown[]> {
+async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates']> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`);
     if (!res.ok) return [];
     const body = await parseApiResponse<unknown[]>(res);
-    return body.success ? body.data : [];
+    if (!body.success) return [];
+    const result = templateListSchema.safeParse(body.data);
+    return result.success ? result.data : [];
   } catch (err) {
     logger.error('edit workflow page: templates fetch failed', err);
     return [];
@@ -74,7 +89,7 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
       mode="edit"
       workflow={workflow}
       initialCapabilities={capabilities}
-      initialTemplates={templates as WorkflowBuilderProps['initialTemplates']}
+      initialTemplates={templates}
     />
   );
 }
