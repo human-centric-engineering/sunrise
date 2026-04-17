@@ -10,7 +10,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
-import type { AiKnowledgeChunk } from '@/types/orchestration';
+import type { AiKnowledgeChunk, PatternSummary } from '@/types/orchestration';
 
 interface PatternDetail {
   patternName: string | null;
@@ -31,6 +31,18 @@ async function getPatternDetail(num: number): Promise<PatternDetail | null> {
   } catch (err) {
     logger.error('pattern detail page: fetch failed', err);
     return null;
+  }
+}
+
+async function getPatternNames(): Promise<Map<number, string>> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
+    if (!res.ok) return new Map();
+    const body = await parseApiResponse<PatternSummary[]>(res);
+    if (!body.success) return new Map();
+    return new Map(body.data.map((p) => [p.patternNumber, p.patternName]));
+  } catch {
+    return new Map();
   }
 }
 
@@ -77,7 +89,7 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
-  const detail = await getPatternDetail(num);
+  const [detail, patternNames] = await Promise.all([getPatternDetail(num), getPatternNames()]);
 
   if (!detail || detail.chunks.length === 0) {
     return (
@@ -100,7 +112,7 @@ export default async function PatternDetailPage({ params }: PageProps) {
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
-  const relatedPatterns = extractRelatedPatterns(detail.chunks, num);
+  const relatedPatterns = extractRelatedPatterns(detail.chunks, num, patternNames);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
