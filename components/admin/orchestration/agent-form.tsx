@@ -42,6 +42,7 @@ import { API } from '@/lib/api/endpoints';
 import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
+import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
@@ -461,11 +462,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             />
           </div>
 
-          <div className="pt-2">
+          <div className="space-y-2 pt-2">
             <ProviderTestButton
               providerId={currentProviderId}
               disabledMessage="We don't have a stored config for this provider yet — save it first."
             />
+            <ModelTestButton providerId={currentProviderId} model={currentModel || null} />
           </div>
         </TabsContent>
 

@@ -65,6 +65,8 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/capabilities`,
       agentCapabilityById: (id: string, capId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/capabilities/${capId}`,
+      agentCapabilitiesUsage: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/capabilities/usage`,
       agentInstructionsHistory: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
       agentInstructionsRevert: (id: string): string =>
@@ -76,6 +78,8 @@ export const API = {
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
+      providerTestModel: (id: string): string =>
+        `/api/v1/admin/orchestration/providers/${id}/test-model`,
       providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
