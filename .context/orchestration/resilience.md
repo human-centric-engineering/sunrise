@@ -4,15 +4,19 @@ Phase 7 Session 7.3 — circuit breaker, provider fallback, budget UX, input gua
 
 ## Quick Reference
 
-| Feature                | Path                                                                       |
-| ---------------------- | -------------------------------------------------------------------------- |
-| Circuit breaker        | `lib/orchestration/llm/circuit-breaker.ts`                                 |
-| Provider fallback      | `lib/orchestration/llm/provider-manager.ts` → `getProviderWithFallbacks()` |
-| Input guard            | `lib/orchestration/chat/input-guard.ts`                                    |
-| Error message registry | `lib/orchestration/chat/error-messages.ts`                                 |
-| Chat rate limiter      | `lib/security/rate-limit.ts` → `chatLimiter`                               |
-| Warning ChatEvent      | `types/orchestration.ts` → `{ type: 'warning' }`                           |
-| Client reconnect       | `components/admin/orchestration/agent-test-chat.tsx`                       |
+| Feature                 | Path                                                                       |
+| ----------------------- | -------------------------------------------------------------------------- |
+| Circuit breaker         | `lib/orchestration/llm/circuit-breaker.ts`                                 |
+| Provider fallback       | `lib/orchestration/llm/provider-manager.ts` → `getProviderWithFallbacks()` |
+| Outbound rate limiter   | `lib/orchestration/engine/outbound-rate-limiter.ts`                        |
+| Per-step timeout        | `lib/orchestration/engine/orchestration-engine.ts` → `runStepWithStrategy` |
+| Non-retriable errors    | `lib/orchestration/engine/errors.ts` → `ExecutorError.retriable`           |
+| External call hardening | `lib/orchestration/engine/executors/external-call.ts`                      |
+| Input guard             | `lib/orchestration/chat/input-guard.ts`                                    |
+| Error message registry  | `lib/orchestration/chat/error-messages.ts`                                 |
+| Chat rate limiter       | `lib/security/rate-limit.ts` → `chatLimiter`                               |
+| Warning ChatEvent       | `types/orchestration.ts` → `{ type: 'warning' }`                           |
+| Client reconnect        | `components/admin/orchestration/agent-test-chat.tsx`                       |
 
 ## Circuit Breaker
 
