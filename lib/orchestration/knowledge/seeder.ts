@@ -111,6 +111,7 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       name: DOCUMENT_NAME,
       fileName: DOCUMENT_FILE_NAME,
       fileHash,
+      scope: 'system',
       status: 'ready',
       uploadedBy: uploaderId,
       chunkCount: chunks.length,

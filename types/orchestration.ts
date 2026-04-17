@@ -499,6 +499,45 @@ export type ProviderConfigWithCreator = AiProviderConfig & {
 export interface KnowledgeSearchResult {
   chunk: AiKnowledgeChunk;
   similarity: number;
+  documentName?: string;
+}
+
+/** Knowledge graph node */
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: 'kb' | 'document' | 'chunk';
+  value: number;
+  status?: string;
+  category: number;
+  metadata?: Record<string, unknown>;
+}
+
+/** Knowledge graph link */
+export interface GraphLink {
+  source: string;
+  target: string;
+}
+
+/** Knowledge graph category */
+export interface GraphCategory {
+  name: string;
+}
+
+/** Knowledge graph statistics */
+export interface GraphStats {
+  documentCount: number;
+  completedCount: number;
+  chunkCount: number;
+  totalTokens: number;
+}
+
+/** Knowledge graph data (returned by graph endpoint) */
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  categories: GraphCategory[];
+  stats: GraphStats;
 }
 
 /** Summary of a pattern for the pattern explorer card grid */

@@ -38,6 +38,12 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+  usePathname: vi.fn(() => '/admin/orchestration/knowledge'),
+}));
+
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({ track: vi.fn() })),
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -50,6 +56,7 @@ const MOCK_DOCUMENTS = [
     fileHash: 'abc123',
     chunkCount: 42,
     status: 'ready',
+    scope: 'system',
     errorMessage: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-01').toISOString(),
@@ -62,6 +69,7 @@ const MOCK_DOCUMENTS = [
     fileHash: 'def456',
     chunkCount: 0,
     status: 'processing',
+    scope: 'app',
     errorMessage: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-02').toISOString(),

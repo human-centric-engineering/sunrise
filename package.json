@@ -83,6 +83,8 @@
     "better-auth": "^1.4.18",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.6",
     "lru-cache": "^11.2.6",
     "lucide-react": "^0.563.0",
     "mermaid": "^11.14.0",

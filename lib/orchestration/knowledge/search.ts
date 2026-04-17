@@ -64,6 +64,7 @@ export interface SearchFilters {
   category?: string;
   section?: string;
   documentId?: string;
+  scope?: string;
 }
 
 /**
@@ -123,6 +124,11 @@ export async function searchKnowledge(
     params.push(filters.documentId);
     paramIdx++;
   }
+  if (filters?.scope) {
+    conditions.push(`d.scope = $${paramIdx}`);
+    params.push(filters.scope);
+    paramIdx++;
+  }
 
   const whereClause = conditions.join(' AND ');
 
@@ -147,6 +153,7 @@ export async function searchKnowledge(
       c.keywords,
       c."estimatedTokens",
       c.metadata,
+      d.name AS "documentName",
       (c.embedding <=> $1::vector) AS distance,
       CASE
         WHEN c.keywords IS NOT NULL
@@ -158,6 +165,7 @@ export async function searchKnowledge(
         ELSE 0
       END AS keyword_boost
     FROM ai_knowledge_chunk c
+    JOIN ai_knowledge_document d ON d.id = c."documentId"
     WHERE ${whereClause}
       AND (c.embedding <=> $1::vector) < $2
     ORDER BY (c.embedding <=> $1::vector) + (
@@ -179,6 +187,7 @@ export async function searchKnowledge(
   const results = await prisma.$queryRawUnsafe<
     Array<
       AiKnowledgeChunk & {
+        documentName: string;
         distance: number;
         keyword_boost: number;
       }
@@ -209,6 +218,7 @@ export async function searchKnowledge(
     return {
       chunk,
       similarity: (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost),
+      documentName: row.documentName,
     };
   });
 }

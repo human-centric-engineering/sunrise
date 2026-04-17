@@ -35,11 +35,15 @@ function hasAllowedExtension(name: string): boolean {
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, status, q } = validateQueryParams(searchParams, listDocumentsQuerySchema);
+  const { page, limit, status, scope, q } = validateQueryParams(
+    searchParams,
+    listDocumentsQuerySchema
+  );
   const skip = (page - 1) * limit;
 
   const where: Prisma.AiKnowledgeDocumentWhereInput = {};
   if (status) where.status = status;
+  if (scope) where.scope = scope;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },
