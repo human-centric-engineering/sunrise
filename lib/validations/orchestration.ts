@@ -1410,3 +1410,20 @@ export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
 export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
 export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;
 export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestrationSettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Quiz scores
+// ---------------------------------------------------------------------------
+
+/** POST body for saving a quiz score. */
+export const saveQuizScoreSchema = z
+  .object({
+    correct: z.number().int().min(0),
+    total: z.number().int().min(1),
+  })
+  .refine((d) => d.correct <= d.total, {
+    message: 'correct must be ≤ total',
+    path: ['correct'],
+  });
+
+export type SaveQuizScoreInput = z.infer<typeof saveQuizScoreSchema>;

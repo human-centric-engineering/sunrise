@@ -17,6 +17,9 @@ import { PatternCardGrid } from './pattern-card-grid';
 
 interface LearningTabsProps {
   patterns: PatternSummary[];
+  defaultTab?: string;
+  contextType?: string;
+  contextId?: string;
 }
 
 const ADVISOR_PROMPTS = [
@@ -51,7 +54,7 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
-export function LearningTabs({ patterns }: LearningTabsProps) {
+export function LearningTabs({ patterns, defaultTab, contextType, contextId }: LearningTabsProps) {
   const router = useRouter();
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
@@ -62,6 +65,15 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
       .then((res) => (res.ok ? res.json() : null))
       .then((body: { data?: EmbeddingStatus } | null) => {
         if (body?.data) setEmbeddingStatus(body.data);
+      })
+      .catch(() => {});
+
+    // Load the most recent persisted quiz score
+    fetch(API.ADMIN.ORCHESTRATION.QUIZ_SCORES)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { data?: { correct: number; total: number }[] } | null) => {
+        const latest = body?.data?.[0];
+        if (latest) setQuizScore({ correct: latest.correct, total: latest.total });
       })
       .catch(() => {});
   }, []);
@@ -77,6 +89,12 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
     const score = parseQuizScore(fullText);
     if (score) {
       setQuizScore(score);
+      // Persist to database (fire-and-forget)
+      fetch(API.ADMIN.ORCHESTRATION.QUIZ_SCORES, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(score),
+      }).catch(() => {});
     }
   }, []);
 
@@ -88,7 +106,7 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
   }, [router, workflowRecommendation]);
 
   return (
-    <Tabs defaultValue="patterns">
+    <Tabs defaultValue={defaultTab ?? 'patterns'}>
       <TabsList>
         <TabsTrigger value="patterns">Patterns</TabsTrigger>
         <TabsTrigger value="advisor">Advisor</TabsTrigger>
@@ -111,6 +129,8 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
           <ChatInterface
             agentSlug="pattern-advisor"
             embedded
+            contextType={contextType}
+            contextId={contextId}
             starterPrompts={ADVISOR_PROMPTS}
             onStreamComplete={handleStreamComplete}
             className="h-[600px]"

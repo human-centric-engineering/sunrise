@@ -1,11 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { DiscussPatternButton } from '@/components/admin/orchestration/learn/discuss-pattern-button';
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
+import { RelatedPatterns } from '@/components/admin/orchestration/learn/related-patterns';
+import { UsePatternButton } from '@/components/admin/orchestration/learn/use-pattern-button';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
 import type { AiKnowledgeChunk } from '@/types/orchestration';
 
 interface PatternDetail {
@@ -96,6 +100,8 @@ export default async function PatternDetailPage({ params }: PageProps) {
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
+  const relatedPatterns = extractRelatedPatterns(detail.chunks, num);
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
@@ -110,7 +116,13 @@ export default async function PatternDetailPage({ params }: PageProps) {
           {' / '}
           <span>{detail.patternName}</span>
         </nav>
-        <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
+          <div className="flex gap-2">
+            <DiscussPatternButton patternNumber={num} />
+            <UsePatternButton patternNumber={num} />
+          </div>
+        </div>
       </header>
 
       {/* Hero sections — always visible in cards */}
@@ -122,6 +134,9 @@ export default async function PatternDetailPage({ params }: PageProps) {
           <PatternContent content={stripEmbeddingPrefix(chunk.content)} />
         </div>
       ))}
+
+      {/* Related patterns — extracted from cross-references in content */}
+      <RelatedPatterns patterns={relatedPatterns} />
 
       {/* Remaining sections — collapsible accordions */}
       {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}
