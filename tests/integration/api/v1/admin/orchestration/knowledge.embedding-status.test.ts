@@ -38,7 +38,7 @@ vi.mock('@/lib/db/client', () => ({
     aiKnowledgeChunk: {
       count: vi.fn(),
     },
-    $queryRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
     aiProviderConfig: {
       findFirst: vi.fn(),
     },
@@ -150,7 +150,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     it('returns correct counts and hasActiveProvider: true when provider row exists', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(10);
-      vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ count: 4n }] as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: 4n }] as never);
       vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue({ id: 'p1' } as never);
 
       const response = await GET(makeRequest());
@@ -167,7 +167,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     it('returns hasActiveProvider: true via OPENAI_API_KEY env fallback when no provider row', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(0);
-      vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ count: 0n }] as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: 0n }] as never);
       vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
       process.env['OPENAI_API_KEY'] = 'sk-test';
 
@@ -181,7 +181,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     it('returns hasActiveProvider: false when no provider row and no env key', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(3);
-      vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ count: 1n }] as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: 1n }] as never);
       vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
       // OPENAI_API_KEY is deleted in beforeEach
 
