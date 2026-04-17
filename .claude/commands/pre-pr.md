@@ -75,12 +75,21 @@ For any new `page.tsx` files added under `app/`, check that the same route segme
 For any new TypeScript files added on this branch (identified via `git diff --name-status $BASE...HEAD` — look for `A` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag new files that have no corresponding test. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
 
 **4g. Direct data imports bypassing the API**
-Flag non-type imports in pages, layouts, and components that pull data or constants from `lib/` modules when that data is seeded into the database and should be fetched via the API. The key indicator is importing runtime values (not just types) from modules whose data is also available through an API endpoint or is seeded into the database — e.g., importing `BUILTIN_WORKFLOW_TEMPLATES` from `@/lib/orchestration/workflows/templates` instead of fetching templates from the API. Type-only imports (`import type { ... }`) are fine — the concern is runtime coupling to data that should come through the API boundary. This enforces the same API-first separation as 4i below: components should fetch data from the API, not import it directly from server-side modules.
+Flag non-type imports in pages, layouts, and components that pull data or constants from `lib/` modules when that data is seeded into the database and should be fetched via the API. The key indicator is importing runtime values (not just types) from modules whose data is also available through an API endpoint or is seeded into the database — e.g., importing `BUILTIN_WORKFLOW_TEMPLATES` from `@/lib/orchestration/workflows/templates` instead of fetching templates from the API. Type-only imports (`import type { ... }`) are fine — the concern is runtime coupling to data that should come through the API boundary. This enforces the same API-first separation as 4l below: components should fetch data from the API, not import it directly from server-side modules.
 
 **4h. N+1 client-side fetches in list/table components**
 Flag components (under `components/` or `app/`) that fire per-row API calls to fetch supplementary data for a list or table. The telltale pattern is a `useEffect` (or similar) that iterates over an array of items and calls `fetch()` per item — e.g., `agents.map(async (agent) => fetch(\`/api/.../\${agent.id}/budget\`))`. The correct pattern is to enrich the list API endpoint to return supplementary data inline (via Prisma `include`, `\_count`, or batch aggregates like `groupBy`), so the page makes a single HTTP request. Indicators to look for: `Promise.all(items.map(... fetch ...))`inside a`useEffect`, state shaped like `Record<string, X | null>` populated by per-item fetches, or multiple identical API calls differing only by an ID path segment. A single detail fetch (e.g., clicking a row to load its full record) is fine — this check targets bulk per-row fetches on list views.
 
-**4i. Direct Prisma usage outside API routes**
+**4i. Relative imports instead of `@/` alias**
+Flag any `import` or `require` that uses a relative path (`../` or `./`) in changed files. The project mandates the `@/` path alias for all imports. The only exception is relative imports within test files that import test helpers from the same `tests/` directory — these are fine.
+
+**4j. Unvalidated API request bodies**
+Flag route handlers (in `app/api/`) that call `await request.json()` or `await request.formData()` and use the result without passing it through a Zod schema (`.parse()` or `.safeParse()`). This is distinct from 4a (which catches unsafe `as` casts) — this catches the case where there is no validation at all. The result of `request.json()` is `any`, so using it directly without validation is both a type-safety and security risk. GET handlers that only read query params via `searchParams` are exempt from this specific check (though query params should also be validated, that's covered by 4a).
+
+**4k. Bare `fetch()` instead of `serverFetch()` for internal API calls**
+Flag server components (files under `app/` without `'use client'`) and server-side `lib/` modules that call `fetch('/api/...')` or `fetch(\`/api/...\`)`instead of using`serverFetch()`from`@/lib/api/server-fetch`. The `serverFetch()`helper handles base URL resolution, auth forwarding, and error standardization. Client components that use`fetch()`for API calls are fine —`serverFetch()`is only for server-side code. Also exempt: test files and the`serverFetch` implementation itself.
+
+**4l. Direct Prisma usage outside API routes**
 Flag imports of `@/lib/prisma`, `@/lib/db`, or `@prisma/client` — and any usage of the `prisma` client (e.g., `prisma.`, `PrismaClient`) — in files outside of `app/api/`, `lib/`, `prisma/`, and `scripts/`. Pages, layouts, components, and other non-API app code must call the API (via `serverFetch()` or client fetch) rather than accessing the database directly. This enforces API-first separation of concerns so the API can be split out of the monolith in the future. Note: this check catches direct imports only, not transitive dependencies (e.g., a page importing a lib helper that internally uses Prisma). Full import-chain analysis is out of scope for this check.
 
 ### Step 5: Check .context/ documentation
@@ -137,6 +146,9 @@ Output a clear summary in this format:
 - [ ] New files missing tests: {count found or CLEAN}
 - [ ] Direct data imports bypassing API: {count found or CLEAN}
 - [ ] N+1 client-side fetches: {count found or CLEAN}
+- [ ] Relative imports: {count found or CLEAN}
+- [ ] Unvalidated request bodies: {count found or CLEAN}
+- [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
 
 ### Documentation Check
