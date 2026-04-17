@@ -19,8 +19,14 @@ import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getCostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { computeETag, checkConditional } from '@/lib/api/etag';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 export const GET = withAdminAuth(async (request) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const summary = await getCostSummary();
 

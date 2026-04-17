@@ -13,10 +13,12 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
+import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -44,8 +46,10 @@ function documentCategoryIndex(status: string): number {
   }
 }
 
-const VALID_SCOPES = new Set(['system', 'app']);
-const VALID_VIEWS = new Set(['structure', 'embedded']);
+const graphQuerySchema = z.object({
+  scope: z.enum(['system', 'app']).optional(),
+  view: z.enum(['structure', 'embedded']).default('structure'),
+});
 
 export const GET = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
@@ -55,10 +59,7 @@ export const GET = withAdminAuth(async (request) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
 
-  const scopeParam = searchParams.get('scope');
-  const scope = scopeParam && VALID_SCOPES.has(scopeParam) ? scopeParam : undefined;
-  const viewParam = searchParams.get('view');
-  const view = viewParam && VALID_VIEWS.has(viewParam) ? viewParam : 'structure';
+  const { scope, view } = validateQueryParams(searchParams, graphQuerySchema);
   const embeddedOnly = view === 'embedded';
 
   // Build document filter
@@ -94,15 +95,14 @@ export const GET = withAdminAuth(async (request) => {
 
   if (embeddedOnly) {
     // Raw query because Prisma can't filter on Unsupported("vector") columns
-    const rawAggs = await prisma.$queryRawUnsafe<
+    const rawAggs = await prisma.$queryRaw<
       Array<{ documentId: string; chunk_count: bigint; total_tokens: bigint }>
-    >(
-      `SELECT "documentId", COUNT(id) AS chunk_count, COALESCE(SUM("estimatedTokens"), 0) AS total_tokens
+    >`
+      SELECT "documentId", COUNT(id) AS chunk_count, COALESCE(SUM("estimatedTokens"), 0) AS total_tokens
        FROM ai_knowledge_chunk
-       WHERE "documentId" = ANY($1) AND embedding IS NOT NULL
-       GROUP BY "documentId"`,
-      documentIds
-    );
+       WHERE "documentId" = ANY(${documentIds}::text[]) AND embedding IS NOT NULL
+       GROUP BY "documentId"
+    `;
     chunkAggregates = rawAggs.map((r) => ({
       documentId: r.documentId,
       _sum: { estimatedTokens: Number(r.total_tokens) },
@@ -217,12 +217,11 @@ export const GET = withAdminAuth(async (request) => {
     }>;
 
     if (embeddedOnly) {
-      chunks = await prisma.$queryRawUnsafe<typeof chunks>(
-        `SELECT id, "chunkKey", "documentId", "chunkType", "patternName", section, "estimatedTokens", content
+      chunks = await prisma.$queryRaw<typeof chunks>`
+        SELECT id, "chunkKey", "documentId", "chunkType", "patternName", section, "estimatedTokens", content
          FROM ai_knowledge_chunk
-         WHERE "documentId" = ANY($1) AND embedding IS NOT NULL`,
-        filteredDocIds
-      );
+         WHERE "documentId" = ANY(${filteredDocIds}::text[]) AND embedding IS NOT NULL
+      `;
     } else {
       chunks = await prisma.aiKnowledgeChunk.findMany({
         where: { documentId: { in: filteredDocIds } },

@@ -25,6 +25,8 @@ import { uploadDocument } from '@/lib/orchestration/knowledge/document-manager';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_LINE_COUNT = 100_000;
+const MAX_LINE_LENGTH = 10_000;
 const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt'] as const;
 
 function hasAllowedExtension(name: string): boolean {
@@ -110,6 +112,19 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   const content = await file.text();
+
+  // Guard against pathological documents that could exhaust memory during chunking
+  const lines = content.split('\n');
+  if (lines.length > MAX_LINE_COUNT) {
+    throw new ValidationError('Document has too many lines', {
+      file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
+    });
+  }
+  if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
+    throw new ValidationError('Document contains excessively long lines', {
+      file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
+    });
+  }
 
   // Optional category from form field
   const categoryField = formData.get('category');
