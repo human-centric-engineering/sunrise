@@ -99,4 +99,26 @@ describe('extractRelatedPatterns', () => {
     const result = extractRelatedPatterns([], 1);
     expect(result).toEqual([]);
   });
+
+  it('resolves names from patternNames map when parenthetical is missing', () => {
+    const chunks = [makeChunk('See Pattern 2 and Pattern 5 for details.')];
+    const names = new Map([
+      [2, 'Routing'],
+      [5, 'Tool Use'],
+    ]);
+    const result = extractRelatedPatterns(chunks, 1, names);
+
+    expect(result).toEqual([
+      { number: 2, name: 'Routing' },
+      { number: 5, name: 'Tool Use' },
+    ]);
+  });
+
+  it('prefers parenthetical name over patternNames map', () => {
+    const chunks = [makeChunk('See Pattern 2 (Branching) for details.')];
+    const names = new Map([[2, 'Routing']]);
+    const result = extractRelatedPatterns(chunks, 1, names);
+
+    expect(result).toEqual([{ number: 2, name: 'Branching' }]);
+  });
 });
