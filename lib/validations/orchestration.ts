@@ -737,6 +737,9 @@ const chunkTypeSchema = z.enum([
 /**
  * Knowledge search schema (GET /api/v1/admin/orchestration/knowledge/search)
  */
+/** Document scope enum — "system" for built-in patterns, "app" for user uploads */
+const documentScopeSchema = z.enum(['system', 'app']);
+
 export const knowledgeSearchSchema = z.object({
   query: z
     .string()
@@ -749,6 +752,8 @@ export const knowledgeSearchSchema = z.object({
   patternNumber: z.coerce.number().int().positive().optional(),
 
   category: z.string().max(100).optional(),
+
+  scope: documentScopeSchema.optional(),
 
   limit: z.coerce
     .number()
@@ -1077,6 +1082,7 @@ export const clearConversationsBodySchema = z
 /** List knowledge documents query (GET /admin/orchestration/knowledge/documents). */
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+  scope: documentScopeSchema.optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });
 

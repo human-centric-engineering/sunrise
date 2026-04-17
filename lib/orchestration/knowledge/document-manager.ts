@@ -53,6 +53,7 @@ export async function uploadDocument(
       name,
       fileName,
       fileHash,
+      scope: 'app',
       status: 'processing',
       uploadedBy: userId,
     },

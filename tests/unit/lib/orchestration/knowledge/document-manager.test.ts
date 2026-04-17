@@ -143,6 +143,7 @@ describe('uploadDocument', () => {
         fileHash: expectedHash,
         status: 'processing',
         uploadedBy: userId,
+        scope: 'app',
       },
     });
   });

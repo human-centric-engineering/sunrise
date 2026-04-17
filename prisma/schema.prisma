@@ -338,6 +338,7 @@ model AiKnowledgeDocument {
   fileHash     String // SHA-256 for deduplication
   chunkCount   Int      @default(0)
   status       String // "processing", "ready", "failed"
+  scope        String   @default("app") // "system" | "app"
   errorMessage String?  @db.Text
   uploadedBy   String
   createdAt    DateTime @default(now())
@@ -349,6 +350,7 @@ model AiKnowledgeDocument {
 
   @@index([uploadedBy])
   @@index([status])
+  @@index([scope])
   @@index([fileHash])
   @@map("ai_knowledge_document")
 }
