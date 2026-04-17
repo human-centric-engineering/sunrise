@@ -277,6 +277,34 @@ export function ExecutionPanel({
     }
   }, [executionId, streamRun]);
 
+  const handleRetryStep = useCallback(
+    async (stepId: string) => {
+      if (!executionId) return;
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.executionRetryStep(executionId), {
+          body: { stepId },
+        });
+        // Remove entries from the failed step onward in the UI
+        setEntries((prev) => {
+          const idx = prev.findIndex((e) => e.stepId === stepId);
+          return idx === -1 ? prev : prev.slice(0, idx);
+        });
+        setErrorMessage(null);
+        // Reconnect to resume from the step before the failed one
+        void streamRun(executionId);
+      } catch (err) {
+        const message =
+          err instanceof APIClientError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Retry failed';
+        setErrorMessage(message);
+      }
+    },
+    [executionId, streamRun]
+  );
+
   const headerIcon = useMemo(() => {
     switch (status) {
       case 'running':
@@ -382,6 +410,7 @@ export function ExecutionPanel({
               tokensUsed={entry.tokensUsed ?? 0}
               costUsd={entry.costUsd ?? 0}
               durationMs={entry.durationMs}
+              onRetry={status === 'failed' ? (sid) => void handleRetryStep(sid) : undefined}
             />
           ))
         )}

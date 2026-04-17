@@ -75,6 +75,7 @@ export class StreamingChatHandler {
    * trust the iterator always terminates cleanly.
    */
   async *run(request: ChatRequest): ChatStream {
+    const log = request.requestId ? logger.withContext({ requestId: request.requestId }) : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
     try {
@@ -92,7 +93,7 @@ export class StreamingChatHandler {
         budget.spent / budget.limit >= 0.8
       ) {
         const pct = ((budget.spent / budget.limit) * 100).toFixed(0);
-        logger.warn('Agent approaching budget limit', {
+        log.warn('Agent approaching budget limit', {
           agentId: agent.id,
           spent: budget.spent,
           limit: budget.limit,
@@ -131,7 +132,7 @@ export class StreamingChatHandler {
       // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
-        logger.warn('Potential prompt injection detected', {
+        log.warn('Potential prompt injection detected', {
           agentSlug: request.agentSlug,
           conversationId: conversation.id,
           patterns: scanResult.patterns,
@@ -348,7 +349,7 @@ export class StreamingChatHandler {
         ];
       }
 
-      logger.warn('Chat tool loop hit iteration cap', {
+      log.warn('Chat tool loop hit iteration cap', {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
@@ -358,7 +359,7 @@ export class StreamingChatHandler {
       );
     } catch (err) {
       if (err instanceof ChatError) {
-        logger.warn('Chat handler surfaced known error', {
+        log.warn('Chat handler surfaced known error', {
           code: err.code,
           message: err.message,
           agentSlug: request.agentSlug,
@@ -370,7 +371,7 @@ export class StreamingChatHandler {
       if (resolvedProviderSlug) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
-      logger.error('Streaming chat handler crashed', err as Error, {
+      log.error('Streaming chat handler crashed', err as Error, {
         agentSlug: request.agentSlug,
         userId: request.userId,
         conversationId,

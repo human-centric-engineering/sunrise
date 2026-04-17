@@ -94,6 +94,8 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       executionCancel: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/cancel`,
+      executionRetryStep: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/retry-step`,
       workflowDefinitionHistory: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/definition-history`,
       workflowDefinitionRevert: (id: string): string =>

@@ -946,6 +946,11 @@ export const approveExecutionBodySchema = z.object({
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
+/** Retry failed step request body (POST /executions/[id]/retry-step). */
+export const retryStepBodySchema = z.object({
+  stepId: z.string().min(1, 'stepId is required'),
+});
+
 /**
  * Resume execution query schema (POST /workflows/[id]/execute?resumeFromExecutionId=…).
  *
