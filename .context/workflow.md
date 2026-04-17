@@ -62,41 +62,61 @@ git add <specific-files>
 git commit -m "feat: add my feature"
 ```
 
-### 3. Pre-PR Validation
+### 3. Test Coverage
 
-After your final functional commit, run these checks **before** creating the PR:
+After your final functional commit, ensure test coverage is adequate **before** running pre-PR checks.
+
+**Add tests for branch changes** (recommended flow):
 
 ```bash
-# 1. Verify test coverage
-npm run test:coverage
+/test-plan              # Analyze branch diff, produce phased test plan
+/test-write plan        # Execute Sprint 1 (spawns test-engineer agents)
+/test-review            # Audit quality of tests just written
+/test-plan review       # Plan fixes if review found issues
+/test-write plan        # Execute fixes
+/test-coverage branch   # Verify coverage meets thresholds for changed files
+```
 
-# 2. Run all validation (type-check + lint + format)
+**Quick test for 1-2 files** (skips planning step):
+
+```bash
+/test-write lib/auth/guards.ts   # Inline plan + execute for small scope
+```
+
+All `/test-*` commands default to branch diff mode. Pass folder paths to scope (e.g., `/test-review lib/auth`). See CLAUDE.md "Test Engineering" for full reference.
+
+### 4. Pre-PR Validation
+
+Run these checks **after** test coverage is adequate:
+
+```bash
+# 1. Run all validation (type-check + lint + format)
 npm run validate
 
-# 3. Ensure production build succeeds
+# 2. Ensure production build succeeds
 npm run build
 ```
 
 Then run the automated review commands:
 
 ```bash
-# 4. Pre-PR checks (custom command)
+# 3. Pre-PR checks (custom command)
 /pre-pr
 
-# 5. Security review
+# 4. Security review
 /security-review
 ```
 
 **Fix any issues that come up before proceeding.**
 
-### 4. Create PR
+### 5. Create PR
 
 ```bash
 git push -u origin feature/my-feature
 # Create PR via GitHub (or use `gh pr create`)
 ```
 
-### 5. Post-PR Review
+### 6. Post-PR Review
 
 After the PR is created:
 
@@ -104,7 +124,7 @@ After the PR is created:
 2. **Wait for CI:** Ensure all checks pass
 3. **Address feedback:** Fix any issues raised
 
-### 6. Merge
+### 7. Merge
 
 Once CI passes and review is complete:
 
@@ -115,7 +135,10 @@ Once CI passes and review is complete:
 
 ```
 □ Final commit made
-□ npm run test:coverage — coverage acceptable
+□ /test-plan — test plan created for branch changes
+□ /test-write plan — tests written and passing
+□ /test-review — test quality audited
+□ /test-coverage branch — coverage meets thresholds
 □ npm run validate — no errors
 □ npm run build — builds successfully
 □ /pre-pr — no issues
@@ -156,8 +179,14 @@ git checkout main && git pull && git checkout -b feature/name
 npm run validate                    # Check before committing
 git commit -m "feat: description"   # Conventional commit
 
-# Before PR (after final commit)
-npm run test:coverage && npm run validate && npm run build
+# Test coverage (after final functional commit)
+/test-plan                          # Plan tests for branch changes
+/test-write plan                    # Write tests
+/test-review                        # Audit test quality
+/test-coverage branch               # Verify coverage
+
+# Before PR
+npm run validate && npm run build
 # Then run: /pre-pr and /security-review
 
 # Create and review PR

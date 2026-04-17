@@ -142,7 +142,11 @@ Use these for implementation tasks:
 | `/form-builder`      | Forms with Zod + react-hook-form                    |
 | `/component-builder` | Reusable React components                           |
 | `/page-builder`      | New pages with layouts/metadata                     |
-| `/testing`           | Unit and integration tests                          |
+| `/testing`           | Quick test patterns reference                       |
+| `/test-plan`         | Analyze code and produce a test plan                |
+| `/test-write`        | Execute test plan with test-engineer agents         |
+| `/test-review`       | Audit test quality                                  |
+| `/test-coverage`     | Find coverage gaps and untested files               |
 | `/security-hardener` | Rate limiting, CORS, CSP                            |
 | `/email-designer`    | React Email templates                               |
 | `/docs-writer`       | Create/update .context/ docs                        |
@@ -151,41 +155,65 @@ Use these for implementation tasks:
 
 ## Test Engineering
 
-Use the **test-engineer agent** for comprehensive test coverage. Defined in `.claude/agents/test-engineer.md`.
+Testing has a dedicated command workflow. Use these commands instead of manually crafting prompts.
 
-### When to Use
+### Testing Commands
 
-**Proactively launch after:**
+| Command          | Purpose                                                  |
+| ---------------- | -------------------------------------------------------- |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents       |
+| `/test-review`   | Audit test quality (weak assertions, missing edge cases) |
+| `/test-coverage` | Find coverage gaps and untested files                    |
 
-- Implementing a new feature, API endpoint, or component
-- Refactoring code (ensure behavior preserved)
-- Fixing bugs (prevent regression)
+### Common Flows
 
-**On request:**
-
-- "Add tests for X"
-- "Review test coverage"
-- "Set up testing framework"
-
-### How to Use
-
-Launch via Task tool as a **foreground subagent** (never background):
+**Add tests for branch changes** (most common):
 
 ```
-Task tool with subagent_type: "test-engineer"
-prompt: "Write tests for [specific code]. Cover happy path, validation errors, and edge cases."
+/test-plan              → produces phased plan from branch diff
+/test-write plan        → executes Sprint 1
+/test-review            → audits quality
+/test-plan review       → plans fixes from review findings
+/test-write plan        → executes fixes
+/test-coverage branch   → verifies coverage meets thresholds
 ```
 
-**Critical constraint:** Never use `run_in_background: true` — test engineers need Write/Edit access.
+**Improve tests in a folder**:
 
-### Agent vs Skill
+```
+/test-review lib/auth       → finds quality issues
+/test-plan review lib/auth  → plans fixes
+/test-write plan            → executes
+```
 
-| Use                     | When                                                              |
-| ----------------------- | ----------------------------------------------------------------- |
-| **test-engineer agent** | Writing new tests, comprehensive coverage, multi-file test suites |
-| **`/testing` skill**    | Quick test patterns reference, single test file guidance          |
+**Fill repo-wide coverage gaps**:
 
-The agent reads `.context/testing/` automatically and validates tests pass lint and type-check before completing.
+```
+/test-coverage              → finds all gaps
+/test-plan coverage         → produces multi-sprint plan
+/test-write plan            → executes sprint by sprint
+```
+
+**Quick test for 1-2 files** (skips planning):
+
+```
+/test-write lib/auth/guards.ts    → inline plan + execute
+```
+
+### How It Works
+
+Commands chain via structured output: `/test-coverage` and `/test-review` produce findings that `/test-plan` consumes to build sprint-based execution plans. `/test-write` executes plans by spawning **test-engineer** subagents (defined in `.claude/agents/test-engineer.md`).
+
+All commands default to branch diff mode but accept file/folder paths. The test-engineer agent reads `.context/testing/` for patterns and validates tests pass lint and type-check before completing.
+
+### Agent vs Skill vs Commands
+
+| Use                     | When                                                                |
+| ----------------------- | ------------------------------------------------------------------- |
+| **`/test-*` commands**  | Standard workflow — planning, writing, reviewing, coverage analysis |
+| **test-engineer agent** | Spawned automatically by `/test-write` — don't invoke directly      |
+| **`/testing` skill**    | Quick patterns reference, single test file guidance                 |
 
 ## Documentation
 

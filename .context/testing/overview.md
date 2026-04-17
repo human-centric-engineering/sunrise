@@ -211,6 +211,75 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 Tests can override these mocks per-file using `vi.mock()` at the top of the test file.
 
+## Testing Workflow Commands
+
+Use these commands to plan, write, review, and verify tests. All default to branch diff mode but accept file/folder paths.
+
+| Command          | Purpose                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan with agent batching            |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents (create, add, rewrite tests)         |
+| `/test-review`   | Audit test quality — find weak assertions, happy-path-only coverage, missing edge cases |
+| `/test-coverage` | Find coverage gaps, untested files, and below-threshold modules                         |
+
+### Example Flows
+
+**Add tests for branch changes** (most common):
+
+```bash
+/test-plan              # Analyze branch diff → phased plan
+/test-write plan        # Execute Sprint 1
+/test-review            # Audit quality
+/test-plan review       # Plan fixes from review findings
+/test-write plan        # Execute fixes
+/test-coverage branch   # Verify coverage for branch files
+```
+
+**Improve tests in a folder**:
+
+```bash
+/test-review lib/auth       # Find quality issues
+/test-plan review lib/auth  # Plan fixes
+/test-write plan            # Execute
+```
+
+**Fill repo-wide coverage gaps**:
+
+```bash
+/test-coverage              # Full repo scan → categorized gaps
+/test-plan coverage         # Multi-sprint plan from coverage findings
+/test-write plan            # Execute Sprint 1 (security-critical)
+/test-write plan sprint 2   # Execute Sprint 2 (business logic)
+```
+
+**Quick test for 1-2 files** (skips planning):
+
+```bash
+/test-write lib/auth/guards.ts   # Inline plan + execute
+```
+
+### How Commands Chain
+
+Commands produce structured output that feeds into the next step:
+
+```
+/test-coverage  →  /test-plan coverage  →  /test-write plan  →  /test-review  →  repeat
+/test-review    →  /test-plan review    →  /test-write plan  →  /test-review  →  repeat
+```
+
+`/test-plan` is the single planning hub. `/test-write` is purely an executor. `/test-review` and `/test-coverage` are analysis tools whose findings feed back into planning.
+
+### Command Definitions
+
+Commands are defined in `.claude/commands/`:
+
+- `test-plan.md` — full planning logic, priority system, sprint design
+- `test-write.md` — plan execution, agent batching, progress tracking
+- `test-review.md` — quality audit checks (7 categories), structured findings output
+- `test-coverage.md` — gap analysis, module-specific thresholds, categorization
+
+The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test-write` — don't invoke it directly.
+
 ## Quick Reference
 
 **See also**:
@@ -220,7 +289,7 @@ Tests can override these mocks per-file using `vi.mock()` at the top of the test
 - [`decisions.md`](./decisions.md) - Architectural decisions and rationale
 - [`history.md`](./history.md) - Key learnings and solutions (lint/type cycle prevention)
 
-**Commands**:
+**npm Commands**:
 
 ```bash
 npm test                  # Run all tests
@@ -236,4 +305,4 @@ npm run validate          # Type-check + lint + format check
 - `tests/helpers/` - Test utilities (assertions, mocks, factories)
 - `tests/types/` - Shared type definitions (MockHeaders, MockSession)
 
-**For detailed testing workflows, see** [`.claude/skills/testing/`](../../.claude/skills/testing/).
+**For testing skill patterns, see** [`.claude/skills/testing/`](../../.claude/skills/testing/).
