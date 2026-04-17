@@ -6,6 +6,7 @@ import {
   CapabilityForm,
   type UsedByAgentSummary,
 } from '@/components/admin/orchestration/capability-form';
+import { CapabilityStatsPanel } from '@/components/admin/orchestration/capability-stats-panel';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -84,6 +85,8 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
         {' / '}
         <span>{capability.name}</span>
       </nav>
+
+      <CapabilityStatsPanel capabilityId={id} />
 
       <CapabilityForm
         mode="edit"

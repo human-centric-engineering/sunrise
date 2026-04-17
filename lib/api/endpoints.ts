@@ -57,9 +57,12 @@ export const API = {
     /** AI Orchestration admin endpoints (Phase 3 / Phase 4) */
     ORCHESTRATION: {
       AGENTS: '/api/v1/admin/orchestration/agents',
+      AGENTS_BULK: '/api/v1/admin/orchestration/agents/bulk',
+      AGENTS_COMPARE: '/api/v1/admin/orchestration/agents/compare',
       AGENTS_EXPORT: '/api/v1/admin/orchestration/agents/export',
       AGENTS_IMPORT: '/api/v1/admin/orchestration/agents/import',
       agentById: (id: string): string => `/api/v1/admin/orchestration/agents/${id}`,
+      agentClone: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/clone`,
       agentBudget: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/budget`,
       agentCapabilities: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/capabilities`,
@@ -75,6 +78,8 @@ export const API = {
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       capabilityAgents: (id: string): string =>
         `/api/v1/admin/orchestration/capabilities/${id}/agents`,
+      capabilityStats: (id: string): string =>
+        `/api/v1/admin/orchestration/capabilities/${id}/stats`,
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
@@ -111,7 +116,10 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,
       knowledgeDocumentRechunk: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
+      knowledgeDocumentRetry: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/retry`,
       KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
+      KNOWLEDGE_GRAPH: '/api/v1/admin/orchestration/knowledge/graph',
       KNOWLEDGE_PATTERNS: '/api/v1/admin/orchestration/knowledge/patterns',
       knowledgePatternByNumber: (num: number): string =>
         `/api/v1/admin/orchestration/knowledge/patterns/${num}`,
@@ -119,6 +127,8 @@ export const API = {
       EMBEDDING_MODELS: '/api/v1/admin/orchestration/embedding-models',
       KNOWLEDGE_EMBED: '/api/v1/admin/orchestration/knowledge/embed',
       KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
+      WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
+      webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',

@@ -22,7 +22,7 @@ import { listConversationsQuerySchema } from '@/lib/validations/orchestration';
 export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, agentId, isActive, q } = validateQueryParams(
+  const { page, limit, agentId, isActive, q, messageSearch } = validateQueryParams(
     searchParams,
     listConversationsQuerySchema
   );
@@ -34,6 +34,9 @@ export const GET = withAdminAuth(async (request, session) => {
   if (agentId) where.agentId = agentId;
   if (isActive !== undefined) where.isActive = isActive;
   if (q) where.title = { contains: q, mode: 'insensitive' };
+  if (messageSearch) {
+    where.messages = { some: { content: { contains: messageSearch, mode: 'insensitive' } } };
+  }
 
   const [conversations, total] = await Promise.all([
     prisma.aiConversation.findMany({
@@ -41,7 +44,10 @@ export const GET = withAdminAuth(async (request, session) => {
       orderBy: { updatedAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { messages: true } } },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        _count: { select: { messages: true } },
+      },
     }),
     prisma.aiConversation.count({ where }),
   ]);

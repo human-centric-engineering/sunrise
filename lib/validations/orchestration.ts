@@ -421,6 +421,59 @@ export const exportAgentsSchema = z.object({
   agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
 });
 
+/** Bulk operations on multiple agents at once. */
+export const bulkAgentActionSchema = z.object({
+  action: z.enum(['activate', 'deactivate', 'delete']),
+  agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
+});
+
+// ============================================================================
+// Webhook Schemas
+// ============================================================================
+
+const WEBHOOK_EVENT_TYPES = [
+  'budget_exceeded',
+  'workflow_failed',
+  'approval_required',
+  'circuit_breaker_opened',
+] as const;
+
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
+
+export const createWebhookSchema = z.object({
+  url: z
+    .string()
+    .url('Must be a valid URL')
+    .max(2000)
+    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+  secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
+  events: z
+    .array(z.enum(WEBHOOK_EVENT_TYPES))
+    .min(1, 'At least one event type is required')
+    .max(WEBHOOK_EVENT_TYPES.length),
+  description: z.string().max(500).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const updateWebhookSchema = z.object({
+  url: z
+    .string()
+    .url('Must be a valid URL')
+    .max(2000)
+    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)')
+    .optional(),
+  secret: z.string().min(16).max(256).optional(),
+  events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).min(1).max(WEBHOOK_EVENT_TYPES.length).optional(),
+  description: z.string().max(500).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const listWebhooksQuerySchema = paginationQuerySchema.extend({
+  isActive: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
+    .optional(),
+});
+
 /**
  * One agent inside an export bundle. Strips server-owned fields
  * (`id`, `createdAt`, `updatedAt`, `createdBy`) and embeds attached
@@ -1001,6 +1054,8 @@ export const listConversationsQuerySchema = paginationQuerySchema.extend({
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),
   q: z.string().trim().min(1).max(200).optional(),
+  /** Full-text search across message content (case-insensitive). */
+  messageSearch: z.string().trim().min(1).max(500).optional(),
 });
 
 /**
