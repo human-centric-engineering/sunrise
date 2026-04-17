@@ -89,10 +89,86 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
     <div className="space-y-2">
       <div className="flex items-center gap-1">
         <span className="text-sm font-medium">Upload Document</span>
-        <FieldHelp title="Upload a document">
-          Plain text and Markdown files work best because they can be cleanly split into searchable
-          chunks. PDFs and Word documents aren&apos;t supported yet because their formatting makes
-          reliable text extraction difficult. Maximum size: 10 MB per file.
+        <FieldHelp
+          title="Uploading documents to the knowledge base"
+          contentClassName="w-[28rem] max-h-96 overflow-y-auto"
+        >
+          <p className="text-foreground font-medium">What happens when you upload</p>
+          <p>
+            Your document is <strong>chunked</strong> — split into smaller pieces of a few
+            paragraphs each (roughly 200–3,200 characters). The system splits on headings first (##
+            then ###), then by paragraph breaks. Each chunk is then <strong>embedded</strong> —
+            converted into a numerical vector that captures its meaning. When a user asks a
+            question, the system finds the chunks whose meaning is closest and feeds them to the AI.
+          </p>
+
+          <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
+          <p>
+            <strong>Headings matter.</strong> The chunker uses ## and ### headings as natural split
+            points. A document with clear headings produces cleaner, more targeted chunks than a
+            wall of text. Think of each heading as a label that tells the AI what that section is
+            about.
+          </p>
+          <p className="mt-1">
+            <strong>Optional metadata.</strong> You can add HTML comments to tag sections with
+            category and keywords that improve search:{' '}
+            <code className="text-xs">
+              {'<!-- metadata: category=sales, keywords="pricing,discounts" -->'}
+            </code>
+          </p>
+          <p className="mt-1">
+            Plain text without any formatting works too — the system will split on paragraph breaks
+            instead. You don&apos;t need to add structure, but it helps.
+          </p>
+
+          <p className="text-foreground mt-3 font-medium">Content quality tips</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+            <li>
+              <strong>Typos and grammar</strong> — minor typos won&apos;t break search because
+              embedding models understand meaning, not exact spelling. But significant errors (wrong
+              terminology, garbled sentences) will reduce quality. A quick proofread is worthwhile.
+            </li>
+            <li>
+              <strong>Video/meeting transcripts</strong> — raw transcripts are noisy (filler words,
+              repetition, speaker labels). They work, but you&apos;ll get much better results if you
+              clean them up first: remove filler, merge fragmented sentences, and add topic
+              headings. Even a rough edit makes a big difference.
+            </li>
+            <li>
+              <strong>Short snippets</strong> (a paragraph or two) — absolutely fine to upload.
+              Short documents become one or two chunks and are searchable just like larger ones.
+              Good for capturing individual ideas, policies, or decisions.
+            </li>
+          </ul>
+
+          <p className="text-foreground mt-3 font-medium">Large documents and books</p>
+          <p>
+            <strong>Chapter by chapter is better than one huge file.</strong> While a whole book
+            under 10 MB will technically upload, splitting by chapter gives you cleaner chunks (each
+            chapter gets its own heading hierarchy), easier management (you can update or remove
+            individual chapters), and better search results (the AI finds the right chapter rather
+            than a random mid-book paragraph).
+          </p>
+
+          <p className="text-foreground mt-3 font-medium">
+            Organising different types of knowledge
+          </p>
+          <p>
+            Currently all documents share a single knowledge base — there&apos;s no way to create
+            separate bases for different topics. However, you can use <strong>metadata tags</strong>{' '}
+            (category and keywords in HTML comments) to label documents by type, and the search
+            system will use those tags to return more relevant results. For example, tag sales docs
+            with <code className="text-xs">{'<!-- metadata: category=sales -->'}</code> and
+            engineering docs with{' '}
+            <code className="text-xs">{'<!-- metadata: category=engineering -->'}</code>.
+          </p>
+
+          <p className="text-foreground mt-3 font-medium">Supported formats</p>
+          <p>
+            <strong>.md, .markdown, .txt</strong> only. PDFs and Word documents aren&apos;t
+            supported yet because their formatting makes reliable text extraction difficult. Maximum
+            size: 10 MB per file.
+          </p>
         </FieldHelp>
       </div>
 
