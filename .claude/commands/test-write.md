@@ -153,11 +153,17 @@ After all batches in the sprint complete:
 {Or "None found"}
 
 ### Next Steps
+
+{Determine the review scope from the plan's **Source** field:
+- If source was a folder/file path (e.g. "components/analytics") → use that as the scope
+- If source was branch diff → no scope needed (branch diff is the right default)
+- If source was a prior `/test-coverage` or `/test-review` → use the folder/paths from that command's scope}
+
 {If more sprints remain in the plan:}
 - `/test-write plan sprint {N+1}` — execute the next sprint ({name})
-- `/test-review` — audit quality of what was just written before proceeding
+- `/test-review {scope}` — audit quality of what was just written before proceeding
 {If this was the last sprint:}
-- `/test-review` — audit quality of all tests written
-- `/test-coverage branch` — verify coverage meets thresholds
+- `/test-review {scope}` — audit quality of all tests written
+- `/test-coverage {scope}` — verify coverage meets thresholds
 - `/pre-pr` — final validation before opening a pull request
 ```

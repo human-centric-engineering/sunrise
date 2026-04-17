@@ -182,7 +182,7 @@ The following findings can be consumed by `/test-plan review`:
 ### Next Steps
 
 To fix these issues:
-1. `/test-plan review` — create an execution plan from these findings
+1. `/test-plan review {scope}` — create an execution plan from these findings
 2. `/test-write plan` — execute the plan
 ```
 
@@ -190,4 +190,6 @@ To fix these issues:
 
 After presenting the review, ask:
 
-> Would you like me to fix these issues? Run `/test-plan review` to create an execution plan, then `/test-write plan` to execute it.
+> Would you like me to fix these issues? Run `/test-plan review {scope}` to create an execution plan, then `/test-write plan` to execute it.
+>
+> _(Replace `{scope}` with the folder or file paths this review targeted, e.g. `components/analytics`. Omit if this was a branch diff review.)_

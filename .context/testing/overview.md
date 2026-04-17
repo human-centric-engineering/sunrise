@@ -243,6 +243,15 @@ Use these commands to plan, write, review, and verify tests. All default to bran
 /test-write plan            # Execute
 ```
 
+**Fill coverage gaps in a folder**:
+
+```bash
+/test-coverage components/analytics   # Scoped scan → categorized gaps
+/test-plan coverage                   # Plan from coverage findings (scope carried from prior command)
+/test-write plan all                  # Execute all sprints
+/test-review components/analytics     # Audit quality (pass scope — bare /test-review uses branch diff)
+```
+
 **Fill repo-wide coverage gaps**:
 
 ```bash
@@ -263,9 +272,11 @@ Use these commands to plan, write, review, and verify tests. All default to bran
 Commands produce structured output that feeds into the next step:
 
 ```
-/test-coverage  →  /test-plan coverage  →  /test-write plan  →  /test-review  →  repeat
-/test-review    →  /test-plan review    →  /test-write plan  →  /test-review  →  repeat
+/test-coverage <scope>  →  /test-plan coverage  →  /test-write plan  →  /test-review <scope>  →  repeat
+/test-review <scope>    →  /test-plan review     →  /test-write plan  →  /test-review <scope>  →  repeat
 ```
+
+**Always pass the same scope to `/test-review` as you passed to `/test-coverage` or `/test-review` at the start.** Without a scope, `/test-review` defaults to branch diff mode, which will find nothing if no source files changed on the branch.
 
 `/test-plan` is the single planning hub. `/test-write` is purely an executor. `/test-review` and `/test-coverage` are analysis tools whose findings feed back into planning.
 
