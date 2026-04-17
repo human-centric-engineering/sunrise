@@ -139,8 +139,8 @@ const CAPABILITY_DEFINITIONS = [
 /**
  * Seed the "pattern-advisor" agent with three built-in capabilities.
  *
- * Idempotent — safe to run on every deploy. The `update: {}` branch
- * is empty so re-seeding never overwrites admin edits.
+ * Idempotent — safe to run on every deploy. The `update` branch only
+ * sets `isSystem: true` so re-seeding never overwrites admin edits.
  */
 const unit: SeedUnit = {
   name: '005-pattern-advisor',
@@ -158,7 +158,7 @@ const unit: SeedUnit = {
 
     const agent = await prisma.aiAgent.upsert({
       where: { slug: 'pattern-advisor' },
-      update: {},
+      update: { isSystem: true },
       create: {
         name: 'Pattern Advisor',
         slug: 'pattern-advisor',
@@ -178,7 +178,7 @@ const unit: SeedUnit = {
     for (const def of CAPABILITY_DEFINITIONS) {
       const capability = await prisma.aiCapability.upsert({
         where: { slug: def.slug },
-        update: {},
+        update: { isSystem: true },
         create: {
           name: def.name,
           slug: def.slug,
