@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { cn } from '@/lib/utils';
+import { messageMetadataSchema } from '@/lib/validations/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -64,15 +65,8 @@ const ROLE_CONFIG: Record<
 
 function parseMetadata(raw: Record<string, unknown> | null): MessageMetadata {
   if (!raw) return {};
-  return {
-    tokenUsage:
-      raw.tokenUsage && typeof raw.tokenUsage === 'object'
-        ? (raw.tokenUsage as MessageMetadata['tokenUsage'])
-        : undefined,
-    modelUsed: typeof raw.modelUsed === 'string' ? raw.modelUsed : undefined,
-    latencyMs: typeof raw.latencyMs === 'number' ? raw.latencyMs : undefined,
-    costUsd: typeof raw.costUsd === 'number' ? raw.costUsd : undefined,
-  };
+  const result = messageMetadataSchema.safeParse(raw);
+  return result.success ? result.data : {};
 }
 
 function formatTimestamp(iso: string): string {

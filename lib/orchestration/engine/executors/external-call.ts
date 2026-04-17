@@ -99,18 +99,16 @@ export async function executeExternalCall(
   }
 
   let response: Response;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  try {
     response = await fetch(url, {
       method,
       headers,
       body,
       signal: controller.signal,
     });
-
-    clearTimeout(timer);
   } catch (err) {
     const message =
       err instanceof Error && err.name === 'AbortError'
@@ -119,6 +117,8 @@ export async function executeExternalCall(
           ? err.message
           : 'Request failed';
     throw new ExecutorError(step.id, 'request_failed', message, err);
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {
