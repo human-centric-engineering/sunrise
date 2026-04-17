@@ -24,7 +24,7 @@ import { logger } from '@/lib/logging';
 import { cn } from '@/lib/utils';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
-import { ExecutionTraceEntryRow } from './execution-trace-entry';
+import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 
 type PanelStatus = 'idle' | 'running' | 'completed' | 'failed' | 'awaiting_approval' | 'aborted';
 

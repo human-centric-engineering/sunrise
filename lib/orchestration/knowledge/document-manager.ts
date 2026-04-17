@@ -9,8 +9,8 @@
 import { createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { chunkMarkdownDocument } from './chunker';
-import { embedBatch } from './embedder';
+import { chunkMarkdownDocument } from '@/lib/orchestration/knowledge/chunker';
+import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
 /**

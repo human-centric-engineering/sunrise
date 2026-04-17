@@ -27,14 +27,17 @@ import { CostOperation } from '@/types/orchestration';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
-import { BaseCapability, CapabilityValidationError } from './base-capability';
+import {
+  BaseCapability,
+  CapabilityValidationError,
+} from '@/lib/orchestration/capabilities/base-capability';
 import type {
   AgentCapabilityBinding,
   CapabilityContext,
   CapabilityFunctionDefinition,
   CapabilityRegistryEntry,
   CapabilityResult,
-} from './types';
+} from '@/lib/orchestration/capabilities/types';
 
 /**
  * Parse a Prisma `Json` value from `AiCapability.functionDefinition` into a

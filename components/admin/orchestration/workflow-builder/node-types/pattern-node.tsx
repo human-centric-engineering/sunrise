@@ -15,7 +15,7 @@ import { HelpCircle } from 'lucide-react';
 import { STEP_CATEGORY_COLOURS, getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
-import type { PatternNode as PatternNodeType } from '../workflow-mappers';
+import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const meta = getStepMetadata(data.type);

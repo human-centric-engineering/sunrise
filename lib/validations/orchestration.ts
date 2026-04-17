@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema, slugSchema } from './common';
+import { paginationQuerySchema, cuidSchema, slugSchema } from '@/lib/validations/common';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';

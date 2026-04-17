@@ -31,21 +31,21 @@ import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manag
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { scanForInjection } from './input-guard';
+import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
-import { buildContext, invalidateContext } from './context-builder';
-import { buildMessages } from './message-builder';
-import { summarizeMessages } from './summarizer';
+import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
+import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
 import {
   MAX_HISTORY_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
   type ChatStream,
-} from './types';
+} from '@/lib/orchestration/chat/types';
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
 export class ChatError extends Error {

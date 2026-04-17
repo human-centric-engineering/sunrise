@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { TemplateItem } from './template-types';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
 
 const EXECUTE_CREATE_TOOLTIP = 'Save the workflow before executing';
 

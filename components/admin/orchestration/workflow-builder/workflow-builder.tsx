@@ -40,27 +40,36 @@ import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
 import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
-import { BlockConfigPanel } from './block-config-panel';
-import { BuilderToolbar } from './builder-toolbar';
-import { ExecutionInputDialog } from './execution-input-dialog';
-import { ExecutionPanel } from './execution-panel';
-import { PatternPalette } from './pattern-palette';
-import { TemplateBanner } from './template-banner';
-import { TemplateDescriptionDialog } from './template-description-dialog';
-import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
-import { WorkflowCanvas } from './workflow-canvas';
-import { WorkflowDetailsDialog } from './workflow-details-dialog';
-import { runExtraChecks } from './extra-checks';
-import { saveWorkflow, type WorkflowDetails } from './workflow-save';
+import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
+import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
+import { ExecutionInputDialog } from '@/components/admin/orchestration/workflow-builder/execution-input-dialog';
+import { ExecutionPanel } from '@/components/admin/orchestration/workflow-builder/execution-panel';
+import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
+import { TemplateBanner } from '@/components/admin/orchestration/workflow-builder/template-banner';
+import { TemplateDescriptionDialog } from '@/components/admin/orchestration/workflow-builder/template-description-dialog';
+import {
+  ValidationSummaryPanel,
+  type CombinedError,
+} from '@/components/admin/orchestration/workflow-builder/validation-summary-panel';
+import { WorkflowCanvas } from '@/components/admin/orchestration/workflow-builder/workflow-canvas';
+import { WorkflowDetailsDialog } from '@/components/admin/orchestration/workflow-builder/workflow-details-dialog';
+import { runExtraChecks } from '@/components/admin/orchestration/workflow-builder/extra-checks';
+import {
+  saveWorkflow,
+  type WorkflowDetails,
+} from '@/components/admin/orchestration/workflow-builder/workflow-save';
 import {
   flowToWorkflowDefinition,
   stripLayout,
   workflowDefinitionToFlow,
   type PatternNode,
-} from './workflow-mappers';
-import type { CapabilityOption } from './block-editors';
-import type { TemplateItem } from './template-types';
-import { templateMetadataSchema, toTemplateItem } from './template-types';
+} from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
+import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
+import {
+  templateMetadataSchema,
+  toTemplateItem,
+} from '@/components/admin/orchestration/workflow-builder/template-types';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';

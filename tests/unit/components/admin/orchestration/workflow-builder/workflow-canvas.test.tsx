@@ -47,6 +47,11 @@ vi.mock('@xyflow/react', () => ({
   addEdge: vi.fn((edge: unknown, edges: unknown[]) => [...edges, edge]),
 }));
 
+vi.mock('@/hooks/use-theme', () => ({
+  useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
+  ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 // Import after mock
 import { WorkflowCanvas } from '@/components/admin/orchestration/workflow-builder/workflow-canvas';
 

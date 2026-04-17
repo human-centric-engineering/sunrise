@@ -20,11 +20,14 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/:id/instructions-history`  | GET                | Read the full `systemInstructions` audit trail            |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions` version         |
 | `/api/v1/admin/orchestration/agents/:id/clone`                 | POST               | Deep-clone agent with capability bindings                 |
+| `/api/v1/admin/orchestration/agents/bulk`                      | POST               | Bulk activate/deactivate/delete agents                    |
+| `/api/v1/admin/orchestration/agents/compare`                   | GET                | Compare two agents side-by-side                           |
 | `/api/v1/admin/orchestration/agents/export`                    | POST               | Export selected agents as a versioned bundle              |
 | `/api/v1/admin/orchestration/agents/import`                    | POST               | Import an agent bundle (skip / overwrite)                 |
 | `/api/v1/admin/orchestration/capabilities`                     | GET, POST          | List / create capabilities                                |
 | `/api/v1/admin/orchestration/capabilities/:id`                 | GET, PATCH, DELETE | Read / update / soft-delete a capability                  |
 | `/api/v1/admin/orchestration/capabilities/:id/agents`          | GET                | Reverse-lookup — agents attaching this capability         |
+| `/api/v1/admin/orchestration/capabilities/:id/stats`           | GET                | Capability execution metrics + daily breakdown            |
 | `/api/v1/admin/orchestration/providers`                        | GET, POST          | List / create LLM provider configs                        |
 | `/api/v1/admin/orchestration/providers/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete a provider config             |
 | `/api/v1/admin/orchestration/providers/:id/test`               | POST               | Run a live connection test against a provider             |
@@ -48,6 +51,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/knowledge/documents`              | GET, POST          | List documents / upload a new one (multipart)             |
 | `/api/v1/admin/orchestration/knowledge/documents/:id`          | GET, DELETE        | Read / delete a document (chunks cascade)                 |
 | `/api/v1/admin/orchestration/knowledge/documents/:id/rechunk`  | POST               | Re-run chunking + embedding on an existing doc            |
+| `/api/v1/admin/orchestration/knowledge/documents/:id/retry`    | POST               | Retry failed document ingestion                           |
+| `/api/v1/admin/orchestration/knowledge/graph`                  | GET                | Knowledge graph data (nodes + links)                      |
 | `/api/v1/admin/orchestration/knowledge/seed`                   | POST               | Seed the canonical "Agentic Design Patterns" doc          |
 | `/api/v1/admin/orchestration/conversations`                    | GET                | List the caller's own conversations                       |
 | `/api/v1/admin/orchestration/conversations/:id`                | DELETE             | Delete one of the caller's conversations                  |
@@ -62,6 +67,10 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/evaluations/:id`                  | GET, PATCH         | Read / update an evaluation session                       |
 | `/api/v1/admin/orchestration/evaluations/:id/logs`             | GET                | Read log events for one of the caller's sessions          |
 | `/api/v1/admin/orchestration/evaluations/:id/complete`         | POST               | Run the AI analysis pass and flip to `completed`          |
+| `/api/v1/admin/orchestration/quiz-scores`                      | GET, POST          | List / save quiz scores                                   |
+| `/api/v1/admin/orchestration/webhooks`                         | GET, POST          | List / create webhook subscriptions                       |
+| `/api/v1/admin/orchestration/webhooks/:id`                     | GET, PATCH, DELETE | Get / update / delete a webhook subscription              |
+| `/api/v1/admin/orchestration/observability/dashboard-stats`    | GET                | Aggregated observability metrics                          |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 

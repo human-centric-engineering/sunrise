@@ -16,7 +16,10 @@ import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import type { AiWorkflow } from '@/types/orchestration';
 
-import { flowToWorkflowDefinition, type PatternNode } from './workflow-mappers';
+import {
+  flowToWorkflowDefinition,
+  type PatternNode,
+} from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 /** Details captured via `WorkflowDetailsDialog` before the first create save. */
 export interface WorkflowDetails {

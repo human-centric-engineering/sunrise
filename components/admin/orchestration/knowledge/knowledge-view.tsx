@@ -14,10 +14,10 @@ import {
 import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
-import { ManageTab } from './manage-tab';
-import { ExploreTab } from './explore-tab';
-import { VisualizeTab } from './visualize-tab';
-import { ErrorsTab } from './errors-tab';
+import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
+import { ExploreTab } from '@/components/admin/orchestration/knowledge/explore-tab';
+import { VisualizeTab } from '@/components/admin/orchestration/knowledge/visualize-tab';
+import { ErrorsTab } from '@/components/admin/orchestration/knowledge/errors-tab';
 
 export type KnowledgeScope = 'all' | 'system' | 'app';
 

@@ -159,6 +159,15 @@ Each step carries `errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail'` in its
 
 `ExecutorError` carries a `retriable` flag (defaults to `true`). When `strategy === 'retry'` and the error has `retriable: false`, the engine skips retry attempts and fails immediately. This prevents pointless retries on HTTP 404, missing credentials, or host-not-allowed errors.
 
+Notable non-retriable error codes from the `external_call` executor:
+
+| Code                    | Meaning                                                         |
+| ----------------------- | --------------------------------------------------------------- |
+| `request_aborted`       | Execution's `AbortSignal` was already triggered before the call |
+| `outbound_rate_limited` | Per-host outbound rate limit exceeded for the target            |
+
+See [`external-calls.md`](./external-calls.md) for the full error code table.
+
 ### Per-step timeout
 
 Every step config supports an optional `timeoutMs` field (on `stepErrorConfigSchema`). When set, the engine wraps the executor call in `Promise.race` against a timeout. Timeout produces a non-retriable `step_timeout` `ExecutorError`.
