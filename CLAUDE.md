@@ -131,6 +131,7 @@ import { logger } from '../../lib/logging'; // ❌
 | Logging       | `logger.info()`, `logger.error()`      | `lib/logging/index.ts`           |
 | Local storage | `useLocalStorage()`                    | `lib/hooks/use-local-storage.ts` |
 | Wizard state  | `useWizard()`                          | `lib/hooks/use-wizard.ts`        |
+| ETag / 304    | `computeETag()`, `checkConditional()`  | `lib/api/etag.ts`                |
 
 ## Skills
 
@@ -216,7 +217,7 @@ The agent reads `.context/testing/` automatically and validates tests pass lint 
 | External Calls          | `.context/orchestration/external-calls.md`           | HTTP executor, outbound rate limits, auth, response caps |
 | Resilience & Errors     | `.context/orchestration/resilience.md`               | Circuit breaker, fallback, budget UX, input guard        |
 | Orchestration Admin API | `.context/orchestration/admin-api.md`                | Agents, capabilities, chat, knowledge, executions        |
-| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`            | Consumer HTTP reference for all 41 routes                |
+| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`            | Consumer HTTP reference for all 65 routes                |
 | SSE Bridge              | `.context/api/sse.md`                                | `sseResponse` helper, framing, sanitization              |
 | Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`          | Admin landing page, data sources, layout                 |
 | Agents List / Pages     | `.context/admin/orchestration-agents.md`             | List, create, edit shells; table, bulk export            |

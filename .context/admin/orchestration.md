@@ -77,55 +77,60 @@ The response is an SSE stream of `ChatEvent` objects (`start`, `content`, `statu
 
 An agent is a configured AI persona: system instructions, model selection, temperature, budget, and attached capabilities. Agents are stored in `AiAgent` and scoped by `userId`. Seeded agents (`pattern-advisor`, `quiz-master`) are marked `isSystem: true` and cannot be deleted or deactivated via the admin API.
 
-- [Agent list & pages](./.context/admin/orchestration-agents.md)
-- [Agent form (5-tab editor)](./.context/admin/agent-form.md)
+- [Agent list & pages](./orchestration-agents.md)
+- [Agent form (5-tab editor)](./agent-form.md)
 
 ### Capabilities
 
 Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Three built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`) and are marked `isSystem: true` — they cannot be deleted or deactivated via the admin API.
 
-- [Capabilities list page](./.context/admin/orchestration-capabilities.md)
-- [How to create capabilities](./.context/admin/orchestration-capabilities-guide.md)
-- [Capability form (4-tab editor)](./.context/admin/capability-form.md)
+- [Capabilities list page](./orchestration-capabilities.md)
+- [How to create capabilities](./orchestration-capabilities-guide.md)
+- [Capability form (4-tab editor)](./capability-form.md)
 
 ### Workflows
 
 Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 12 step types are supported, and 5 built-in templates provide starting points.
 
-- [How to design workflows](./.context/admin/orchestration-workflows-guide.md)
-- [Workflow builder UI](./.context/admin/workflow-builder.md)
+- [How to design workflows](./orchestration-workflows-guide.md)
+- [Workflow builder UI](./workflow-builder.md)
 
 ### Patterns
 
 21 agentic design patterns (routing, chaining, reflection, planning, multi-agent, RAG, etc.) inform how you compose agents and workflows. The Learning UI provides an interactive explorer, advisor chatbot, and quizzes.
 
-- [Learning UI](./.context/admin/orchestration-learn.md)
-- [Solution builder guide](./.context/admin/orchestration-solution-builder.md)
+- [Learning UI](./orchestration-learn.md)
+- [Solution builder guide](./orchestration-solution-builder.md)
 
 ### Knowledge Base
 
 Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with pgvector → semantic search available to agents via the `search_knowledge_base` capability.
 
-- [Knowledge Base UI](./.context/admin/orchestration-knowledge-ui.md)
-- [Knowledge service docs](./.context/orchestration/knowledge.md)
+- [Knowledge Base UI](./orchestration-knowledge-ui.md)
+- [Knowledge service docs](../orchestration/knowledge.md)
 
 ## API Reference
 
-48 endpoints under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
+65 route files under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
 
-| Area          | Endpoints | Purpose                                                         |
-| ------------- | --------- | --------------------------------------------------------------- |
-| Agents        | 10 routes | CRUD, capabilities, instructions history, export/import, budget |
-| Capabilities  | 4 routes  | CRUD, agents-using count                                        |
-| Providers     | 5 routes  | CRUD, test connection, models                                   |
-| Workflows     | 5 routes  | CRUD, validate, execute                                         |
-| Executions    | 2 routes  | Read status, approve paused                                     |
-| Chat          | 1 route   | Streaming chat turn (SSE)                                       |
-| Knowledge     | 6 routes  | Documents, search, seed                                         |
-| Conversations | 4 routes  | List, read, delete, bulk clear                                  |
-| Costs         | 4 routes  | Breakdown, summary, alerts, settings                            |
+| Area          | Endpoints | Purpose                                                                               |
+| ------------- | --------- | ------------------------------------------------------------------------------------- |
+| Agents        | 13 routes | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
+| Capabilities  | 5 routes  | CRUD, agents-using count, execution stats                                             |
+| Providers     | 7 routes  | CRUD, test connection, test model, health, models                                     |
+| Workflows     | 8 routes  | CRUD, validate, dry-run, execute, definition history/revert                           |
+| Executions    | 5 routes  | List, read, approve, cancel, retry-step                                               |
+| Chat          | 1 route   | Streaming chat turn (SSE)                                                             |
+| Knowledge     | 10 routes | Documents, search, seed, embed, graph, retry, patterns                                |
+| Conversations | 4 routes  | List, read, delete, bulk clear                                                        |
+| Costs         | 3 routes  | Breakdown, summary, alerts                                                            |
+| Settings      | 1 route   | Global orchestration settings                                                         |
+| Webhooks      | 2 routes  | CRUD for webhook subscriptions                                                        |
+| Evaluations   | 4 routes  | CRUD, logs, AI completion                                                             |
+| Observability | 1 route   | Dashboard stats                                                                       |
+| Quiz          | 1 route   | Quiz scores                                                                           |
 
-Full reference: [`.context/api/orchestration-endpoints.md`](./.context/api/orchestration-endpoints.md)
+Full reference: [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md)
 
 ## Configuration
 
@@ -133,10 +138,14 @@ Full reference: [`.context/api/orchestration-endpoints.md`](./.context/api/orche
 
 `PATCH /api/v1/admin/orchestration/settings` — singleton row in `AiOrchestrationSettings`.
 
-| Setting                  | Purpose                                                             | Default                           |
-| ------------------------ | ------------------------------------------------------------------- | --------------------------------- |
-| `defaultModels`          | Task → model mapping (`routing`, `chat`, `reasoning`, `embeddings`) | Auto-computed from model registry |
-| `globalMonthlyBudgetUsd` | Hard cap across all agents                                          | `null` (unlimited)                |
+| Setting                    | Purpose                                                                   | Default                           |
+| -------------------------- | ------------------------------------------------------------------------- | --------------------------------- |
+| `defaultModels`            | Task → model mapping (`routing`, `chat`, `reasoning`, `embeddings`)       | Auto-computed from model registry |
+| `globalMonthlyBudgetUsd`   | Hard cap across all agents                                                | `null` (unlimited)                |
+| `searchConfig`             | Knowledge base search tuning (vector weight, keyword weight, etc.)        | `null` (built-in defaults)        |
+| `inputGuardMode`           | Prompt injection detection mode: `log_only`, `warn_and_continue`, `block` | `log_only`                        |
+| `defaultApprovalTimeoutMs` | Default timeout for human-approval steps (ms)                             | `null` (no timeout)               |
+| `approvalDefaultAction`    | Action when approval times out: `deny` or `allow`                         | `deny`                            |
 
 Settings are cached for 30s. The PATCH route invalidates the cache immediately.
 
@@ -156,7 +165,7 @@ Settings are cached for 30s. The PATCH route invalidates the cache immediately.
 - **Input guard**: Log-only prompt injection detection (never blocks)
 - **Chat rate limit**: 20/min per user ID (on top of 30/min per IP admin limiter)
 
-See [`.context/orchestration/resilience.md`](./.context/orchestration/resilience.md) for details.
+See [`.context/orchestration/resilience.md`](../orchestration/resilience.md) for details.
 
 ### Choosing an Embedding Provider
 
@@ -177,13 +186,13 @@ The static registry is at `lib/orchestration/llm/embedding-models.ts` and served
 
 ## Related Documentation
 
-| Topic                      | Path                                                                                                     |
-| -------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Service-level architecture | [`.context/orchestration/overview.md`](./.context/orchestration/overview.md)                             |
-| LLM providers              | [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md)                   |
-| Streaming chat             | [`.context/orchestration/chat.md`](./.context/orchestration/chat.md)                                     |
-| Engine & execution         | [`.context/orchestration/engine.md`](./.context/orchestration/engine.md)                                 |
-| SSE helper                 | [`.context/api/sse.md`](./.context/api/sse.md)                                                           |
-| Solution builder           | [`.context/admin/orchestration-solution-builder.md`](./.context/admin/orchestration-solution-builder.md) |
-| Setup wizard               | [`.context/admin/setup-wizard.md`](./.context/admin/setup-wizard.md)                                     |
-| Observability              | [`.context/admin/orchestration-observability.md`](./.context/admin/orchestration-observability.md)       |
+| Topic                      | Path                                                                                      |
+| -------------------------- | ----------------------------------------------------------------------------------------- |
+| Service-level architecture | [`.context/orchestration/overview.md`](../orchestration/overview.md)                      |
+| LLM providers              | [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md)            |
+| Streaming chat             | [`.context/orchestration/chat.md`](../orchestration/chat.md)                              |
+| Engine & execution         | [`.context/orchestration/engine.md`](../orchestration/engine.md)                          |
+| SSE helper                 | [`.context/api/sse.md`](../api/sse.md)                                                    |
+| Solution builder           | [`.context/admin/orchestration-solution-builder.md`](./orchestration-solution-builder.md) |
+| Setup wizard               | [`.context/admin/setup-wizard.md`](./setup-wizard.md)                                     |
+| Observability              | [`.context/admin/orchestration-observability.md`](./orchestration-observability.md)       |

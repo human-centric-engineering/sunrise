@@ -9,7 +9,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { embedText } from './embedder';
+import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import type { KnowledgeSearchResult, PatternSummary, SearchConfig } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
 

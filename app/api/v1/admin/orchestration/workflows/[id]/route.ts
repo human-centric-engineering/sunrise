@@ -10,6 +10,7 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -79,7 +80,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     }
     const history: WorkflowDefinitionHistoryEntry[] = historyParse.success ? historyParse.data : [];
     history.push({
-      definition: current.workflowDefinition as Record<string, unknown>,
+      definition: z.record(z.string(), z.unknown()).catch({}).parse(current.workflowDefinition),
       changedAt: new Date().toISOString(),
       changedBy: session.user.id,
     });

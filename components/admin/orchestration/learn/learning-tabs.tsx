@@ -13,7 +13,7 @@ import type { PatternSummary } from '@/types/orchestration';
 
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
-import { PatternCardGrid } from './pattern-card-grid';
+import { PatternCardGrid } from '@/components/admin/orchestration/learn/pattern-card-grid';
 
 interface LearningTabsProps {
   patterns: PatternSummary[];

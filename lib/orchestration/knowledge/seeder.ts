@@ -14,7 +14,7 @@ import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { embedBatch } from './embedder';
+import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
 const seedChunkMetadataSchema = z.object({

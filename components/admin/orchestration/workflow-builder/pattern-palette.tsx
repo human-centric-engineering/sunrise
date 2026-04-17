@@ -28,8 +28,8 @@ import {
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
-import { PatternCoverageDialog } from './pattern-coverage-dialog';
-import { PatternLearnMoreDialog } from './pattern-learn-more-dialog';
+import { PatternCoverageDialog } from '@/components/admin/orchestration/workflow-builder/pattern-coverage-dialog';
+import { PatternLearnMoreDialog } from '@/components/admin/orchestration/workflow-builder/pattern-learn-more-dialog';
 
 /** Short descriptions shown under each category heading in the palette. */
 const CATEGORY_HINTS: Record<StepCategory, string> = {

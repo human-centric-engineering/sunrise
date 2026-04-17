@@ -10,9 +10,9 @@ import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import type { AiKnowledgeDocument, OrchestrationSettings } from '@/types/orchestration';
 
-import { CompareProvidersModal } from './compare-providers-modal';
-import { EmbeddingStatusBanner } from './embedding-status-banner';
-import { DocumentUploadZone } from './document-upload-zone';
+import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
+import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
+import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 
 const STATUS_STYLES: Record<
   string,

@@ -54,8 +54,17 @@ import {
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@/types/orchestration';
-import { createContext, mergeStepResult, snapshotContext, type ExecutionContext } from './context';
-import { BudgetExceeded, ExecutorError, PausedForApproval } from './errors';
+import {
+  createContext,
+  mergeStepResult,
+  snapshotContext,
+  type ExecutionContext,
+} from '@/lib/orchestration/engine/context';
+import {
+  BudgetExceeded,
+  ExecutorError,
+  PausedForApproval,
+} from '@/lib/orchestration/engine/errors';
 import {
   approvalRequired,
   budgetWarning,
@@ -65,12 +74,12 @@ import {
   workflowCompleted,
   workflowFailed,
   workflowStarted,
-} from './events';
-import { getExecutor } from './executor-registry';
+} from '@/lib/orchestration/engine/events';
+import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
-import './executors';
+import '@/lib/orchestration/engine/executors';
 
 /** Default retry count for `retry` strategy. */
 const DEFAULT_RETRY_COUNT = 2;

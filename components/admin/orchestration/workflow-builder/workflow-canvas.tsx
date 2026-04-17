@@ -33,9 +33,9 @@ import '@xyflow/react/dist/style.css';
 
 import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 
-import { addNode } from './add-node';
-import { nodeTypes } from './node-types';
-import type { PatternNode } from './workflow-mappers';
+import { addNode } from '@/components/admin/orchestration/workflow-builder/add-node';
+import { nodeTypes } from '@/components/admin/orchestration/workflow-builder/node-types';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export interface WorkflowCanvasProps {
   nodes: PatternNode[];

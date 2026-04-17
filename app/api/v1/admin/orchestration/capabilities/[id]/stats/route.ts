@@ -96,8 +96,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 
   // Aggregate cost log metrics
   const invocations = costLogs.length;
+  const metaSchema = z.record(z.string(), z.unknown()).nullable().catch(null);
   const successCount = costLogs.filter((log) => {
-    const meta = log.metadata as Record<string, unknown> | null;
+    const meta = metaSchema.parse(log.metadata);
     return meta?.success === true;
   }).length;
   const successRate = invocations > 0 ? Math.round((successCount / invocations) * 10000) / 100 : 0;
@@ -120,7 +121,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     const day = log.createdAt.toISOString().slice(0, 10);
     const entry = dailyMap.get(day) ?? { invocations: 0, successes: 0, costUsd: 0 };
     entry.invocations += 1;
-    const meta = log.metadata as Record<string, unknown> | null;
+    const meta = metaSchema.parse(log.metadata);
     if (meta?.success === true) entry.successes += 1;
     entry.costUsd += log.totalCostUsd;
     dailyMap.set(day, entry);

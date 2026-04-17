@@ -15,7 +15,7 @@
 
 import { logger } from '@/lib/logging';
 import type { LlmMessage, LlmRole } from '@/lib/orchestration/llm/types';
-import { MAX_HISTORY_MESSAGES } from './types';
+import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
 
 export interface HistoryRow {
   role: string;

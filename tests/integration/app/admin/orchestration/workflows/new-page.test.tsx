@@ -54,6 +54,11 @@ vi.mock('@xyflow/react', async () => {
   };
 });
 
+vi.mock('@/hooks/use-theme', () => ({
+  useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
+  ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 // ─── Other mocks ──────────────────────────────────────────────────────────────
 
 vi.mock('@/lib/api/server-fetch', () => ({

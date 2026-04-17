@@ -39,7 +39,7 @@ import {
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
-import type { PatternNode } from './workflow-mappers';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 import {
   ChainEditor,
   EvaluateEditor,
@@ -54,7 +54,7 @@ import {
   RouteEditor,
   ToolCallEditor,
   type CapabilityOption,
-} from './block-editors';
+} from '@/components/admin/orchestration/workflow-builder/block-editors';
 
 export interface BlockConfigPanelProps {
   node: PatternNode;

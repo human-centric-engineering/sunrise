@@ -19,56 +19,72 @@ Validation schemas for every request body / query live in `lib/validations/orche
 
 ## Quick reference
 
-| Endpoint                           | Methods            | Purpose                                                 | Session |
-| ---------------------------------- | ------------------ | ------------------------------------------------------- | ------- |
-| `/agents`                          | GET, POST          | List / create agents                                    | 3.1     |
-| `/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.1     |
-| `/agents/:id/capabilities`         | POST               | Attach capability                                       | 3.1     |
-| `/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Update / detach pivot row                               | 3.1     |
-| `/agents/:id/instructions-history` | GET                | Read `systemInstructions` audit trail                   | 3.1     |
-| `/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions`               | 3.1     |
-| `/agents/export`                   | POST               | Export selected agents as a bundle                      | 3.1     |
-| `/agents/import`                   | POST               | Import an agent bundle                                  | 3.1     |
-| `/capabilities`                    | GET, POST          | List / create capabilities                              | 3.1     |
-| `/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.1     |
-| `/providers`                       | GET, POST          | List / create LLM provider configs                      | 3.2     |
-| `/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
-| `/providers/:id/test`              | POST               | Live connection test                                    | 3.2     |
-| `/providers/:id/models`            | GET                | Provider-reported models                                | 3.2     |
-| `/models`                          | GET                | Aggregated model registry                               | 3.2     |
-| `/workflows`                       | GET, POST          | List / create workflows                                 | 3.2     |
-| `/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
-| `/workflows/:id/validate`          | POST               | DAG validation                                          | 3.2     |
-| `/workflows/:id/execute`           | POST               | Run workflow _(501 stub — Session 5.2)_                 | 3.2     |
-| `/executions/:id`                  | GET                | Read execution _(501 stub — Session 5.2)_               | 3.2     |
-| `/executions/:id/approve`          | POST               | Approve paused execution _(501 stub — Session 5.2)_     | 3.2     |
-| `/executions/:id/retry-step`       | POST               | Retry from a failed step                                | 7.0     |
-| `/chat/stream`                     | POST               | Streaming chat turn (SSE)                               | 3.3     |
-| `/knowledge/search`                | POST               | Hybrid vector + keyword search                          | 3.3     |
-| `/knowledge/patterns/:number`      | GET                | Fetch all chunks for a single design pattern            | 3.3     |
-| `/knowledge/documents`             | GET, POST          | List / upload document (multipart)                      | 3.3     |
-| `/knowledge/documents/:id`         | GET, DELETE        | Read / delete document                                  | 3.3     |
-| `/knowledge/documents/:id/rechunk` | POST               | Rechunk + re-embed                                      | 3.3     |
-| `/knowledge/seed`                  | POST               | Seed chunks (no embeddings) for design patterns         | 3.3     |
-| `/knowledge/embed`                 | POST               | Generate embeddings for unembedded chunks               | 3.3     |
-| `/knowledge/embedding-status`      | GET                | Embedding coverage stats + provider availability        | 3.3     |
-| `/embedding-models`                | GET                | Static registry of embedding models (filterable)        | 7.0     |
-| `/conversations`                   | GET                | List caller's conversations                             | 3.3     |
-| `/conversations/:id`               | GET, DELETE        | Read / delete one of the caller's conversations         | 3.3     |
-| `/conversations/:id/messages`      | GET                | Read messages of one conversation                       | 3.3     |
-| `/conversations/clear`             | POST               | Bulk-delete by filter (at least one filter required)    | 3.3     |
-| `/costs`                           | GET                | Breakdown by day / agent / model                        | 3.4     |
-| `/costs/summary`                   | GET                | Today / week / month + per-agent + trend                | 3.4     |
-| `/costs/alerts`                    | GET                | Agents ≥ 80% of their budget                            | 3.4     |
-| `/settings`                        | GET, PATCH         | Task-type defaults + global monthly budget cap          | 4.4     |
-| `/agents/:id/budget`               | GET                | Read-only budget status                                 | 3.4     |
-| `/evaluations`                     | GET, POST          | List caller's sessions / create                         | 3.4     |
-| `/evaluations/:id`                 | GET, PATCH         | Read / update                                           | 3.4     |
-| `/evaluations/:id/logs`            | GET                | Read log events                                         | 3.4     |
-| `/evaluations/:id/complete`        | POST               | Run AI analysis and flip to `completed`                 | 3.4     |
-| `/quiz-scores`                     | GET, POST          | List / save quiz scores (stored as evaluation sessions) | 6       |
+| Endpoint                            | Methods            | Purpose                                                 | Session |
+| ----------------------------------- | ------------------ | ------------------------------------------------------- | ------- |
+| `/agents`                           | GET, POST          | List / create agents                                    | 3.1     |
+| `/agents/:id`                       | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.1     |
+| `/agents/:id/capabilities`          | POST               | Attach capability                                       | 3.1     |
+| `/agents/:id/capabilities/:capId`   | PATCH, DELETE      | Update / detach pivot row                               | 3.1     |
+| `/agents/:id/instructions-history`  | GET                | Read `systemInstructions` audit trail                   | 3.1     |
+| `/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions`               | 3.1     |
+| `/agents/:id/clone`                 | POST               | Deep-clone agent with capability bindings               | 5.1     |
+| `/agents/:id/capabilities/usage`    | GET                | Capability rate limit usage per slug (last 60s)         | 5.1     |
+| `/agents/bulk`                      | POST               | Bulk activate/deactivate/delete agents                  | 5.1     |
+| `/agents/compare`                   | GET                | Compare two agents side-by-side                         | 5.1     |
+| `/agents/export`                    | POST               | Export selected agents as a bundle                      | 3.1     |
+| `/agents/import`                    | POST               | Import an agent bundle                                  | 3.1     |
+| `/capabilities`                     | GET, POST          | List / create capabilities                              | 3.1     |
+| `/capabilities/:id`                 | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.1     |
+| `/capabilities/:id/stats`           | GET                | Capability execution metrics + daily breakdown          | 5.1     |
+| `/providers`                        | GET, POST          | List / create LLM provider configs                      | 3.2     |
+| `/providers/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
+| `/providers/:id/test`               | POST               | Live connection test                                    | 3.2     |
+| `/providers/:id/test-model`         | POST               | Test a specific model via provider                      | 5.1     |
+| `/providers/:id/health`             | GET, POST          | Read / reset circuit breaker state                      | 5.1     |
+| `/providers/:id/models`             | GET                | Provider-reported models                                | 3.2     |
+| `/models`                           | GET                | Aggregated model registry                               | 3.2     |
+| `/workflows`                        | GET, POST          | List / create workflows                                 | 3.2     |
+| `/workflows/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
+| `/workflows/:id/validate`           | POST               | DAG validation                                          | 3.2     |
+| `/workflows/:id/dry-run`            | POST               | Validate + check inputData against template vars        | 5.1     |
+| `/workflows/:id/execute`            | POST               | Run workflow (SSE `text/event-stream`)                  | 3.2     |
+| `/workflows/:id/definition-history` | GET                | Workflow definition version history                     | 5.1     |
+| `/workflows/:id/definition-revert`  | POST               | Revert to previous definition version                   | 5.1     |
+| `/executions/:id`                   | GET                | Read execution + parsed trace                           | 3.2     |
+| `/executions/:id/approve`           | POST               | Approve paused execution                                | 3.2     |
+| `/executions/:id/cancel`            | POST               | Cancel a running/paused execution                       | 5.1     |
+| `/executions/:id/retry-step`        | POST               | Retry from a failed step                                | 7.0     |
+| `/chat/stream`                      | POST               | Streaming chat turn (SSE)                               | 3.3     |
+| `/knowledge/search`                 | POST               | Hybrid vector + keyword search                          | 3.3     |
+| `/knowledge/patterns/:number`       | GET                | Fetch all chunks for a single design pattern            | 3.3     |
+| `/knowledge/documents`              | GET, POST          | List / upload document (multipart)                      | 3.3     |
+| `/knowledge/documents/:id`          | GET, DELETE        | Read / delete document                                  | 3.3     |
+| `/knowledge/documents/:id/rechunk`  | POST               | Rechunk + re-embed                                      | 3.3     |
+| `/knowledge/seed`                   | POST               | Seed chunks (no embeddings) for design patterns         | 3.3     |
+| `/knowledge/embed`                  | POST               | Generate embeddings for unembedded chunks               | 3.3     |
+| `/knowledge/documents/:id/retry`    | POST               | Retry failed document ingestion                         | 5.1     |
+| `/knowledge/graph`                  | GET                | Knowledge graph data (nodes + links)                    | 5.1     |
+| `/knowledge/embedding-status`       | GET                | Embedding coverage stats + provider availability        | 3.3     |
+| `/embedding-models`                 | GET                | Static registry of embedding models (filterable)        | 7.0     |
+| `/conversations`                    | GET                | List caller's conversations                             | 3.3     |
+| `/conversations/:id`                | GET, DELETE        | Read / delete one of the caller's conversations         | 3.3     |
+| `/conversations/:id/messages`       | GET                | Read messages of one conversation                       | 3.3     |
+| `/conversations/clear`              | POST               | Bulk-delete by filter (at least one filter required)    | 3.3     |
+| `/costs`                            | GET                | Breakdown by day / agent / model                        | 3.4     |
+| `/costs/summary`                    | GET                | Today / week / month + per-agent + trend                | 3.4     |
+| `/costs/alerts`                     | GET                | Agents ≥ 80% of their budget                            | 3.4     |
+| `/settings`                         | GET, PATCH         | Task-type defaults + global monthly budget cap          | 4.4     |
+| `/agents/:id/budget`                | GET                | Read-only budget status                                 | 3.4     |
+| `/evaluations`                      | GET, POST          | List caller's sessions / create                         | 3.4     |
+| `/evaluations/:id`                  | GET, PATCH         | Read / update                                           | 3.4     |
+| `/evaluations/:id/logs`             | GET                | Read log events                                         | 3.4     |
+| `/evaluations/:id/complete`         | POST               | Run AI analysis and flip to `completed`                 | 3.4     |
+| `/quiz-scores`                      | GET, POST          | List / save quiz scores (stored as evaluation sessions) | 6       |
+| `/webhooks`                         | GET, POST          | List / create webhook subscriptions                     | 5.1     |
+| `/webhooks/:id`                     | GET, PATCH, DELETE | Get / update / delete webhook subscription              | 5.1     |
+| `/observability/dashboard-stats`    | GET                | Aggregated observability metrics                        | 5.1     |
 
-43 endpoints. For architecture detail see `.context/orchestration/admin-api.md`.
+65 route files. For architecture detail see `.context/orchestration/admin-api.md`.
 
 ---
 
@@ -117,6 +133,30 @@ Returns the full audit array. Malformed rows are logged server-side and skipped 
 
 Body: `{ index: number }` — revert to a previous history entry. The current value is pushed onto history before the overwrite, so the revert itself is also recoverable.
 
+### `POST /agents/:id/clone`
+
+Deep-clones an agent including all capability bindings in a single transaction. The new agent gets a fresh (empty) `systemInstructionsHistory` and the session user as `createdBy`.
+
+Optional body: `{ name?: string, slug?: string }`. Defaults: name = `"{source.name} (Copy)"`, slug = `"{source.slug}-copy"`. On slug collision, retries with `-copy-2` through `-copy-5`. Returns `201` on success, `409` if all slug variants are taken.
+
+### `POST /agents/bulk`
+
+Bulk agent operations. Body: `{ action: 'activate' | 'deactivate' | 'delete', agentIds: string[] }`. System agents (`isSystem = true`) are excluded from all mutations. Delete is a soft delete (sets `isActive = false`).
+
+Response: `{ action, requested, affected }` — `affected` may be less than `requested` when system agents are filtered out.
+
+### `GET /agents/compare`
+
+Compare two agents side-by-side. Query: `agentIds=<cuid>,<cuid>` (exactly 2 required).
+
+Returns `{ agents: [agentA, agentB] }` where each entry includes the agent config plus aggregated stats: `totalCostUsd`, `totalInputTokens`, `totalOutputTokens`, `llmCallCount`, `conversationCount`, `capabilityCount`, `evaluations: { total, completed }`.
+
+### `GET /agents/:id/capabilities/usage`
+
+Returns per-capability call counts within the last 60-second sliding window. Queries `AiCostLog` where `operation = 'tool_call'`, grouped by `metadata->>'slug'`.
+
+Response: `{ usage: { "search_knowledge_base": 12, "get_pattern_detail": 3 } }`
+
 ### `POST /agents/export` / `POST /agents/import`
 
 Versioned bundle format. Import runs in a single transaction with `conflictMode: 'skip' | 'overwrite'`. Capabilities are embedded by slug for cross-environment portability.
@@ -139,6 +179,14 @@ Create. Body validated by `createCapabilitySchema` — `functionDefinition` must
 
 Standard CRUD. `DELETE` is a soft delete. Dispatcher cache is cleared on every mutation.
 
+### `GET /capabilities/:id/stats`
+
+Aggregates execution metrics for a capability over a configurable period. Query: `period=7d|30d|90d` (default `30d`).
+
+Response: `{ capabilityId, capabilitySlug, period, invocations, successRate, avgLatencyMs, p50LatencyMs, p95LatencyMs, totalCostUsd, dailyBreakdown: [{ date, invocations, successRate, costUsd }] }`.
+
+Latency percentiles are computed from `AiEvaluationLog` entries with `executionTimeMs`. Invocation counts and cost come from `AiCostLog` where `operation = 'tool_call'`.
+
 ---
 
 ## Providers
@@ -158,6 +206,18 @@ Standard CRUD. `PATCH` merges the update and re-runs the SSRF guard in `buildPro
 ### `POST /providers/:id/test`
 
 Runs a live `testConnection()`. The response **strips raw SDK / fetch error messages** — success returns the reported models; failure returns a generic `connection_failed` error. The real error is logged server-side only to prevent using the endpoint as a blind-SSRF port scanner.
+
+### `POST /providers/:id/test-model`
+
+Sends a trivial prompt (`"Say hello."`, maxTokens: 10, temperature: 0) to a specific provider + model combination and reports round-trip latency. Body: `{ model: string }`.
+
+Response: `{ ok: true, latencyMs: 246, model: "claude-sonnet-4-6" }` on success. On model failure: `{ ok: false, latencyMs: null, model }` at HTTP 200 (same convention as `/test`). Raw SDK errors are logged server-side but never forwarded.
+
+### `GET / POST /providers/:id/health`
+
+Circuit breaker status for a provider. `GET` returns `{ providerId, slug, state, failureCount, openedAt, config }`. When no breaker exists yet, returns a default `closed` state.
+
+`POST` resets the breaker to closed (useful after a provider outage is resolved). Rate-limited by `adminLimiter`.
 
 ### `GET /providers/:id/models`
 
@@ -183,9 +243,43 @@ Standard CRUD.
 
 Runs the pure-logic DAG validator from `lib/orchestration/workflows/validator.ts`. Checks duplicate ids, entry existence, unknown targets, reachability (BFS), cycle detection (DFS gray/black), and per-type config requirements. Returns `{ valid: true }` or `{ valid: false, errors: [{ code, message, path }] }`. Error codes are stable — render by `code`, never `message`.
 
-### `POST /workflows/:id/execute`, `GET /executions/:id`, `POST /executions/:id/approve`
+### `POST /workflows/:id/dry-run`
 
-**501 stubs** until Session 5.2 ships the execution engine. Full route handlers exist — they validate inputs, resolve the workflow / execution, and return `501 NOT_IMPLEMENTED`. The contract is locked for Phase 4 UI work.
+Validates a workflow without executing it. Runs structural + semantic validation, then extracts `{{input.key}}` template variables and checks if `inputData` covers them. Body: `{ inputData: Record<string, unknown> }`.
+
+Response: `{ ok, errors, warnings, extractedVariables }`. Warnings (uncovered template variables) are informational and do not set `ok: false`.
+
+### `POST /workflows/:id/execute`
+
+Runs a workflow as a live SSE `text/event-stream`. Body: `{ inputData, budgetLimitUsd? }`. See [`.context/orchestration/engine.md`](../orchestration/engine.md) for event types and lifecycle. Optional query param `?resumeFromExecutionId=<cuid>` resumes a paused execution.
+
+### `GET /workflows/:id/definition-history`
+
+Returns the workflow's current `workflowDefinition` plus the `workflowDefinitionHistory` array (newest first). Each entry carries an explicit `versionIndex` field referencing the raw (oldest-to-newest) DB array position -- the value `/definition-revert` expects.
+
+Response: `{ workflowId, slug, current, history: [{ definition, changedAt, changedBy, versionIndex }] }`.
+
+### `POST /workflows/:id/definition-revert`
+
+Replaces the current `workflowDefinition` with the value at `workflowDefinitionHistory[versionIndex]`. The current value is pushed onto history before the swap so the revert itself is recoverable.
+
+Body: `{ versionIndex: number }`. Returns the updated workflow.
+
+### `GET /executions/:id`
+
+Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `session.user.id` — cross-user returns 404.
+
+### `POST /executions/:id/approve`
+
+Approves a `paused_for_approval` execution. Body: `{ approved: true }`. The execution resumes from the approval step. Non-paused executions return 400.
+
+### `POST /executions/:id/cancel`
+
+Cancels a `running` or `paused_for_approval` execution. Sets status to `cancelled` and records `completedAt`. The engine polls execution status between steps and stops when it sees `cancelled`.
+
+Scoped to `session.user.id` — cross-user returns 404. Non-cancellable statuses return 400.
+
+Response: `{ success: true, executionId }`
 
 ### `POST /executions/:id/retry-step`
 
@@ -376,6 +470,18 @@ Knowledge documents are **global, not per-user**. `uploadedBy` is recorded for a
 
 **Phase 2** of the two-phase seeder. Finds all chunks where `embedding IS NULL`, batches them through the configured embedding provider, and writes vectors back. Returns `{ processed, total, alreadyEmbedded }`. Can be called repeatedly — only processes chunks that still need embeddings. Requires an active embedding provider (OpenAI API key or local provider like Ollama).
 
+### `POST /knowledge/documents/:id/retry`
+
+Retries a failed document ingestion. Only works on documents with `status: 'failed'`. Resets the document to `pending`, clears the error, and re-runs the chunker pipeline via `rechunkDocument()`.
+
+Non-failed documents return `409 CONFLICT`.
+
+### `GET /knowledge/graph`
+
+Builds a hierarchical node/link graph for the knowledge base: central KB node, document nodes, and chunk nodes (if total chunks < 500). Query: `scope=system|app` (optional), `view=structure|embedded` (default: `structure`).
+
+Response: `{ nodes, links, categories, stats: { documentCount, completedCount, chunkCount, totalTokens } }`. Each node has `id`, `name`, `type`, `value`, `category`, `metadata`. The `embedded` view filters to documents/chunks with embeddings.
+
 ### `GET /knowledge/embedding-status`
 
 Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
@@ -408,7 +514,7 @@ Used by the "Compare embedding providers" modal on the Knowledge Base page.
 
 ### `GET /conversations`
 
-Paginated list of the caller's conversations. Query: `page`, `limit`, `agentId`, `isActive`, `q` (`listConversationsQuerySchema`).
+Paginated list of the caller's conversations. Query: `page`, `limit`, `agentId`, `isActive`, `q`, `messageSearch` (`listConversationsQuerySchema`). `messageSearch` filters to conversations containing at least one message whose `content` matches the search string (case-insensitive).
 
 ### `DELETE /conversations/:id`
 
@@ -593,6 +699,40 @@ Response (201): `{ success: true, data: { id, correct, total } }`
 | 401    | Unauthenticated        |
 | 403    | Not admin              |
 | 429    | Rate limit (POST only) |
+
+---
+
+## Webhooks
+
+**Scoped to `session.user.id`.** Admins manage their own webhook subscriptions.
+
+### `GET /webhooks`
+
+Paginated list of the caller's webhook subscriptions. Query: `page`, `limit`, `isActive`.
+
+### `POST /webhooks`
+
+Create a webhook subscription. Body: `{ url: string, secret?: string, events: string[], description?: string, isActive?: boolean }`. Returns `201` with the created subscription (secret is never returned in responses).
+
+### `GET / PATCH / DELETE /webhooks/:id`
+
+Standard CRUD for a single webhook subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ url?, events?, description?, isActive? }`. `DELETE` is a hard delete.
+
+---
+
+## Observability
+
+### `GET /observability/dashboard-stats`
+
+Aggregated metrics for the observability dashboard. Returns in a single batched query:
+
+- `activeConversations` — count of active conversations for the caller
+- `todayRequests` — cost log entries since UTC midnight
+- `errorRate` — failed / total executions in last 24h (caller-scoped)
+- `recentErrors` — last 5 failed executions with `id`, `errorMessage`, `workflowId`, `createdAt`
+- `topCapabilities` — top 10 capabilities by invocation count: `[{ slug, count }]`
+
+Supports `ETag` / `If-None-Match` for conditional GET (returns 304 when unchanged).
 
 ---
 

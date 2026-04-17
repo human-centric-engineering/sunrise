@@ -16,7 +16,7 @@ import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolve
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
-import type { HistoryRow } from './message-builder';
+import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
 
 const SUMMARY_SYSTEM_PROMPT = `You are a conversation summarizer. Given the conversation history below, produce a concise summary that preserves:
 - The user's original problem or request
