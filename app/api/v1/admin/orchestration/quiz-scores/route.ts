@@ -9,6 +9,7 @@
  * evaluation model rather than adding a new table.
  */
 
+import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -18,6 +19,10 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { saveQuizScoreSchema } from '@/lib/validations/orchestration';
+
+const quizMetadataSchema = z.object({
+  quizScore: z.object({ correct: z.number(), total: z.number() }).optional(),
+});
 
 const QUIZ_MASTER_SLUG = 'quiz-master';
 
@@ -40,7 +45,7 @@ export const GET = withAdminAuth(async (request, session) => {
   });
 
   const scores = sessions.map((s) => {
-    const meta = s.metadata as { quizScore?: { correct: number; total: number } };
+    const meta = quizMetadataSchema.catch({ quizScore: undefined }).parse(s.metadata);
     return {
       id: s.id,
       correct: meta.quizScore?.correct ?? 0,

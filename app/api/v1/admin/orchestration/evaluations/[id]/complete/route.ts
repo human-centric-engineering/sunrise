@@ -42,8 +42,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
   const sessionId = parsed.data;
 
-  // Tolerate an empty body. `completeEvaluationBodySchema` accepts `{}`.
-  await validateRequestBody(request, completeEvaluationBodySchema).catch(() => ({}));
+  // Tolerate an empty or missing body — the schema already accepts `{}`.
+  // Clone the request so we can safely attempt to read the body; if the
+  // body is empty or unparseable JSON, fall through with defaults.
+  const cloned = request.clone();
+  const rawText = await cloned.text();
+  if (rawText.trim().length > 0) {
+    await validateRequestBody(request, completeEvaluationBodySchema);
+  }
 
   const result = await completeEvaluationSession({
     sessionId,
