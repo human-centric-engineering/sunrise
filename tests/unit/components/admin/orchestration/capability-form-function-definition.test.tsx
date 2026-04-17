@@ -170,7 +170,7 @@ describe('CapabilityForm — Function Definition tab', () => {
       await user.type(nameInput, 'test_param');
 
       // Switch to JSON mode
-      await user.click(screen.getByRole('button', { name: /^json$/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
 
       await waitFor(() => {
         const textarea = screen.getByRole('textbox', { name: /json editor/i });
@@ -185,7 +185,7 @@ describe('CapabilityForm — Function Definition tab', () => {
       const user = userEvent.setup();
       await openFunctionTab(user);
 
-      await user.click(screen.getByRole('button', { name: /^json$/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
       await user.click(screen.getByRole('button', { name: /^builder$/i }));
 
       await waitFor(() => {
@@ -201,7 +201,7 @@ describe('CapabilityForm — Function Definition tab', () => {
       const user = userEvent.setup();
       await openFunctionTab(user);
 
-      await user.click(screen.getByRole('button', { name: /^json$/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
 
       const textarea = screen.getByRole('textbox', { name: /json editor/i });
       // Use fireEvent.change because userEvent.type treats { as a keyboard modifier
@@ -215,11 +215,60 @@ describe('CapabilityForm — Function Definition tab', () => {
       });
     });
 
+    it('JSON with integer type and extra keys (minLength) allows switching to Builder', async () => {
+      const user = userEvent.setup();
+      await openFunctionTab(user);
+
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
+
+      const schemaWithExtras = JSON.stringify({
+        name: 'search_knowledge_base',
+        description: 'Search the knowledge base.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query.',
+              minLength: 1,
+              maxLength: 500,
+            },
+            limit: {
+              type: 'integer',
+              description: 'Max results.',
+              minimum: 1,
+              maximum: 50,
+            },
+          },
+          required: ['query'],
+        },
+      });
+
+      const textarea = screen.getByRole('textbox', { name: /json editor/i });
+      fireEvent.change(textarea, { target: { value: schemaWithExtras } });
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // Should be able to switch back to Builder
+      await user.click(screen.getByRole('button', { name: /^builder$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add parameter/i })).toBeInTheDocument();
+      });
+
+      // Banner should NOT be shown
+      expect(
+        screen.queryByText(/schema has features the builder can't represent/i)
+      ).not.toBeInTheDocument();
+    });
+
     it('JSON with unsupported shape (enum) sets visualDisabled banner when switching back', async () => {
       const user = userEvent.setup();
       await openFunctionTab(user);
 
-      await user.click(screen.getByRole('button', { name: /^json$/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
 
       const complexSchema = JSON.stringify({
         name: 'test_fn',
