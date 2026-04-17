@@ -346,6 +346,14 @@ export default async function ProductsPage() {
 - Select only needed fields (`select: { id: true, name: true }`)
 - Eager loading with `include` to prevent N+1 queries
 
+### Avoid N+1 Client-Side Fetches
+
+List/table pages must **not** fire per-row API calls to fetch supplementary data (counts, budgets, related items). Instead, enrich the list API endpoint to return that data inline — via Prisma `include`, `_count`, or batch aggregates (e.g., `groupBy`). This keeps the page to a single HTTP request regardless of row count.
+
+**Anti-pattern (removed in e37d3b1):** `useEffect` that maps over rows and calls `fetch(/api/.../[id]/budget)` per row — generated up to 128 requests per page view.
+
+**Correct pattern:** The list endpoint returns enriched items (e.g., `AiAgentListItem` with `_count` and `_budget` inline). The component receives all data it needs from the initial fetch.
+
 ## Security Architecture
 
 Security is implemented as defense-in-depth across multiple layers. See [Security Overview](../security/overview.md) for details on:
