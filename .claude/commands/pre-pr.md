@@ -19,7 +19,16 @@ If either command fails, report the failures and stop. Do not proceed to the ant
 
 ### Step 2: Identify changed files
 
-Run `git diff --name-only main...HEAD` (no file filter) to get the complete list of all files changed on this branch.
+First, resolve the correct base ref. The local `main` branch may be stale or polluted with feature-branch commits, so **always use the remote tracking ref**:
+
+```bash
+git fetch origin main --quiet
+BASE=$(git merge-base origin/main HEAD)
+```
+
+Use `$BASE` as the comparison point for all git diff commands in subsequent steps. Report the resolved base commit (short hash) in the output so reviewers can verify.
+
+Run `git diff --name-only $BASE...HEAD` (no file filter) to get the complete list of all files changed on this branch.
 
 From that list, build two separate sets:
 
@@ -48,7 +57,7 @@ Flag `console.log`, `console.warn`, `console.error`, or `console.info` in change
 For any new `page.tsx` files added under `app/`, check that the same route segment has an `error.tsx` and `loading.tsx`. Flag missing boundaries. Route groups that share a parent `error.tsx`/`loading.tsx` are fine — check parent directories.
 
 **3f. New code files missing tests**
-For any new TypeScript files added on this branch (identified via `git diff --name-status main...HEAD` — look for `A` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag new files that have no corresponding test. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
+For any new TypeScript files added on this branch (identified via `git diff --name-status $BASE...HEAD` — look for `A` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag new files that have no corresponding test. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
 
 **3g. Direct data imports bypassing the API**
 Flag non-type imports in pages, layouts, and components that pull data or constants from `lib/` modules when that data is seeded into the database and should be fetched via the API. The key indicator is importing runtime values (not just types) from modules whose data is also available through an API endpoint or is seeded into the database — e.g., importing `BUILTIN_WORKFLOW_TEMPLATES` from `@/lib/orchestration/workflows/templates` instead of fetching templates from the API. Type-only imports (`import type { ... }`) are fine — the concern is runtime coupling to data that should come through the API boundary. This enforces the same API-first separation as 3h below: components should fetch data from the API, not import it directly from server-side modules.
