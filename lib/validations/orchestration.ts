@@ -1414,6 +1414,20 @@ export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   maxResponseBytes: z.number().int().positive().optional(),
 });
 
+// ---------- Message Metadata (Prisma JSON rehydration) ----------
+
+export const messageMetadataSchema = z.object({
+  tokenUsage: z
+    .object({
+      input: z.number().optional(),
+      output: z.number().optional(),
+    })
+    .optional(),
+  modelUsed: z.string().optional(),
+  latencyMs: z.number().optional(),
+  costUsd: z.number().optional(),
+});
+
 // ============================================================================
 // Inferred Types
 // ============================================================================
