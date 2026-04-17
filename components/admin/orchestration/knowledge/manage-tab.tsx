@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, RefreshCw, Sprout } from 'lucide-react';
+import { ChevronDown, Cpu, RefreshCw, Sprout, Tag } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,117 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
+interface MetaTagEntry {
+  value: string;
+  chunkCount: number;
+  documentCount: number;
+}
+
+interface ScopedMetaTags {
+  categories: MetaTagEntry[];
+  keywords: MetaTagEntry[];
+}
+
+interface MetaTagSummary {
+  app: ScopedMetaTags;
+  system: ScopedMetaTags;
+}
+
+const KEYWORD_COLLAPSED_LIMIT = 30;
+
+function MetaTagSection({
+  title,
+  scope,
+  defaultOpen,
+  showAllKeywords,
+  onToggleKeywords,
+}: {
+  title: string;
+  scope: ScopedMetaTags;
+  defaultOpen: boolean;
+  showAllKeywords: boolean;
+  onToggleKeywords: () => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const hasCats = scope.categories.length > 0;
+  const hasKws = scope.keywords.length > 0;
+  const visibleKeywords = showAllKeywords
+    ? scope.keywords
+    : scope.keywords.slice(0, KEYWORD_COLLAPSED_LIMIT);
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1 text-left text-xs font-medium"
+      >
+        <ChevronDown
+          className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`}
+        />
+        {title}
+        <span className="text-muted-foreground font-normal">
+          ({scope.categories.length} categories, {scope.keywords.length} keywords)
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 pl-5">
+          {hasCats && (
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-xs font-medium">
+                Categories ({scope.categories.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {scope.categories.map((tag) => (
+                  <Tip
+                    key={tag.value}
+                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
+                  >
+                    <Badge variant="secondary" className="text-xs">
+                      {tag.value}
+                      <span className="text-muted-foreground ml-1">({tag.chunkCount})</span>
+                    </Badge>
+                  </Tip>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasKws && (
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-xs font-medium">
+                Keywords ({scope.keywords.length})
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {visibleKeywords.map((tag) => (
+                  <Tip
+                    key={tag.value}
+                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
+                  >
+                    <Badge variant="outline" className="text-xs">
+                      {tag.value}
+                    </Badge>
+                  </Tip>
+                ))}
+              </div>
+              {scope.keywords.length > KEYWORD_COLLAPSED_LIMIT && (
+                <button
+                  type="button"
+                  onClick={onToggleKeywords}
+                  className="text-primary text-xs hover:underline"
+                >
+                  {showAllKeywords ? 'Show less' : `Show all ${scope.keywords.length} keywords`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ManageTabProps {
   documents: AiKnowledgeDocument[];
   onRefresh: () => void;
@@ -45,6 +156,20 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
+  const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
+  const [showAllAppKeywords, setShowAllAppKeywords] = useState(false);
+  const [showAllSystemKeywords, setShowAllSystemKeywords] = useState(false);
+
+  const fetchMetaTags = useCallback(async () => {
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: MetaTagSummary };
+      if (body.data?.app && body.data?.system) setMetaTags(body.data);
+    } catch {
+      // Supplementary — ignore failures
+    }
+  }, []);
 
   const fetchEmbeddingStatus = useCallback(async () => {
     try {
@@ -71,7 +196,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   useEffect(() => {
     void fetchEmbeddingStatus();
     void fetchLastSeededAt();
-  }, [fetchEmbeddingStatus, fetchLastSeededAt]);
+    void fetchMetaTags();
+  }, [fetchEmbeddingStatus, fetchLastSeededAt, fetchMetaTags]);
 
   const handleSeed = useCallback(async () => {
     setSeeding(true);
@@ -133,6 +259,12 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
+
+  const hasAppTags =
+    metaTags !== null && (metaTags.app.categories.length > 0 || metaTags.app.keywords.length > 0);
+  const hasSystemTags =
+    metaTags !== null &&
+    (metaTags.system.categories.length > 0 || metaTags.system.keywords.length > 0);
 
   return (
     <div className="space-y-8">
@@ -246,7 +378,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             <FieldHelp
               title="Generate Embeddings"
               ariaLabel="What does Generate Embeddings do?"
-              contentClassName="w-80"
+              contentClassName="w-80 max-h-80 overflow-y-auto"
             >
               <p>
                 Sends each unembedded chunk to the configured embedding model to generate a vector
@@ -315,6 +447,69 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
 
       <DocumentUploadZone onUploadComplete={onRefresh} />
 
+      {/* Meta-tags in use */}
+      {metaTags && (hasAppTags || hasSystemTags) && (
+        <div className="space-y-3 rounded-lg border p-4">
+          <div className="flex items-center gap-1.5">
+            <Tag className="text-muted-foreground h-4 w-4" />
+            <h3 className="text-sm font-medium">Meta-tags in use</h3>
+            <FieldHelp
+              title="Meta-tags in use"
+              ariaLabel="About meta-tags"
+              contentClassName="w-80 max-h-80 overflow-y-auto"
+            >
+              <p>
+                This panel shows all category and keyword values found across your knowledge base
+                chunks, separated by scope. Use it to check for consistency before uploading new
+                documents.
+              </p>
+              <p className="mt-2">
+                <strong>App knowledge</strong> contains your uploaded documents.{' '}
+                <strong>System knowledge</strong> contains the built-in Agentic Design Patterns
+                (read-only).
+              </p>
+              <p className="mt-2">
+                <strong>Categories</strong> are best kept to a small, consistent set (5–15 values).
+                Agents can be configured to only search specific categories, so inconsistent naming
+                (e.g. &quot;sales&quot; vs &quot;Sales&quot; vs &quot;selling&quot;) means some
+                content won&apos;t be found.
+              </p>
+              <p className="mt-2">
+                <strong>Keywords</strong> are more forgiving — they boost search relevance
+                additively, so having many unique keywords is fine. Duplicates or near-duplicates
+                are less harmful here.
+              </p>
+              <p className="mt-2">
+                Tags are completely <strong>free-form</strong> — you can use any values. But the
+                trade-off is that there&apos;s no automatic normalisation. &quot;Sales&quot; and
+                &quot;sales&quot; are treated as different values. Agree on naming conventions
+                before bulk uploading.
+              </p>
+            </FieldHelp>
+          </div>
+
+          {hasAppTags && (
+            <MetaTagSection
+              title="App knowledge"
+              scope={metaTags.app}
+              defaultOpen
+              showAllKeywords={showAllAppKeywords}
+              onToggleKeywords={() => setShowAllAppKeywords((v) => !v)}
+            />
+          )}
+
+          {hasSystemTags && (
+            <MetaTagSection
+              title="System knowledge"
+              scope={metaTags.system}
+              defaultOpen={false}
+              showAllKeywords={showAllSystemKeywords}
+              onToggleKeywords={() => setShowAllSystemKeywords((v) => !v)}
+            />
+          )}
+        </div>
+      )}
+
       {/* Document list */}
       <div className="space-y-2">
         <h3 className="text-sm font-medium">Documents ({documents.length})</h3>
@@ -334,6 +529,11 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                   <th className="px-4 py-2 text-left font-medium">
                     <Tip label="The document name — click to view details">
                       <span>Name</span>
+                    </Tip>
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium">
+                    <Tip label="Document category for filtering and agent scoping">
+                      <span>Category</span>
                     </Tip>
                   </th>
                   <th className="px-4 py-2 text-left font-medium">
@@ -361,6 +561,15 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                   return (
                     <tr key={doc.id}>
                       <td className="px-4 py-2 font-medium">{doc.name}</td>
+                      <td className="px-4 py-2">
+                        {doc.category ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {doc.category}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2">
                         <Badge variant={style.variant}>{style.label}</Badge>
                       </td>

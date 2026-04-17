@@ -165,6 +165,7 @@ describe('AgentForm — General tab', () => {
         updatedAt: new Date(),
         systemInstructionsHistory: [],
         metadata: {},
+        knowledgeCategories: [],
         deletedAt: null,
         fallbackProviders: [],
       };

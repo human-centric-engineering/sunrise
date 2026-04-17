@@ -44,6 +44,7 @@ function makeDocument(
     chunkCount: overrides.chunkCount ?? 10,
     status: overrides.status ?? 'ready',
     scope: 'app',
+    category: null,
     errorMessage: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-01'),
@@ -292,5 +293,364 @@ describe('ManageTab', () => {
     render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
 
     expect(screen.getByText(/compare embedding providers/i)).toBeInTheDocument();
+  });
+
+  // ── Embed button ──────────────────────────────────────────────────────────
+
+  it('calls embed endpoint when Generate Embeddings is clicked', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 0, pending: 10, hasActiveProvider: true },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+      expect(embedButtons[0]).not.toBeDisabled();
+    });
+
+    const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+    await user.click(embedButtons[0]);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/embed'),
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+  });
+
+  it('shows embed error message on HTTP error response', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 0, pending: 10, hasActiveProvider: true },
+            }),
+        });
+      }
+      if (url.includes('/knowledge/embed')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ error: { message: 'Provider unavailable' } }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+      expect(embedButtons[0]).not.toBeDisabled();
+    });
+
+    const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+    await user.click(embedButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Provider unavailable')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when embed fetch throws', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 0, pending: 10, hasActiveProvider: true },
+            }),
+        });
+      }
+      if (url.includes('/knowledge/embed')) {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+      expect(embedButtons[0]).not.toBeDisabled();
+    });
+
+    const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+    await user.click(embedButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Embedding status indicators ───────────────────────────────────────────
+
+  it('shows "All chunks embedded" when fully embedded', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 10, pending: 0, hasActiveProvider: true },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('All chunks embedded')).toBeInTheDocument();
+    });
+  });
+
+  it('shows embedding progress when partially embedded', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 5, pending: 5, hasActiveProvider: true },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('5/10 embedded')).toBeInTheDocument();
+    });
+  });
+
+  // ── Last seeded at ────────────────────────────────────────────────────────
+
+  it('shows last seeded timestamp when available', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/settings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { lastSeededAt: '2025-06-15T10:00:00Z' },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/last seeded:/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Meta-tags panel ───────────────────────────────────────────────────────
+
+  it('renders separate app and system meta-tag sections', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/meta-tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                app: {
+                  categories: [
+                    { value: 'sales', chunkCount: 15, documentCount: 3 },
+                    { value: 'engineering', chunkCount: 8, documentCount: 2 },
+                  ],
+                  keywords: [{ value: 'pricing', chunkCount: 5, documentCount: 1 }],
+                },
+                system: {
+                  categories: [{ value: 'patterns', chunkCount: 20, documentCount: 1 }],
+                  keywords: [],
+                },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Meta-tags in use')).toBeInTheDocument();
+    });
+
+    // App section is expanded by default
+    expect(screen.getByText('App knowledge')).toBeInTheDocument();
+    expect(screen.getByText('sales')).toBeInTheDocument();
+    expect(screen.getByText('engineering')).toBeInTheDocument();
+    expect(screen.getByText('pricing')).toBeInTheDocument();
+
+    // System section present but collapsed by default
+    expect(screen.getByText('System knowledge')).toBeInTheDocument();
+    // System categories not visible until expanded
+    expect(screen.queryByText('patterns')).not.toBeInTheDocument();
+  });
+
+  it('expands system section when clicked', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/meta-tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                app: { categories: [], keywords: [] },
+                system: {
+                  categories: [{ value: 'patterns', chunkCount: 20, documentCount: 1 }],
+                  keywords: [{ value: 'reasoning', chunkCount: 5, documentCount: 1 }],
+                },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('System knowledge')).toBeInTheDocument();
+    });
+
+    // Click to expand
+    await user.click(screen.getByText('System knowledge'));
+
+    await waitFor(() => {
+      expect(screen.getByText('patterns')).toBeInTheDocument();
+      expect(screen.getByText('reasoning')).toBeInTheDocument();
+    });
+  });
+
+  it('does not render meta-tags panel when no tags exist in either scope', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/meta-tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                app: { categories: [], keywords: [] },
+                system: { categories: [], keywords: [] },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/meta-tags'));
+    });
+
+    expect(screen.queryByText('Meta-tags in use')).not.toBeInTheDocument();
+  });
+
+  it('shows "Show all" toggle and reveals hidden keywords when clicked', async () => {
+    const user = userEvent.setup();
+    const manyKeywords = Array.from({ length: 35 }, (_, i) => ({
+      value: `kw-${i}`,
+      chunkCount: i + 1,
+      documentCount: 1,
+    }));
+
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/meta-tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                app: { categories: [], keywords: manyKeywords },
+                system: { categories: [], keywords: [] },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Meta-tags in use')).toBeInTheDocument();
+    });
+
+    // First 30 visible, 31st hidden
+    expect(screen.getByText('kw-0')).toBeInTheDocument();
+    expect(screen.getByText('kw-29')).toBeInTheDocument();
+    expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
+
+    // Click "Show all"
+    await user.click(screen.getByText('Show all 35 keywords'));
+
+    // Now all visible
+    expect(screen.getByText('kw-30')).toBeInTheDocument();
+    expect(screen.getByText('kw-34')).toBeInTheDocument();
+
+    // Toggle back
+    await user.click(screen.getByText('Show less'));
+    expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
+  });
+
+  it('renders category column in document table', async () => {
+    const docWithCategory = makeDocument({
+      id: 'doc-cat',
+      name: 'Sales Playbook',
+    });
+    (docWithCategory as Record<string, unknown>).category = 'sales';
+
+    render(<ManageTab documents={[docWithCategory]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByText('sales')).toBeInTheDocument();
   });
 });

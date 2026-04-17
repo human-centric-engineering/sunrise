@@ -35,7 +35,7 @@ function hasAllowedExtension(name: string): boolean {
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, status, scope, q } = validateQueryParams(
+  const { page, limit, status, scope, category, q } = validateQueryParams(
     searchParams,
     listDocumentsQuerySchema
   );
@@ -44,6 +44,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const where: Prisma.AiKnowledgeDocumentWhereInput = {};
   if (status) where.status = status;
   if (scope) where.scope = scope;
+  if (category) where.category = category;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },
@@ -110,12 +111,18 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const content = await file.text();
 
-  const document = await uploadDocument(content, file.name, session.user.id);
+  // Optional category from form field
+  const categoryField = formData.get('category');
+  const category =
+    typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
+
+  const document = await uploadDocument(content, file.name, session.user.id, category);
 
   log.info('Document uploaded', {
     documentId: document.id,
     fileName: file.name,
     sizeBytes: file.size,
+    category: document.category ?? 'none',
     adminId: session.user.id,
   });
 

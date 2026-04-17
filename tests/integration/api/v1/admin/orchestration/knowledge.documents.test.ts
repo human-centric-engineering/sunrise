@@ -266,7 +266,12 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
 
       await POST(makePostRequestWithFormData(formData));
 
-      expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(content, 'patterns.md', ADMIN_ID);
+      expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
+        content,
+        'patterns.md',
+        ADMIN_ID,
+        undefined
+      );
     });
   });
 

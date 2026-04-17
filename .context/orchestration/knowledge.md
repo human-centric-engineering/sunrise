@@ -2,27 +2,34 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the six admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/seed`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`).
 
 ## Module Layout
 
-| File                  | Exports                                               | Purpose                                                                   |
-| --------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------- |
-| `document-manager.ts` | `documentManager` (singleton)                         | Upload, delete, rechunk, list documents                                   |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns` | Vector + keyword search; single-pattern lookup; pattern list for explorer |
-| `seeder.ts`           | `seedFromChunksJson`                                  | Idempotent seeder for the "Agentic Design Patterns" doc                   |
-| `chunker.ts`          | internal                                              | Markdown → chunks with type classification                                |
-| `embedder.ts`         | internal                                              | Generates embeddings for chunks                                           |
+| File                  | Exports                                                                                | Purpose                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `document-manager.ts` | `uploadDocument`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Upload, delete, rechunk, list documents, meta-tag summary                 |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                  | Vector + keyword search; single-pattern lookup; pattern list for explorer |
+| `seeder.ts`           | `seedFromChunksJson`                                                                   | Idempotent seeder for the "Agentic Design Patterns" doc                   |
+| `chunker.ts`          | `chunkMarkdownDocument`, `parseMetadataComments`                                       | Markdown → chunks with type classification; metadata comment parser       |
+| `embedder.ts`         | `embedBatch`                                                                           | Generates embeddings for chunks                                           |
 
 ## Quick Start
 
 ```typescript
-import { documentManager } from '@/lib/orchestration/knowledge/document-manager';
+import { uploadDocument, listMetaTags } from '@/lib/orchestration/knowledge/document-manager';
 import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { seedFromChunksJson } from '@/lib/orchestration/knowledge/seeder';
 
 // Upload (admin flow — content is a string, not a file handle)
-const doc = await documentManager.uploadDocument(markdownContent, 'react-patterns.md', userId);
+const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
+
+// Upload with explicit category (overrides any in-document metadata)
+const doc2 = await uploadDocument(markdownContent, 'playbook.md', userId, 'sales');
+
+// List all category and keyword values across the knowledge base
+const tags = await listMetaTags();
+// → { categories: [{ value: 'sales', chunkCount: 15, documentCount: 3 }], keywords: [...] }
 
 // Vector search
 const results = await searchKnowledge(
@@ -56,17 +63,61 @@ pending → processing → ready
 
 ## Upload
 
-`documentManager.uploadDocument(content: string, fileName: string, userId: string)` parses the markdown, generates chunks, embeds them, and writes the `AiKnowledgeDocument` + `AiKnowledgeChunk` rows in one go.
+`uploadDocument(content, fileName, userId, category?)` parses the markdown, generates chunks, embeds them, and writes the `AiKnowledgeDocument` + `AiKnowledgeChunk` rows in one go.
+
+**Category resolution** (priority order):
+
+1. Explicit `category` parameter (from the upload form)
+2. Document-level `<!-- metadata: category=... -->` comment (parsed by `extractDocumentCategory`)
+3. `null` — no category assigned
+
+When a document-level category is resolved, it propagates to any chunks that don't have their own category from section-level metadata comments.
 
 The admin upload route (`POST /knowledge/documents`) is the caller for human-initiated uploads:
 
-- **Multipart only** (`multipart/form-data`), `file` field
+- **Multipart only** (`multipart/form-data`), `file` field + optional `category` field
 - **10 MB max** (`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in the route)
 - **Extension whitelist**: `.md`, `.markdown`, `.txt` — text only this session. PDF / HTML are future work (they need `pdf-parse` / `sanitize-html` plus new chunker branches)
 - MIME type is advisory — the extension is the source of truth
 - Returns the created document at 201 with the standard response envelope
 
 Knowledge documents are **not per-user scoped**. `uploadedBy` is stored for audit, but GET / DELETE / rechunk work on any document regardless of which admin created it.
+
+## Categories and Meta-Tags
+
+Documents and chunks support **category** and **keywords** metadata. Categories are a first-class field on `AiKnowledgeDocument` (with a database index) and on each `AiKnowledgeChunk`. Keywords are stored as comma-separated strings on chunks.
+
+### In-document metadata comments
+
+Authors can embed metadata in their markdown using HTML comments:
+
+```markdown
+<!-- metadata: category=sales, keywords="pricing,discounts,negotiation" -->
+
+## Section heading
+
+Content here inherits the metadata above...
+```
+
+`parseMetadataComments(content)` (exported from `chunker.ts`) extracts these into a `Record<string, string>`. Supported tags: `category`, `keywords`. Tags are free-form — there is no fixed taxonomy. Case-sensitive: `Sales` ≠ `sales`.
+
+### Meta-tag discovery
+
+`listMetaTags()` returns a `MetaTagSummary` with all distinct category and keyword values in use, grouped by document scope (`app` vs `system`), plus chunk and document counts for each. Used by the admin UI to show what tags exist (in separate collapsible sections) and power category autocomplete on the upload form (app categories only).
+
+```typescript
+interface MetaTagSummary {
+  app: ScopedMetaTags; // user-uploaded documents
+  system: ScopedMetaTags; // built-in seeded patterns (read-only)
+}
+
+interface ScopedMetaTags {
+  categories: MetaTagEntry[]; // { value, chunkCount, documentCount }
+  keywords: MetaTagEntry[];
+}
+```
+
+The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping uses `AiAgent.knowledgeCategories` (a string array) to filter which categories an agent can search.
 
 ## Search
 
@@ -78,7 +129,7 @@ Results are ranked chunks with their parent document metadata — the admin sear
 
 ## Rechunking
 
-`documentManager.rechunkDocument(id)` deletes the current chunks, re-runs the chunker + embedder, and writes fresh rows. Use it after:
+`rechunkDocument(id)` deletes the current chunks, re-runs the chunker + embedder, and writes fresh rows. Use it after:
 
 - Improving `chunker.ts` (e.g. better markdown heading detection, new chunk type classification)
 - Fixing a chunk classification bug for a specific document

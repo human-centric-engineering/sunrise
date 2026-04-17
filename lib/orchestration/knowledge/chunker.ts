@@ -80,7 +80,7 @@ function splitMetadataPairs(input: string): string[] {
  * Surrounding double quotes are stripped from parsed values. Equals signs
  * inside values are preserved (first `=` is the separator).
  */
-function parseMetadataComments(content: string): Record<string, string> {
+export function parseMetadataComments(content: string): Record<string, string> {
   const metadata: Record<string, string> = {};
   const regex = /<!--\s*metadata:\s*(.*?)\s*-->/g;
   let match;

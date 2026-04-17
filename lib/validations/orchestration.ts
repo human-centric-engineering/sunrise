@@ -1083,6 +1083,7 @@ export const clearConversationsBodySchema = z
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
   scope: documentScopeSchema.optional(),
+  category: z.string().max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });
 
