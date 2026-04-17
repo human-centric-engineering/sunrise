@@ -207,17 +207,22 @@ vi.mock('@/lib/db', () => ({
 }));
 
 describe('GET /api/v1/users', () => {
-  it('should return users list', async () => {
-    const mockUsers = [{ id: '1', name: 'John' }];
-    vi.mocked(db.user.findMany).mockResolvedValue(mockUsers);
+  it('should wrap users in standard response envelope', async () => {
+    // Arrange: seed the mock with raw DB rows
+    const dbRows = [{ id: '1', name: 'John', passwordHash: 'secret' }];
+    vi.mocked(db.user.findMany).mockResolvedValue(dbRows);
 
+    // Act
     const request = new NextRequest('http://localhost:3000/api/v1/users');
     const response = await GET(request);
     const data = await response.json();
 
+    // Assert: verify the ROUTE's behavior, not the mock's return value
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.data).toEqual(mockUsers);
+    // Route should strip sensitive fields and wrap in envelope — NOT just pass through dbRows
+    expect(data.data).toEqual([{ id: '1', name: 'John' }]);
+    expect(data.data[0]).not.toHaveProperty('passwordHash');
   });
 
   it('should handle validation errors', async () => {
@@ -496,7 +501,32 @@ When a test fails, ask yourself:
 3. Is the code following the project's patterns (CLAUDE.md, `.context/` docs)? → If no, likely a **code bug**
 4. Am I testing an implementation detail or a behavioral contract? → If implementation detail, likely a **test bug**
 
-**Default assumption**: If unclear, treat the code as correct and fix the test — but add a comment noting the ambiguity so `/test-review` can flag it.
+**Default assumption**: If unclear, treat the code as correct and fix the test — but add a comment noting the ambiguity so `/test-review` can flag it. **Exception**: If the only way to make the test pass is to assert the exact mock return value with no transformation, that's not ambiguity — it's a mock-proving test. Report it as a suspected code bug (the code should be doing something with the data, not just passing it through).
+
+## Anti-Green-Bar Self-Check
+
+Apply this checklist to **every test you write** before moving to the next one. A green-bar test — one that passes but doesn't verify real behavior — is worse than no test at all because it gives false confidence.
+
+### Per-test checklist
+
+After writing each test, ask yourself these three questions:
+
+1. **Would this test fail if I deleted the function body?** If the function returned `undefined`/`null`/empty and the test would still pass (because it only checks `toBeDefined()` or `toBeTruthy()`), the assertion is too weak. Assert specific values or structures.
+
+2. **Am I asserting something the code computed, or something the mock returned?** If your assertion checks a value that was literally set up in `mockResolvedValue()` with no transformation, filtering, mapping, or enrichment by the code under test, the test proves the mock works — not the code. Either:
+   - Assert a **transformed** value (the code filters, maps, enriches, or restructures the mock data)
+   - Assert a **side effect** (the code called another dependency with specific arguments derived from the mock data)
+   - Assert **structural wrapping** (the code wrapped the data in a response envelope, added metadata, etc.)
+
+3. **Does this test verify at least one thing the code DOES, not just what it RETURNS?** Good tests check: Was the right query made? Were the right arguments passed? Was the error logged? Was the response shaped correctly? A test that only checks `data === mockData` checks nothing the code did.
+
+### When you catch yourself green-barring
+
+If a test fails this checklist, **do not ship it**. Instead:
+
+- If the code genuinely transforms the data → fix the assertion to check the transformation
+- If the code just passes data through (no transformation at all) → the test is still valid but needs a side-effect assertion (e.g., was the right DB query made with the right `where` clause?)
+- If you can't write a meaningful assertion because the code doesn't do anything testable → report it as a finding, don't write a vacuous test
 
 ## Working Within the Testing Command Pipeline
 
@@ -518,7 +548,7 @@ Follow the prompt's file list and behavior requirements — don't add scope beyo
 ## Important Constraints
 
 - **Never skip error cases** - They're the most important tests
-- **Never write tests that always pass** - Ensure tests actually validate behavior
+- **Never write tests that always pass** - Apply the Anti-Green-Bar Self-Check to every test
 - **Never mock everything** - Integration tests with real implementations are valuable
 - **Never ignore flaky tests** - Fix them or mark them as skip with explanation
 - **Never skip validation** - Tests must pass linting and type-check before completion
