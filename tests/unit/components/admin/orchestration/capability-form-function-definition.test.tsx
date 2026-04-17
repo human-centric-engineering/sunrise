@@ -2,14 +2,14 @@
  * CapabilityForm — Function Definition Tab Tests
  *
  * Test Coverage:
- * - Visual builder: clicking "Add parameter" appends a row
+ * - Builder mode: clicking "Add parameter" appends a row
  * - Filling name/type/description/required updates the live preview
  * - Trash button removes a row
- * - Toggle Visual → JSON: textarea contains serialized compiled JSON
+ * - Toggle Builder → JSON: textarea contains serialized compiled JSON
  * - JSON editor with invalid JSON shows inline error
  * - JSON editor with valid-but-complex shape (enum) writes state but
- *   toggling back to Visual shows the "schema has features" banner and
- *   Visual toggle stays disabled
+ *   toggling back to Builder shows the "schema has features" banner and
+ *   Builder toggle stays disabled
  * - Submit payload includes the correctly compiled functionDefinition
  *
  * @see components/admin/orchestration/capability-form.tsx
@@ -158,7 +158,7 @@ describe('CapabilityForm — Function Definition tab', () => {
     });
   });
 
-  // ── Mode toggle Visual → JSON ──────────────────────────────────────────────
+  // ── Mode toggle Builder → JSON ─────────────────────────────────────────────
 
   describe('mode toggle', () => {
     it('switching to JSON mode shows a textarea with serialized JSON', async () => {
@@ -181,12 +181,12 @@ describe('CapabilityForm — Function Definition tab', () => {
       });
     });
 
-    it('switching back to Visual shows the visual builder', async () => {
+    it('switching back to Builder shows the visual builder', async () => {
       const user = userEvent.setup();
       await openFunctionTab(user);
 
       await user.click(screen.getByRole('button', { name: /^json$/i }));
-      await user.click(screen.getByRole('button', { name: /^visual$/i }));
+      await user.click(screen.getByRole('button', { name: /^builder$/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /add parameter/i })).toBeInTheDocument();
@@ -247,11 +247,11 @@ describe('CapabilityForm — Function Definition tab', () => {
       });
 
       // Try to switch back to visual mode
-      await user.click(screen.getByRole('button', { name: /^visual$/i }));
+      await user.click(screen.getByRole('button', { name: /^builder$/i }));
 
       await waitFor(() => {
         expect(
-          screen.getByText(/schema has features the visual builder can't represent/i)
+          screen.getByText(/schema has features the builder can't represent/i)
         ).toBeInTheDocument();
       });
     });
