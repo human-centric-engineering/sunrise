@@ -24,7 +24,7 @@ import { logger } from '@/lib/logging';
 import { cn } from '@/lib/utils';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
-import { ExecutionTraceEntryRow } from './execution-trace-entry';
+import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 
 type PanelStatus = 'idle' | 'running' | 'completed' | 'failed' | 'awaiting_approval' | 'aborted';
 
@@ -249,8 +249,14 @@ export function ExecutionPanel({
   }, [open]);
 
   const handleAbort = useCallback(() => {
+    if (executionId) {
+      // Best-effort: persist cancellation in DB so the engine also stops.
+      apiClient.post(API.ADMIN.ORCHESTRATION.executionCancel(executionId)).catch(() => {
+        /* best-effort */
+      });
+    }
     abortRef.current?.abort();
-  }, []);
+  }, [executionId]);
 
   const handleApprove = useCallback(async () => {
     if (!executionId) return;
@@ -270,6 +276,34 @@ export function ExecutionPanel({
       setErrorMessage(message);
     }
   }, [executionId, streamRun]);
+
+  const handleRetryStep = useCallback(
+    async (stepId: string) => {
+      if (!executionId) return;
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.executionRetryStep(executionId), {
+          body: { stepId },
+        });
+        // Remove entries from the failed step onward in the UI
+        setEntries((prev) => {
+          const idx = prev.findIndex((e) => e.stepId === stepId);
+          return idx === -1 ? prev : prev.slice(0, idx);
+        });
+        setErrorMessage(null);
+        // Reconnect to resume from the step before the failed one
+        void streamRun(executionId);
+      } catch (err) {
+        const message =
+          err instanceof APIClientError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Retry failed';
+        setErrorMessage(message);
+      }
+    },
+    [executionId, streamRun]
+  );
 
   const headerIcon = useMemo(() => {
     switch (status) {
@@ -376,6 +410,7 @@ export function ExecutionPanel({
               tokensUsed={entry.tokensUsed ?? 0}
               costUsd={entry.costUsd ?? 0}
               durationMs={entry.durationMs}
+              onRetry={status === 'failed' ? (sid) => void handleRetryStep(sid) : undefined}
             />
           ))
         )}

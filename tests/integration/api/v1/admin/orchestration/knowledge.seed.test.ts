@@ -91,16 +91,22 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
   });
 
   describe('Successful seeding', () => {
-    it('returns 200 with { seeded: true }', async () => {
+    it('returns 200 with { seeded: true, lastSeededAt }', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(seedChunks).mockResolvedValue(undefined);
 
       const response = await POST(makeRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: { seeded: boolean } }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: { seeded: boolean; lastSeededAt: string };
+      }>(response);
       expect(data.success).toBe(true);
       expect(data.data.seeded).toBe(true);
+      expect(data.data.lastSeededAt).toBeDefined();
+      // lastSeededAt should be a valid ISO date string
+      expect(new Date(data.data.lastSeededAt).getTime()).not.toBeNaN();
     });
 
     it('calls seedChunks with path ending in prisma/seeds/data/chunks/chunks.json', async () => {

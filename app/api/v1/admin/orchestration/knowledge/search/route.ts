@@ -26,8 +26,8 @@ export const POST = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, knowledgeSearchSchema);
 
-  const { query, limit, chunkType, patternNumber, category } = body;
-  const filters = { chunkType, patternNumber, category };
+  const { query, limit, chunkType, patternNumber, category, scope } = body;
+  const filters = { chunkType, patternNumber, category, scope };
 
   const results = await searchKnowledge(query, filters, limit);
 

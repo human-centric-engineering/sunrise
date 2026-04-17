@@ -23,6 +23,8 @@ export interface CapabilityResult<T = unknown> {
    * estimate), so we skip a wasteful second round-trip.
    */
   skipFollowup?: boolean;
+  /** Additional structured data (e.g. approval timeout config). */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -62,6 +64,8 @@ export interface CapabilityRegistryEntry {
   category: string;
   functionDefinition: CapabilityFunctionDefinition;
   requiresApproval: boolean;
+  /** Per-capability approval timeout in ms; null = use global default. */
+  approvalTimeoutMs: number | null;
   /** Calls per minute; null = unlimited. */
   rateLimit: number | null;
   isActive: boolean;

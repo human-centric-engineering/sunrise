@@ -39,26 +39,38 @@ import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
-import { BlockConfigPanel } from './block-config-panel';
-import { BuilderToolbar } from './builder-toolbar';
-import { ExecutionInputDialog } from './execution-input-dialog';
-import { ExecutionPanel } from './execution-panel';
-import { PatternPalette } from './pattern-palette';
-import { TemplateBanner } from './template-banner';
-import { TemplateDescriptionDialog } from './template-description-dialog';
-import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
-import { WorkflowCanvas } from './workflow-canvas';
-import { WorkflowDetailsDialog } from './workflow-details-dialog';
-import { runExtraChecks } from './extra-checks';
-import { saveWorkflow, type WorkflowDetails } from './workflow-save';
+import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
+import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
+import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
+import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
+import { ExecutionInputDialog } from '@/components/admin/orchestration/workflow-builder/execution-input-dialog';
+import { ExecutionPanel } from '@/components/admin/orchestration/workflow-builder/execution-panel';
+import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
+import { TemplateBanner } from '@/components/admin/orchestration/workflow-builder/template-banner';
+import { TemplateDescriptionDialog } from '@/components/admin/orchestration/workflow-builder/template-description-dialog';
+import {
+  ValidationSummaryPanel,
+  type CombinedError,
+} from '@/components/admin/orchestration/workflow-builder/validation-summary-panel';
+import { WorkflowCanvas } from '@/components/admin/orchestration/workflow-builder/workflow-canvas';
+import { WorkflowDetailsDialog } from '@/components/admin/orchestration/workflow-builder/workflow-details-dialog';
+import { runExtraChecks } from '@/components/admin/orchestration/workflow-builder/extra-checks';
+import {
+  saveWorkflow,
+  type WorkflowDetails,
+} from '@/components/admin/orchestration/workflow-builder/workflow-save';
 import {
   flowToWorkflowDefinition,
+  stripLayout,
   workflowDefinitionToFlow,
   type PatternNode,
-} from './workflow-mappers';
-import type { CapabilityOption } from './block-editors';
-import type { TemplateItem } from './template-types';
-import { templateMetadataSchema, toTemplateItem } from './template-types';
+} from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
+import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
+import {
+  templateMetadataSchema,
+  toTemplateItem,
+} from '@/components/admin/orchestration/workflow-builder/template-types';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
@@ -287,6 +299,18 @@ function WorkflowBuilderInner({
     [getNode, setCenter]
   );
 
+  const handleCopyJson = useCallback(() => {
+    const def = flowToWorkflowDefinition(nodes, edges, {
+      errorStrategy: details?.errorStrategy,
+    });
+    const cleaned = {
+      ...def,
+      steps: def.steps.map((s) => ({ ...s, config: stripLayout(s.config) })),
+    };
+    const json = JSON.stringify(cleaned, null, 2);
+    void navigator.clipboard.writeText(json);
+  }, [nodes, edges, details?.errorStrategy]);
+
   const handleValidate = useCallback(() => {
     summaryPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
@@ -401,6 +425,25 @@ function WorkflowBuilderInner({
     [performSave]
   );
 
+  const handleHistoryRevert = useCallback(async () => {
+    if (!workflow) return;
+    try {
+      const fresh = await apiClient.get<AiWorkflow>(
+        API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
+      );
+      const parsed = workflowDefinitionSchema.safeParse(fresh.workflowDefinition);
+      if (parsed.success) {
+        const { nodes: revertedNodes, edges: revertedEdges } = workflowDefinitionToFlow(
+          parsed.data
+        );
+        setNodes(revertedNodes);
+        setEdges(revertedEdges);
+      }
+    } catch (err) {
+      logger.error('Failed to refresh canvas after revert', { err });
+    }
+  }, [workflow, setNodes, setEdges]);
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   return (
@@ -409,6 +452,7 @@ function WorkflowBuilderInner({
         mode={mode}
         workflowName={workflowName}
         onNameChange={setWorkflowName}
+        onCopyJson={handleCopyJson}
         onValidate={handleValidate}
         onSave={handleSave}
         onExecute={handleExecute}
@@ -418,6 +462,12 @@ function WorkflowBuilderInner({
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
+
+      {mode === 'create' && (
+        <div className="border-b px-4 py-3">
+          <CliAuthoringHint resource="workflows" />
+        </div>
+      )}
 
       {workflow?.isTemplate && (
         <TemplateBanner
@@ -435,6 +485,15 @@ function WorkflowBuilderInner({
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />
       </div>
+
+      {mode === 'edit' && workflow && (
+        <div className="border-b px-4 py-2">
+          <WorkflowDefinitionHistoryPanel
+            workflowId={workflow.id}
+            onReverted={() => void handleHistoryRevert()}
+          />
+        </div>
+      )}
 
       {saveError && (
         <div

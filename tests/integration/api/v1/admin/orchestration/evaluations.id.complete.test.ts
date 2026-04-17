@@ -87,11 +87,17 @@ function makeCompleteResult() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makePostRequest(body: Record<string, unknown> = {}): NextRequest {
-  return {
+  const bodyStr = JSON.stringify(body);
+  const base = {
     method: 'POST',
     headers: new Headers({ 'Content-Type': 'application/json' }),
     json: () => Promise.resolve(body),
+    text: () => Promise.resolve(bodyStr),
     url: `http://localhost:3000/api/v1/admin/orchestration/evaluations/${SESSION_ID}/complete`,
+  };
+  return {
+    ...base,
+    clone: () => ({ ...base }),
   } as unknown as NextRequest;
 }
 
@@ -164,11 +170,16 @@ describe('POST /api/v1/admin/orchestration/evaluations/:id/complete', () => {
       vi.mocked(completeEvaluationSession).mockResolvedValue(makeCompleteResult());
 
       // Empty body — no json field, simulates missing body
-      const request = {
+      const base = {
         method: 'POST',
         headers: new Headers(),
         json: () => Promise.reject(new Error('no body')),
+        text: () => Promise.resolve(''),
         url: `http://localhost:3000/api/v1/admin/orchestration/evaluations/${SESSION_ID}/complete`,
+      };
+      const request = {
+        ...base,
+        clone: () => ({ ...base }),
       } as unknown as NextRequest;
 
       const response = await POST(request, makeParams(SESSION_ID));

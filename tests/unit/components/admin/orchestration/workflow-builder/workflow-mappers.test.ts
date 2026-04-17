@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest';
 import {
   workflowDefinitionToFlow,
   flowToWorkflowDefinition,
+  stripLayout,
   type PatternNode,
 } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 import type { WorkflowDefinition } from '@/types/orchestration';
@@ -55,6 +56,38 @@ const LINEAR_3_DEFINITION: WorkflowDefinition = {
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('stripLayout', () => {
+  it('removes the _layout key from a config object', () => {
+    const config = { prompt: 'hello', _layout: { x: 100, y: 200 } };
+    const result = stripLayout(config);
+    expect(result).not.toHaveProperty('_layout');
+  });
+
+  it('preserves all other keys unchanged', () => {
+    const config = { prompt: 'hello', model: 'gpt-4', _layout: { x: 0, y: 0 } };
+    const result = stripLayout(config);
+    expect(result.prompt).toBe('hello');
+    expect(result.model).toBe('gpt-4');
+  });
+
+  it('returns the same object reference when _layout is not present', () => {
+    const config = { prompt: 'hello', model: 'gpt-4' };
+    const result = stripLayout(config);
+    expect(result).toBe(config);
+  });
+
+  it('does not mutate the original config object', () => {
+    const config = { prompt: 'hello', _layout: { x: 1, y: 2 } };
+    stripLayout(config);
+    expect(config).toHaveProperty('_layout');
+  });
+
+  it('handles an empty config object', () => {
+    const result = stripLayout({});
+    expect(result).toEqual({});
+  });
+});
 
 describe('workflowDefinitionToFlow', () => {
   it('returns empty nodes and edges for an empty definition', () => {

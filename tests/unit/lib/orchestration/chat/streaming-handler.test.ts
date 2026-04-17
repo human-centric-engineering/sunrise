@@ -1045,7 +1045,39 @@ describe('StreamingChatHandler', () => {
     expect(provider.chatStream).toHaveBeenCalledTimes(2);
   });
 
-  // 26 — buildDoneEvent null usage: zeroed tokens and costUsd=0 ------------------
+  // 26 — requestId correlation: scoped logger when requestId provided ----------------
+  it('creates a scoped logger with requestId when provided', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // The mock logger's withContext should return itself (the mock)
+    const scopedLogger = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      withContext: vi.fn(),
+    };
+    (logger as unknown as { withContext: ReturnType<typeof vi.fn> }).withContext = vi
+      .fn()
+      .mockReturnValue(scopedLogger);
+
+    await collect(streamChat({ ...baseRequest, requestId: 'req-abc-123' }));
+
+    expect(
+      (logger as unknown as { withContext: ReturnType<typeof vi.fn> }).withContext
+    ).toHaveBeenCalledWith({ requestId: 'req-abc-123' });
+  });
+
+  // 27 — buildDoneEvent null usage: zeroed tokens and costUsd=0 ------------------
   it('emits done event with zeroed token counts and costUsd=0 when provider never yields usage', async () => {
     const { calculateCost } = await import('@/lib/orchestration/llm/cost-tracker');
 

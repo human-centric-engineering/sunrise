@@ -4,7 +4,8 @@
  * Test Coverage:
  * - Dialog is closed when source is null
  * - Empty-name submit is blocked
- * - Happy path: GETs source agent, POSTs new agent, calls router.push with new agent id
+ * - Happy path: POSTs to clone endpoint, calls router.push with new agent id
+ * - Verifies clone endpoint URL includes source agent id
  *
  * @see components/admin/orchestration/duplicate-agent-dialog.tsx
  */
@@ -143,10 +144,9 @@ describe('DuplicateAgentDialog', () => {
 
   // ── Happy path ────────────────────────────────────────────────────────────
 
-  it('GETs source agent, POSTs new agent, navigates to new agent edit page', async () => {
+  it('POSTs to clone endpoint with name and slug, navigates to new agent', async () => {
     // Arrange
     const { apiClient } = await import('@/lib/api/client');
-    vi.mocked(apiClient.get).mockResolvedValue(SOURCE_AGENT);
     vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent-id', name: 'Copy' });
 
     const onOpenChange = vi.fn();
@@ -156,24 +156,18 @@ describe('DuplicateAgentDialog', () => {
     // Act: click Duplicate (name and slug are pre-filled)
     await user.click(screen.getByRole('button', { name: /^duplicate$/i }));
 
-    // Assert: GET called for source agent
+    // Assert: POST called to clone endpoint (not generic /agents)
     await waitFor(() => {
-      expect(apiClient.get).toHaveBeenCalledWith(
-        expect.stringContaining(`/agents/${SOURCE_AGENT.id}`)
+      expect(apiClient.post).toHaveBeenCalledWith(
+        expect.stringContaining(`/agents/${SOURCE_AGENT.id}/clone`),
+        expect.objectContaining({
+          body: { name: 'Original Agent (copy)', slug: 'original-agent-copy' },
+        })
       );
     });
 
-    // Assert: POST called with new name/slug
-    expect(apiClient.post).toHaveBeenCalledWith(
-      expect.stringContaining('/agents'),
-      expect.objectContaining({
-        body: expect.objectContaining({
-          name: 'Original Agent (copy)',
-          slug: 'original-agent-copy',
-          isActive: false, // copy starts inactive
-        }),
-      })
-    );
+    // Assert: no GET call — clone endpoint handles everything server-side
+    expect(apiClient.get).not.toHaveBeenCalled();
 
     // Assert: router push to new agent's edit page
     await waitFor(() => {
@@ -187,7 +181,6 @@ describe('DuplicateAgentDialog', () => {
   it('shows error when POST fails', async () => {
     // Arrange
     const { apiClient, APIClientError } = await import('@/lib/api/client');
-    vi.mocked(apiClient.get).mockResolvedValue(SOURCE_AGENT);
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('Slug already exists', 'CONFLICT', 409)
     );

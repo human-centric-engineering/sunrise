@@ -117,6 +117,11 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 
+vi.mock('@/hooks/use-theme', () => ({
+  useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
+  ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import type { AiWorkflow } from '@prisma/client';

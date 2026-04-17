@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/select';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { WorkflowDetails } from './workflow-save';
+import type { WorkflowDetails } from '@/components/admin/orchestration/workflow-builder/workflow-save';
 
 /** Match the server-side `slugSchema` in `lib/validations/common.ts`. */
 const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -174,6 +174,7 @@ export function WorkflowDetailsDialog({
               <SelectContent>
                 <SelectItem value="fail">Fail fast</SelectItem>
                 <SelectItem value="retry">Retry step</SelectItem>
+                <SelectItem value="skip">Skip step</SelectItem>
                 <SelectItem value="fallback">Fallback branch</SelectItem>
               </SelectContent>
             </Select>

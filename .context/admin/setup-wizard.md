@@ -10,7 +10,7 @@ Five-step guided flow that walks a new admin from "fresh install" to "I have a w
 
 | #   | Title                   | Purpose                                                                  | Auto-skip?                         |
 | --- | ----------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
-| 1   | What are you building?  | Phase 6 pattern-advisor placeholder. Disabled textarea + "Skip" CTA      | Always skippable                   |
+| 1   | What are you building?  | Pattern advisor chat — recommends patterns/workflows based on use case   | Always skippable                   |
 | 2   | Configure a provider    | Probes `/providers?limit=1`. Inline create form if empty.                | Auto-complete when providers exist |
 | 3   | Create your first agent | Inline form → `POST /agents`                                             | Auto-complete when agents exist    |
 | 4   | Test your agent         | Embeds `<AgentTestChat>` — same SSE consumer used by the agent edit page | —                                  |
@@ -40,9 +40,11 @@ Every form field in the wizard has a `<FieldHelp>` ⓘ popover. This is the refe
 3. Render it inside the step switch in `SetupWizard`.
 4. If the new step introduces additional state, extend `WizardState` and `DEFAULT_STATE`, then consider bumping the localStorage key version so existing users with old drafts don't trip on the new fields.
 
-## Phase 6 hook-in point
+## Step 1 — Pattern Advisor
 
-Step 1 is a **disabled placeholder** today. When the pattern advisor lands in Phase 6, replace `StepIntro`'s body with the real advisor UI and wire it up to its agent. The wizard's overall structure should not change.
+Step 1 embeds `<ChatInterface agentSlug="pattern-advisor" embedded />` so admins can describe their use case and receive pattern/workflow recommendations. When the advisor outputs a `workflow-definition` fenced code block, a "Create this workflow" CTA appears that navigates to the workflow builder with the definition pre-populated. The skip button remains for users who prefer manual configuration.
+
+The `extractWorkflowDefinition` utility at `lib/orchestration/utils/extract-workflow-definition.ts` is shared with the Learning Hub's advisor tab.
 
 ## Related
 

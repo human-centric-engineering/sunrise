@@ -10,6 +10,7 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -19,7 +20,12 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { updateWorkflowSchema } from '@/lib/validations/orchestration';
+import { logger } from '@/lib/logging';
+import {
+  updateWorkflowSchema,
+  workflowDefinitionHistorySchema,
+  type WorkflowDefinitionHistoryEntry,
+} from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 
 function parseWorkflowId(raw: string): string {
@@ -60,8 +66,26 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.name !== undefined) data.name = body.name;
   if (body.slug !== undefined) data.slug = body.slug;
   if (body.description !== undefined) data.description = body.description;
+  // Audit: if workflowDefinition actually changed, push the old value
+  // onto the history column before writing the new one.
   if (body.workflowDefinition !== undefined) {
+    const historyParse = workflowDefinitionHistorySchema.safeParse(
+      current.workflowDefinitionHistory
+    );
+    if (!historyParse.success) {
+      logger.warn('Workflow PATCH: workflowDefinitionHistory malformed, resetting', {
+        workflowId: id,
+        issues: historyParse.error.issues,
+      });
+    }
+    const history: WorkflowDefinitionHistoryEntry[] = historyParse.success ? historyParse.data : [];
+    history.push({
+      definition: z.record(z.string(), z.unknown()).catch({}).parse(current.workflowDefinition),
+      changedAt: new Date().toISOString(),
+      changedBy: session.user.id,
+    });
     data.workflowDefinition = body.workflowDefinition as unknown as Prisma.InputJsonValue;
+    data.workflowDefinitionHistory = history as unknown as Prisma.InputJsonValue;
   }
   if (body.patternsUsed !== undefined) data.patternsUsed = body.patternsUsed;
   if (body.isActive !== undefined) data.isActive = body.isActive;

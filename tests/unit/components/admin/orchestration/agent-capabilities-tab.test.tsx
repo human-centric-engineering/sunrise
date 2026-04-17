@@ -211,7 +211,8 @@ describe('AgentCapabilitiesTab', () => {
           expect.objectContaining({ body: { capabilityId: 'cap-calc' } })
         );
         // refetch was called (get called more than initial 2 times)
-        expect(apiClient.get).toHaveBeenCalledTimes(4); // 2 initial + 2 refetch
+        // 2 initial + 2 refetch + 1 usage badge fetch = 5
+        expect(apiClient.get).toHaveBeenCalledTimes(5);
       });
     });
   });
@@ -238,7 +239,8 @@ describe('AgentCapabilitiesTab', () => {
         expect(apiClient.delete).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search')
         );
-        expect(apiClient.get).toHaveBeenCalledTimes(4); // 2 initial + 2 refetch
+        // 2 initial + 2 refetch + 1 usage badge fetch = 5
+        expect(apiClient.get).toHaveBeenCalledTimes(5);
       });
     });
   });

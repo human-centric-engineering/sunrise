@@ -64,6 +64,8 @@ const PROVIDERS = [
     updatedAt: new Date(),
     baseUrl: null,
     metadata: {},
+    timeoutMs: null,
+    maxRetries: null,
   },
   {
     id: 'prov-openai',
@@ -78,6 +80,8 @@ const PROVIDERS = [
     updatedAt: new Date(),
     baseUrl: null,
     metadata: {},
+    timeoutMs: null,
+    maxRetries: null,
   },
 ];
 

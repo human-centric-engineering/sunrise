@@ -45,6 +45,9 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       findFirst: vi.fn(),
     },
+    aiOrchestrationSettings: {
+      upsert: vi.fn(),
+    },
     $executeRawUnsafe: vi.fn(),
     $queryRawUnsafe: vi.fn(),
   },

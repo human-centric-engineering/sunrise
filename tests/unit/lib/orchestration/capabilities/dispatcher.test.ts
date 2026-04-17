@@ -97,6 +97,7 @@ interface CapabilityRowOverrides {
   functionDefinition?: Record<string, unknown>;
   requiresApproval?: boolean;
   rateLimit?: number | null;
+  approvalTimeoutMs?: number | null;
   isActive?: boolean;
 }
 
@@ -114,6 +115,7 @@ function makeCapabilityRow(overrides: CapabilityRowOverrides = {}) {
     },
     requiresApproval: overrides.requiresApproval ?? false,
     rateLimit: overrides.rateLimit !== undefined ? overrides.rateLimit : null,
+    approvalTimeoutMs: overrides.approvalTimeoutMs ?? null,
     isActive: overrides.isActive ?? true,
   };
 }
@@ -268,10 +270,13 @@ describe('CapabilityDispatcher', () => {
 
       const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         success: false,
-        error: expect.objectContaining({ code: 'requires_approval' }),
+        error: { code: 'requires_approval' },
         skipFollowup: true,
+        metadata: {
+          defaultAction: 'deny',
+        },
       });
       expect(executeSpy).not.toHaveBeenCalled();
       executeSpy.mockRestore();

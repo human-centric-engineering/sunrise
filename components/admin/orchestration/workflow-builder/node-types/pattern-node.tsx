@@ -15,7 +15,7 @@ import { HelpCircle } from 'lucide-react';
 import { STEP_CATEGORY_COLOURS, getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
-import type { PatternNode as PatternNodeType } from '../workflow-mappers';
+import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const meta = getStepMetadata(data.type);
@@ -49,7 +49,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
           style={{
             top: inputs === 1 ? '50%' : `${((i + 1) * 100) / (inputs + 1)}%`,
           }}
-          className="!h-2 !w-2 !border-2 !border-current !bg-white"
+          className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
         />
       ))}
 
@@ -72,7 +72,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
           style={{
             top: outputs === 1 ? '50%' : `${((i + 1) * 100) / (outputs + 1)}%`,
           }}
-          className="!h-2 !w-2 !border-2 !border-current !bg-white"
+          className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
         />
       ))}
     </div>

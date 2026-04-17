@@ -29,15 +29,23 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
-import { scanForInjection } from './input-guard';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
-import { buildContext, invalidateContext } from './context-builder';
-import { buildMessages } from './message-builder';
-import { MAX_TOOL_ITERATIONS, type ChatRequest, type ChatStream } from './types';
+import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
+import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
+import {
+  MAX_HISTORY_MESSAGES,
+  MAX_TOOL_ITERATIONS,
+  type ChatRequest,
+  type ChatStream,
+} from '@/lib/orchestration/chat/types';
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
 export class ChatError extends Error {
@@ -68,6 +76,7 @@ export class StreamingChatHandler {
    * trust the iterator always terminates cleanly.
    */
   async *run(request: ChatRequest): ChatStream {
+    const log = request.requestId ? logger.withContext({ requestId: request.requestId }) : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
     try {
@@ -85,7 +94,7 @@ export class StreamingChatHandler {
         budget.spent / budget.limit >= 0.8
       ) {
         const pct = ((budget.spent / budget.limit) * 100).toFixed(0);
-        logger.warn('Agent approaching budget limit', {
+        log.warn('Agent approaching budget limit', {
           agentId: agent.id,
           spent: budget.spent,
           limit: budget.limit,
@@ -104,6 +113,12 @@ export class StreamingChatHandler {
           'budget_exceeded',
           `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
         );
+        void dispatchWebhookEvent('budget_exceeded', {
+          agentId: agent.id,
+          agentSlug: agent.slug,
+          usedUsd: budget.spent,
+          limitUsd: budget.limit,
+        });
         return;
       }
 
@@ -121,15 +136,70 @@ export class StreamingChatHandler {
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
 
-      // Input guard — log-only, never blocks
+      // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
-        logger.warn('Potential prompt injection detected', {
+        log.warn('Potential prompt injection detected', {
           agentSlug: request.agentSlug,
           conversationId: conversation.id,
           patterns: scanResult.patterns,
           // Never log message content
         });
+
+        let guardMode: string = 'log_only';
+        try {
+          const settings = await getOrchestrationSettings();
+          guardMode = settings.inputGuardMode;
+        } catch {
+          // Settings unavailable — fall back to log_only
+        }
+
+        if (guardMode === 'block') {
+          yield errorEvent('input_blocked', 'Message blocked by security policy.');
+          return;
+        }
+        if (guardMode === 'warn_and_continue') {
+          yield {
+            type: 'warning',
+            code: 'input_flagged',
+            message: 'Your message was flagged for review but processing continues.',
+          };
+        }
+      }
+
+      // Rolling summary — when history exceeds the window, summarize
+      // the oldest messages and persist the summary for future turns.
+      let conversationSummary: string | undefined;
+      const historyRows = history.map((m) => ({
+        role: m.role,
+        content: m.content,
+        toolCallId: m.toolCallId,
+      }));
+
+      if (historyRows.length > MAX_HISTORY_MESSAGES) {
+        const droppedCount = historyRows.length - MAX_HISTORY_MESSAGES;
+        const droppedMessages = historyRows.slice(0, droppedCount);
+        const lastDroppedId = history[droppedCount - 1]?.id ?? null;
+
+        // Reuse existing summary if it covers all dropped messages
+        if (conversation.summary && conversation.summaryUpToMessageId === lastDroppedId) {
+          conversationSummary = conversation.summary;
+        } else {
+          yield { type: 'status', message: 'Summarizing conversation history...' };
+          const fallbackSlugs = Array.isArray((agent as Record<string, unknown>).fallbackProviders)
+            ? ((agent as Record<string, unknown>).fallbackProviders as string[])
+            : [];
+          conversationSummary = await summarizeMessages(
+            droppedMessages,
+            agent.provider,
+            fallbackSlugs
+          );
+          // Persist for future turns
+          await prisma.aiConversation.update({
+            where: { id: conversation.id },
+            data: { summary: conversationSummary, summaryUpToMessageId: lastDroppedId },
+          });
+        }
       }
 
       const contextBlock =
@@ -140,12 +210,9 @@ export class StreamingChatHandler {
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
         contextBlock,
-        history: history.map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolCallId: m.toolCallId,
-        })),
+        history: historyRows,
         newUserMessage: request.message,
+        conversationSummary,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
@@ -289,7 +356,7 @@ export class StreamingChatHandler {
         ];
       }
 
-      logger.warn('Chat tool loop hit iteration cap', {
+      log.warn('Chat tool loop hit iteration cap', {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
@@ -299,7 +366,7 @@ export class StreamingChatHandler {
       );
     } catch (err) {
       if (err instanceof ChatError) {
-        logger.warn('Chat handler surfaced known error', {
+        log.warn('Chat handler surfaced known error', {
           code: err.code,
           message: err.message,
           agentSlug: request.agentSlug,
@@ -311,7 +378,7 @@ export class StreamingChatHandler {
       if (resolvedProviderSlug) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
-      logger.error('Streaming chat handler crashed', err as Error, {
+      log.error('Streaming chat handler crashed', err as Error, {
         agentSlug: request.agentSlug,
         userId: request.userId,
         conversationId,

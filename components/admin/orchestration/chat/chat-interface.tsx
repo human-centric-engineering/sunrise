@@ -14,16 +14,25 @@
  *   - Reads `delta` field from `content` events (matches server ChatEvent)
  *   - Raw error text is NEVER forwarded to the DOM
  *   - In-flight fetch is aborted via `AbortController` on unmount
+ *   - Network failures trigger up to 3 reconnect attempts with exponential
+ *     backoff (1 s, 2 s, 4 s). HTTP-level errors (429, 4xx, 5xx) are not
+ *     retriable. Matches the pattern in `agent-test-chat.tsx`.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Send } from 'lucide-react';
+import { AlertTriangle, Loader2, Send } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
+import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+/** Network-failure retry ceiling. HTTP errors are never retried. */
+const MAX_RECONNECT_ATTEMPTS = 3;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -67,7 +76,8 @@ export function ChatInterface({
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserFacingError | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -91,6 +101,7 @@ export function ChatInterface({
       if (!trimmed || streaming) return;
 
       setError(null);
+      setWarning(null);
       setStatus(null);
       setInput('');
 
@@ -106,83 +117,109 @@ export function ChatInterface({
       abortRef.current = controller;
       let fullText = '';
 
-      try {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
-          method: 'POST',
-          credentials: 'include',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agentSlug,
-            message: trimmed,
-            conversationId: conversationId ?? undefined,
-            contextType,
-            contextId,
-          }),
-        });
+      for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+        try {
+          const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
+            method: 'POST',
+            credentials: 'include',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentSlug,
+              message: trimmed,
+              conversationId: conversationId ?? undefined,
+              contextType,
+              contextId,
+            }),
+          });
 
-        if (!res.ok || !res.body) {
-          setError('Chat stream failed to start. Try again in a moment.');
-          // Remove the empty assistant message
-          setMessages((prev) => prev.slice(0, -1));
-          return;
-        }
+          if (!res.ok || !res.body) {
+            // HTTP-level errors are not retriable
+            if (res.status === 429) {
+              setError(getUserFacingError('rate_limited'));
+            } else {
+              setError(getUserFacingError('stream_error'));
+            }
+            // Remove the empty assistant message if no content streamed yet
+            if (!fullText) {
+              setMessages((prev) => prev.slice(0, -1));
+            }
+            return;
+          }
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+          setWarning(null);
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
 
-          let sepIndex;
-          while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-            const block = buffer.slice(0, sepIndex);
-            buffer = buffer.slice(sepIndex + 2);
-            const parsed = parseSseBlock(block);
-            if (!parsed) continue;
+            let sepIndex;
+            while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+              const block = buffer.slice(0, sepIndex);
+              buffer = buffer.slice(sepIndex + 2);
+              const parsed = parseSseBlock(block);
+              if (!parsed) continue;
 
-            if (parsed.type === 'start') {
-              const cid = parsed.data.conversationId;
-              if (typeof cid === 'string') {
-                setConversationId(cid);
-              }
-            } else if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
-              const delta = parsed.data.delta;
-              fullText += delta;
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === 'assistant') {
-                  updated[updated.length - 1] = { ...last, content: last.content + delta };
+              if (parsed.type === 'start') {
+                const cid = parsed.data.conversationId;
+                if (typeof cid === 'string') {
+                  setConversationId(cid);
                 }
-                return updated;
-              });
-            } else if (parsed.type === 'status' && typeof parsed.data.message === 'string') {
-              setStatus(parsed.data.message);
-            } else if (parsed.type === 'capability_result') {
-              const slug = parsed.data.capabilitySlug;
-              if (typeof slug === 'string') {
-                onCapabilityResult?.(slug, parsed.data.result);
+              } else if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
+                const delta = parsed.data.delta;
+                fullText += delta;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === 'assistant') {
+                    updated[updated.length - 1] = { ...last, content: last.content + delta };
+                  }
+                  return updated;
+                });
+              } else if (parsed.type === 'status' && typeof parsed.data.message === 'string') {
+                setStatus(parsed.data.message);
+              } else if (parsed.type === 'capability_result') {
+                const slug = parsed.data.capabilitySlug;
+                if (typeof slug === 'string') {
+                  onCapabilityResult?.(slug, parsed.data.result);
+                }
+              } else if (parsed.type === 'error') {
+                const code =
+                  typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+                setError(getUserFacingError(code));
+                return;
+              } else if (parsed.type === 'done') {
+                setWarning(null);
+                onStreamComplete?.(fullText);
+                return;
               }
-            } else if (parsed.type === 'error') {
-              setError('The agent ran into a problem. Check the server logs for details.');
-              return;
-            } else if (parsed.type === 'done') {
-              onStreamComplete?.(fullText);
-              return;
             }
           }
+
+          // Stream ended without a done/error event — treat as complete
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+
+          // Network failure — attempt reconnect with exponential backoff
+          if (attempt < MAX_RECONNECT_ATTEMPTS) {
+            const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
+            setWarning('Connection interrupted. Reconnecting...');
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+
+          setError({
+            title: 'Connection Lost',
+            message: 'Could not reconnect to the chat stream.',
+            action: 'Please try sending your message again.',
+          });
+          return;
         }
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError('Could not reach the chat stream. Try again in a moment.');
-      } finally {
-        setStreaming(false);
-        setStatus(null);
-        abortRef.current = null;
       }
     },
     [
@@ -196,9 +233,24 @@ export function ChatInterface({
     ]
   );
 
+  // Wrap sendMessage to ensure streaming state is always cleaned up
+  const sendMessageWrapped = useCallback(
+    async (text: string) => {
+      try {
+        await sendMessage(text);
+      } finally {
+        setStreaming(false);
+        setStatus(null);
+        setWarning(null);
+        abortRef.current = null;
+      }
+    },
+    [sendMessage]
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    void sendMessage(input);
+    void sendMessageWrapped(input);
   };
 
   const showStarters = messages.length === 0 && starterPrompts && starterPrompts.length > 0;
@@ -216,7 +268,7 @@ export function ChatInterface({
                   key={prompt}
                   variant="outline"
                   size="sm"
-                  onClick={() => void sendMessage(prompt)}
+                  onClick={() => void sendMessageWrapped(prompt)}
                   disabled={streaming}
                 >
                   {prompt}
@@ -248,8 +300,22 @@ export function ChatInterface({
       {/* Status line */}
       {status && <div className="text-muted-foreground px-3 py-1 text-xs">{status}</div>}
 
+      {/* Warning (reconnecting) */}
+      {warning && (
+        <div className="flex items-center gap-2 px-3 py-1 text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{warning}</span>
+        </div>
+      )}
+
       {/* Error */}
-      {error && <div className="text-destructive px-3 py-1 text-sm">{error}</div>}
+      {error && (
+        <div className="space-y-0.5 px-3 py-1 text-sm">
+          <p className="text-destructive font-medium">{error.title}</p>
+          <p className="text-destructive/80">{error.message}</p>
+          {error.action && <p className="text-muted-foreground text-xs">{error.action}</p>}
+        </div>
+      )}
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="flex gap-2 border-t p-3">
@@ -261,7 +327,7 @@ export function ChatInterface({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              void sendMessage(input);
+              void sendMessageWrapped(input);
             }
           }}
         />

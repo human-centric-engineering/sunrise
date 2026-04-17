@@ -18,6 +18,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,11 @@ export class CircuitBreaker {
     if (this.failures.length >= this.config.failureThreshold) {
       this._state = 'open';
       this.openedAt = now;
+      void dispatchWebhookEvent('circuit_breaker_opened', {
+        providerSlug: this.slug,
+        failures: this.failures.length,
+        threshold: this.config.failureThreshold,
+      });
       logger.warn('Circuit breaker tripped', {
         provider: this.slug,
         failures: this.failures.length,
@@ -124,6 +130,22 @@ export class CircuitBreaker {
     return true;
   }
 
+  /** Number of failures within the current sliding window. */
+  get failureCount(): number {
+    this.pruneWindow(Date.now());
+    return this.failures.length;
+  }
+
+  /** The breaker's configuration (thresholds and timings). */
+  get currentConfig(): CircuitBreakerConfig {
+    return { ...this.config };
+  }
+
+  /** Timestamp (ms since epoch) when the breaker tripped, or `null` if closed. */
+  get openedAtTimestamp(): number | null {
+    return this.openedAt;
+  }
+
   /** Reset to initial state (for tests). */
   reset(): void {
     this._state = 'closed';
@@ -151,6 +173,31 @@ export function getBreaker(slug: string, config?: Partial<CircuitBreakerConfig>)
   const breaker = new CircuitBreaker(slug, config);
   breakers.set(slug, breaker);
   return breaker;
+}
+
+/** Status snapshot of a circuit breaker. */
+export interface CircuitBreakerStatus {
+  state: CircuitState;
+  failureCount: number;
+  openedAt: number | null;
+  config: CircuitBreakerConfig;
+}
+
+/** Get the status of a specific breaker, or `null` if none exists for the slug. */
+export function getCircuitBreakerStatus(slug: string): CircuitBreakerStatus | null {
+  const breaker = breakers.get(slug);
+  if (!breaker) return null;
+  return {
+    state: breaker.state,
+    failureCount: breaker.failureCount,
+    openedAt: breaker.openedAtTimestamp,
+    config: breaker.currentConfig,
+  };
+}
+
+/** Get all slugs that have an active breaker. */
+export function getAllBreakerSlugs(): string[] {
+  return Array.from(breakers.keys());
 }
 
 /** Reset all breakers (for tests). */

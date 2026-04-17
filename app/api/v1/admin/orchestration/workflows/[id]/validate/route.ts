@@ -25,7 +25,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { validateWorkflow } from '@/lib/orchestration/workflows';
+import { validateWorkflow, semanticValidateWorkflow } from '@/lib/orchestration/workflows';
 import { cuidSchema } from '@/lib/validations/common';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -52,12 +52,17 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
     });
   }
   const definition = defParsed.data;
-  const result = validateWorkflow(definition);
+  const structural = validateWorkflow(definition);
+  const semantic = await semanticValidateWorkflow(definition);
+
+  const errors = [...structural.errors, ...semantic.errors];
+  const result = { ok: errors.length === 0, errors };
 
   log.info('Workflow validated', {
     workflowId: id,
     ok: result.ok,
-    errorCount: result.errors.length,
+    structuralErrors: structural.errors.length,
+    semanticErrors: semantic.errors.length,
   });
 
   return successResponse(result);

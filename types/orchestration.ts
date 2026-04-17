@@ -178,7 +178,7 @@ export interface WorkflowDefinition {
   /** ID of the first step to execute */
   entryStepId: string;
   /** How to handle step failures */
-  errorStrategy: 'retry' | 'fallback' | 'fail';
+  errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
 }
 
 // ============================================================================
@@ -432,6 +432,20 @@ export interface CostSummary {
 export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
+/** Tunable weights for hybrid knowledge-base search. */
+export interface SearchConfig {
+  /** Cosine-distance reduction for keyword-matching chunks (non-positive, e.g. -0.02). */
+  keywordBoostWeight: number;
+  /** Multiplier applied to the vector similarity score (e.g. 1.0). */
+  vectorWeight: number;
+}
+
+/** Action taken when an approval gate times out. */
+export type ApprovalDefaultAction = 'deny' | 'allow';
+
+/** Input guard behaviour for prompt injection detection. */
+export type InputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -440,6 +454,16 @@ export interface OrchestrationSettings {
   defaultModels: Record<TaskType, string>;
   /** Month-to-date global spend cap in USD, or `null` to disable. */
   globalMonthlyBudgetUsd: number | null;
+  /** Tunable search weights, or `null` to use built-in defaults. */
+  searchConfig: SearchConfig | null;
+  /** Timestamp of the last successful knowledge-base seed. */
+  lastSeededAt: Date | null;
+  /** Default timeout (ms) for approval gates, or `null` to disable. */
+  defaultApprovalTimeoutMs: number | null;
+  /** Action when approval gate times out. */
+  approvalDefaultAction: ApprovalDefaultAction | null;
+  /** Input guard behaviour for prompt injection detection. */
+  inputGuardMode: InputGuardMode;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -475,6 +499,45 @@ export type ProviderConfigWithCreator = AiProviderConfig & {
 export interface KnowledgeSearchResult {
   chunk: AiKnowledgeChunk;
   similarity: number;
+  documentName?: string;
+}
+
+/** Knowledge graph node */
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: 'kb' | 'document' | 'chunk';
+  value: number;
+  status?: string;
+  category: number;
+  metadata?: Record<string, unknown>;
+}
+
+/** Knowledge graph link */
+export interface GraphLink {
+  source: string;
+  target: string;
+}
+
+/** Knowledge graph category */
+export interface GraphCategory {
+  name: string;
+}
+
+/** Knowledge graph statistics */
+export interface GraphStats {
+  documentCount: number;
+  completedCount: number;
+  chunkCount: number;
+  totalTokens: number;
+}
+
+/** Knowledge graph data (returned by graph endpoint) */
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  categories: GraphCategory[];
+  stats: GraphStats;
 }
 
 /** Summary of a pattern for the pattern explorer card grid */

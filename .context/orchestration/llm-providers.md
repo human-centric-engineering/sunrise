@@ -163,10 +163,10 @@ Uniform across every provider via `withRetry` + `fetchWithTimeout` (internal hel
 
 | Concern         | Cloud provider                               | Local provider              |
 | --------------- | -------------------------------------------- | --------------------------- |
-| Default timeout | 30s                                          | 10s                         |
+| Default timeout | 30s (overridable via `timeoutMs`)            | 10s (overridable)           |
 | Retry 429       | Yes (exp backoff)                            | Yes                         |
 | Retry 5xx       | Yes (exp backoff)                            | **No** — restart won't help |
-| Max retries     | 3                                            | 3                           |
+| Max retries     | 3 (overridable via `maxRetries`)             | 3 (overridable)             |
 | Backoff         | 500ms → 1s → 2s + ±25% jitter, capped at 10s | same                        |
 
 `ProviderError` carries `code` (stable short string), `status?` (HTTP code when known), `retriable` (consulted by `withRetry`), and `cause?`. SDK errors are narrowed via `toProviderError()` which extracts the `status` field that both `@anthropic-ai/sdk` and `openai` expose.
@@ -177,15 +177,17 @@ Every long-running call accepts an `AbortSignal` via `LlmOptions.signal`. Aborts
 
 `AiProviderConfig` rows (see `prisma/schema.prisma`) drive the provider manager. Fields used here:
 
-| Field          | Purpose                                                |
-| -------------- | ------------------------------------------------------ |
-| `slug`         | Primary lookup key for `getProvider`                   |
-| `name`         | Fallback lookup key; human label                       |
-| `providerType` | `'anthropic' \| 'openai-compatible'` — dispatch key    |
-| `baseUrl`      | Required for `openai-compatible`                       |
-| `apiKeyEnvVar` | Name of the `process.env` var holding the key          |
-| `isLocal`      | Shorter timeouts, no 5xx retries, allows empty API key |
-| `isActive`     | `false` → `getProvider` throws `provider_disabled`     |
+| Field          | Purpose                                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `slug`         | Primary lookup key for `getProvider`                                                                                             |
+| `name`         | Fallback lookup key; human label                                                                                                 |
+| `providerType` | `'anthropic' \| 'openai-compatible'` — dispatch key                                                                              |
+| `baseUrl`      | Required for `openai-compatible`                                                                                                 |
+| `apiKeyEnvVar` | Name of the `process.env` var holding the key                                                                                    |
+| `isLocal`      | Shorter timeouts, no 5xx retries, allows empty API key                                                                           |
+| `isActive`     | `false` → `getProvider` throws `provider_disabled`                                                                               |
+| `timeoutMs`    | Per-provider timeout override (1,000–300,000 ms). Resolution: `timeoutMs` → `LOCAL_TIMEOUT_MS` (if local) → `DEFAULT_TIMEOUT_MS` |
+| `maxRetries`   | Per-provider retry override (0–10). Passed to the SDK constructor                                                                |
 
 ## Anti-Patterns
 

@@ -215,6 +215,64 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
         })
       );
     });
+
+    it('passes messageSearch as message content filter combined with userId scope', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+      await GET(makeGetRequest({ messageSearch: 'error handling' }));
+
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: ADMIN_ID,
+            messages: {
+              some: { content: { contains: 'error handling', mode: 'insensitive' } },
+            },
+          }),
+        })
+      );
+    });
+
+    it('applies both q and messageSearch when both provided', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+      await GET(makeGetRequest({ q: 'support', messageSearch: 'error' }));
+
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: ADMIN_ID,
+            title: expect.objectContaining({ contains: 'support' }),
+            messages: {
+              some: { content: { contains: 'error', mode: 'insensitive' } },
+            },
+          }),
+        })
+      );
+    });
+  });
+
+  describe('Agent relation included', () => {
+    it('includes agent select and message count in query', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+      await GET(makeGetRequest());
+
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            agent: { select: { id: true, name: true, slug: true } },
+            _count: { select: { messages: true } },
+          },
+        })
+      );
+    });
   });
 
   describe('Pagination', () => {

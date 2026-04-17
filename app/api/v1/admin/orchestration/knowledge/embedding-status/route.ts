@@ -22,9 +22,9 @@ export const GET = withAdminAuth(async (request) => {
 
   const [total, embeddedRows, hasProvider] = await Promise.all([
     prisma.aiKnowledgeChunk.count(),
-    prisma.$queryRawUnsafe<[{ count: bigint }]>(
-      `SELECT COUNT(*) as count FROM ai_knowledge_chunk WHERE embedding IS NOT NULL`
-    ),
+    prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*) as count FROM ai_knowledge_chunk WHERE embedding IS NOT NULL
+    `,
     prisma.aiProviderConfig.findFirst({ where: { isActive: true }, select: { id: true } }),
   ]);
 

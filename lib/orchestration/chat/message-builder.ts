@@ -15,7 +15,7 @@
 
 import { logger } from '@/lib/logging';
 import type { LlmMessage, LlmRole } from '@/lib/orchestration/llm/types';
-import { MAX_HISTORY_MESSAGES } from './types';
+import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
 
 export interface HistoryRow {
   role: string;
@@ -28,6 +28,8 @@ export interface BuildMessagesArgs {
   contextBlock: string | null;
   history: HistoryRow[];
   newUserMessage: string;
+  /** Rolling summary of messages older than the truncation window. */
+  conversationSummary?: string;
 }
 
 /**
@@ -46,10 +48,17 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
   if (history.length > MAX_HISTORY_MESSAGES) {
     const dropped = history.length - MAX_HISTORY_MESSAGES;
     truncated = history.slice(-MAX_HISTORY_MESSAGES);
-    messages.push({
-      role: 'system',
-      content: `[... ${dropped} older messages omitted for context window ...]`,
-    });
+    if (args.conversationSummary) {
+      messages.push({
+        role: 'system',
+        content: `[Conversation summary of ${dropped} earlier messages]\n\n${args.conversationSummary}`,
+      });
+    } else {
+      messages.push({
+        role: 'system',
+        content: `[... ${dropped} older messages omitted for context window ...]`,
+      });
+    }
   }
 
   for (const row of truncated) {
