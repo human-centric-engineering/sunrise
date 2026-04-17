@@ -75,14 +75,14 @@ The response is an SSE stream of `ChatEvent` objects (`start`, `content`, `statu
 
 ### Agents
 
-An agent is a configured AI persona: system instructions, model selection, temperature, budget, and attached capabilities. Agents are stored in `AiAgent` and scoped by `userId`.
+An agent is a configured AI persona: system instructions, model selection, temperature, budget, and attached capabilities. Agents are stored in `AiAgent` and scoped by `userId`. Seeded agents (`pattern-advisor`, `quiz-master`) are marked `isSystem: true` and cannot be deleted or deactivated via the admin API.
 
 - [Agent list & pages](./.context/admin/orchestration-agents.md)
 - [Agent form (5-tab editor)](./.context/admin/agent-form.md)
 
 ### Capabilities
 
-Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Three built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`).
+Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Three built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`) and are marked `isSystem: true` — they cannot be deleted or deactivated via the admin API.
 
 - [Capabilities list page](./.context/admin/orchestration-capabilities.md)
 - [How to create capabilities](./.context/admin/orchestration-capabilities-guide.md)

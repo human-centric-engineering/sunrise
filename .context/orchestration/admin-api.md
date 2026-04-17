@@ -105,9 +105,19 @@ All `updateAgentSchema` fields are optional and applied conditionally. The **onl
 - If `systemInstructionsHistory` is malformed in the DB, it's logged via `logger.warn` and reset to `[]` before the push. Nothing explodes.
 - Updates that don't change `systemInstructions` never touch the history column.
 
+### System agent protection
+
+Agents seeded by the platform (e.g. `pattern-advisor`, `quiz-master`) have `isSystem: true`. System agents:
+
+- **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System agents cannot be deleted')`.
+- **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System agents cannot be deactivated')`.
+- **Can be edited** — `PATCH` with other fields succeeds, but when `systemInstructions` changes the response includes an `X-System-Warning` header so the UI can surface a confirmation. The previous instructions are still versioned in `systemInstructionsHistory` and revertible via `/instructions-revert`.
+
+The `isSystem` flag is set during seeding and is not exposed as a writable field on create/update schemas.
+
 ### Delete agent
 
-`DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
+`DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). Rejected with 403 if the agent is a system agent (`isSystem: true`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
 
 ## Agent ↔ Capability pivot
 
@@ -312,11 +322,19 @@ curl -X POST /api/v1/admin/orchestration/capabilities \
     "executionHandler": "WebSearchCapability"
   }'
 
-# Soft delete (returns { id, isActive: false })
+# Soft delete (returns { id, isActive: false }) — blocked for system capabilities
 curl -X DELETE /api/v1/admin/orchestration/capabilities/<id>
 ```
 
 Slug collisions on create → 409 `ConflictError`. On PATCH slug collisions → 400 `ValidationError` with `{ slug: ['Slug is already in use'] }`.
+
+### System capability protection
+
+Capabilities seeded by the platform (e.g. `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`) have `isSystem: true`. System capabilities:
+
+- **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System capabilities cannot be deleted')`.
+- **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System capabilities cannot be deactivated')`.
+- **Can be edited** — other fields (description, rateLimit, etc.) can still be updated.
 
 ### Reverse-lookup: agents using a capability
 

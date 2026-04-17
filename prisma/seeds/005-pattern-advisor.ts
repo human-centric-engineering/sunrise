@@ -170,6 +170,7 @@ const unit: SeedUnit = {
         temperature: 0.3,
         maxTokens: 4096,
         isActive: true,
+        isSystem: true,
         createdBy,
       },
     });
@@ -187,6 +188,7 @@ const unit: SeedUnit = {
           executionType: def.executionType,
           executionHandler: def.executionHandler,
           isActive: true,
+          isSystem: true,
         },
       });
 

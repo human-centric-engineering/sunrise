@@ -159,6 +159,7 @@ model AiAgent {
   monthlyBudgetUsd          Float?
   metadata                  Json?
   isActive                  Boolean  @default(true)
+  isSystem                  Boolean  @default(false)
   createdBy                 String
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -191,6 +192,7 @@ model AiCapability {
   approvalTimeoutMs  Int? // ms before auto-deny/allow; null = use global default
   rateLimit          Int? // calls per minute
   isActive           Boolean @default(true)
+  isSystem           Boolean @default(false)
   metadata           Json?
 
   // Relations
@@ -227,8 +229,9 @@ model AiWorkflow {
   name               String
   slug               String   @unique
   description        String   @db.Text
-  workflowDefinition Json // DAG of pattern steps
-  patternsUsed       Int[] // pattern numbers used in this workflow
+  workflowDefinition        Json // DAG of pattern steps
+  workflowDefinitionHistory Json     @default("[]") // [{definition, changedAt, changedBy}]
+  patternsUsed              Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
   metadata           Json?

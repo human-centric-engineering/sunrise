@@ -18,7 +18,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -60,6 +60,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (!current) throw new NotFoundError(`Capability ${id} not found`);
 
   const body = await validateRequestBody(request, updateCapabilitySchema);
+
+  // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
+  if (current.isSystem && body.isActive === false) {
+    throw new ForbiddenError('System capabilities cannot be deactivated');
+  }
 
   const data: Prisma.AiCapabilityUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
@@ -115,6 +120,10 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   const current = await prisma.aiCapability.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Capability ${id} not found`);
+
+  if (current.isSystem) {
+    throw new ForbiddenError('System capabilities cannot be deleted');
+  }
 
   const capability = await prisma.aiCapability.update({
     where: { id },

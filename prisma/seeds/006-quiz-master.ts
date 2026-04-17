@@ -58,6 +58,7 @@ const unit: SeedUnit = {
         temperature: 0.5,
         maxTokens: 4096,
         isActive: true,
+        isSystem: true,
         createdBy,
       },
     });
