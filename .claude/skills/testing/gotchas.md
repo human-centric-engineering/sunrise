@@ -203,6 +203,70 @@ vi.mocked(prisma.$queryRaw).mockImplementation(
 
 ---
 
+### 9. happy-dom sessionStorage Spy Cached Reference
+
+**Problem**: `vi.spyOn(Storage.prototype, 'getItem')` (or `vi.spyOn(sessionStorage, 'getItem')`) becomes ineffective after `vi.clearAllMocks()` or between tests in happy-dom. The sessionStorage instance caches its method references at creation and ignores subsequent prototype changes, so the spy's implementation is never invoked and the test either fails confusingly or passes against unmocked real behaviour.
+
+**Solution**: Use `Object.defineProperty()` on the `sessionStorage` instance with an explicit restore in `afterEach`. This overrides the instance method directly, bypassing the cached reference.
+
+```typescript
+let originalGetItem: typeof sessionStorage.getItem;
+
+beforeEach(() => {
+  originalGetItem = sessionStorage.getItem.bind(sessionStorage);
+});
+
+afterEach(() => {
+  Object.defineProperty(sessionStorage, 'getItem', {
+    value: originalGetItem,
+    writable: true,
+    configurable: true,
+  });
+});
+
+it('handles sessionStorage read errors', () => {
+  Object.defineProperty(sessionStorage, 'getItem', {
+    value: vi.fn(() => {
+      throw new Error('Storage locked');
+    }),
+    writable: true,
+    configurable: true,
+  });
+  // ... exercise code that reads from sessionStorage
+});
+```
+
+**Status**: ✅ DOCUMENTED — Discovered while rewriting `components/analytics/user-identifier.tsx` tests.
+
+---
+
+### 10. One-Shot useRef Guards Block Re-Run Assertions on Same Instance
+
+**Problem**: Components that use a `useRef(false)` → `true` pattern to guard one-time initialization (e.g. `hasTrackedInitialRef.current`) will NOT re-run that logic on the same component instance, even after prop or session changes. Tests that expect "re-fires after X" against a persistent instance fail confusingly — the `.current` ref is still `true`, so the initialization effect returns early.
+
+**Solution**: For re-run assertions, unmount and fresh-mount a new component instance. Do not rely on `rerender()` with new props on the persistent instance — the ref survives the rerender.
+
+```typescript
+// ❌ WRONG — ref is still true on rerender, effect returns early
+const { rerender } = render(<UserIdentifier />);
+vi.mocked(useSession).mockReturnValue({ data: { user: newUser } } as never);
+rerender(<UserIdentifier />);
+expect(mockIdentify).toHaveBeenCalledTimes(2); // fails: still 1
+
+// ✅ CORRECT — fresh mount resets the ref
+const { unmount } = render(<UserIdentifier />);
+unmount();
+vi.mocked(useSession).mockReturnValue({ data: { user: newUser } } as never);
+render(<UserIdentifier />);
+expect(mockIdentify).toHaveBeenCalledTimes(2);
+```
+
+**Flip side**: if the test is verifying that the guard DOES block re-runs (e.g. "should not re-identify on pathname change"), a persistent instance is the right harness. Use explicit `toHaveBeenCalledTimes(N)` counts before and after the trigger — do NOT use `vi.clearAllMocks()` mid-test.
+
+**Status**: ✅ DOCUMENTED — Discovered while rewriting `UserIdentifier` re-identification tests.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:

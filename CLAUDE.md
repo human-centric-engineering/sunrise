@@ -146,6 +146,7 @@ Use these for implementation tasks:
 | `/test-plan`         | Analyze code and produce a test plan                |
 | `/test-write`        | Execute test plan with test-engineer agents         |
 | `/test-review`       | Audit test quality                                  |
+| `/test-fix`          | Fast-path executor for 1–5 file review findings     |
 | `/test-coverage`     | Find coverage gaps and untested files               |
 | `/security-hardener` | Rate limiting, CORS, CSP                            |
 | `/email-designer`    | React Email templates                               |
@@ -159,12 +160,13 @@ Testing has a dedicated command workflow. Use these commands instead of manually
 
 ### Testing Commands
 
-| Command          | Purpose                                                  |
-| ---------------- | -------------------------------------------------------- |
-| `/test-plan`     | Analyze code and produce a phased, prioritized test plan |
-| `/test-write`    | Execute a plan by spawning test-engineer subagents       |
-| `/test-review`   | Audit test quality (weak assertions, missing edge cases) |
-| `/test-coverage` | Find coverage gaps and untested files                    |
+| Command          | Purpose                                                          |
+| ---------------- | ---------------------------------------------------------------- |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan         |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents               |
+| `/test-review`   | Audit test quality (weak assertions, missing edge cases)         |
+| `/test-fix`      | Fast-path applier for 1–5 file review findings (skips plan step) |
+| `/test-coverage` | Find coverage gaps and untested files                            |
 
 ### Common Flows
 
@@ -186,6 +188,15 @@ Testing has a dedicated command workflow. Use these commands instead of manually
 /test-plan review lib/auth  → plans fixes
 /test-write plan            → executes
 ```
+
+**Quick quality fix after review** (1–5 files, skips plan step):
+
+```
+/test-review components/x   → finds quality issues
+/test-fix components/x      → applies review findings directly
+```
+
+Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and the work is quality fixes, not coverage expansion. For 6+ files or coverage-driven work, use the `/test-plan review` → `/test-write plan` path.
 
 **Fill repo-wide coverage gaps**:
 

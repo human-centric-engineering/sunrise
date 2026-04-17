@@ -77,6 +77,15 @@ After your final functional commit, ensure test coverage is adequate **before** 
 /test-coverage branch   # Verify coverage meets thresholds for changed files
 ```
 
+**Quick quality fix after review** (1–5 files, skips plan step):
+
+```bash
+/test-review components/x   # Finds quality issues
+/test-fix components/x      # Applies review findings directly
+```
+
+Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and the work is quality fixes, not coverage expansion. For 6+ files or coverage-driven work, use the `/test-plan review` → `/test-write plan` path.
+
 **Quick test for 1-2 files** (skips planning step):
 
 ```bash

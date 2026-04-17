@@ -1,9 +1,13 @@
 ---
-allowed-tools: Bash, Glob, Grep, Read
+allowed-tools: Bash, Glob, Grep, Read, Write, Agent
 description: Audit test quality — find weak assertions, happy-path-only coverage, mock-proving tests, and missing edge cases
 ---
 
 Review existing tests for quality issues. Identifies tests that give false confidence — happy-path-only coverage, tests that just prove mocks work, weak assertions, and missing edge cases.
+
+**Performance:** For 2+ file pairs, this command parallelizes audits across Sonnet subagents (one per file pair), then uses the main model for source-finding synthesis and aggregation. For a single file pair, it runs inline.
+
+**Context discipline:** The main agent does NOT read source or test files unless source-finding synthesis specifically requires it. Subagents read their own file pair — passing file contents through the main context defeats the purpose of delegation.
 
 ## Input
 
@@ -37,13 +41,87 @@ $ARGUMENTS — optional file paths, folder paths, or test file paths. If omitted
 
 If no test files are found, report "No test files found to review" and stop.
 
-### Step 2: Read source and test files
+### Step 2: Build the file-pair list
 
-For each test file, also read the corresponding source file it tests. You need both to assess quality — a test can only be evaluated against the code it's supposed to verify.
+**Do NOT read source or test files into the main context.** Resolve pairs by path only:
 
-### Step 3: Audit each test file
+- For each test file identified in Step 1, compute its corresponding source path using project conventions (`tests/unit/...` → mirror in source tree; `.test.tsx` → `.tsx`).
+- If a test file exists but its source counterpart doesn't, flag it (likely a rename/delete). Otherwise keep the pair.
+- Optionally use `Glob` to verify paths exist — do not `Read` them.
 
-For each test file, check for the following quality issues. Classify each finding as **critical** (test gives false confidence), **warning** (test is weak but not misleading), or **info** (style improvement).
+Output of this step is a simple list: `[{ testFile, sourceFile }, ...]`. This drives Step 3.
+
+### Step 3: Audit test files — parallel or inline
+
+**Decision:** If there are **2 or more file pairs**, use parallel Sonnet subagents (Step 3a). If there is a **single file pair**, audit inline (Step 3b).
+
+#### Step 3a: Parallel audit (2+ file pairs)
+
+Spawn one **Sonnet** subagent per file pair using the Agent tool with `model: "sonnet"`. Send all Agent tool calls in a **single message** so they run in parallel.
+
+The subagent reads its own file pair — do NOT inline file contents in the prompt. This keeps the main context small and the subagent's context focused.
+
+**Subagent prompt template:**
+
+> You are a test quality auditor. Read both files below and identify quality issues in the test file.
+>
+> **Source file**: `{source_path}`
+> **Test file**: `{test_path}`
+>
+> Start by calling Read on BOTH files. Then apply the audit checklist below. Do not read other files unless they are directly imported by the test and the import is central to the finding.
+>
+> ## Audit checklist
+>
+> Classify each finding as **critical** (test gives false confidence), **warning** (test is weak but not misleading), or **info** (style improvement).
+>
+> {Insert the full audit criteria 3a through 3g from the "Audit criteria reference" section below}
+>
+> ## Output format
+>
+> Return findings in EXACTLY this format. Omit any section that has no entries (write nothing — not "none"). No preamble, no summary, no commentary.
+>
+> ```
+> AUDIT: {test_path} → {source_path}
+> QUALITY: Good | Acceptable | Needs Work | Poor
+>
+> CRITICAL:
+> - [{type}] L{N}: {description} | CURRENT: {assertion} | SHOULD: {what to assert}
+>
+> WARNINGS:
+> - [{type}] L{N}: {description}
+>
+> INFO:
+> - [{type}] L{N}: {description}
+>
+> MISSING:
+> - {scenario}
+>
+> KEEP:
+> - {test name} L{N}
+>
+> REWRITE:
+> - {test name} L{N} — {reason} | SHOULD: {what rewritten test asserts}
+>
+> ADD:
+> - {scenario} — {why}
+>
+> DELETE:
+> - {test name} L{N} — {reason}
+> ```
+>
+> Keep each line under ~200 chars. Use short issue-type tags: `happy-path`, `mock-proving`, `weak-assert`, `missing-error`, `brittle`, `test-mismatch`, `untested-path`.
+
+After all subagents return, collect their structured outputs and proceed to Step 3.5.
+
+#### Step 3b: Inline audit (single file pair)
+
+Read both files directly and apply the same audit criteria (3a-3g). Produce findings in the same compact format. Then proceed to Step 3.5.
+
+---
+
+### Audit criteria reference
+
+These criteria are used by both Step 3a (included in subagent prompts) and Step 3b (applied inline).
 
 #### 3a. Happy-path-only coverage (critical)
 
@@ -111,85 +189,273 @@ Review the source code for branches, conditions, and code paths that have no tes
 - Early returns that are never triggered in tests
 - Optional parameters that are never tested with/without values
 
-### Step 4: Output the review
+---
 
-Output the review in this format:
+### Step 3.5: Surface source findings linked to critical test issues
 
+This step runs in the **main agent** (not subagents) — it requires cross-file reasoning and judgment about source intent.
+
+**Read sparingly.** Work from subagent evidence where possible (each subagent cites source line numbers and described behavior). Only `Read` a source file if you genuinely cannot classify the finding from the subagent output — e.g., the subagent flagged a "mock-proving" critical but you need to see the source line to confirm whether it's a real gap or an intentional no-op. When you do read, read only the relevant range, not the whole file.
+
+Mock-proving tests and similar critical findings almost always sit on top of a real source gap. The test is "green" because the test was bent to fit the source, not the other way round. For every critical test finding raised in Step 3 (whether from subagents or inline), ask:
+
+> **If this test were rewritten honestly against the source, would it pass?**
+
+If the answer is no, the source has a gap — record it as a **Source Finding**, separate from the test rewrite.
+
+For each source finding, pick a default classification (see `.claude/docs/test-command-file-protocol.md` for the full vocabulary):
+
+- **Fix** (default): Source is genuinely broken. Pick this for unhandled rejections, missing validation at security boundaries, silent catch-all blocks, logic that contradicts documented intent. The fix is usually small (add `.catch()`, wrap in try/catch, add a validation check).
+- **Document**: Source behavior is intentional but undocumented. Pick this when the function is meant to throw, or when the "gap" is really a deliberate no-op.
+- **Skip**: The test was testing the wrong thing. Pick this when the test asserts a contract the source never claimed.
+
+Default to **Fix** unless you have specific evidence that the behavior is intentional. Silent green-bar tests are the worse failure mode; a confident Fix default pushes the user toward honest test coverage.
+
+Every source finding must link to the related test rewrite item(s) — they share a root cause.
+
+Every finding is written with `Decision: {default}` and `Status: pending`. The review file is the authoritative decision-tracking record: the user resolves findings inside this conversation (inline fix, delegated subagent, or separate session — then "sync the review"), and the main agent updates the file's Status fields in-place (see Step 7). `/test-plan review` refuses to proceed until every finding is `resolved` or `accepted`.
+
+### Step 4: Write full findings to file
+
+Write the complete review to `.claude/tmp/test-review.md`, overwriting any prior run. This file is the authoritative record — `/test-plan review` reads from it. Follow the shared protocol in `.claude/docs/test-command-file-protocol.md` — every file must start with the metadata frontmatter block.
+
+Before writing, capture git state with Bash:
+
+```bash
+git rev-parse --abbrev-ref HEAD
+git rev-parse HEAD
+date -u +%Y-%m-%dT%H:%M:%SZ
 ```
-## Test Quality Review
+
+The file format:
+
+```markdown
+---
+command: test-review
+scope: {scope string — e.g., "components/analytics" or "branch diff vs origin/main"}
+mode: targeted | branch-diff
+branch: {current branch}
+head: {current HEAD SHA}
+generated: {ISO 8601 UTC timestamp}
+---
+
+# Test Quality Review
 
 **Files reviewed**: {count} test files for {count} source files
-**Mode**: Branch diff / Targeted
 
-### Summary
-- **Critical issues**: {count} — tests give false confidence, fix before merging
+## Summary
+
+- **Critical**: {count} — tests give false confidence, fix before merging
 - **Warnings**: {count} — tests are weak, improve when possible
 - **Info**: {count} — style improvements, low priority
+- **Source findings**: {count} — suspected source gaps linked to critical test issues ({fix count} Fix, {doc count} Document, {skip count} Skip)
 
-### File: `{test file path}` → `{source file path}`
+**Ready for merge**: Yes / No (fix critical issues AND resolve source findings first)
+
+---
+
+## File: `{test file path}` → `{source file path}`
 
 **Overall quality**: Good / Acceptable / Needs Work / Poor
 
-#### Critical Issues
-{numbered list with:}
+### Critical Issues
+
 1. **{Issue type}** (line {N}): {description}
    - **Current**: `{the weak/wrong assertion or missing test}`
    - **Should be**: `{what should be tested instead}`
 
-#### Warnings
+### Warnings
+
 {numbered list}
 
-#### Info
+### Info
+
 {numbered list}
 
-#### Missing Test Cases
-Tests that should be added to this file:
-- [ ] {description of missing test — e.g., "should return 401 when session is expired"}
+### Missing Test Cases
+
 - [ ] {description}
 
 ---
+
 {repeat for each file}
 
-### Overall Assessment
+## Source Findings
 
-**Ready for merge**: Yes / No (fix critical issues first)
+Suspected source gaps linked to critical test issues. This section is the authoritative decision-tracking record — each finding carries a `Decision` (default: Fix) and `Status` (starts: pending). `/test-plan review` refuses to run until every finding is `resolved` or `accepted`.
 
-**Priority fixes** (do these first):
-1. {file}: {most important fix}
-2. {file}: {second most important fix}
+### `{source file path}:{line}` — {one-line summary}
 
-**Improvement suggestions** (do these when possible):
-- {suggestion}
-
-### Structured Findings
-
-The following findings can be consumed by `/test-plan review`:
-
-{For each file with issues, output this block:}
-#### `{source file path}` → `{test file path}`
-
-**Keep** (good tests, do not modify):
-- `{test name}` (line {N})
-
-**Rewrite** (fix these existing tests):
-- `{test name}` (line {N}) — {reason: weak assertion / mock-proving / outdated / name mismatch}. Should: {what the rewritten test should assert}
-
-**Add** (new test cases needed):
-- {scenario description} — {why: untested error path / missing edge case / uncovered branch at source line N}
+**Linked test item(s)**: `{test file path}:{line}` — `{test name}` (+ any siblings in the same Rewrite cluster)
+**Decision**: Fix (default) | Document | Skip
+**Status**: pending
+**Reasoning**: {one short paragraph — what the source actually does today, what the contract should be, why this classification}
+**If Fix**: {concrete source change — e.g. "add `.catch(logger.error)` on line 81", "wrap `sessionStorage.getItem` in try/catch returning null"}
+**If Document**: {what the test should assert instead — the honest current behavior}
+**If Skip**: {which test(s) to delete and why no replacement is needed}
 
 ---
 
-### Next Steps
+{repeat for each source finding}
 
-To fix these issues:
-1. `/test-plan review {scope}` — create an execution plan from these findings
-2. `/test-write plan` — execute the plan
+## Structured Findings
+
+Consumed by `/test-plan review`.
+
+### `{source file path}` → `{test file path}`
+
+**Keep**:
+
+- `{test name}` (line {N})
+
+**Rewrite**:
+
+- `{test name}` (line {N}) — {reason}. Should: {what the rewritten test should assert}. {If linked to a source finding: `Linked source finding: {source path}:{line}`}
+
+**Add**:
+
+- {scenario description} — {why}
+
+**Delete** (optional — only if truly redundant):
+
+- `{test name}` (line {N}) — {reason}
+
+---
 ```
 
-### Step 5: Offer to fix
+### Step 5: Print terse summary to chat
 
-After presenting the review, ask:
+Do NOT print the full review in chat. Print a short, scannable summary only — the user can open the file if they need details.
 
-> Would you like me to fix these issues? Run `/test-plan review {scope}` to create an execution plan, then `/test-write plan` to execute it.
+Format:
+
+```
+## Test Quality Review — {scope}
+
+{N} files reviewed · **{C} critical · {W} warnings · {I} info** · **{S} source findings ({Fix}/{Doc}/{Skip})**
+{If parallel mode: "Audited via {N} parallel Sonnet agents + Opus source analysis"}
+Full findings: `.claude/tmp/test-review.md`
+
+| File | Quality | C | W | I |
+|------|---------|---|---|---|
+| {filename} | {Good/Acceptable/Needs Work/Poor} | {count} | {count} | {count} |
+{...one row per file}
+
+### Top critical issues
+{Up to 5 one-liners, highest-impact first. Format: `file.test.tsx:NN — {issue type}: {one-sentence why}`}
+{If 0 critical issues: omit this section and write "No critical issues."}
+
+### Source findings ({S})
+{Up to 3 highest-impact, one per line: `- source/path.ts:NN — {default classification}: {one-sentence why}`}
+{If 0: omit section entirely}
+{If >3: "(+{N} more in file)"}
+
+**Ready for merge**: {Yes / No — fix {C} critical issues AND resolve {S} source findings first}
+
+{If 0 source findings:}
+Next: `/test-plan review {scope}` → `/test-write plan`
+
+{If 1+ source findings:}
+Next: resolve the {S} source finding{s} first — see options below. Once every finding is `resolved` or `accepted`, run `/test-plan review {scope}`.
+```
+
+Keep it under ~22 lines of chat output regardless of how many files were reviewed. If there are more than 5 critical issues across all files, show the top 5 and note "(+{N} more in file)".
+
+### Step 6: Offer next action
+
+After the summary, branch on the number of source findings. The goal is to keep decision-making **here in this conversation** — do not punt to `/test-plan review` while findings are still pending.
+
+#### If 0 source findings
+
+> Want me to fix the critical test issues? Next step: `/test-plan review {scope}` turns the findings into an execution plan, then `/test-write plan` runs it.
 >
-> _(Replace `{scope}` with the folder or file paths this review targeted, e.g. `components/analytics`. Omit if this was a branch diff review.)_
+> _(Replace `{scope}` with the folder or file paths this review targeted. Omit if this was a branch diff review.)_
+
+#### If 1–3 source findings
+
+The right move is usually a small inline fix. List the findings with the `If Fix` recommendation and offer to apply them:
+
+> {S} source finding{s} need a decision before the plan step. Defaults are **Fix** — small changes I can apply inline right now:
+>
+> - `{source path}:{line}` — {one-line summary of the If Fix change}
+> - ...
+>
+> Options:
+>
+> - Say **"fix them"** (or name specific ones) to apply the default Fix now.
+> - Say **"document {finding}"** or **"skip {finding}"** to override the default and accept as-is.
+> - Say **"I'll handle these separately"** if you want to fix them externally (another session, your editor, a subagent sweep), then come back and say **"findings are fixed"** or **"sync the review"** to have me verify and update the review.
+>
+> Once every finding is `resolved` or `accepted`, run `/test-plan review {scope}`.
+
+#### If 4+ source findings OR any individually complex fix
+
+Inline resolution stops scaling. Recommend external handling with a sync-back:
+
+> {S} source findings need a decision — too many to resolve cleanly inline. Recommended flow:
+>
+> 1. Handle the fixes externally — a dedicated session, a subagent sweep, or your editor. The review file at `.claude/tmp/test-review.md` has the full `If Fix` recommendation for each finding, so whoever does the work has everything they need.
+> 2. Optionally override defaults first — say **"document {finding}"** or **"skip {finding}"** for any you want to accept as-is (I'll flip those to `accepted` immediately).
+> 3. When the fixes land, come back to this conversation and say **"findings are fixed"** or name which ones are done. I'll re-read the affected source ranges, verify each fix matches the `If Fix` recommendation, and update the review's Status fields.
+>
+> Once every finding is `resolved` or `accepted`, run `/test-plan review {scope}`.
+
+### Step 7: Resolve findings (respond to inline fix / sync requests)
+
+This step runs when the user asks you to apply, accept, or verify source findings after the review has been written. The trigger phrases cluster around:
+
+- **Apply defaults**: "fix them", "fix {finding name}", "apply the fix", "do the inline fixes"
+- **Override defaults**: "document {finding}", "skip {finding}", "accept {finding} as document/skip"
+- **Sync after external work**: "findings are fixed", "sync the review", "check the fixes", "I've fixed {finding}"
+
+Always work from `.claude/tmp/test-review.md` — re-read it to get the current state of every finding's `Decision` and `Status` before acting.
+
+#### 7a. Apply inline fixes (Decision = Fix, user says "fix them")
+
+For each finding the user asked to fix:
+
+1. Read the source range referenced in the finding's `If Fix` line (narrow range — just enough to make the change). This is the Step 3.5 carve-out; reading the whole file is unnecessary.
+2. Apply the change using `Edit`. If the fix requires a new import (e.g. `logger`), add it too.
+3. Run `npm run type-check` and `npm run lint` scoped to the changed file. If either fails, report and stop — do not flip status until the fix is clean.
+4. Update `.claude/tmp/test-review.md`: flip that finding's `Status: pending` to `Status: resolved`. Leave `Decision: Fix` as-is.
+5. Move to the next finding. After all requested fixes are applied, print a short summary.
+
+#### 7b. Accept overrides (Decision = Document or Skip)
+
+The user has chosen to not change the source. For each finding being overridden:
+
+1. No source read or change needed — this is a classification flip.
+2. Update `.claude/tmp/test-review.md`: change that finding's `Decision` from `Fix` to `Document` (or `Skip`) and flip `Status: pending` to `Status: accepted`.
+3. The review's `Structured Findings` block still references the finding's test items — those will be handled by the plan/write steps according to the new Decision (Document → assert honest current behavior; Skip → delete test).
+
+#### 7c. Sync after external fixes (user says "findings are fixed")
+
+For each `pending` finding with `Decision: Fix`:
+
+1. Read the source range referenced in the `If Fix` line.
+2. Verify the fix matches the recommendation — concretely:
+   - "Add `.catch(logger.error)` on line 81" → confirm a `.catch(...)` handler is now present at/near that line and `logger` is imported.
+   - "Wrap X in try/catch returning null" → confirm a `try`/`catch` block is present around the call.
+   - Match is semantic, not syntactic — if the fix uses a different logger method or a different variable name but achieves the same contract, accept it.
+3. If verified: flip `Status: pending` to `Status: resolved`.
+4. If NOT verified: leave `Status: pending` and record a short note in your summary — e.g., "line 81 still has `void initialize()` with no catch handler; fix not detected". The user can either land the fix or explicitly accept a Document/Skip override.
+5. If the user also overrode some findings (Document/Skip), apply those per 7b at the same time.
+
+#### 7d. Report after any Step 7 action
+
+Print a compact summary:
+
+```
+Review sync — `.claude/tmp/test-review.md` updated:
+- resolved: {N} ({list})
+- accepted: {N} ({list})
+- still pending: {N} ({list with reason})
+
+{If 0 pending:}
+All source findings resolved. Next: `/test-plan review {scope}` → `/test-write plan`.
+
+{If >0 pending:}
+Remaining findings need attention before the plan step. See options from Step 6.
+```
+
+Keep it under 10 lines. The review file itself has the full detail.

@@ -220,6 +220,7 @@ Use these commands to plan, write, review, and verify tests. All default to bran
 | `/test-plan`     | Analyze code and produce a phased, prioritized test plan with agent batching            |
 | `/test-write`    | Execute a plan by spawning test-engineer subagents (create, add, rewrite tests)         |
 | `/test-review`   | Audit test quality — find weak assertions, happy-path-only coverage, missing edge cases |
+| `/test-fix`      | Fast-path applier for 1–5 file review findings (skips the plan step)                    |
 | `/test-coverage` | Find coverage gaps, untested files, and below-threshold modules                         |
 
 ### Example Flows
@@ -242,6 +243,15 @@ Use these commands to plan, write, review, and verify tests. All default to bran
 /test-plan review lib/auth  # Plan fixes
 /test-write plan            # Execute
 ```
+
+**Quick quality fix after review** (1–5 files, skips plan step):
+
+```bash
+/test-review components/x   # Find quality issues
+/test-fix components/x      # Apply review findings directly
+```
+
+Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and the work is quality fixes, not coverage expansion. For 6+ files or coverage-driven work, use the `/test-plan review` → `/test-write plan` path.
 
 **Fill coverage gaps in a folder**:
 
@@ -274,6 +284,7 @@ Commands produce structured output that feeds into the next step:
 ```
 /test-coverage <scope>  →  /test-plan coverage  →  /test-write plan  →  /test-review <scope>  →  repeat
 /test-review <scope>    →  /test-plan review     →  /test-write plan  →  /test-review <scope>  →  repeat
+/test-review <scope>    →  /test-fix <scope>                                                 (1–5 files)
 ```
 
 **Always pass the same scope to `/test-review` as you passed to `/test-coverage` or `/test-review` at the start.** Without a scope, `/test-review` defaults to branch diff mode, which will find nothing if no source files changed on the branch.
@@ -287,6 +298,7 @@ Commands are defined in `.claude/commands/`:
 - `test-plan.md` — full planning logic, priority system, sprint design
 - `test-write.md` — plan execution, agent batching, progress tracking
 - `test-review.md` — quality audit checks (7 categories), structured findings output
+- `test-fix.md` — fast-path review applier (1–5 file scope cap, single agent spawn)
 - `test-coverage.md` — gap analysis, module-specific thresholds, categorization
 
 The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test-write` — don't invoke it directly.

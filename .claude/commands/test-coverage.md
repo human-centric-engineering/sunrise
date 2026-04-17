@@ -1,9 +1,11 @@
 ---
-allowed-tools: Bash, Glob, Grep, Read
+allowed-tools: Bash, Glob, Grep, Read, Write
 description: Analyze test coverage gaps and prioritize files/folders that need tests
 ---
 
 Analyze test coverage across the project or specific folders. Identifies files with no tests, low coverage, and untested critical paths. Use this to find where to focus testing effort.
+
+**Context discipline:** This command works purely from `coverage/coverage-summary.json` and file-path information (Glob). **The main agent must NOT read source files.** Module classification and thresholds are derived from paths alone — e.g., `lib/auth/**` → auth module (90%), `app/api/**/route.ts` → API endpoint (80%). Reading source contents is unnecessary and inflates context on what should be a cheap planning step.
 
 ## Input
 
@@ -88,34 +90,55 @@ Files meeting line coverage but with branch coverage below 75%. These often indi
 **Category D — Meeting thresholds** (low priority):
 Files meeting all coverage thresholds. Only flag these if they're in a critical module (auth, security) and below 90%.
 
-### Step 5: Classify by module criticality
+### Step 5: Classify by module criticality (path-based)
 
-Apply the project's coverage thresholds from `.claude/skills/testing/success-criteria.md`:
+Classify each file by its **path** — do not open the file. Then apply the module threshold from `.claude/skills/testing/success-criteria.md`:
 
-| Module             | Threshold |
-| ------------------ | --------- |
-| Validation schemas | 95%+      |
-| Auth utilities     | 90%+      |
-| Error handler      | 90%+      |
-| API utilities      | 85%+      |
-| Database utilities | 85%+      |
-| General utilities  | 85%+      |
-| API endpoints      | 80%+      |
-| Components         | 70%+      |
+| Path pattern                                           | Module             | Threshold |
+| ------------------------------------------------------ | ------------------ | --------- |
+| `lib/validation/**`, `**/schemas/**`, `**/*.schema.ts` | Validation schemas | 95%+      |
+| `lib/auth/**`                                          | Auth utilities     | 90%+      |
+| `lib/errors/**`, `**/error-handler*`                   | Error handler      | 90%+      |
+| `lib/api/**`                                           | API utilities      | 85%+      |
+| `lib/db/**`, `lib/prisma/**`, `**/database/**`         | Database utilities | 85%+      |
+| `lib/**` (everything else)                             | General utilities  | 85%+      |
+| `app/api/**/route.ts`                                  | API endpoints      | 80%+      |
+| `components/**`, `app/**/page.tsx`                     | Components         | 70%+      |
 
-Flag files that are below their module-specific threshold, even if they meet the global 80%.
+Flag files below their module-specific threshold, even if they meet the global 80%. When a path matches multiple patterns (rare), use the stricter threshold.
 
-### Step 6: Output the analysis
+### Step 6: Write full analysis to file
 
+Write the complete coverage analysis to `.claude/tmp/test-coverage.md`, overwriting any prior run. This file is the authoritative record — `/test-plan coverage` reads from it. Follow the shared protocol in `.claude/docs/test-command-file-protocol.md` — every file must start with the metadata frontmatter block.
+
+Before writing, capture git state with Bash:
+
+```bash
+git rev-parse --abbrev-ref HEAD
+git rev-parse HEAD
+date -u +%Y-%m-%dT%H:%M:%SZ
 ```
-## Coverage Analysis
 
-**Scope**: {Entire project / Folders: {list}}
+The file format:
+
+```markdown
+---
+command: test-coverage
+scope: { scope string — folder paths, 'branch diff vs origin/main', or "whole project" }
+mode: targeted | branch-diff
+branch: { current branch }
+head: { current HEAD SHA }
+generated: { ISO 8601 UTC timestamp }
+---
+
+# Coverage Analysis
+
 **Total source files scanned**: {count}
 **Total test files**: {count}
 **Overall coverage**: {lines}% lines, {branches}% branches, {functions}% functions
 
-### Category A: No Tests ({count} files)
+## Category A: No Tests ({count} files)
+
 These files have zero test coverage — no dedicated test file and no indirect coverage.
 
 **Security-critical (fix immediately):**
@@ -131,72 +154,85 @@ These files have zero test coverage — no dedicated test file and no indirect c
 | File | Type | Module | Required Threshold |
 |------|------|--------|--------------------|
 
-### Category B: Below Threshold ({count} files)
-These files have tests but don't meet coverage targets.
+## Category B: Below Threshold ({count} files)
 
 | File | Lines | Branches | Functions | Target | Gap |
-|------|-------|----------|-----------|--------|-----|
-| `lib/api/client.ts` | 62% | 45% | 70% | 85% | -23% lines |
+| ---- | ----- | -------- | --------- | ------ | --- |
 
-### Category C: Weak Branch Coverage ({count} files)
-Line coverage is OK but branch coverage suggests untested error/edge paths.
+## Category C: Weak Branch Coverage ({count} files)
 
 | File | Lines | Branches | Key Untested Branches |
-|------|-------|----------|-----------------------|
-{If possible, identify which branches are untested by reading the source}
+| ---- | ----- | -------- | --------------------- |
 
-### Category D: Meeting Thresholds ({count} files)
-{Only list files in critical modules (auth, security, validation) that are between their module threshold and 100% — these are candidates for hardening}
+## Category D: Meeting Thresholds ({count} files)
 
-### Summary Statistics
+{Only list critical-module files between their module threshold and 100%}
 
-| Metric | Value |
-|--------|-------|
-| Files with no tests | {count} ({percent}%) |
-| Files below threshold | {count} ({percent}%) |
-| Files meeting threshold | {count} ({percent}%) |
-| Critical files uncovered | {count} |
+## Summary Statistics
 
-### Recommended Action Plan
+| Metric                   | Value                |
+| ------------------------ | -------------------- |
+| Files with no tests      | {count} ({percent}%) |
+| Files below threshold    | {count} ({percent}%) |
+| Files meeting threshold  | {count} ({percent}%) |
+| Critical files uncovered | {count}              |
 
-**Sprint 1** (security-critical gaps):
-{List files, estimated complexity, suggested approach}
+## Recommended Action Plan
 
-**Sprint 2** (business logic gaps):
-{List files, estimated complexity, suggested approach}
+**Sprint 1** (security-critical gaps): {files}
+**Sprint 2** (business logic gaps): {files}
+**Sprint 3** (coverage hardening): {files}
 
-**Sprint 3** (coverage hardening):
-{List files needing branch coverage improvement}
+## Structured Findings
 
-### Structured Findings
+Consumed by `/test-plan coverage`.
 
-The following structured findings can be consumed by `/test-plan coverage`:
-
-{For each file needing work, output this block:}
-#### `{source file path}`
+### `{source file path}`
 
 **Action**: CREATE / ADD
 **Test file**: `{expected test file path}`
-**Sprint**: 1 (security-critical) / 2 (business logic) / 3 (coverage hardening)
+**Sprint**: 1 / 2 / 3
 **Coverage target**: {percentage based on module}
 
-{For CREATE files (Category A — no tests):}
+{For CREATE files (Category A):}
 **Needs**: Full test file — no existing tests
-**Key behaviors to cover**: {list main functions/exports and their purposes from reading the source}
+**Key behaviors to cover**: _deferred to `/test-plan coverage`_ — `/test-plan`'s fresh-analysis subagents will read the source and enumerate behaviors. Do not pre-enumerate here (that would require reading source in this command, which is explicitly out of scope).
 
-{For ADD files (Category B/C — below threshold):}
+{For ADD files (Category B/C):}
 **Current coverage**: {lines}% lines, {branches}% branches
-**Gap**: {what's missing — e.g., "error handling branches at lines 45-52 untested", "else clause at line 78 never hit"}
+**Gap**: {what's missing — specific lines/branches}
 **Needs**: Additional test cases for uncovered paths
 
 ---
-
-### Next Steps
-
-To address these gaps:
-1. `/test-plan coverage` — create a phased execution plan from these findings (recommended)
-2. `/test-plan {folder}` — plan tests for a specific module
-3. `/test-plan {file paths}` — plan tests for specific files
-
-Then `/test-write plan` to execute.
 ```
+
+### Step 7: Print terse summary to chat
+
+Do NOT print the full analysis in chat. Print a short, scannable summary only.
+
+Format:
+
+```
+## Coverage Analysis — {scope}
+
+{N} files scanned · **{A} no tests · {B} below threshold · {C} weak branches**
+Overall: {lines}% lines, {branches}% branches, {functions}% functions
+Full analysis: `.claude/tmp/test-coverage.md`
+
+### Category A: No tests ({A} files)
+{Up to 3 security-critical / high-priority files, one per line, formatted: `- lib/auth/guards.ts — middleware (Auth, 90% target)`}
+{If more: "(+{N} more in file)"}
+
+### Category B: Below threshold ({B} files)
+{Up to 3 worst offenders, formatted: `- lib/api/client.ts — 62% lines (target 85%, gap -23%)`}
+{If more: "(+{N} more in file)"}
+
+### Priority
+Sprint 1 (security-critical): {count} files
+Sprint 2 (business logic): {count} files
+Sprint 3 (hardening): {count} files
+
+Next: `/test-plan coverage` → `/test-write plan`
+```
+
+Keep chat output under ~25 lines regardless of project size.

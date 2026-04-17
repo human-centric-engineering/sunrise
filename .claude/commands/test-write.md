@@ -17,25 +17,57 @@ For each file in the plan, the agent handles whichever combination is needed:
 
 $ARGUMENTS — controls what to execute:
 
-- **`plan`** → execute the most recent `/test-plan` from the conversation (Sprint 1 by default)
-- **`plan sprint N`** → execute a specific sprint from the most recent plan
-- **`plan all`** → execute all sprints sequentially from the most recent plan
+- **`plan`** → execute the plan from `.claude/tmp/test-plan.md` (Sprint 1 by default)
+- **`plan sprint N`** → execute a specific sprint from the plan file
+- **`plan all`** → execute all sprints sequentially from the plan file
 - **File paths (1-2 files only)** → generate a minimal inline plan and execute it immediately (skip `/test-plan` for trivial scope)
-- **No arguments** → look for a plan in the conversation; if none exists, prompt the user to run `/test-plan` first
+- **No arguments** → if `.claude/tmp/test-plan.md` exists, use it (Sprint 1); otherwise prompt the user to run `/test-plan` first
 
-**Selecting prior context:** When multiple `/test-plan` outputs exist in the conversation, use the **most recent** one. Ignore older plans.
+**Plan source:** The plan file at `.claude/tmp/test-plan.md` is the single source of truth. It is overwritten by each `/test-plan` run.
 
 ## Steps
 
 ### Step 1: Resolve the plan
 
-**If `plan` keyword is present:**
+**If `plan` keyword is present (or no arguments):**
 
-- Extract the most recent `/test-plan` output from the conversation
-- If `sprint N` is specified, extract only that sprint's batches
-- If `all` is specified, execute all sprints in order
-- If neither, default to Sprint 1
-- If no plan exists in the conversation, report: "No test plan found. Run `/test-plan` first to create one." and stop.
+- Read `.claude/tmp/test-plan.md` and follow the reader protocol in `.claude/docs/test-command-file-protocol.md`:
+  1. Parse the frontmatter metadata.
+  2. Hard-stop if an invocation scope disagrees with the file's scope. (For `/test-write`, no scope is ever passed as an argument, so this step just verifies the file parses.)
+  3. Soft-warn on age >1h, branch change, or HEAD change. Given that `/test-write` executes work from the plan, a stale plan is riskier than a stale review — if age >24h OR branch/HEAD changed, pause and ask the user to confirm before proceeding.
+  4. Print the provenance line.
+- If `sprint N` is specified, extract only that sprint's batches.
+- If `all` is specified, execute all sprints in order.
+- If neither, default to Sprint 1.
+- If the file does not exist, report: "No test plan found at `.claude/tmp/test-plan.md`. Run `/test-plan` first to create one." and stop.
+
+### Step 1.5: Enforce Source Decisions (hard stop on pending)
+
+After the plan parses, inspect the `## Source Decisions` block (if present).
+
+- If the block is absent or empty, continue.
+- Parse every finding's `**Status**` field. Valid terminal values: `resolved` (Fix landed) or `accepted` (user confirmed Document or Skip).
+- If ANY finding has `Status: pending`, STOP and tell the user:
+
+  > `{count}` Source Decision{s} in `.claude/tmp/test-plan.md` {is/are} still `pending`. `/test-write` refuses to execute until each is resolved (source fix merged) or accepted (user explicitly confirmed `Document` or `Skip`).
+  >
+  > Pending findings:
+  >
+  > - `{source path}:{line}` — {summary} (Decision: {decision})
+  >   {...one per pending finding}
+  >
+  > To unblock:
+  >
+  > - **Fix**: land the source change, then edit `.claude/tmp/test-plan.md` and set `Status: resolved` for that finding.
+  > - **Document / Skip**: re-read the reasoning, confirm you want to accept it, then edit the file and set `Status: accepted` (and update `Decision:` if you're overriding the default).
+
+  Do not proceed. Do not offer to patch statuses yourself — the status flip is the user's explicit authorization for the sprint to run.
+
+- If every finding is `resolved` or `accepted`, print a one-line confirmation before moving on:
+
+  ```
+  Source Decisions: {R} resolved, {A} accepted — OK to execute.
+  ```
 
 **If 1-2 file paths are provided (no `plan` keyword):**
 
@@ -70,11 +102,17 @@ Before spawning any agents, show the user what will happen:
 **Files**: {count}
 **Agent batches**: {count}
 **Estimated agents to spawn**: {count}
+**Source Decisions**: {R} resolved, {A} accepted (0 pending — verified in Step 1.5)
 
 | Batch | Files | Action | Agent Scope |
 |-------|-------|--------|-------------|
 | 1.1 | 3 | CREATE (2), UPDATE (1) | Validation schemas — simple, no mocking |
 | 1.2 | 1 | UPDATE | Auth guards — complex, auth + db mocking |
+
+{If any decisions were `accepted` with `Document` or `Skip`, list them briefly so the user can spot a mistake before agents start:}
+**Accepted decisions** (source not changed — tests will assert current behavior):
+- `{source path}:{line}` — Document: {what the test will assert instead}
+- `{source path}:{line}` — Skip: {which test(s) are being deleted}
 
 Proceed? (Y/n)
 ```
@@ -101,11 +139,24 @@ For each batch in the sprint, spawn a **foreground** test-engineer agent. The pr
 > - When a test fails: determine if the code or the test is wrong before fixing (see "When Tests Fail" in agent definition)
 > - Read `.claude/skills/testing/gotchas.md` before writing any tests
 
-3. **Validation requirements:**
+3. **Mid-sprint source-bug protocol:**
+
+> If, while writing a test, you discover a **new** suspected source bug that is NOT already covered by a Source Decision in the plan (e.g. a rewritten assertion against the honest contract fails because the source is broken), you MUST:
+>
+> 1. STOP work on that file. Do not modify the source. Do not weaken the test to make it pass.
+> 2. Report the finding in your final output under a `## New Source Findings` heading with:
+>    - `source file:line` — one-line summary
+>    - linked test (file + intended test name)
+>    - concrete evidence (assertion run, actual vs expected, stack if relevant)
+>    - recommended classification (default: **Fix**)
+> 3. Leave the file in a clean state — either revert the rewrite-in-progress or mark the failing test with `it.todo(...)` and a `// MID-SPRINT FINDING: see sprint output` comment. Never commit a green test that hides the finding.
+> 4. Continue to the next file in your batch (other files are not blocked by one file's finding).
+
+4. **Validation requirements:**
 
 > After completing all changes:
 >
-> 1. Run `npm test -- {test file paths}` — all must pass
+> 1. Run `npm test -- {test file paths}` — all must pass (tests parked with `it.todo` due to mid-sprint findings count as a known gap, not a failure)
 > 2. Run `npm run lint` — no new errors
 > 3. Run `npm run type-check` — no new errors
 >    Do NOT mark complete until all three pass.
@@ -117,40 +168,84 @@ After each agent completes, report:
 ```
 ### Batch {N} Results
 
-| File | Test File | Action | Kept | Rewritten | Added | Total | Pass | Status |
-|------|-----------|--------|------|-----------|-------|-------|------|--------|
-| `lib/auth/guards.ts` | `tests/unit/lib/auth/guards.test.ts` | UPDATE | 4 | 2 | 3 | 9 | 9/9 | DONE |
-| `lib/api/client.ts` | `tests/unit/lib/api/client.test.ts` | CREATE | — | — | 12 | 12 | 12/12 | DONE |
+| File | Test File | Action | Kept | Rewritten | Added | Todo | Total | Pass | Status |
+|------|-----------|--------|------|-----------|-------|------|-------|------|--------|
+| `lib/auth/guards.ts` | `tests/unit/lib/auth/guards.test.ts` | UPDATE | 4 | 2 | 3 | 0 | 9 | 9/9 | DONE |
+| `lib/api/client.ts` | `tests/unit/lib/api/client.test.ts` | CREATE | — | — | 12 | 0 | 12 | 12/12 | DONE |
 
-{Any issues encountered or suspected code bugs discovered}
+{Any issues encountered. If the agent reported mid-sprint findings, add them to the running `New Source Findings` list — see Step 4.5.}
 ```
 
-If an agent reports a **suspected code bug** (test fails because the source code appears wrong):
+The `Todo` column counts tests parked with `it.todo(...)` because of a mid-sprint source finding — those are known gaps, not regressions, but they must be resolved before the sprint can be considered complete.
 
-- Flag it clearly — do NOT modify the source code without user approval
-- Report: file path, line number, expected vs actual behavior, evidence
+### Step 4.5: Collect mid-sprint source findings
+
+Maintain a running list of any `## New Source Findings` sections returned by agents during the sprint. After each batch, append new findings to the list and print:
+
+```
+### New Source Findings (sprint so far: {count})
+
+- `{source path}:{line}` — {summary}
+  - Linked test: `{test path}` — `{test name}` (parked as `it.todo`)
+  - Evidence: {one-line summary of assertion + actual behavior}
+  - Recommended classification: Fix | Document | Skip (default: **Fix**)
+```
+
+Do NOT halt the whole sprint on the first finding — other batches may not be affected, and running them in parallel keeps the user's time to decision short. But do NOT proceed to Step 5's "sprint complete" claim while findings are unresolved.
 
 ### Step 5: Sprint summary
 
-After all batches in the sprint complete:
+After all batches in the sprint complete. The sprint is considered **Complete** only if zero mid-sprint findings are open; otherwise it's **Complete with open findings** and the next step is decision-making, not the next sprint.
 
 ```
-## Sprint {N} Complete: {name}
+## Sprint {N} {Complete | Complete with open findings}: {name}
 
 **Files processed**: {count}
 - Created: {count} new test files
 - Updated: {count} existing test files ({rewritten} tests rewritten, {added} tests added, {kept} tests kept)
-**Total tests**: {count}
-**All passing**: Yes / No
+**Total tests**: {count} ({todo} parked as `it.todo` pending source decision)
+**All passing**: Yes / No (excluding `it.todo`)
 
 ### Coverage Impact
 | File | Before | After | Target | Status |
 |------|--------|-------|--------|--------|
 {per-file coverage changes — run `npm run test:coverage` to get updated numbers}
 
-### Suspected Code Bugs
-{List any cases where the test was written to the correct contract but fails against the current code}
-{Or "None found"}
+### Source Decisions from the plan
+{Quick audit — confirm each Source Decision was actually honored:}
+- `{source path}:{line}` — Decision: Fix → source change landed: Yes / No
+- `{source path}:{line}` — Decision: Document → test asserts honest current behavior: Yes / No
+- `{source path}:{line}` — Decision: Skip → test was deleted / not replaced: Yes / No
+
+{If any row is "No", flag as a regression — the sprint has quietly drifted from the plan.}
+
+### New Source Findings (mid-sprint)
+{Aggregate from Step 4.5. If zero, write "None — sprint honored the plan with no surprises."}
+
+For each finding:
+- `{source path}:{line}` — {summary}
+  - Linked parked test: `{test path}` — `{test name}`
+  - Recommended classification: Fix | Document | Skip (default: **Fix**)
+  - Why: {one-line rationale}
+
+### Capture as gotcha? (conditional)
+
+{Only show this block if ANY batch returned a non-empty `Deviations from the plan` section OR a non-empty `New Source Findings` section. Omit entirely if the sprint was clean.}
+
+Some of the deviations / findings above look like repeatable patterns worth capturing for future agents. Reply:
+
+- **`capture {short phrase}`** — e.g. `capture sessionStorage spy quirk` — to log an entry in `.claude/skills/testing/gotchas.md`.
+- **`skip`** — continue without capturing.
+- You can capture multiple by chaining: `capture X; capture Y`.
+
+When the user replies with a capture request:
+
+1. Read `.claude/skills/testing/gotchas.md`.
+2. Append a new numbered entry after the last one in the "Critical Gotchas" section. Follow the existing format: `### {N}. {Title}`, `**Problem**:`, `**Solution**:`, a code example, `**Status**: ✅ DOCUMENTED — {discovery context}`.
+3. The discovery context should cite the sprint: `Discovered while executing {sprint name} (Sprint {N}) on {file path}.`
+4. Confirm: `Captured gotcha #{N} in .claude/skills/testing/gotchas.md.`
+
+If the user replies `skip` or proceeds without a capture reply, continue to Next Steps without prompting again.
 
 ### Next Steps
 
@@ -159,10 +254,18 @@ After all batches in the sprint complete:
 - If source was branch diff → no scope needed (branch diff is the right default)
 - If source was a prior `/test-coverage` or `/test-review` → use the folder/paths from that command's scope}
 
-{If more sprints remain in the plan:}
+{If mid-sprint findings are open — ALWAYS show this branch first:}
+- Resolve the {count} new source finding{s} before moving on:
+  - **Fix**: land the source change, remove the `it.todo`, convert back to a real assertion, and re-run the sprint.
+  - **Document**: replace the `it.todo` with the honest-behavior assertion and a `// SOURCE DECISION: Document — {reason}` comment.
+  - **Skip**: delete the parked test.
+- For 1–3 findings: resolve inline now.
+- For 4+ findings: consider spawning a dedicated session or subagent sweep, then return here and re-run `/test-write plan sprint {N}` (idempotent — Keep tests are unchanged).
+
+{If more sprints remain AND no findings are open:}
 - `/test-write plan sprint {N+1}` — execute the next sprint ({name})
 - `/test-review {scope}` — audit quality of what was just written before proceeding
-{If this was the last sprint:}
+{If this was the last sprint AND no findings are open:}
 - `/test-review {scope}` — audit quality of all tests written
 - `/test-coverage {scope}` — verify coverage meets thresholds
 - `/pre-pr` — final validation before opening a pull request
