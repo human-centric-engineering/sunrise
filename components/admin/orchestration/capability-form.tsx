@@ -51,6 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
 import type { AiCapability } from '@/types/prisma';
 
@@ -526,6 +527,8 @@ export function CapabilityForm({
           </Button>
         </div>
       </div>
+
+      {!isEdit && <CliAuthoringHint resource="capabilities" />}
 
       {error && (
         <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">

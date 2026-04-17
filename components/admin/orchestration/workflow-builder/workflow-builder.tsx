@@ -39,6 +39,7 @@ import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
+import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
 import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
 import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
@@ -461,6 +462,12 @@ function WorkflowBuilderInner({
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
+
+      {mode === 'create' && (
+        <div className="border-b px-4 py-3">
+          <CliAuthoringHint resource="workflows" />
+        </div>
+      )}
 
       {workflow?.isTemplate && (
         <TemplateBanner
