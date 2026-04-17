@@ -178,7 +178,7 @@ export interface WorkflowDefinition {
   /** ID of the first step to execute */
   entryStepId: string;
   /** How to handle step failures */
-  errorStrategy: 'retry' | 'fallback' | 'fail';
+  errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
 }
 
 // ============================================================================

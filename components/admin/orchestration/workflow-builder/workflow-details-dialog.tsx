@@ -174,6 +174,7 @@ export function WorkflowDetailsDialog({
               <SelectContent>
                 <SelectItem value="fail">Fail fast</SelectItem>
                 <SelectItem value="retry">Retry step</SelectItem>
+                <SelectItem value="skip">Skip step</SelectItem>
                 <SelectItem value="fallback">Fallback branch</SelectItem>
               </SelectContent>
             </Select>

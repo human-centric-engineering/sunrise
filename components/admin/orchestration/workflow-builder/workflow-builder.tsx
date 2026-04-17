@@ -39,6 +39,7 @@ import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
+import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
 import { BlockConfigPanel } from './block-config-panel';
 import { BuilderToolbar } from './builder-toolbar';
 import { ExecutionInputDialog } from './execution-input-dialog';
@@ -53,6 +54,7 @@ import { runExtraChecks } from './extra-checks';
 import { saveWorkflow, type WorkflowDetails } from './workflow-save';
 import {
   flowToWorkflowDefinition,
+  stripLayout,
   workflowDefinitionToFlow,
   type PatternNode,
 } from './workflow-mappers';
@@ -287,6 +289,18 @@ function WorkflowBuilderInner({
     [getNode, setCenter]
   );
 
+  const handleCopyJson = useCallback(() => {
+    const def = flowToWorkflowDefinition(nodes, edges, {
+      errorStrategy: details?.errorStrategy,
+    });
+    const cleaned = {
+      ...def,
+      steps: def.steps.map((s) => ({ ...s, config: stripLayout(s.config) })),
+    };
+    const json = JSON.stringify(cleaned, null, 2);
+    void navigator.clipboard.writeText(json);
+  }, [nodes, edges, details?.errorStrategy]);
+
   const handleValidate = useCallback(() => {
     summaryPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
@@ -401,6 +415,25 @@ function WorkflowBuilderInner({
     [performSave]
   );
 
+  const handleHistoryRevert = useCallback(async () => {
+    if (!workflow) return;
+    try {
+      const fresh = await apiClient.get<AiWorkflow>(
+        API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
+      );
+      const parsed = workflowDefinitionSchema.safeParse(fresh.workflowDefinition);
+      if (parsed.success) {
+        const { nodes: revertedNodes, edges: revertedEdges } = workflowDefinitionToFlow(
+          parsed.data
+        );
+        setNodes(revertedNodes);
+        setEdges(revertedEdges);
+      }
+    } catch (err) {
+      logger.error('Failed to refresh canvas after revert', { err });
+    }
+  }, [workflow, setNodes, setEdges]);
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   return (
@@ -409,6 +442,7 @@ function WorkflowBuilderInner({
         mode={mode}
         workflowName={workflowName}
         onNameChange={setWorkflowName}
+        onCopyJson={handleCopyJson}
         onValidate={handleValidate}
         onSave={handleSave}
         onExecute={handleExecute}
@@ -435,6 +469,15 @@ function WorkflowBuilderInner({
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />
       </div>
+
+      {mode === 'edit' && workflow && (
+        <div className="border-b px-4 py-2">
+          <WorkflowDefinitionHistoryPanel
+            workflowId={workflow.id}
+            onReverted={() => void handleHistoryRevert()}
+          />
+        </div>
+      )}
 
       {saveError && (
         <div

@@ -40,6 +40,7 @@ function makeCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
     variables: {},
     totalTokensUsed: 0,
     totalCostUsd: 0,
+    defaultErrorStrategy: 'fail',
     logger: {
       info: vi.fn(),
       warn: vi.fn(),

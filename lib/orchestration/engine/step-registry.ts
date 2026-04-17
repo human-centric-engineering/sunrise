@@ -56,6 +56,8 @@ export interface StepRegistryEntry {
   patternNumber?: number;
   /** Seed config applied when a new block is dropped on the canvas. */
   defaultConfig: Record<string, unknown>;
+  /** Approximate execution time hint shown in the palette. */
+  estimatedDuration: string;
 }
 
 export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
@@ -69,6 +71,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 1,
     defaultConfig: { prompt: '', modelOverride: '', temperature: 0.7 },
+    estimatedDuration: '~2-5s',
   },
   {
     type: 'chain',
@@ -80,6 +83,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 1,
     defaultConfig: { steps: [] },
+    estimatedDuration: '~5-15s',
   },
   {
     type: 'route',
@@ -91,6 +95,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 2,
     patternNumber: 2,
     defaultConfig: { classificationPrompt: '', routes: [] },
+    estimatedDuration: '~1-3s',
   },
   {
     type: 'parallel',
@@ -102,6 +107,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 3,
     patternNumber: 3,
     defaultConfig: { branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' },
+    estimatedDuration: 'varies',
   },
   {
     type: 'reflect',
@@ -113,6 +119,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 4,
     defaultConfig: { critiquePrompt: '', maxIterations: 3 },
+    estimatedDuration: '~10-30s',
   },
   {
     type: 'tool_call',
@@ -124,6 +131,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 5,
     defaultConfig: { capabilitySlug: '' },
+    estimatedDuration: '~0.5-2s',
   },
   {
     type: 'plan',
@@ -135,6 +143,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 6,
     defaultConfig: { objective: '', maxSubSteps: 5 },
+    estimatedDuration: '~5-15s',
   },
   {
     type: 'human_approval',
@@ -146,6 +155,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 13,
     defaultConfig: { prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' },
+    estimatedDuration: 'manual',
   },
   {
     type: 'rag_retrieve',
@@ -157,6 +167,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 14,
     defaultConfig: { query: '', topK: 5, similarityThreshold: 0.7 },
+    estimatedDuration: '~1-3s',
   },
   {
     type: 'guard',
@@ -168,6 +179,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 2,
     patternNumber: 18,
     defaultConfig: { rules: '', mode: 'llm', failAction: 'block', temperature: 0.1 },
+    estimatedDuration: '~1-3s',
   },
   {
     type: 'evaluate',
@@ -179,6 +191,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 19,
     defaultConfig: { rubric: '', scaleMin: 1, scaleMax: 5, threshold: 3 },
+    estimatedDuration: '~2-5s',
   },
   {
     type: 'external_call',
@@ -190,6 +203,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     outputs: 1,
     patternNumber: 15,
     defaultConfig: { url: '', method: 'POST', timeoutMs: 30000, authType: 'none' },
+    estimatedDuration: '~1-10s',
   },
 ] as const;
 

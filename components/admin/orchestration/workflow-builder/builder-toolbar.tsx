@@ -8,7 +8,15 @@
  */
 
 import Link from 'next/link';
-import { ChevronLeft, CheckCircle2, FileText, Loader2, Play, Save } from 'lucide-react';
+import {
+  ChevronLeft,
+  CheckCircle2,
+  ClipboardCopy,
+  FileText,
+  Loader2,
+  Play,
+  Save,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +37,8 @@ export interface BuilderToolbarProps {
   workflowName: string;
   onNameChange: (name: string) => void;
   mode: 'create' | 'edit';
+  /** Called when the Copy JSON button is clicked. */
+  onCopyJson: () => void;
   /** Called when the Validate button is clicked. */
   onValidate: () => void;
   /** Called when the Save button is clicked. */
@@ -51,6 +61,7 @@ export function BuilderToolbar({
   workflowName,
   onNameChange,
   mode,
+  onCopyJson,
   onValidate,
   onSave,
   onExecute,
@@ -114,6 +125,16 @@ export function BuilderToolbar({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onCopyJson}
+        title="Copy workflow definition as JSON to clipboard"
+      >
+        <ClipboardCopy className="mr-2 h-4 w-4" />
+        Copy JSON
+      </Button>
 
       <Button
         variant="outline"

@@ -22,7 +22,7 @@ import { flowToWorkflowDefinition, type PatternNode } from './workflow-mappers';
 export interface WorkflowDetails {
   slug: string;
   description: string;
-  errorStrategy: 'retry' | 'fallback' | 'fail';
+  errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
   isTemplate: boolean;
 }
 

@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **8 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **8 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel. **Phase 5 additions:** step time estimates in palette, Copy JSON toolbar button, per-step error strategy overrides, execution cancellation, workflow definition version history.
 
 **Core files:**
 
@@ -62,9 +62,12 @@ interface StepRegistryEntry {
   inputs: number; // handle count on target side
   outputs: number; // handle count on source side (route: 2, parallel: 3, rest: 1)
   patternNumber?: number; // forward-link to /learning/patterns/:n
+  estimatedDuration: string; // human-readable hint, e.g. "~2-5s"
   defaultConfig: Record<string, unknown>;
 }
 ```
+
+Each entry carries an `estimatedDuration` hint displayed in the palette below the description (e.g. `"~2-5s"`, `"varies"`, `"manual"`).
 
 **Twelve entries:**
 
@@ -135,6 +138,10 @@ Structure (top to bottom):
 - Editable **Name** `<Input>` with `<FieldHelp title="Step name">`. Writes back via `onLabelChange(id, value)`.
 - Read-only **Step ID** with a copy-to-clipboard button. IDs are generated via `makeStepId()` (`step_<random8>`) and never change.
 - A type-specific **editor** section picked from `block-editors/` via a single `switch (node.data.type)`. Each editor receives `{ config, onChange, capabilities? }` per the `EditorProps<TConfig>` interface in `block-editors/index.ts`. `onChange(partial)` bubbles to `onConfigChange(nodeId, partial)` on the builder shell, which shallow-merges the partial into `data.config`.
+- An **Error handling** section (below the type-specific editor) with:
+  - **Strategy** Select: "Inherit from workflow" (default), "Retry", "Fallback", "Skip", "Fail". Writes `config.errorStrategy` (or `undefined` for inherit).
+  - Conditional **Retry count** number input (0–10, default 2) when strategy is "Retry". Writes `config.retryCount`.
+  - Conditional **Fallback step ID** text input when strategy is "Fallback". Writes `config.fallbackStepId`.
 
 **One panel, one switch.** Matches the "one `PatternNode` for all step types" decision from 5.1a: adding a new step type means one new `case` and one new editor file — no new panel component, no new shell wiring.
 
@@ -220,7 +227,7 @@ The POST schema requires `slug` and `description`, which the canvas does not cap
 
 - **Slug** — auto-derived from the workflow name via a local `slugify()` helper, but the dialog stops auto-deriving once the user types in the slug field (`slugTouched` state). Validated against `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` before the Confirm button enables.
 - **Description** — free-text, required non-empty.
-- **Error strategy** — Select over `fail` / `retry` / `fallback`, defaults to `fail`. Threaded through `flowToWorkflowDefinition` opts.
+- **Error strategy** — Select over `fail` / `retry` / `skip` / `fallback`, defaults to `fail`. Threaded through `flowToWorkflowDefinition` opts. Individual steps can override this via the block config panel's error handling section.
 - **Is template** — Checkbox, default false.
 
 Confirming calls `performSave(resolved)` → `saveWorkflow()` → on success `router.push('/admin/orchestration/workflows/:id')`. On subsequent saves the shell holds the resolved `details` in state and skips the dialog.
@@ -235,7 +242,7 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ### Toolbar wiring
 
-`builder-toolbar.tsx` accepts `{ onValidate, onSave, onExecute, onTemplateSelect, templatesDisabled, saving, hasErrors, mode }`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute is **disabled** in create mode with `title="Save the workflow before executing"` and **enabled** in edit mode, where clicking it fires `onExecute` — see [Execution panel](#execution-panel) below.
+`builder-toolbar.tsx` accepts `{ onValidate, onSave, onExecute, onCopyJson, onTemplateSelect, templatesDisabled, saving, hasErrors, mode }`. **Copy JSON** (`ClipboardCopy` icon) copies the current canvas as a `WorkflowDefinition` JSON to the clipboard with `_layout` keys stripped via `stripLayout()`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute is **disabled** in create mode with `title="Save the workflow before executing"` and **enabled** in edit mode, where clicking it fires `onExecute` — see [Execution panel](#execution-panel) below.
 
 ## Templates
 
@@ -349,7 +356,7 @@ Clicking **Execute** in edit mode opens `ExecutionInputDialog` — a JSON textar
 | `workflow_completed` | Terminal — status pill → "Completed"                                                    |
 | `workflow_failed`    | Terminal — status pill → "Failed", red banner with the sanitized `error` from the frame |
 
-**Abort** — while `status === 'running'` the panel renders an abort button that calls `abortController.abort()`. The in-flight `fetch` tears down, the engine's DB checkpoint reflects the last completed step, and the panel flips to `aborted`. Unmounting the panel while a stream is open has the same effect via the cleanup function on the `useEffect` that drives `streamRun`.
+**Abort / Cancel** — while `status === 'running'` the panel renders an abort button. Clicking it first POSTs to `POST /executions/:id/cancel` (best-effort — the cancel persists `status: 'cancelled'` and `completedAt` in the database) then calls `abortController.abort()`. The engine polls execution status between steps and stops when it sees `cancelled`. Unmounting the panel while a stream is open has the same abort effect via the cleanup function on the `useEffect` that drives `streamRun`.
 
 **Approve** — on `approval_required` the panel enables the Approve button. Clicking it POSTs `{ approvalPayload: { approved: true } }` to `/executions/:id/approve` via `apiClient.post`, then reconnects to the execute route with `?resumeFromExecutionId=<id>` so the engine drains the remaining events. The resume path is covered by the engine docs — see [`../orchestration/engine.md`](../orchestration/engine.md).
 
@@ -362,6 +369,21 @@ Unit tests live under `tests/unit/lib/orchestration/engine/` and `tests/unit/com
 **Mocking React Flow:** canvas / builder / node tests mock `@xyflow/react` at the module level. The stub module exports trivial replacements for `ReactFlow`, `ReactFlowProvider`, `Handle`, `Background`, `Controls`, `MiniMap`, `useReactFlow`, `useNodesState`, `useEdgesState`, and `addEdge`. Verifies prop wiring without needing to hydrate the real library.
 
 **Mocking the mappers' complement:** `workflow-mappers.ts` is pure TS so its tests need zero mocks — they exercise round-trips directly against fixture definitions.
+
+## Definition version history
+
+In **edit mode**, a collapsible `WorkflowDefinitionHistoryPanel` appears below the validation summary. It follows the same pattern as `InstructionsHistoryPanel` on the agent form.
+
+**Schema:** `AiWorkflow.workflowDefinitionHistory` is a JSON column (`@default("[]")`) storing `[{ definition, changedAt, changedBy }]` entries. Every PATCH that changes `workflowDefinition` pushes the old value onto the array before writing the new one.
+
+**Endpoints:**
+
+- `GET /workflows/:id/definition-history` — returns `{ workflowId, slug, current, history }` with history newest-first, each entry annotated with `versionIndex` (the raw oldest→newest DB array index).
+- `POST /workflows/:id/definition-revert` — body `{ versionIndex }`. Pushes the current definition onto history before overwriting with the target version, so the revert itself is auditable.
+
+**UI:** lazy-fetch on first expand, newest-first rows with step count preview, "Diff" dialog (JSON pretty-print LCS diff), "Revert" with AlertDialog confirmation. After a successful revert, the builder re-fetches the workflow and re-initializes the canvas nodes/edges.
+
+**Validation schemas:** `workflowDefinitionHistoryEntrySchema`, `workflowDefinitionHistorySchema`, `workflowDefinitionRevertSchema` in `lib/validations/orchestration.ts`.
 
 ## Related
 

@@ -74,6 +74,7 @@ function PaletteBlock({
         <div className="flex-1 text-sm font-medium">{entry.label}</div>
       </div>
       <p className="text-muted-foreground mt-1 line-clamp-2 text-[11px]">{entry.description}</p>
+      <span className="text-muted-foreground/60 mt-0.5 text-[10px]">{entry.estimatedDuration}</span>
       {entry.patternNumber && onLearnMore && (
         <button
           type="button"
