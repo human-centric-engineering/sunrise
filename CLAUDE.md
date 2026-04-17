@@ -39,6 +39,7 @@ Instructions for Claude Code when working in this repository.
 
 - **API-first** — implement API endpoints before UI; every capability must be API-accessible
 - **Server components by default** — add `'use client'` only when needed
+- **No N+1 client-side fetches** — list/table pages get all data from a single enriched list endpoint; never fire per-row API calls in `useEffect`
 - **Contextual help on form fields** — every non-trivial form field gets a `<FieldHelp>` ⓘ popover; see `.context/ui/contextual-help.md`
 
 ## MCP Integration
