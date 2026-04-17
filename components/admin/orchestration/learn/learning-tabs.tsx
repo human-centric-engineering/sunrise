@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API } from '@/lib/api/endpoints';
+import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
 import type { PatternSummary } from '@/types/orchestration';
 
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
@@ -41,27 +42,6 @@ function parseQuizScore(text: string): { correct: number; total: number } | null
   const total = parseInt(match[2], 10);
   if (total <= 0 || correct > total) return null;
   return { correct, total };
-}
-
-/** Extract a workflow-definition code block from assistant text. */
-function extractWorkflowDefinition(text: string): string | null {
-  const match = /```workflow-definition\n([\s\S]*?)\n```/.exec(text);
-  if (!match?.[1]) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(match[1]);
-    if (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      'steps' in parsed &&
-      Array.isArray((parsed as Record<string, unknown>).steps)
-    ) {
-      return match[1];
-    }
-  } catch {
-    // Invalid JSON — ignore
-  }
-  return null;
 }
 
 interface EmbeddingStatus {

@@ -16,9 +16,10 @@
  * Errors render inline — nothing toasts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -49,6 +50,19 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [configureTarget, setConfigureTarget] = useState<AttachedLink | null>(null);
+  const [usage, setUsage] = useState<Record<string, number> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchUsage = useCallback(async () => {
+    try {
+      const data = await apiClient.get<{ usage: Record<string, number> }>(
+        API.ADMIN.ORCHESTRATION.agentCapabilitiesUsage(agentId)
+      );
+      setUsage(data.usage);
+    } catch {
+      // Usage is non-critical — silently ignore fetch failures
+    }
+  }, [agentId]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -69,7 +83,15 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
 
   useEffect(() => {
     void fetchAll();
-  }, [fetchAll]);
+    void fetchUsage();
+  }, [fetchAll, fetchUsage]);
+
+  useEffect(() => {
+    intervalRef.current = setInterval(() => void fetchUsage(), 15_000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [fetchUsage]);
 
   const handleAttach = useCallback(
     async (capabilityId: string) => {
@@ -126,6 +148,31 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
   const attachedIds = new Set(attached?.map((l) => l.capabilityId) ?? []);
   const available = catalogue?.filter((c) => !attachedIds.has(c.id)) ?? [];
 
+  function usageBadge(link: AttachedLink) {
+    const calls = usage?.[link.capability.slug] ?? 0;
+    const limit = link.customRateLimit ?? link.capability.rateLimit;
+
+    if (limit == null) {
+      if (calls === 0) return null;
+      return (
+        <Badge variant="outline" className="text-muted-foreground text-xs font-normal">
+          {calls} calls/min
+        </Badge>
+      );
+    }
+
+    const ratio = calls / limit;
+    let colorClass = 'text-muted-foreground';
+    if (ratio >= 1) colorClass = 'text-red-600';
+    else if (ratio >= 0.8) colorClass = 'text-amber-600';
+
+    return (
+      <Badge variant="outline" className={`text-xs font-normal ${colorClass}`}>
+        {calls} / {limit} /min
+      </Badge>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -143,7 +190,10 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
               {attached.map((link) => (
                 <li key={link.id} className="flex items-center justify-between gap-2 p-3">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{link.capability.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium">{link.capability.name}</p>
+                      {usageBadge(link)}
+                    </div>
                     <p className="text-muted-foreground truncate font-mono text-xs">
                       {link.capability.slug}
                     </p>

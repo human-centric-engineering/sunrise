@@ -22,10 +22,12 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, X } from 'lucide-react';
 
 import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
+import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -42,6 +44,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
+import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
 
 const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v1';
 const TOTAL_STEPS = 5;
@@ -241,26 +244,55 @@ async function paginatedTotalGt0(res: Response): Promise<boolean> {
 // Step 1 — Intro / Pattern advisor placeholder
 // ----------------------------------------------------------------------------
 
+const WIZARD_STARTER_PROMPTS = [
+  'I want to build a customer support bot',
+  'Help me design a content moderation pipeline',
+  'I need a research assistant that searches documents',
+  'I want an agent that generates and reviews code',
+];
+
 function StepIntro({ onSkip }: { onSkip: () => void }) {
+  const router = useRouter();
+  const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
+
+  const handleStreamComplete = useCallback((fullText: string) => {
+    const definition = extractWorkflowDefinition(fullText);
+    if (definition) {
+      setWorkflowRecommendation(definition);
+    }
+  }, []);
+
+  const handleCreateWorkflow = useCallback(() => {
+    if (!workflowRecommendation) return;
+    router.push(
+      `/admin/orchestration/workflows/new?definition=${encodeURIComponent(workflowRecommendation)}`
+    );
+  }, [router, workflowRecommendation]);
+
   return (
     <div className="space-y-4">
       <p className="text-sm">
         Tell us what you&apos;re trying to build and we&apos;ll suggest a pattern — a reflection
         agent, a multi-step workflow, a retrieval-augmented chat, or something else.
       </p>
-      <div className="rounded-md border border-dashed p-4">
-        <div className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
-          Coming soon: pattern advisor
+      <ChatInterface
+        agentSlug="pattern-advisor"
+        embedded
+        starterPrompts={WIZARD_STARTER_PROMPTS}
+        onStreamComplete={handleStreamComplete}
+        className="h-[350px]"
+      />
+      {workflowRecommendation && (
+        <div className="bg-muted/30 flex items-center justify-between rounded-md border p-3">
+          <span className="text-sm">The advisor recommended a workflow definition.</span>
+          <Button size="sm" onClick={handleCreateWorkflow}>
+            Create this workflow
+          </Button>
         </div>
-        <Textarea disabled placeholder="Describe your goal in one or two sentences…" rows={3} />
-        <p className="text-muted-foreground mt-2 text-xs">
-          The pattern advisor arrives in Phase 6. For now, skip ahead and configure your first agent
-          manually — you can always come back and re-run the wizard later.
-        </p>
-      </div>
+      )}
       <div className="flex justify-end">
-        <Button size="sm" onClick={onSkip}>
-          Continue to provider setup →
+        <Button variant="ghost" size="sm" onClick={onSkip}>
+          Skip, I&apos;ll configure manually →
         </Button>
       </div>
     </div>
