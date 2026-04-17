@@ -236,6 +236,7 @@ describe('SetupWizard', () => {
 
     await waitFor(() => expect(screen.getByText(/Step 4 of 5/i)).toBeInTheDocument());
 
+    await user.type(screen.getByLabelText(/your message/i), 'Hi');
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {

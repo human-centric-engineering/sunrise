@@ -41,6 +41,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
+import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
 import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
@@ -209,6 +210,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           </Button>
         </div>
       </div>
+
+      {!isEdit && <CliAuthoringHint resource="agents" />}
 
       {error && (
         <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">

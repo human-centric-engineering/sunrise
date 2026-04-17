@@ -32,19 +32,28 @@ export function TemplateBanner({ name, description, isTemplate, metadata }: Temp
   if (!isTemplate || !metadata) return null;
 
   return (
-    <div className="border-b border-blue-200 bg-blue-50 px-4 py-2.5 dark:border-blue-900 dark:bg-blue-950/40">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm">
-          <BookOpen className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
-          <span className="font-medium text-blue-900 dark:text-blue-100">Built-in template:</span>
-          <span className="text-blue-800 dark:text-blue-200">{name}</span>
-          <span className="text-blue-600/80 dark:text-blue-300/70">{description}</span>
+    <div className="border-b border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-blue-900 dark:text-blue-100">{name}</span>
+              <Badge
+                variant="secondary"
+                className="bg-blue-100 px-1.5 py-0 text-[11px] leading-5 text-blue-600 dark:bg-blue-900/60 dark:text-blue-300"
+              >
+                Template
+              </Badge>
+            </div>
+            <p className="mt-0.5 text-sm text-blue-600/80 dark:text-blue-300/70">{description}</p>
+          </div>
         </div>
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setExpanded((prev) => !prev)}
-          className="h-7 shrink-0 text-blue-700 hover:bg-blue-100 hover:text-blue-900 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-100"
+          className="mt-0.5 h-7 shrink-0 text-blue-700 hover:bg-blue-100 hover:text-blue-900 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-100"
         >
           {expanded ? (
             <>

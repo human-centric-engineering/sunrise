@@ -112,7 +112,9 @@ export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
     void (async () => {
       try {
         const [providerRes, agentRes] = await Promise.all([
-          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1`, { credentials: 'include' }),
+          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`, {
+            credentials: 'include',
+          }),
           fetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=1`, { credentials: 'include' }),
         ]);
 
@@ -318,9 +320,12 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1`, {
-          credentials: 'include',
-        });
+        const res = await fetch(
+          `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`,
+          {
+            credentials: 'include',
+          }
+        );
         if (cancelled) return;
         setHasExisting(await paginatedTotalGt0(res));
       } catch {
