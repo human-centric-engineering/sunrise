@@ -42,6 +42,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/execute`           | POST               | Run workflow _(501 stub — Session 5.2)_                 | 3.2     |
 | `/executions/:id`                  | GET                | Read execution _(501 stub — Session 5.2)_               | 3.2     |
 | `/executions/:id/approve`          | POST               | Approve paused execution _(501 stub — Session 5.2)_     | 3.2     |
+| `/executions/:id/retry-step`       | POST               | Retry from a failed step                                | 7.0     |
 | `/chat/stream`                     | POST               | Streaming chat turn (SSE)                               | 3.3     |
 | `/knowledge/search`                | POST               | Hybrid vector + keyword search                          | 3.3     |
 | `/knowledge/patterns/:number`      | GET                | Fetch all chunks for a single design pattern            | 3.3     |
@@ -185,6 +186,30 @@ Runs the pure-logic DAG validator from `lib/orchestration/workflows/validator.ts
 ### `POST /workflows/:id/execute`, `GET /executions/:id`, `POST /executions/:id/approve`
 
 **501 stubs** until Session 5.2 ships the execution engine. Full route handlers exist — they validate inputs, resolve the workflow / execution, and return `501 NOT_IMPLEMENTED`. The contract is locked for Phase 4 UI work.
+
+### `POST /executions/:id/retry-step`
+
+Prepares a failed execution for retry from a specific step. Truncates the trace at the failed step, recalculates token/cost totals from remaining entries, and resets the execution status to `running`.
+
+```jsonc
+// Request
+{ "stepId": "step-3" }
+
+// Response
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "executionId": "<cuid>",
+    "retryStepId": "step-3",
+    "workflowId": "<cuid>"
+  }
+}
+```
+
+After this call, the client reconnects via `POST /workflows/:workflowId/execute?resumeFromExecutionId=<executionId>` to resume streaming from the failed step.
+
+Guards: execution must be `failed`, `stepId` must reference a failed step in the trace, ownership is scoped to `session.user.id`.
 
 ---
 

@@ -728,6 +728,92 @@ describe('EvaluationRunner', () => {
       });
     });
 
+    it('clicking a category button again deselects it (toggle off)', async () => {
+      const user = userEvent.setup();
+      await setupWithOneMessage(user);
+
+      const youBadge = screen.getByText('You');
+      const annotationRow = youBadge.closest('button');
+      await user.click(annotationRow!);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Issue' })).toBeInTheDocument();
+      });
+
+      const issueBtn = screen.getByRole('button', { name: 'Issue' });
+
+      // Click to select
+      await user.click(issueBtn);
+      // Click again to deselect
+      await user.click(issueBtn);
+
+      // After toggling off, the button should revert to outline variant
+      await waitFor(() => {
+        const btn = screen.getByRole('button', { name: 'Issue' });
+        expect(btn.className).toMatch(/border/);
+      });
+    });
+
+    it('notes textarea appears when annotation entry is expanded', async () => {
+      const user = userEvent.setup();
+      await setupWithOneMessage(user);
+
+      const youBadge = screen.getByText('You');
+      const annotationRow = youBadge.closest('button');
+      await user.click(annotationRow!);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText(/add notes about this response/i)).toBeInTheDocument();
+      });
+    });
+
+    it('typing in notes textarea updates annotation', async () => {
+      const user = userEvent.setup();
+      await setupWithOneMessage(user);
+
+      const youBadge = screen.getByText('You');
+      const annotationRow = youBadge.closest('button');
+      await user.click(annotationRow!);
+
+      const textarea = await screen.findByPlaceholderText(/add notes about this response/i);
+      await user.type(textarea, 'Great response');
+
+      expect(textarea).toHaveValue('Great response');
+    });
+
+    it('rating slider appears when annotation entry is expanded', async () => {
+      const user = userEvent.setup();
+      await setupWithOneMessage(user);
+
+      const youBadge = screen.getByText('You');
+      const annotationRow = youBadge.closest('button');
+      await user.click(annotationRow!);
+
+      await waitFor(() => {
+        expect(screen.getByText(/rating:/i)).toBeInTheDocument();
+      });
+    });
+
+    it('collapsing an expanded annotation hides the controls', async () => {
+      const user = userEvent.setup();
+      await setupWithOneMessage(user);
+
+      const youBadge = screen.getByText('You');
+      const annotationRow = youBadge.closest('button');
+
+      // Expand
+      await user.click(annotationRow!);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Expected' })).toBeInTheDocument();
+      });
+
+      // Collapse
+      await user.click(annotationRow!);
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Expected' })).not.toBeInTheDocument();
+      });
+    });
+
     it('annotation save is debounced — PATCH fires after 30 s', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });

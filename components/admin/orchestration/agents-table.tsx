@@ -36,6 +36,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Shield,
   Trash2,
 } from 'lucide-react';
 
@@ -69,6 +70,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { Tip } from '@/components/ui/tooltip';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -427,12 +429,25 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                     />
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/admin/orchestration/agents/${agent.id}`}
-                      className="hover:underline"
-                    >
-                      {agent.name}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/admin/orchestration/agents/${agent.id}`}
+                        className="hover:underline"
+                      >
+                        {agent.name}
+                      </Link>
+                      {agent.isSystem && (
+                        <Tip label="System agent — cannot be deleted or deactivated">
+                          <Badge
+                            variant="secondary"
+                            className="gap-1 px-1.5 py-0 text-[10px] font-medium"
+                          >
+                            <Shield className="h-3 w-3" />
+                            System
+                          </Badge>
+                        </Tip>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {agent.slug}
@@ -468,6 +483,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                     <Switch
                       checked={agent.isActive}
                       onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+                      disabled={agent.isSystem}
                       aria-label={`Toggle ${agent.name} active`}
                     />
                   </TableCell>
@@ -492,13 +508,15 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                           <Copy className="mr-2 h-4 w-4" />
                           Duplicate
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => setDeleteTarget(agent)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {!agent.isSystem && (
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => setDeleteTarget(agent)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>

@@ -72,6 +72,7 @@ interface ChatRequest {
   contextType?: string;
   contextId?: string;
   entityContext?: Record<string, unknown>;
+  requestId?: string;
   signal?: AbortSignal;
 }
 ```
@@ -79,6 +80,7 @@ interface ChatRequest {
 - Omit `conversationId` to create a new `AiConversation` — `contextType` and `contextId` are persisted on the row at creation time only.
 - Supply `conversationId` to continue an existing conversation. Mismatched `userId` / `agentId` → `conversation_not_found`.
 - `entityContext` is opaque to the handler — it's passed straight through to `CapabilityContext.entityContext` so capabilities can read it.
+- `requestId` is a correlation ID for structured log tracing. When provided, the handler creates a scoped logger via `logger.withContext({ requestId })` so all log entries from the chat turn are traceable. The chat stream route extracts this from the `x-request-id` header automatically.
 - `signal` is forwarded into every `provider.chatStream` call.
 
 ## `ChatEvent` Lifecycle

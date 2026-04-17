@@ -30,6 +30,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Shield,
   Trash2,
 } from 'lucide-react';
 
@@ -361,12 +362,25 @@ export function CapabilitiesTable({
               capabilities.map((cap) => (
                 <TableRow key={cap.id}>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/admin/orchestration/capabilities/${cap.id}`}
-                      className="hover:underline"
-                    >
-                      {cap.name}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/admin/orchestration/capabilities/${cap.id}`}
+                        className="hover:underline"
+                      >
+                        {cap.name}
+                      </Link>
+                      {cap.isSystem && (
+                        <Tip label="System capability — cannot be deleted or deactivated">
+                          <Badge
+                            variant="secondary"
+                            className="gap-1 px-1.5 py-0 text-[10px] font-medium"
+                          >
+                            <Shield className="h-3 w-3" />
+                            System
+                          </Badge>
+                        </Tip>
+                      )}
+                    </div>
                     <div className="text-muted-foreground font-mono text-xs">{cap.slug}</div>
                   </TableCell>
                   <TableCell>
@@ -428,6 +442,7 @@ export function CapabilitiesTable({
                     <Switch
                       checked={cap.isActive}
                       onCheckedChange={(v) => void handleToggleStatus(cap, v)}
+                      disabled={cap.isSystem}
                       aria-label={`Toggle ${cap.name} active`}
                     />
                   </TableCell>
@@ -448,13 +463,15 @@ export function CapabilitiesTable({
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => setDeleteTarget(cap)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {!cap.isSystem && (
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => setDeleteTarget(cap)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
