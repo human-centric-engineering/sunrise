@@ -11,6 +11,9 @@
  *   - no cycles (DFS with gray/black colouring)
  *   - `human_approval` steps carry a `prompt` config
  *   - `tool_call` steps carry a `capabilitySlug` config
+ *   - `guard` steps carry a `rules` config
+ *   - `evaluate` steps carry a `rubric` config
+ *   - `external_call` steps carry a `url` config
  *
  * Platform-agnostic: no DB, no I/O, no Next.js imports. Consumed by:
  *
@@ -40,7 +43,10 @@ export interface WorkflowValidationError {
     | 'CYCLE_DETECTED'
     | 'DUPLICATE_STEP_ID'
     | 'MISSING_APPROVAL_PROMPT'
-    | 'MISSING_CAPABILITY_SLUG';
+    | 'MISSING_CAPABILITY_SLUG'
+    | 'MISSING_GUARD_RULES'
+    | 'MISSING_EVALUATE_RUBRIC'
+    | 'MISSING_EXTERNAL_URL';
   message: string;
   stepId?: string;
   path?: string[];
@@ -119,6 +125,36 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidationRes
         errors.push({
           code: 'MISSING_CAPABILITY_SLUG',
           message: `tool_call step "${step.id}" is missing a non-empty config.capabilitySlug`,
+          stepId: step.id,
+        });
+      }
+    }
+    if (step.type === 'guard') {
+      const rules = step.config?.rules;
+      if (typeof rules !== 'string' || rules.trim().length === 0) {
+        errors.push({
+          code: 'MISSING_GUARD_RULES',
+          message: `guard step "${step.id}" is missing a non-empty config.rules`,
+          stepId: step.id,
+        });
+      }
+    }
+    if (step.type === 'evaluate') {
+      const rubric = step.config?.rubric;
+      if (typeof rubric !== 'string' || rubric.trim().length === 0) {
+        errors.push({
+          code: 'MISSING_EVALUATE_RUBRIC',
+          message: `evaluate step "${step.id}" is missing a non-empty config.rubric`,
+          stepId: step.id,
+        });
+      }
+    }
+    if (step.type === 'external_call') {
+      const url = step.config?.url;
+      if (typeof url !== 'string' || url.trim().length === 0) {
+        errors.push({
+          code: 'MISSING_EXTERNAL_URL',
+          message: `external_call step "${step.id}" is missing a non-empty config.url`,
           stepId: step.id,
         });
       }

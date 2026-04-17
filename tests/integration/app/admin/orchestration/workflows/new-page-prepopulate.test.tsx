@@ -39,6 +39,11 @@ vi.mock('@xyflow/react', async () => {
   };
 });
 
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(),
+  parseApiResponse: vi.fn(),
+}));
+
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
     post: vi.fn(),
@@ -84,6 +89,8 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 
+import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 const MOCK_DEFINITION = {
@@ -110,6 +117,8 @@ const MOCK_DEFINITION = {
 describe('NewWorkflowPage — definition pre-population', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
   });
 
   afterEach(() => {

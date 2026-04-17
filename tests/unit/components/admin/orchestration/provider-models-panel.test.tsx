@@ -225,4 +225,37 @@ describe('ProviderModelsPanel', () => {
       });
     });
   });
+
+  // ── apiKeyPresent=false ───────────────────────────────────────────────────
+
+  describe('apiKeyPresent=false', () => {
+    it('does not fetch models and shows "No API key" message', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+
+      render(
+        <ProviderModelsPanel
+          providerId="prov-1"
+          providerName="Anthropic"
+          isLocal={false}
+          apiKeyPresent={false}
+        />
+      );
+
+      expect(screen.getByText(/no api key configured/i)).toBeInTheDocument();
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+
+    it('does not render the Refresh button', () => {
+      render(
+        <ProviderModelsPanel
+          providerId="prov-1"
+          providerName="Anthropic"
+          isLocal={false}
+          apiKeyPresent={false}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /refresh models/i })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -3,7 +3,7 @@
 /**
  * TemplateDescriptionDialog — shown when an admin picks a built-in
  * template from the toolbar dropdown. Displays the template's name,
- * short description, pattern badges, and flow summary, then confirms
+ * description, pattern badges, and flow summary, then confirms
  * the canvas replacement.
  *
  * Behaviour:
@@ -28,11 +28,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-import type { WorkflowTemplate } from '@/lib/orchestration/workflows/templates';
+import type { TemplateItem } from './template-types';
 
 export interface TemplateDescriptionDialogProps {
   open: boolean;
-  template: WorkflowTemplate | null;
+  template: TemplateItem | null;
   /** True if the current canvas already has nodes — swaps button copy + warning. */
   canvasHasContent: boolean;
   onOpenChange: (open: boolean) => void;
@@ -51,35 +51,56 @@ export function TemplateDescriptionDialog({
   }
 
   const confirmLabel = canvasHasContent ? 'Replace canvas with template' : 'Use this template';
+  const meta = template.metadata;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{template.name}</DialogTitle>
-          <DialogDescription>{template.shortDescription}</DialogDescription>
+          <DialogDescription>{template.description}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
-            <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-              Patterns used
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {template.patterns.map((pattern) => (
-                <Badge key={pattern.number} variant="secondary">
-                  #{pattern.number} {pattern.name}
-                </Badge>
-              ))}
-            </div>
-          </div>
+          {meta && (
+            <>
+              <div className="space-y-1.5">
+                <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  Patterns used
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {meta.patterns.map((pattern) => (
+                    <Badge key={pattern.number} variant="secondary">
+                      #{pattern.number} {pattern.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
 
-          <div className="space-y-1.5">
-            <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-              Flow
-            </p>
-            <p className="text-sm leading-relaxed">{template.flowSummary}</p>
-          </div>
+              {meta.useCases.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                    Use cases
+                  </p>
+                  <ul className="space-y-1.5 text-sm">
+                    {meta.useCases.map((uc) => (
+                      <li key={uc.title}>
+                        <span className="font-medium">{uc.title}</span>
+                        <span className="text-muted-foreground"> — {uc.scenario}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  Flow
+                </p>
+                <p className="text-sm leading-relaxed">{meta.flowSummary}</p>
+              </div>
+            </>
+          )}
 
           {canvasHasContent && (
             <div

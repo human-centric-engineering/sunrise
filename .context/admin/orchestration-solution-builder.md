@@ -8,7 +8,7 @@
 2. **Select patterns** — which of the 21 agentic design patterns apply?
 3. **Create agents** — one per distinct role (router, specialist, reviewer, etc.)
 4. **Create capabilities** — one per tool/action the agents need
-5. **Compose the workflow** — wire steps into a DAG using the 9 step types
+5. **Compose the workflow** — wire steps into a DAG using the 12 step types
 6. **Test** — use the embedded chat and workflow executor
 7. **Deploy** — configure budgets, rate limits, and approval gates
 8. **Monitor** — check costs, traces, and evaluations in the dashboard

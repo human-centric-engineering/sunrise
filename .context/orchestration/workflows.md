@@ -71,6 +71,9 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | `CYCLE_DETECTED`          | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.              |
 | `MISSING_APPROVAL_PROMPT` | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.   |
 | `MISSING_CAPABILITY_SLUG` | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler. |
+| `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
+| `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
+| `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
 
 ### Example error payload
 
@@ -105,11 +108,11 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 
 Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
 
-**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 9 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
+**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 12 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
 **What it defers:** Chain sub-step editor and inline edge-condition editing are future work.
 
-**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 5 built-in composition recipes from `lib/orchestration/workflows/templates/` — pure TS, no network call. Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning). `prisma/seed.ts` also upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
+**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 5 built-in composition recipes from `prisma/seeds/data/templates/` — pure TS, no network call. Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning). `prisma/seed.ts` also upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
 
 **UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON and are honoured opportunistically by the runtime executors (see [`engine.md`](./engine.md)). The same goes for `step.config._layout` — UI metadata, ignored by the validator and the engine.
 

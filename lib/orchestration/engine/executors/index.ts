@@ -18,3 +18,6 @@ import './reflect';
 import './plan';
 import './human-approval';
 import './rag-retrieve';
+import './guard';
+import './evaluate';
+import './external-call';

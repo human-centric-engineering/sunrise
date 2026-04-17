@@ -34,6 +34,9 @@ import { cn } from '@/lib/utils';
 import type { PatternNode } from './workflow-mappers';
 import {
   ChainEditor,
+  EvaluateEditor,
+  ExternalCallEditor,
+  GuardEditor,
   HumanApprovalEditor,
   LlmCallEditor,
   ParallelEditor,
@@ -204,6 +207,12 @@ function BlockEditor({
       return <HumanApprovalEditor config={config as never} onChange={onChange as never} />;
     case 'rag_retrieve':
       return <RagRetrieveEditor config={config as never} onChange={onChange as never} />;
+    case 'guard':
+      return <GuardEditor config={config as never} onChange={onChange as never} />;
+    case 'evaluate':
+      return <EvaluateEditor config={config as never} onChange={onChange as never} />;
+    case 'external_call':
+      return <ExternalCallEditor config={config as never} onChange={onChange as never} />;
     default:
       return (
         <p className="text-muted-foreground text-xs italic">

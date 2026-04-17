@@ -1194,6 +1194,47 @@ export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
   filters: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const guardConfigSchema = stepErrorConfigSchema.extend({
+  rules: z.string().optional(),
+  mode: z.enum(['llm', 'regex']).optional(),
+  failAction: z.enum(['block', 'flag']).optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const evaluateConfigSchema = stepErrorConfigSchema.extend({
+  rubric: z.string().optional(),
+  scaleMin: z.number().optional(),
+  scaleMax: z.number().optional(),
+  threshold: z.number().optional(),
+  modelOverride: z.string().optional(),
+  temperature: z.number().optional(),
+});
+
+export const externalCallConfigSchema = stepErrorConfigSchema.extend({
+  url: z.string().optional(),
+  method: z.enum(['GET', 'POST', 'PUT']).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  bodyTemplate: z.string().optional(),
+  timeoutMs: z.number().optional(),
+  authType: z.enum(['none', 'bearer', 'api-key']).optional(),
+  authSecret: z.string().optional(),
+});
+
+// ---------- Message Metadata (Prisma JSON rehydration) ----------
+
+export const messageMetadataSchema = z.object({
+  tokenUsage: z
+    .object({
+      input: z.number().optional(),
+      output: z.number().optional(),
+    })
+    .optional(),
+  modelUsed: z.string().optional(),
+  latencyMs: z.number().optional(),
+  costUsd: z.number().optional(),
+});
+
 // ============================================================================
 // Inferred Types
 // ============================================================================

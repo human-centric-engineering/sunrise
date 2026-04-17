@@ -83,6 +83,7 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    _count: { executions: 0 },
     ...overrides,
   };
 }
@@ -151,10 +152,15 @@ describe('GET /api/v1/admin/orchestration/workflows', () => {
       const response = await GET(makeGetRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: Array<{ _count: { executions: number } }>;
+        meta: unknown;
+      }>(response);
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
+      expect(data.data[0]._count.executions).toBe(0);
     });
 
     it('returns empty array when no workflows exist', async () => {

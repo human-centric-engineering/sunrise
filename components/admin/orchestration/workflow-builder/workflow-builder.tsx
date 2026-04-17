@@ -31,11 +31,12 @@ import {
   type Edge,
 } from '@xyflow/react';
 
-import type { AiWorkflow } from '@prisma/client';
+import type { AiWorkflow } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
 import { BlockConfigPanel } from './block-config-panel';
@@ -43,6 +44,7 @@ import { BuilderToolbar } from './builder-toolbar';
 import { ExecutionInputDialog } from './execution-input-dialog';
 import { ExecutionPanel } from './execution-panel';
 import { PatternPalette } from './pattern-palette';
+import { TemplateBanner } from './template-banner';
 import { TemplateDescriptionDialog } from './template-description-dialog';
 import { ValidationSummaryPanel, type CombinedError } from './validation-summary-panel';
 import { WorkflowCanvas } from './workflow-canvas';
@@ -55,8 +57,9 @@ import {
   type PatternNode,
 } from './workflow-mappers';
 import type { CapabilityOption } from './block-editors';
-import type { WorkflowTemplate } from '@/lib/orchestration/workflows/templates';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import type { TemplateItem } from './template-types';
+import { templateMetadataSchema, toTemplateItem } from './template-types';
+import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
 
@@ -65,6 +68,18 @@ export interface WorkflowBuilderProps {
   workflow?: AiWorkflow | null;
   /** Pre-populate the canvas from a WorkflowDefinition (e.g. from advisor). */
   initialDefinition?: WorkflowDefinition;
+  /** Server-prefetched capabilities for the Tool Call block editor. */
+  initialCapabilities?: CapabilityOption[];
+  /** Server-prefetched templates for the "Use template" dropdown. */
+  initialTemplates?: Array<{
+    slug: string;
+    name: string;
+    description: string;
+    workflowDefinition: unknown;
+    patternsUsed: number[];
+    isTemplate: boolean;
+    metadata: unknown;
+  }>;
 }
 
 interface InitialState {
@@ -87,7 +102,8 @@ function initialState(
     return { nodes: [], edges: [], name: 'Untitled workflow', details: null };
   }
 
-  const def = workflow.workflowDefinition as unknown as WorkflowDefinition | null;
+  const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const def = defResult.success ? (defResult.data as WorkflowDefinition) : null;
   const baseDetails: WorkflowDetails = {
     slug: workflow.slug,
     description: workflow.description,
@@ -103,7 +119,13 @@ function initialState(
   return { nodes, edges, name: workflow.name, details: baseDetails };
 }
 
-function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBuilderProps) {
+function WorkflowBuilderInner({
+  mode,
+  workflow,
+  initialDefinition,
+  initialCapabilities,
+  initialTemplates,
+}: WorkflowBuilderProps) {
   const router = useRouter();
   const seed = useMemo(
     () => initialState(workflow, initialDefinition),
@@ -125,8 +147,11 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Capabilities for the Tool Call editor — fetched once on mount.
-  const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>([]);
+  // Capabilities for the Tool Call editor — server-prefetched via props,
+  // with a client-side fallback if the page didn't provide them.
+  const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>(
+    initialCapabilities ?? []
+  );
 
   // Execution flow state.
   const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -136,13 +161,21 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
     budgetLimitUsd?: number;
   } | null>(null);
 
+  // Map server-prefetched templates to TemplateItem[].
+  const templates = useMemo<readonly TemplateItem[]>(
+    () => (initialTemplates ?? []).map(toTemplateItem),
+    [initialTemplates]
+  );
+
   // Template selection state. `pendingTemplate` drives the description
   // dialog — a null value hides it. The dialog confirms before the canvas
   // is actually replaced so we don't clobber in-progress work.
-  const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
+  const [pendingTemplate, setPendingTemplate] = useState<TemplateItem | null>(null);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
 
+  // Fallback: fetch capabilities client-side only if not prefetched.
   useEffect(() => {
+    if (initialCapabilities && initialCapabilities.length > 0) return;
     let cancelled = false;
     void apiClient
       .get<CapabilityOption[]>(API.ADMIN.ORCHESTRATION.CAPABILITIES, {
@@ -159,7 +192,7 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialCapabilities]);
 
   // Debounced live validation. Runs both the authoritative backend-aligned
   // validator and the FE-only extra checks, merges their errors, and
@@ -262,7 +295,7 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
   // Template selection
   // ------------------------------------------------------------------
 
-  const handleTemplateSelect = useCallback((template: WorkflowTemplate) => {
+  const handleTemplateSelect = useCallback((template: TemplateItem) => {
     setPendingTemplate(template);
     setTemplateDialogOpen(true);
   }, []);
@@ -380,10 +413,24 @@ function WorkflowBuilderInner({ mode, workflow, initialDefinition }: WorkflowBui
         onSave={handleSave}
         onExecute={handleExecute}
         onTemplateSelect={handleTemplateSelect}
+        templates={templates}
         templatesDisabled={mode === 'edit'}
         saving={saving}
         hasErrors={validationErrors.length > 0}
       />
+
+      {workflow?.isTemplate && (
+        <TemplateBanner
+          name={workflow.name}
+          description={workflow.description}
+          isTemplate={workflow.isTemplate}
+          metadata={
+            (templateMetadataSchema.safeParse(workflow.metadata).data as
+              | WorkflowTemplateMetadata
+              | undefined) ?? null
+          }
+        />
+      )}
 
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />

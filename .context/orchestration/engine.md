@@ -45,7 +45,10 @@ lib/orchestration/engine/
     ├── reflect.ts
     ├── plan.ts
     ├── human-approval.ts
-    └── rag-retrieve.ts
+    ├── rag-retrieve.ts
+    ├── guard.ts
+    ├── evaluate.ts
+    └── external-call.ts
 ```
 
 Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `prisma` from `@/lib/db/client`; nothing reaches for `next/*` or React. That makes the engine unit-testable without spinning up a server.
@@ -119,9 +122,9 @@ getRegisteredTypes(): readonly WorkflowStepType[];
 __resetRegistryForTests(): void;
 ```
 
-Each executor self-registers at module import. The barrel at `executors/index.ts` pulls in every executor file for its side effect, which means importing **the engine** (which imports the barrel) is enough to guarantee all nine executors are registered.
+Each executor self-registers at module import. The barrel at `executors/index.ts` pulls in every executor file for its side effect, which means importing **the engine** (which imports the barrel) is enough to guarantee all twelve executors are registered.
 
-Nine executors ship with 5.2:
+Twelve executors:
 
 | Type             | File                | Reuses                                        |
 | ---------------- | ------------------- | --------------------------------------------- |
@@ -134,6 +137,9 @@ Nine executors ship with 5.2:
 | `plan`           | `plan.ts`           | LLM planner → stores plan on `ctx.variables`  |
 | `human_approval` | `human-approval.ts` | throws `PausedForApproval`                    |
 | `rag_retrieve`   | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module |
+| `guard`          | `guard.ts`          | LLM or regex safety check, routes pass/fail   |
+| `evaluate`       | `evaluate.ts`       | LLM rubric scorer, clamps to scale range      |
+| `external_call`  | `external-call.ts`  | HTTP fetch with SSRF allowlist + auth helpers |
 
 ## Error strategies
 

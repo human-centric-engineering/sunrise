@@ -300,7 +300,7 @@ used in workflow definitions.
 | UI components              | `components/admin/orchestration/`                   |
 | Types                      | `types/orchestration.ts`                            |
 | Validation schemas         | `lib/validations/orchestration.ts`                  |
-| Seed data                  | `lib/orchestration/seed/chunks.json`                |
+| Seed data                  | `prisma/seeds/data/chunks/chunks.json`              |
 
 ---
 

@@ -101,6 +101,8 @@ function makeCapability(overrides: Record<string, unknown> = {}) {
     metadata: null,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    // Raw pivot relation returned by findMany with include: { agents: { include: { agent: ... } } }
+    agents: [],
     ...overrides,
   };
 }
@@ -173,10 +175,16 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       const response = await listGet(makeListRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: Array<{ _agents: unknown[] }>;
+        meta: unknown;
+      }>(response);
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
+      // Route handler flattens pivot relation into _agents array
+      expect(data.data[0]._agents).toEqual([]);
     });
 
     it('passes isActive filter to Prisma when set to true', async () => {
@@ -187,7 +195,10 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       await listGet(makeListRequest({ isActive: 'true' }));
 
       expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ isActive: true }) })
+        expect.objectContaining({
+          where: expect.objectContaining({ isActive: true }),
+          include: expect.objectContaining({ agents: expect.anything() }),
+        })
       );
     });
 
@@ -199,7 +210,10 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       await listGet(makeListRequest({ category: 'search' }));
 
       expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ category: 'search' }) })
+        expect.objectContaining({
+          where: expect.objectContaining({ category: 'search' }),
+          include: expect.objectContaining({ agents: expect.anything() }),
+        })
       );
     });
   });

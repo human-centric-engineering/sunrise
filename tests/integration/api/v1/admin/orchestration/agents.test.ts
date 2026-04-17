@@ -34,7 +34,17 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       create: vi.fn(),
     },
+    aiCostLog: {
+      groupBy: vi.fn(),
+    },
+    aiOrchestrationSettings: {
+      findUnique: vi.fn(),
+    },
   },
+}));
+
+vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
+  getMonthToDateGlobalSpend: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -74,6 +84,8 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    _count: { capabilities: 0, conversations: 0 },
+    _budget: null,
     ...overrides,
   };
 }
@@ -145,14 +157,22 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       const agents = [makeAgent(), makeAgent({ id: 'cmjbv4i3x00003wsloputgwu2', slug: 'agent-2' })];
       vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(agents as never);
       vi.mocked(prisma.aiAgent.count).mockResolvedValue(2);
+      vi.mocked(prisma.aiCostLog.groupBy).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null as never);
 
       const response = await GET(makeGetRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: Array<{ _count: unknown; _budget: unknown }>;
+        meta: unknown;
+      }>(response);
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(2);
       expect(data.meta).toBeDefined();
+      expect(data.data[0]).toHaveProperty('_count');
+      expect(data.data[0]).toHaveProperty('_budget');
     });
 
     it('returns empty array when no agents exist', async () => {
@@ -178,7 +198,10 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       await GET(makeGetRequest({ isActive: 'true' }));
 
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ isActive: true }) })
+        expect.objectContaining({
+          where: expect.objectContaining({ isActive: true }),
+          include: { _count: { select: { capabilities: true, conversations: true } } },
+        })
       );
     });
 
@@ -190,7 +213,10 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       await GET(makeGetRequest({ provider: 'openai' }));
 
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ provider: 'openai' }) })
+        expect.objectContaining({
+          where: expect.objectContaining({ provider: 'openai' }),
+          include: { _count: { select: { capabilities: true, conversations: true } } },
+        })
       );
     });
 
@@ -204,6 +230,7 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ OR: expect.any(Array) }),
+          include: { _count: { select: { capabilities: true, conversations: true } } },
         })
       );
     });
@@ -242,6 +269,15 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
       await POST(makePostRequest(VALID_AGENT));
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+
+    it('returns 429 when rate limit is exceeded', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+      const response = await POST(makePostRequest(VALID_AGENT));
+
+      expect(response.status).toBe(429);
     });
   });
 

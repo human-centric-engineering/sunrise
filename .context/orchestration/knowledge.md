@@ -35,7 +35,7 @@ const results = await searchKnowledge(
 const pattern = await getPatternDetail(3);
 
 // Seed (idempotent — see below)
-await seedFromChunksJson('lib/orchestration/seed/chunks.json');
+await seedFromChunksJson('prisma/seeds/data/chunks/chunks.json');
 ```
 
 ## Document Lifecycle
@@ -92,7 +92,7 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 **The seeder is idempotent.** Safe to call on every deploy: if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Don't wrap calls in existence checks — that's the seeder's job.
 
-Seed file lives at `lib/orchestration/seed/chunks.json`. The admin route (`POST /knowledge/seed`) resolves this via `path.join(process.cwd(), 'lib/orchestration/seed/chunks.json')` and returns `{ seeded: true }` when the call completes.
+Seed file lives at `prisma/seeds/data/chunks/chunks.json`. The admin route (`POST /knowledge/seed`) resolves this via `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and returns `{ seeded: true }` when the call completes.
 
 ## Anti-Patterns
 

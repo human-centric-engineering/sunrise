@@ -45,7 +45,7 @@
 import { Prisma } from '@prisma/client';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
-import { stepErrorConfigSchema } from '@/lib/validations/orchestration';
+import { executionTraceEntrySchema, stepErrorConfigSchema } from '@/lib/validations/orchestration';
 import {
   WorkflowStatus,
   type ExecutionEvent,
@@ -412,8 +412,12 @@ export class OrchestrationEngine {
       if (!row) {
         throw new Error(`Execution row ${options.resumeFromExecutionId} not found`);
       }
-      const trace = Array.isArray(row.executionTrace)
-        ? (row.executionTrace as unknown as ExecutionTraceEntry[])
+      const rawTrace = row.executionTrace;
+      const trace: ExecutionTraceEntry[] = Array.isArray(rawTrace)
+        ? rawTrace.flatMap((entry) => {
+            const parsed = executionTraceEntrySchema.safeParse(entry);
+            return parsed.success ? [parsed.data as ExecutionTraceEntry] : [];
+          })
         : [];
       const ctx = createContext({
         executionId: row.id,

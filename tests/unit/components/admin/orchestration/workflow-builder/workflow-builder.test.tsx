@@ -119,7 +119,6 @@ vi.mock('next/navigation', () => ({
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
-import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
 import type { AiWorkflow } from '@prisma/client';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
@@ -139,6 +138,47 @@ const TWO_STEP_DEFINITION: WorkflowDefinition = {
     { id: 'step-2', name: 'Second Step', type: 'chain', config: {}, nextSteps: [] },
   ],
 };
+
+const MOCK_TEMPLATES = [
+  {
+    slug: 'tpl-customer-support',
+    name: 'Customer Support',
+    description: 'Multi-channel support automation',
+    workflowDefinition: {
+      entryStepId: 's1',
+      errorStrategy: 'fail',
+      steps: [
+        { id: 's1', name: 'Entry', type: 'llm_call', config: { prompt: 'Hello' }, nextSteps: [] },
+      ],
+    },
+    patternsUsed: [1, 2],
+    isTemplate: true,
+    metadata: {
+      flowSummary: 'A flow',
+      useCases: [{ title: 'Triage', scenario: 'Route tickets' }],
+      patterns: [{ number: 1, name: 'Chain' }],
+    },
+  },
+  {
+    slug: 'tpl-content-pipeline',
+    name: 'Content Pipeline',
+    description: 'Content generation pipeline',
+    workflowDefinition: {
+      entryStepId: 's1',
+      errorStrategy: 'fail',
+      steps: [
+        { id: 's1', name: 'Entry', type: 'llm_call', config: { prompt: 'Hello' }, nextSteps: [] },
+      ],
+    },
+    patternsUsed: [1, 3],
+    isTemplate: true,
+    metadata: {
+      flowSummary: 'A flow',
+      useCases: [{ title: 'Blog', scenario: 'Write blog posts' }],
+      patterns: [{ number: 1, name: 'Chain' }],
+    },
+  },
+];
 
 function makeWorkflow(overrides: Partial<AiWorkflow> = {}): AiWorkflow {
   return {
@@ -409,10 +449,10 @@ describe('WorkflowBuilder', () => {
   describe('5.1c: template selection', () => {
     it('opens the template description dialog when a template is picked', async () => {
       const user = userEvent.setup();
-      render(<WorkflowBuilder mode="create" />);
+      render(<WorkflowBuilder mode="create" initialTemplates={MOCK_TEMPLATES} />);
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
-      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const template = MOCK_TEMPLATES[0];
       const item = await screen.findByRole('menuitem', {
         name: new RegExp(template.name, 'i'),
         hidden: true,
@@ -426,10 +466,10 @@ describe('WorkflowBuilder', () => {
 
     it('confirming populates the canvas with nodes matching the template step count', async () => {
       const user = userEvent.setup();
-      render(<WorkflowBuilder mode="create" />);
+      render(<WorkflowBuilder mode="create" initialTemplates={MOCK_TEMPLATES} />);
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
-      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const template = MOCK_TEMPLATES[0];
       const item = await screen.findByRole('menuitem', {
         name: new RegExp(template.name, 'i'),
         hidden: true,
@@ -450,13 +490,13 @@ describe('WorkflowBuilder', () => {
 
     it('confirming replaces the workflow name with the template name', async () => {
       const user = userEvent.setup();
-      render(<WorkflowBuilder mode="create" />);
+      render(<WorkflowBuilder mode="create" initialTemplates={MOCK_TEMPLATES} />);
 
       const nameInput = screen.getByRole('textbox', { name: /workflow name/i });
       expect((nameInput as HTMLInputElement).value).toBe('Untitled workflow');
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
-      const template = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const template = MOCK_TEMPLATES[0];
       const item = await screen.findByRole('menuitem', {
         name: new RegExp(template.name, 'i'),
         hidden: true,
@@ -470,11 +510,13 @@ describe('WorkflowBuilder', () => {
 
     it('renders template items as disabled in edit mode', async () => {
       const user = userEvent.setup();
-      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
+      render(
+        <WorkflowBuilder mode="edit" workflow={makeWorkflow()} initialTemplates={MOCK_TEMPLATES} />
+      );
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
 
-      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+      for (const template of MOCK_TEMPLATES) {
         const item = await screen.findByRole('menuitem', {
           name: new RegExp(template.name, 'i'),
           hidden: true,

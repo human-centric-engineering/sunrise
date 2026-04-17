@@ -5,7 +5,7 @@ import type { SeedUnit } from '../runner';
 
 /**
  * Seed the "Agentic Design Patterns" knowledge base document and its
- * chunks from the pre-parsed `lib/orchestration/seed/chunks.json`.
+ * chunks from the pre-parsed `prisma/seeds/data/chunks/chunks.json`.
  *
  * Embeddings are intentionally NOT generated here — that requires a live
  * embedding provider and is out of scope for CLI seeding. Run the
@@ -14,14 +14,13 @@ import type { SeedUnit } from '../runner';
 const unit: SeedUnit = {
   name: '007-knowledge-chunks',
   // Fold the chunk data file into the content hash so edits re-trigger this unit.
-  hashInputs: ['../../lib/orchestration/seed/chunks.json'],
+  hashInputs: ['./data/chunks/chunks.json'],
   async run({ logger }) {
     logger.info('📖 Seeding knowledge base chunks...');
 
     // __dirname equivalent for ESM: .../prisma/seeds
     const here = dirname(fileURLToPath(import.meta.url));
-    // Repo root is two levels up from prisma/seeds
-    const chunksPath = resolve(here, '..', '..', 'lib', 'orchestration', 'seed', 'chunks.json');
+    const chunksPath = resolve(here, 'data', 'chunks', 'chunks.json');
 
     await seedChunks(chunksPath);
 

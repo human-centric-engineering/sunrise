@@ -340,6 +340,7 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
               <tbody className="divide-y">
                 {documents.map((doc) => {
                   const style = STATUS_STYLES[doc.status] ?? STATUS_STYLES.pending;
+                  const isSeeded = doc.fileName === 'agentic-design-patterns.md';
                   return (
                     <tr key={doc.id}>
                       <td className="px-4 py-2 font-medium">{doc.name}</td>
@@ -351,27 +352,48 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
                         {new Date(doc.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        <span className="inline-flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={rechunkingId === doc.id}
-                            onClick={() => void handleRechunk(doc.id)}
-                          >
-                            <RefreshCw
-                              className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
-                            />
-                            Rechunk
-                          </Button>
-                          <FieldHelp title="Rechunk" ariaLabel="What does Rechunk do?">
-                            <p>
-                              Re-splits this document into chunks and regenerates all embeddings
-                              from scratch. Useful if the chunking strategy has been updated or if
-                              the embedding model has changed — the new vectors may capture meaning
-                              more accurately, improving search results.
-                            </p>
-                          </FieldHelp>
-                        </span>
+                        {isSeeded ? (
+                          <span className="inline-flex items-center gap-1">
+                            <Badge variant="outline" className="text-xs">
+                              Pre-chunked
+                            </Badge>
+                            <FieldHelp title="Pre-chunked" ariaLabel="Why can't this be rechunked?">
+                              <p>
+                                This document was loaded from the built-in Agentic Design Patterns
+                                data, which ships pre-chunked with optimised section boundaries.
+                                Rechunking would use the generic chunker and produce lower-quality
+                                splits.
+                              </p>
+                              <p className="mt-2">
+                                To refresh this data, use the{' '}
+                                <strong>Load Agentic Design Patterns</strong> button above (it will
+                                skip if already loaded).
+                              </p>
+                            </FieldHelp>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={rechunkingId === doc.id}
+                              onClick={() => void handleRechunk(doc.id)}
+                            >
+                              <RefreshCw
+                                className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
+                              />
+                              Rechunk
+                            </Button>
+                            <FieldHelp title="Rechunk" ariaLabel="What does Rechunk do?">
+                              <p>
+                                Re-splits this document into chunks and regenerates all embeddings
+                                from scratch. Useful if the chunking strategy has been updated or if
+                                the embedding model has changed — the new vectors may capture
+                                meaning more accurately, improving search results.
+                              </p>
+                            </FieldHelp>
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

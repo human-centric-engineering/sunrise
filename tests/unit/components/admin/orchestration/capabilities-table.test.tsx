@@ -20,7 +20,7 @@ import userEvent from '@testing-library/user-event';
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
 import type { PaginationMeta } from '@/types/api';
-import type { AiCapability } from '@prisma/client';
+import type { AiCapabilityListItem } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ vi.mock('@/lib/api/client', () => ({
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-function makeCapability(overrides: Partial<AiCapability> = {}): AiCapability {
+function makeCapability(overrides: Partial<AiCapabilityListItem> = {}): AiCapabilityListItem {
   const id = overrides.id ?? 'cmjbv4i3x00003wsloputgwul';
   return {
     id,
@@ -76,11 +76,12 @@ function makeCapability(overrides: Partial<AiCapability> = {}): AiCapability {
     updatedAt: new Date('2025-01-01T00:00:00Z'),
     deletedAt: null,
     metadata: {},
+    _agents: [],
     ...overrides,
-  } as AiCapability;
+  } as AiCapabilityListItem;
 }
 
-const THREE_CAPABILITIES: AiCapability[] = [
+const THREE_CAPABILITIES: AiCapabilityListItem[] = [
   makeCapability({
     id: 'cap-1',
     name: 'Alpha Search',
@@ -120,16 +121,12 @@ function toUrlString(url: RequestInfo | URL): string {
   return url.url;
 }
 
-function makeCapabilitiesListResponse(capabilities: AiCapability[] = THREE_CAPABILITIES) {
+function makeCapabilitiesListResponse(capabilities: AiCapabilityListItem[] = THREE_CAPABILITIES) {
   return createMockFetchResponse({
     success: true,
     data: capabilities,
     meta: MOCK_META,
   });
-}
-
-function makeAgentCountResponse(agents: { id: string; name: string; slug: string }[] = []) {
-  return createMockFetchResponse({ success: true, data: agents });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -142,11 +139,7 @@ describe('CapabilitiesTable', () => {
     mockFetch = vi.fn<typeof fetch>();
     global.fetch = mockFetch as typeof fetch;
 
-    mockFetch.mockImplementation((url: RequestInfo | URL) => {
-      const urlStr = toUrlString(url);
-      if (urlStr.includes('/agents')) {
-        return Promise.resolve(makeAgentCountResponse());
-      }
+    mockFetch.mockImplementation(() => {
       return Promise.resolve(makeCapabilitiesListResponse());
     });
 
@@ -257,59 +250,6 @@ describe('CapabilitiesTable', () => {
     });
   });
 
-  // ── Lazy agent counts ──────────────────────────────────────────────────────
-
-  describe('lazy agent count fetch', () => {
-    it('renders em-dash when agent count fetch fails', async () => {
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) {
-          return Promise.resolve(createMockFetchResponse({}, 500));
-        }
-        return Promise.resolve(makeCapabilitiesListResponse());
-      });
-
-      render(
-        <CapabilitiesTable
-          initialCapabilities={THREE_CAPABILITIES}
-          initialMeta={MOCK_META}
-          availableCategories={['knowledge', 'api', 'webhook']}
-        />
-      );
-
-      await waitFor(() => {
-        const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBeGreaterThanOrEqual(3);
-      });
-
-      // Critical: no throw
-      expect(screen.getByText('Alpha Search')).toBeInTheDocument();
-    });
-
-    it('renders 0 when agent count fetch returns empty array', async () => {
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) {
-          return Promise.resolve(makeAgentCountResponse([]));
-        }
-        return Promise.resolve(makeCapabilitiesListResponse());
-      });
-
-      render(
-        <CapabilitiesTable
-          initialCapabilities={THREE_CAPABILITIES}
-          initialMeta={MOCK_META}
-          availableCategories={['knowledge', 'api', 'webhook']}
-        />
-      );
-
-      await waitFor(() => {
-        const zeros = screen.getAllByText('0');
-        expect(zeros.length).toBeGreaterThanOrEqual(1);
-      });
-    });
-  });
-
   // ── Search / debounce ──────────────────────────────────────────────────────
 
   describe('search with debounce', () => {
@@ -327,17 +267,12 @@ describe('CapabilitiesTable', () => {
       await user.type(screen.getByPlaceholderText('Search capabilities...'), 'al');
 
       // No extra list fetches before debounce fires
-      const listFetches = mockFetch.mock.calls.filter(
-        (call) => !toUrlString(call[0] as RequestInfo | URL).includes('/agents')
-      );
-      expect(listFetches.length).toBe(initialCalls - THREE_CAPABILITIES.length);
+      expect(mockFetch.mock.calls.length).toBe(initialCalls);
     });
 
     it('fires refetch after 300ms debounce with search query', async () => {
       const user = userEvent.setup({ delay: null });
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) return Promise.resolve(makeAgentCountResponse());
+      mockFetch.mockImplementation(() => {
         return Promise.resolve(makeCapabilitiesListResponse([THREE_CAPABILITIES[0]]));
       });
 
@@ -356,9 +291,9 @@ describe('CapabilitiesTable', () => {
       });
 
       await waitFor(() => {
-        const fetchUrls = mockFetch.mock.calls
-          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/agents'))
-          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
         expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true);
       });
     });
@@ -367,9 +302,7 @@ describe('CapabilitiesTable', () => {
       // This test verifies the debounce fires after 300ms total, using a
       // simpler approach to avoid timer-order sensitivity with shouldAdvanceTime.
       const user = userEvent.setup({ delay: null });
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) return Promise.resolve(makeAgentCountResponse());
+      mockFetch.mockImplementation(() => {
         return Promise.resolve(makeCapabilitiesListResponse());
       });
 
@@ -388,9 +321,9 @@ describe('CapabilitiesTable', () => {
       });
 
       await waitFor(() => {
-        const fetchUrls = mockFetch.mock.calls
-          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/agents'))
-          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
         expect(fetchUrls.some((u) => u.includes('q=myquery'))).toBe(true);
       });
     });
@@ -401,9 +334,7 @@ describe('CapabilitiesTable', () => {
   describe('category filter', () => {
     it('changes category filter refetches with ?category=knowledge', async () => {
       const user = userEvent.setup();
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) return Promise.resolve(makeAgentCountResponse());
+      mockFetch.mockImplementation(() => {
         return Promise.resolve(makeCapabilitiesListResponse());
       });
 
@@ -425,9 +356,9 @@ describe('CapabilitiesTable', () => {
       await user.click(knowledgeOption);
 
       await waitFor(() => {
-        const fetchUrls = mockFetch.mock.calls
-          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/agents'))
-          .map((call) => toUrlString(call[0] as RequestInfo | URL));
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
         expect(fetchUrls.some((u) => u.includes('category=knowledge'))).toBe(true);
       });
     });
@@ -520,9 +451,7 @@ describe('CapabilitiesTable', () => {
     it('confirms delete calls apiClient.delete and removes row', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) return Promise.resolve(makeAgentCountResponse());
+      mockFetch.mockImplementation(() => {
         return Promise.resolve(makeCapabilitiesListResponse(THREE_CAPABILITIES.slice(1)));
       });
 
@@ -569,67 +498,73 @@ describe('CapabilitiesTable', () => {
   // ── Agent-list Popover ─────────────────────────────────────────────────────
 
   describe('agent-list popover', () => {
-    // Fixture: two agents linked to cap-1 ("Alpha Search")
+    // Agent fixtures used in _agents arrays
     const TWO_AGENTS = [
-      { id: 'agent-aa', name: 'Agent Amber', slug: 'agent-amber' },
-      { id: 'agent-bb', name: 'Agent Bravo', slug: 'agent-bravo' },
+      { id: 'agent-aa', name: 'Agent Amber', slug: 'agent-amber', isActive: true },
+      { id: 'agent-bb', name: 'Agent Bravo', slug: 'agent-bravo', isActive: true },
     ];
 
-    // Fixture: one agent linked to cap-1 (singular header test)
-    const ONE_AGENT = [{ id: 'agent-solo', name: 'Solo Bot', slug: 'solo-bot' }];
+    const ONE_AGENT = [{ id: 'agent-solo', name: 'Solo Bot', slug: 'solo-bot', isActive: true }];
 
-    function setupWithAgents(agents: typeof TWO_AGENTS) {
-      // All three capabilities share the same agent list for simplicity;
-      // the tests only care about cap-1 ("Alpha Search").
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) {
-          return Promise.resolve(makeAgentCountResponse(agents));
-        }
-        return Promise.resolve(makeCapabilitiesListResponse());
-      });
+    // Build a fixture set where cap-1 has the given agents; cap-2 and cap-3 have none.
+    function makeCapabilitiesWithAgents(agents: typeof TWO_AGENTS): AiCapabilityListItem[] {
+      return [
+        makeCapability({
+          id: 'cap-1',
+          name: 'Alpha Search',
+          slug: 'alpha-search',
+          category: 'knowledge',
+          executionType: 'internal',
+          _agents: agents,
+        }),
+        makeCapability({
+          id: 'cap-2',
+          name: 'Beta Webhook',
+          slug: 'beta-webhook',
+          category: 'api',
+          executionType: 'api',
+          isActive: false,
+          _agents: [],
+        }),
+        makeCapability({
+          id: 'cap-3',
+          name: 'Gamma Hook',
+          slug: 'gamma-hook',
+          category: 'webhook',
+          executionType: 'webhook',
+          _agents: [],
+        }),
+      ];
+    }
 
+    it('trigger button renders the agent count', () => {
       render(
         <CapabilitiesTable
-          initialCapabilities={THREE_CAPABILITIES}
+          initialCapabilities={makeCapabilitiesWithAgents(TWO_AGENTS)}
           initialMeta={MOCK_META}
           availableCategories={['knowledge', 'api', 'webhook']}
         />
       );
-    }
 
-    it('trigger button renders the agent count', async () => {
-      // Arrange + Act
-      setupWithAgents(TWO_AGENTS);
-
-      // Assert: wait for lazy fetch to complete and buttons to appear
-      await waitFor(() => {
-        // Each row will show a trigger like "2 →" once agents load
-        const triggers = screen.getAllByRole('button', { name: /→/ });
-        expect(triggers.length).toBeGreaterThanOrEqual(1);
-      });
-
-      // The count shown in the first trigger should be the agent count
-      const trigger = screen.getAllByRole('button', { name: /→/ })[0];
+      // cap-1 has 2 agents, so its trigger shows "2 →"
+      const trigger = screen.getByRole('button', { name: /2 →/ });
       expect(trigger).toHaveTextContent('2');
     });
 
     it('clicking the trigger opens the popover and reveals linked agent names', async () => {
-      // Arrange
       const user = userEvent.setup();
-      setupWithAgents(TWO_AGENTS);
+      render(
+        <CapabilitiesTable
+          initialCapabilities={makeCapabilitiesWithAgents(TWO_AGENTS)}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
 
-      // All 3 rows get the same mock response, so 3 triggers appear.
-      // Click the first one (cap-1 "Alpha Search").
-      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
-      expect(triggers.length).toBeGreaterThanOrEqual(1);
+      // cap-1 has 2 agents; click its trigger
+      await user.click(screen.getByRole('button', { name: /2 →/ }));
 
-      // Act: open the popover
-      await user.click(triggers[0]);
-
-      // Assert: agent names are now visible
-      // Radix Popover renders content via a portal into document.body;
-      // screen queries search the whole document so no special scoping needed.
+      // Radix Popover renders content via a portal into document.body
       await waitFor(() => {
         expect(screen.getByText('Agent Amber')).toBeInTheDocument();
         expect(screen.getByText('Agent Bravo')).toBeInTheDocument();
@@ -637,18 +572,17 @@ describe('CapabilitiesTable', () => {
     });
 
     it('each agent row renders both name and slug and links to /admin/orchestration/agents/{id}', async () => {
-      // Arrange
       const user = userEvent.setup();
-      setupWithAgents(TWO_AGENTS);
+      render(
+        <CapabilitiesTable
+          initialCapabilities={makeCapabilitiesWithAgents(TWO_AGENTS)}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
 
-      // All 3 rows share the same mock agent list; click the first trigger.
-      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
-      expect(triggers.length).toBeGreaterThanOrEqual(1);
+      await user.click(screen.getByRole('button', { name: /2 →/ }));
 
-      // Act
-      await user.click(triggers[0]);
-
-      // Assert names and slugs are present in the opened popover
       await waitFor(() => {
         expect(screen.getByText('Agent Amber')).toBeInTheDocument();
         expect(screen.getByText('agent-amber')).toBeInTheDocument();
@@ -656,7 +590,6 @@ describe('CapabilitiesTable', () => {
         expect(screen.getByText('agent-bravo')).toBeInTheDocument();
       });
 
-      // Assert each agent name is wrapped in (or is a descendant of) a link to the right href
       const amberLink = screen.getByText('Agent Amber').closest('a');
       expect(amberLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-aa');
 
@@ -665,54 +598,42 @@ describe('CapabilitiesTable', () => {
     });
 
     it('header uses singular "agent" when count is 1', async () => {
-      // Arrange
       const user = userEvent.setup();
-      setupWithAgents(ONE_AGENT);
+      render(
+        <CapabilitiesTable
+          initialCapabilities={makeCapabilitiesWithAgents(ONE_AGENT)}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
 
-      // All 3 rows share the same mock; click the first trigger.
-      const triggers = await screen.findAllByRole('button', { name: /1 →/ });
-      expect(triggers.length).toBeGreaterThanOrEqual(1);
+      await user.click(screen.getByRole('button', { name: /1 →/ }));
 
-      // Act
-      await user.click(triggers[0]);
-
-      // Assert: header reads "1 agent using Alpha Search" (no trailing 's')
       await waitFor(() => {
         expect(screen.getByText(/1 agent using/)).toBeInTheDocument();
       });
-      // Confirm "agents" (plural) is NOT used
       expect(screen.queryByText(/1 agents using/)).not.toBeInTheDocument();
     });
 
     it('header uses plural "agents" when count is greater than 1', async () => {
-      // Arrange
       const user = userEvent.setup();
-      setupWithAgents(TWO_AGENTS);
+      render(
+        <CapabilitiesTable
+          initialCapabilities={makeCapabilitiesWithAgents(TWO_AGENTS)}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
 
-      // All 3 rows share the same mock; click the first trigger.
-      const triggers = await screen.findAllByRole('button', { name: /2 →/ });
-      expect(triggers.length).toBeGreaterThanOrEqual(1);
+      await user.click(screen.getByRole('button', { name: /2 →/ }));
 
-      // Act
-      await user.click(triggers[0]);
-
-      // Assert: header reads "2 agents using Alpha Search"
       await waitFor(() => {
         expect(screen.getByText(/2 agents using/)).toBeInTheDocument();
       });
     });
 
-    it('renders plain "0" without a Popover trigger when agent count is zero', async () => {
-      // Arrange: agent fetch returns empty array → source renders '0' as plain text, not a button
-      // (source line 433-434: agents.length === 0 → '0')
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) {
-          return Promise.resolve(makeAgentCountResponse([]));
-        }
-        return Promise.resolve(makeCapabilitiesListResponse());
-      });
-
+    it('renders plain "0" without a Popover trigger when agent count is zero', () => {
+      // THREE_CAPABILITIES all have _agents: [] by default
       render(
         <CapabilitiesTable
           initialCapabilities={THREE_CAPABILITIES}
@@ -721,13 +642,10 @@ describe('CapabilitiesTable', () => {
         />
       );
 
-      // Assert: plain "0" text is present once agents have loaded
-      await waitFor(() => {
-        const zeros = screen.getAllByText('0');
-        expect(zeros.length).toBeGreaterThanOrEqual(1);
-      });
+      // All 3 rows have 0 agents → plain "0" text, no popover trigger
+      const zeros = screen.getAllByText('0');
+      expect(zeros.length).toBeGreaterThanOrEqual(3);
 
-      // Assert: no Popover trigger button (→) is rendered when count is zero
       expect(screen.queryByRole('button', { name: /→/ })).not.toBeInTheDocument();
     });
   });
@@ -769,9 +687,7 @@ describe('CapabilitiesTable', () => {
       // Arrange: page 1 of 2
       const meta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
 
-      mockFetch.mockImplementation((url: RequestInfo | URL) => {
-        const urlStr = toUrlString(url);
-        if (urlStr.includes('/agents')) return Promise.resolve(makeAgentCountResponse());
+      mockFetch.mockImplementation(() => {
         return Promise.resolve(makeCapabilitiesListResponse());
       });
 
@@ -790,10 +706,10 @@ describe('CapabilitiesTable', () => {
 
       // Assert: a list fetch with page=2 was fired
       await waitFor(() => {
-        const listFetches = mockFetch.mock.calls
-          .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/agents'))
-          .map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(listFetches.some((u) => u.includes('page=2'))).toBe(true);
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
+        expect(fetchUrls.some((u) => u.includes('page=2'))).toBe(true);
       });
     });
   });

@@ -49,6 +49,7 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
+      include: { _count: { select: { executions: true } } },
     }),
     prisma.aiWorkflow.count({ where }),
   ]);

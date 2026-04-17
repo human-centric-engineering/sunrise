@@ -16,7 +16,7 @@
  * export/import, so there is no standalone bundle format today.
  */
 
-import type { AiCapability } from '@prisma/client';
+import type { AiCapabilityListItem } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -62,10 +62,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  DeleteCapabilityDialog,
-  type UsedByAgent,
-} from '@/components/admin/orchestration/delete-capability-dialog';
+import { DeleteCapabilityDialog } from '@/components/admin/orchestration/delete-capability-dialog';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
@@ -73,7 +70,7 @@ import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
 export interface CapabilitiesTableProps {
-  initialCapabilities: AiCapability[];
+  initialCapabilities: AiCapabilityListItem[];
   initialMeta: PaginationMeta;
   availableCategories: string[];
 }
@@ -110,9 +107,8 @@ export function CapabilitiesTable({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AiCapability | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiCapabilityListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [agentCounts, setAgentCounts] = useState<Record<string, UsedByAgent[] | null>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -151,7 +147,7 @@ export function CapabilitiesTable({
         });
         if (!res.ok) throw new Error('list failed');
 
-        const body = await parseApiResponse<AiCapability[]>(res);
+        const body = await parseApiResponse<AiCapabilityListItem[]>(res);
         if (!body.success) throw new Error('list failed');
 
         const next = [...body.data];
@@ -176,35 +172,6 @@ export function CapabilitiesTable({
     },
     [category, meta.limit, search, sortField, sortOrder]
   );
-
-  // Lazy-fetch agents-using count per visible row once the list paints.
-  useEffect(() => {
-    if (capabilities.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      const entries = await Promise.all(
-        capabilities.map(async (cap): Promise<[string, UsedByAgent[] | null]> => {
-          try {
-            const res = await fetch(API.ADMIN.ORCHESTRATION.capabilityAgents(cap.id), {
-              credentials: 'same-origin',
-            });
-            if (!res.ok) return [cap.id, null];
-            const body = await parseApiResponse<UsedByAgent[]>(res);
-            return [cap.id, body.success ? body.data : null];
-          } catch {
-            return [cap.id, null];
-          }
-        })
-      );
-      if (cancelled) return;
-      setAgentCounts(Object.fromEntries(entries));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [capabilities]);
 
   const handleSearch = useCallback(
     (value: string) => {
@@ -243,7 +210,7 @@ export function CapabilitiesTable({
     [fetchCapabilities]
   );
 
-  const handleToggleStatus = useCallback(async (cap: AiCapability, nextActive: boolean) => {
+  const handleToggleStatus = useCallback(async (cap: AiCapabilityListItem, nextActive: boolean) => {
     setCapabilities((prev) =>
       prev.map((c) => (c.id === cap.id ? { ...c, isActive: nextActive } : c))
     );
@@ -391,119 +358,108 @@ export function CapabilitiesTable({
                 </TableCell>
               </TableRow>
             ) : (
-              capabilities.map((cap) => {
-                const agents = agentCounts[cap.id];
-                return (
-                  <TableRow key={cap.id}>
-                    <TableCell className="font-medium">
-                      <Link
-                        href={`/admin/orchestration/capabilities/${cap.id}`}
-                        className="hover:underline"
+              capabilities.map((cap) => (
+                <TableRow key={cap.id}>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={`/admin/orchestration/capabilities/${cap.id}`}
+                      className="hover:underline"
+                    >
+                      {cap.name}
+                    </Link>
+                    <div className="text-muted-foreground font-mono text-xs">{cap.slug}</div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{cap.category}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <ExecutionTypeBadge type={cap.executionType} />
+                  </TableCell>
+                  <TableCell>
+                    {cap.requiresApproval ? (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
                       >
-                        {cap.name}
-                      </Link>
-                      <div className="text-muted-foreground font-mono text-xs">{cap.slug}</div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{cap.category}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <ExecutionTypeBadge type={cap.executionType} />
-                    </TableCell>
-                    <TableCell>
-                      {cap.requiresApproval ? (
-                        <Badge
-                          variant="outline"
-                          className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                        Approval
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{cap.rateLimit ?? '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {cap._agents.length === 0 ? (
+                      '0'
+                    ) : (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="cursor-pointer tabular-nums hover:underline">
+                            {cap._agents.length} →
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0" align="end">
+                          <div className="border-b px-3 py-2">
+                            <p className="text-sm font-medium">
+                              {cap._agents.length} agent{cap._agents.length !== 1 ? 's' : ''} using{' '}
+                              <span className="font-semibold">{cap.name}</span>
+                            </p>
+                          </div>
+                          <ul className="max-h-48 overflow-y-auto py-1">
+                            {cap._agents.map((agent) => (
+                              <li key={agent.id}>
+                                <Link
+                                  href={`/admin/orchestration/agents/${agent.id}`}
+                                  className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                >
+                                  <span className="truncate">{agent.name}</span>
+                                  <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                    {agent.slug}
+                                  </span>
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Switch
+                      checked={cap.isActive}
+                      onCheckedChange={(v) => void handleToggleStatus(cap, v)}
+                      aria-label={`Toggle ${cap.name} active`}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Row actions</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/admin/orchestration/capabilities/${cap.id}`)}
                         >
-                          Approval
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {cap.rateLimit ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agents === undefined ? (
-                        <span className="text-muted-foreground">…</span>
-                      ) : agents === null ? (
-                        '—'
-                      ) : agents.length === 0 ? (
-                        '0'
-                      ) : (
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <button className="cursor-pointer tabular-nums hover:underline">
-                              {agents.length} →
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-64 p-0" align="end">
-                            <div className="border-b px-3 py-2">
-                              <p className="text-sm font-medium">
-                                {agents.length} agent{agents.length !== 1 ? 's' : ''} using{' '}
-                                <span className="font-semibold">{cap.name}</span>
-                              </p>
-                            </div>
-                            <ul className="max-h-48 overflow-y-auto py-1">
-                              {agents.map((agent) => (
-                                <li key={agent.id}>
-                                  <Link
-                                    href={`/admin/orchestration/agents/${agent.id}`}
-                                    className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
-                                  >
-                                    <span className="truncate">{agent.name}</span>
-                                    <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                      {agent.slug}
-                                    </span>
-                                  </Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </PopoverContent>
-                        </Popover>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Switch
-                        checked={cap.isActive}
-                        onCheckedChange={(v) => void handleToggleStatus(cap, v)}
-                        aria-label={`Toggle ${cap.name} active`}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" className="h-8 w-8 p-0">
-                            <span className="sr-only">Row actions</span>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() =>
-                              router.push(`/admin/orchestration/capabilities/${cap.id}`)
-                            }
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => setDeleteTarget(cap)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-red-600"
+                          onClick={() => setDeleteTarget(cap)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>
@@ -542,7 +498,7 @@ export function CapabilitiesTable({
 
       <DeleteCapabilityDialog
         target={deleteTarget}
-        usedBy={(deleteTarget && agentCounts[deleteTarget.id]) || []}
+        usedBy={deleteTarget?._agents ?? []}
         error={deleteError}
         isDeleting={isLoading}
         onCancel={() => {

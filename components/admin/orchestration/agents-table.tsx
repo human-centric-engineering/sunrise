@@ -19,7 +19,7 @@
  * Delete uses the same inline AlertDialog pattern as UserTable.
  */
 
-import type { AiAgent } from '@prisma/client';
+import type { AiAgentListItem } from '@/types/orchestration';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -75,21 +75,16 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
+import type { AiAgent } from '@/types/orchestration';
 import { DuplicateAgentDialog } from '@/components/admin/orchestration/duplicate-agent-dialog';
 import { ImportAgentsDialog } from '@/components/admin/orchestration/import-agents-dialog';
 
 export interface AgentsTableProps {
-  initialAgents: AiAgent[];
+  initialAgents: AiAgentListItem[];
   initialMeta: PaginationMeta;
 }
 
 type SortField = 'createdAt' | 'name';
-
-interface BudgetEntry {
-  spent: number;
-  limit: number | null;
-  withinBudget: boolean;
-}
 
 export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const router = useRouter();
@@ -101,13 +96,10 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [deleteTarget, setDeleteTarget] = useState<AiAgent | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiAgentListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [duplicateSource, setDuplicateSource] = useState<AiAgent | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [budgets, setBudgets] = useState<Record<string, BudgetEntry | null>>({});
-  const [capCounts, setCapCounts] = useState<Record<string, number | null>>({});
-  const [convCounts, setConvCounts] = useState<Record<string, number | null>>({});
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -140,7 +132,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         });
         if (!res.ok) throw new Error('list failed');
 
-        const body = await parseApiResponse<AiAgent[]>(res);
+        const body = await parseApiResponse<AiAgentListItem[]>(res);
         if (!body.success) throw new Error('list failed');
 
         const next = [...body.data];
@@ -167,98 +159,6 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     },
     [meta.limit, search, sortField, sortOrder]
   );
-
-  /**
-   * Lazy-fetch MTD spend for every visible row once the list paints.
-   */
-  useEffect(() => {
-    if (agents.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      const entries = await Promise.all(
-        agents.map(async (agent): Promise<[string, BudgetEntry | null]> => {
-          try {
-            const res = await fetch(API.ADMIN.ORCHESTRATION.agentBudget(agent.id), {
-              credentials: 'same-origin',
-            });
-            if (!res.ok) return [agent.id, null];
-            const body = await parseApiResponse<BudgetEntry>(res);
-            return [agent.id, body.success ? body.data : null];
-          } catch {
-            return [agent.id, null];
-          }
-        })
-      );
-      if (cancelled) return;
-      setBudgets(Object.fromEntries(entries));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [agents]);
-
-  // Lazy-fetch capability count per visible row.
-  useEffect(() => {
-    if (agents.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      const entries = await Promise.all(
-        agents.map(async (agent): Promise<[string, number | null]> => {
-          try {
-            const res = await fetch(API.ADMIN.ORCHESTRATION.agentCapabilities(agent.id), {
-              credentials: 'same-origin',
-            });
-            if (!res.ok) return [agent.id, null];
-            const body = await parseApiResponse<unknown[]>(res);
-            return [agent.id, body.success ? body.data.length : null];
-          } catch {
-            return [agent.id, null];
-          }
-        })
-      );
-      if (cancelled) return;
-      setCapCounts(Object.fromEntries(entries));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [agents]);
-
-  // Lazy-fetch conversation count per visible row.
-  useEffect(() => {
-    if (agents.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      const entries = await Promise.all(
-        agents.map(async (agent): Promise<[string, number | null]> => {
-          try {
-            const res = await fetch(
-              `${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?agentId=${agent.id}&limit=1&page=1`,
-              { credentials: 'same-origin' }
-            );
-            if (!res.ok) return [agent.id, null];
-            const body = await parseApiResponse<unknown[]>(res);
-            if (!body.success) return [agent.id, null];
-            const meta = parsePaginationMeta(body.meta);
-            return [agent.id, meta?.total ?? null];
-          } catch {
-            return [agent.id, null];
-          }
-        })
-      );
-      if (cancelled) return;
-      setConvCounts(Object.fromEntries(entries));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [agents]);
 
   const handleSearch = useCallback(
     (value: string) => {
@@ -293,7 +193,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
    * Optimistic status toggle — flips the local row first, then PATCHes.
    * On failure, reverts.
    */
-  const handleToggleStatus = useCallback(async (agent: AiAgent, nextActive: boolean) => {
+  const handleToggleStatus = useCallback(async (agent: AiAgentListItem, nextActive: boolean) => {
     setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, isActive: nextActive } : a)));
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
@@ -517,112 +417,93 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              agents.map((agent) => {
-                const budget = budgets[agent.id];
-                return (
-                  <TableRow key={agent.id}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selected.has(agent.id)}
-                        onCheckedChange={() => toggleRow(agent.id)}
-                        aria-label={`Select ${agent.name}`}
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">
+              agents.map((agent) => (
+                <TableRow key={agent.id}>
+                  <TableCell>
+                    <Checkbox
+                      checked={selected.has(agent.id)}
+                      onCheckedChange={() => toggleRow(agent.id)}
+                      aria-label={`Select ${agent.name}`}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={`/admin/orchestration/agents/${agent.id}`}
+                      className="hover:underline"
+                    >
+                      {agent.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs">
+                    {agent.slug}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {agent._count.capabilities === 0 ? (
+                      <span className="text-muted-foreground">0</span>
+                    ) : (
                       <Link
                         href={`/admin/orchestration/agents/${agent.id}`}
                         className="hover:underline"
+                        title="View agent capabilities"
                       >
-                        {agent.name}
+                        {agent._count.capabilities}
                       </Link>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {agent.slug}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {capCounts[agent.id] === undefined ? (
-                        <span className="text-muted-foreground">…</span>
-                      ) : capCounts[agent.id] === null ? (
-                        '—'
-                      ) : capCounts[agent.id] === 0 ? (
-                        <span className="text-muted-foreground">0</span>
-                      ) : (
-                        <Link
-                          href={`/admin/orchestration/agents/${agent.id}`}
-                          className="hover:underline"
-                          title="View agent capabilities"
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {agent._count.conversations}
+                  </TableCell>
+                  <TableCell>{agent.provider}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{agent.model}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {agent.temperature.toFixed(2)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {agent._budget ? `$${agent._budget.spent.toFixed(2)}` : '—'}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Switch
+                      checked={agent.isActive}
+                      onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+                      aria-label={`Toggle ${agent.name} active`}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Row actions</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
                         >
-                          {capCounts[agent.id]}
-                        </Link>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {convCounts[agent.id] === undefined ? (
-                        <span className="text-muted-foreground">…</span>
-                      ) : convCounts[agent.id] === null ? (
-                        '—'
-                      ) : (
-                        convCounts[agent.id]
-                      )}
-                    </TableCell>
-                    <TableCell>{agent.provider}</TableCell>
-                    <TableCell className="text-muted-foreground text-xs">{agent.model}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent.temperature.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {budget === undefined ? (
-                        <span className="text-muted-foreground">…</span>
-                      ) : budget === null ? (
-                        '—'
-                      ) : (
-                        `$${budget.spent.toFixed(2)}`
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Switch
-                        checked={agent.isActive}
-                        onCheckedChange={(v) => void handleToggleStatus(agent, v)}
-                        aria-label={`Toggle ${agent.name} active`}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" className="h-8 w-8 p-0">
-                            <span className="sr-only">Row actions</span>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
-                            <Copy className="mr-2 h-4 w-4" />
-                            Duplicate
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => setDeleteTarget(agent)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-red-600"
+                          onClick={() => setDeleteTarget(agent)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>

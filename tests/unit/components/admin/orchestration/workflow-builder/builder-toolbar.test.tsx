@@ -25,7 +25,30 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
-import { BUILTIN_WORKFLOW_TEMPLATES } from '@/lib/orchestration/workflows/templates';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
+
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
+
+const MOCK_TEMPLATES: TemplateItem[] = [
+  {
+    slug: 'tpl-customer-support',
+    name: 'Customer Support',
+    description: 'Multi-channel support automation',
+    workflowDefinition: { steps: [], entryStepId: 's1', errorStrategy: 'fail' },
+    patternsUsed: [1, 2],
+    isTemplate: true,
+    metadata: { flowSummary: 'A flow', useCases: [], patterns: [{ number: 1, name: 'Chain' }] },
+  },
+  {
+    slug: 'tpl-content-pipeline',
+    name: 'Content Pipeline',
+    description: 'Content generation pipeline',
+    workflowDefinition: { steps: [], entryStepId: 's1', errorStrategy: 'fail' },
+    patternsUsed: [1, 3],
+    isTemplate: true,
+    metadata: { flowSummary: 'A flow', useCases: [], patterns: [{ number: 1, name: 'Chain' }] },
+  },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +61,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     onSave: vi.fn(),
     onExecute: vi.fn(),
     onTemplateSelect: vi.fn(),
+    templates: MOCK_TEMPLATES,
     templatesDisabled: false,
     saving: false,
     hasErrors: false,
@@ -174,7 +198,7 @@ describe('BuilderToolbar', () => {
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
 
-      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+      for (const template of MOCK_TEMPLATES) {
         const item = await screen.findByRole('menuitem', {
           name: new RegExp(template.name, 'i'),
           hidden: true,
@@ -189,7 +213,7 @@ describe('BuilderToolbar', () => {
       renderToolbar({ onTemplateSelect });
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
-      const firstTemplate = BUILTIN_WORKFLOW_TEMPLATES[0];
+      const firstTemplate = MOCK_TEMPLATES[0];
       const item = await screen.findByRole('menuitem', {
         name: new RegExp(firstTemplate.name, 'i'),
         hidden: true,
@@ -206,7 +230,7 @@ describe('BuilderToolbar', () => {
 
       await user.click(screen.getByRole('button', { name: /use template/i }));
 
-      for (const template of BUILTIN_WORKFLOW_TEMPLATES) {
+      for (const template of MOCK_TEMPLATES) {
         const item = await screen.findByRole('menuitem', {
           name: new RegExp(template.name, 'i'),
           hidden: true,

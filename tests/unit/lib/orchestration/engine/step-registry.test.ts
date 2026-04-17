@@ -34,7 +34,7 @@ describe('STEP_REGISTRY', () => {
     }
   });
 
-  it('has 9 entries matching the known step types count', () => {
+  it('has 12 entries matching the known step types count', () => {
     expect(STEP_REGISTRY.length).toBe(KNOWN_STEP_TYPES.length);
   });
 
@@ -68,13 +68,19 @@ describe('STEP_REGISTRY', () => {
       expect(entry?.outputs).toBe(2);
     });
 
+    it('guard has 2 outputs', () => {
+      const entry = STEP_REGISTRY.find((e) => e.type === 'guard');
+      expect(entry?.outputs).toBe(2);
+    });
+
     it('parallel has 3 outputs', () => {
       const entry = STEP_REGISTRY.find((e) => e.type === 'parallel');
       expect(entry?.outputs).toBe(3);
     });
 
     it('all other entries have exactly 1 output', () => {
-      const others = STEP_REGISTRY.filter((e) => e.type !== 'route' && e.type !== 'parallel');
+      const multiOutput = new Set(['route', 'parallel', 'guard']);
+      const others = STEP_REGISTRY.filter((e) => !multiOutput.has(e.type));
       for (const entry of others) {
         expect(entry.outputs, `${entry.type} should have 1 output`).toBe(1);
       }

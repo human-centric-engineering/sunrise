@@ -218,8 +218,26 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         }
         break;
       }
+      case 'guard': {
+        if (!isNonEmptyString(config.rules)) {
+          emit(`Guard "${label}" needs safety rules`);
+        }
+        break;
+      }
+      case 'evaluate': {
+        if (!isNonEmptyString(config.rubric)) {
+          emit(`Evaluate "${label}" needs a scoring rubric`);
+        }
+        break;
+      }
+      case 'external_call': {
+        if (!isNonEmptyString(config.url)) {
+          emit(`External Call "${label}" needs a target URL`);
+        }
+        break;
+      }
       default:
-        // chain / parallel have no required config in 5.1b.
+        // chain / parallel have no required config.
         break;
     }
   }

@@ -30,13 +30,13 @@ describe('PatternPalette', () => {
     }
   });
 
-  it('renders exactly 9 palette blocks (one per step type)', () => {
+  it('renders exactly 12 palette blocks (one per step type)', () => {
     render(<PatternPalette />);
 
-    // STEP_REGISTRY has 9 entries
-    expect(STEP_REGISTRY.length).toBe(9);
+    // STEP_REGISTRY has 12 entries
+    expect(STEP_REGISTRY.length).toBe(12);
     const blocks = document.querySelectorAll('[data-testid^="palette-block-"]');
-    expect(blocks.length).toBe(9);
+    expect(blocks.length).toBe(12);
   });
 
   it('all palette blocks have draggable attribute', () => {
@@ -119,39 +119,55 @@ describe('PatternPalette', () => {
     });
   });
 
-  describe('Learn more links', () => {
-    it('renders a "Learn more" link for each entry that has a patternNumber', () => {
+  describe('Learn more buttons', () => {
+    it('renders a "Learn more" button for each entry that has a patternNumber', () => {
       render(<PatternPalette />);
 
       const entriesWithPattern = STEP_REGISTRY.filter((e) => e.patternNumber !== undefined);
-      const learnMoreLinks = screen.getAllByRole('link', { name: /learn more/i });
+      const learnMoreButtons = screen.getAllByRole('button', { name: /learn more/i });
 
-      expect(learnMoreLinks.length).toBe(entriesWithPattern.length);
+      expect(learnMoreButtons.length).toBe(entriesWithPattern.length);
     });
 
-    it('Learn more link for llm_call points to /admin/orchestration/learning/patterns/1', () => {
-      render(<PatternPalette />);
-
-      // Find the one inside the llm_call block
-      const llmBlock = screen.getByTestId('palette-block-llm_call');
-      const learnMoreLink = llmBlock.querySelector('a');
-
-      expect(learnMoreLink).toHaveAttribute('href', '/admin/orchestration/learning/patterns/1');
-    });
-
-    it('Learn more links have correct pattern numbers for all entries', () => {
+    it('each entry with a patternNumber has a Learn more button in its block', () => {
       render(<PatternPalette />);
 
       for (const entry of STEP_REGISTRY) {
         if (!entry.patternNumber) continue;
 
         const block = screen.getByTestId(`palette-block-${entry.type}`);
-        const link = block.querySelector('a');
+        const button = block.querySelector('button');
 
-        expect(link).toHaveAttribute(
-          'href',
-          `/admin/orchestration/learning/patterns/${entry.patternNumber}`
-        );
+        expect(button).not.toBeNull();
+        expect(button?.textContent).toMatch(/learn more/i);
+      }
+    });
+
+    it('each step type maps to the correct design pattern number', () => {
+      // Canonical mapping: step type → knowledge base pattern number.
+      // If this test fails, someone changed a patternNumber in the
+      // registry without verifying it still points to the right pattern.
+      const expectedMapping: Record<string, number> = {
+        llm_call: 1, // Prompt Chaining
+        chain: 1, // Prompt Chaining
+        route: 2, // Routing
+        parallel: 3, // Parallelisation
+        reflect: 4, // Reflection
+        tool_call: 5, // Tool Use
+        plan: 6, // Planning
+        human_approval: 13, // Human-in-the-Loop
+        rag_retrieve: 14, // Knowledge Retrieval (RAG)
+        guard: 18, // Guardrails & Safety
+        evaluate: 19, // Evaluation & Monitoring
+        external_call: 15, // Inter-Agent Communication (A2A)
+      };
+
+      for (const entry of STEP_REGISTRY) {
+        if (entry.patternNumber === undefined) continue;
+        expect(
+          entry.patternNumber,
+          `${entry.type} should link to pattern ${expectedMapping[entry.type]}`
+        ).toBe(expectedMapping[entry.type]);
       }
     });
   });

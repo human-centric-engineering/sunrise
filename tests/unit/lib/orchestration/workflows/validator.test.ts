@@ -249,4 +249,91 @@ describe('validateWorkflow', () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  it('flags guard step missing rules', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [{ id: 'a', name: 'A', type: 'guard', config: {}, nextSteps: [] }],
+      })
+    );
+    const err = result.errors.find((e) => e.code === 'MISSING_GUARD_RULES');
+    expect(err?.stepId).toBe('a');
+  });
+
+  it('accepts guard step with rules', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'guard',
+            config: { rules: 'No PII allowed' },
+            nextSteps: [],
+          },
+        ],
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('flags evaluate step missing rubric', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [{ id: 'a', name: 'A', type: 'evaluate', config: {}, nextSteps: [] }],
+      })
+    );
+    const err = result.errors.find((e) => e.code === 'MISSING_EVALUATE_RUBRIC');
+    expect(err?.stepId).toBe('a');
+  });
+
+  it('accepts evaluate step with rubric', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'evaluate',
+            config: { rubric: 'Score clarity 1-10' },
+            nextSteps: [],
+          },
+        ],
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('flags external_call step missing url', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [{ id: 'a', name: 'A', type: 'external_call', config: {}, nextSteps: [] }],
+      })
+    );
+    const err = result.errors.find((e) => e.code === 'MISSING_EXTERNAL_URL');
+    expect(err?.stepId).toBe('a');
+  });
+
+  it('accepts external_call step with url', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'external_call',
+            config: { url: 'https://api.example.com/webhook' },
+            nextSteps: [],
+          },
+        ],
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
 });

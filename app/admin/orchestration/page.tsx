@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import type { AiConversation, AiWorkflowExecution } from '@prisma/client';
+import type { AiConversation, AiWorkflowExecution } from '@/types/orchestration';
 
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
 import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';

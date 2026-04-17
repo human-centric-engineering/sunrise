@@ -28,7 +28,7 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 const DOCUMENT_NAME = 'Agentic Design Patterns';
-const CHUNKS_PATH = resolve(__dirname, '../lib/orchestration/seed/chunks.json');
+const CHUNKS_PATH = resolve(__dirname, '../prisma/seeds/data/chunks/chunks.json');
 
 async function ensureTestUser(): Promise<string> {
   const existing = await prisma.user.findFirst({ where: { role: 'ADMIN' } });

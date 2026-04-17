@@ -184,7 +184,7 @@ FROM seed_history ORDER BY name;
 ## Known Quirks
 
 - **Whole-file hashing.** Any edit to a seed file — including whitespace — triggers a re-run on next `db:seed`. Same for any file listed in `hashInputs`. Safe because units are idempotent `upsert`s, just slightly noisier.
-- **Unit 007 uses the module prisma client.** `007-knowledge-chunks.ts` delegates to `seedChunks()` in `lib/orchestration/knowledge/seeder.ts`, which imports `prisma` from `@/lib/db/client` rather than the context-supplied one. This is intentional — the helper is also used by admin HTTP endpoints — and works fine because both point at the same database. Unit 007 also declares `hashInputs: ['../../lib/orchestration/seed/chunks.json']` so edits to the parsed knowledge-base data trigger a re-run.
+- **Unit 007 uses the module prisma client.** `007-knowledge-chunks.ts` delegates to `seedChunks()` in `lib/orchestration/knowledge/seeder.ts`, which imports `prisma` from `@/lib/db/client` rather than the context-supplied one. This is intentional — the helper is also used by admin HTTP endpoints — and works fine because both point at the same database. Unit 007 also declares `hashInputs: ['./data/chunks/chunks.json']` so edits to the parsed knowledge-base data trigger a re-run.
 
 ## Key Files
 

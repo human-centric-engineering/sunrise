@@ -8,7 +8,7 @@
  * source of truth and round-trips through the store.
  */
 
-import type { AiCapability } from '@prisma/client';
+import type { AiCapability } from '@/types/orchestration';
 
 /** Minimal capability shape the tool-call editor needs. */
 export type CapabilityOption = Pick<AiCapability, 'id' | 'slug' | 'name' | 'description'>;
@@ -35,3 +35,6 @@ export { ToolCallEditor } from './tool-call-editor';
 export { PlanEditor } from './plan-editor';
 export { HumanApprovalEditor } from './human-approval-editor';
 export { RagRetrieveEditor } from './rag-retrieve-editor';
+export { GuardEditor } from './guard-editor';
+export { EvaluateEditor } from './evaluate-editor';
+export { ExternalCallEditor } from './external-call-editor';

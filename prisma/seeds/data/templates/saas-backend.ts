@@ -24,6 +24,23 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
   ],
   flowSummary:
     'A Route step classifies each request as simple, standard, or complex and dispatches to an LLM call with an appropriate model override. All three branches converge at a Tool Call that estimates workflow cost, followed by a final LLM safety / formatting pass.',
+  useCases: [
+    {
+      title: 'AI writing assistant API',
+      scenario:
+        'Route by task complexity (spell-check vs. paragraph rewrite vs. full essay), dispatch to cost-appropriate models, track per-request cost, and safety-check output.',
+    },
+    {
+      title: 'Customer-facing chatbot backend',
+      scenario:
+        'Triage simple FAQ lookups vs. complex account questions, use cheap models for simple queries and frontier models for complex ones, estimate cost for billing, and sanitise PII from responses.',
+    },
+    {
+      title: 'Developer copilot service',
+      scenario:
+        'Route code completion (simple) vs. generation (standard) vs. architectural advice (complex), dispatch to the right model tier, track cost, and scan output for leaked secrets.',
+    },
+  ],
   workflowDefinition: {
     entryStepId: 'complexity_triage',
     errorStrategy: 'fallback',

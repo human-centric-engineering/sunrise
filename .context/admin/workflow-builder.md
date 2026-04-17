@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **5 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **8 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel.
 
 **Core files:**
 
@@ -66,7 +66,7 @@ interface StepRegistryEntry {
 }
 ```
 
-**Initial nine entries** (Session 5.1a):
+**Twelve entries:**
 
 | Type             | Label          | Category | Outputs | Pattern |
 | ---------------- | -------------- | -------- | ------- | ------- |
@@ -79,6 +79,9 @@ interface StepRegistryEntry {
 | `plan`           | Plan           | agent    | 1       | 7       |
 | `human_approval` | Human Approval | decision | 1       | 8       |
 | `rag_retrieve`   | RAG Retrieve   | input    | 1       | 9       |
+| `guard`          | Guard          | decision | 2       | 18      |
+| `evaluate`       | Evaluate       | decision | 1       | 19      |
+| `external_call`  | External Call  | input    | 1       | 15      |
 
 **Adding a new step type:** append an entry to `STEP_REGISTRY`. The palette, the `PatternNode`, and any future registry-driven consumer will pick it up automatically — no new component, no new JSX.
 
@@ -137,19 +140,22 @@ Structure (top to bottom):
 
 ### Block editors
 
-All nine editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
+All twelve editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
 
-| Type             | Editor                      | Fields (default)                                                                                                                   |
-| ---------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                |
-| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                      |
-| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                            |
-| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                              |
-| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                           |
-| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                    |
-| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                  |
-| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed) |
-| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                             |
+| Type             | Editor                      | Fields (default)                                                                                                                     |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                  |
+| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                        |
+| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                              |
+| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                                |
+| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                             |
+| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                      |
+| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                    |
+| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)   |
+| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                               |
+| `guard`          | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                        |
+| `evaluate`       | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 0), `scaleMax` (number, 10), `threshold` (number, 7)                                        |
+| `external_call`  | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input) |
 
 **Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
 
@@ -233,21 +239,24 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ## Templates
 
-Session 5.1c ships 5 built-in composition recipes lifted verbatim from `.claude/skills/agent-architect/SKILL.md`. The dropdown loads them directly from a pure-TS module — there is **no** network call.
+8 built-in composition recipes are seeded into the database via `prisma/seeds/004-builtin-templates.ts` and served to the UI through the existing workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). The builder pages prefetch templates server-side and pass them as `initialTemplates` props — the same pattern used for capabilities.
 
-**Module layout** (all under `lib/orchestration/workflows/templates/`):
+**Seed data** (all under `prisma/seeds/data/templates/`):
 
-| File                         | Template                                                   | Patterns                                                         |
-| ---------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
-| `types.ts`                   | `WorkflowTemplate` shape                                   | —                                                                |
-| `customer-support.ts`        | Customer Support                                           | Routing (2), Retrieval (9), Tool Use (6), HITL (7)               |
-| `content-pipeline.ts`        | Content Pipeline                                           | Planning (5), Parallelisation (3), Reflection (1)                |
-| `saas-backend.ts`            | SaaS Backend                                               | Routing (2), Prompt Chaining (4), Tool Use (6)                   |
-| `research-agent.ts`          | Research Agent                                             | Planning (5), Retrieval (9), Parallelisation (3), Reflection (1) |
-| `conversational-learning.ts` | Conversational Learning                                    | Memory (8), Prompt Chaining (4), Tool Use (6), Reflection (1)    |
-| `index.ts`                   | `BUILTIN_WORKFLOW_TEMPLATES` (readonly array) + re-exports | —                                                                |
+| File                         | Template                                         | Patterns                                                           |
+| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| `types.ts`                   | `WorkflowTemplate` shape                         | —                                                                  |
+| `customer-support.ts`        | Customer Support                                 | Routing (2), Retrieval (9), Tool Use (6), HITL (7)                 |
+| `content-pipeline.ts`        | Content Pipeline                                 | Planning (5), Parallelisation (3), Reflection (1)                  |
+| `saas-backend.ts`            | SaaS Backend                                     | Routing (2), Prompt Chaining (4), Tool Use (6)                     |
+| `research-agent.ts`          | Research Agent                                   | Planning (5), Retrieval (9), Parallelisation (3), Reflection (1)   |
+| `conversational-learning.ts` | Conversational Learning                          | Memory (8), Prompt Chaining (4), Tool Use (6), Reflection (1)      |
+| `code-review.ts`             | Code Review Agent                                | Parallelisation (3), Guard (18), Reflection (1), Evaluate (19)     |
+| `data-pipeline.ts`           | Data Pipeline + Quality Gate                     | External Call (15), Guard (18), Parallelisation (3), Evaluate (19) |
+| `outreach-safety.ts`         | Multi-Channel Outreach                           | Guard (18), Routing (2), Evaluate (19), HITL (7)                   |
+| `index.ts`                   | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                  |
 
-**Template shape:**
+**Template shape** (seed-side `WorkflowTemplate` in `types/orchestration.ts`):
 
 ```ts
 interface WorkflowTemplate {
@@ -256,16 +265,21 @@ interface WorkflowTemplate {
   shortDescription: string;
   patterns: { number: number; name: string }[];
   flowSummary: string;
+  useCases: { title: string; scenario: string }[];
   workflowDefinition: WorkflowDefinition;
 }
 ```
+
+**UI-side type** (`TemplateItem` in `components/.../template-types.ts`):
+
+The `toTemplateItem()` mapper converts an `AiWorkflow` API response into a `TemplateItem`, Zod-parsing `workflowDefinition` and `metadata` JSON columns. The `metadata` column stores `WorkflowTemplateMetadata` (`flowSummary`, `useCases`, `patterns`) populated by the 004 seed unit.
 
 Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_call` references one of the three built-in capability slugs: `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`. Every `llm_call` has a non-empty prompt. Every `route` has ≥2 branches and all parallel branches reconverge — each template passes both `validateWorkflow()` and `runExtraChecks()` out of the box.
 
 ### Dropdown → dialog → canvas
 
-1. **Use template** button in `builder-toolbar.tsx` is a shadcn `DropdownMenu`. It renders one `DropdownMenuItem` per `BUILTIN_WORKFLOW_TEMPLATES` entry showing `name` + `shortDescription`, and calls `onTemplateSelect(template)` on click.
-2. The builder shell opens `TemplateDescriptionDialog` (`components/admin/orchestration/workflow-builder/template-description-dialog.tsx`) — a shadcn `Dialog` displaying name, short description, pattern badges, and flow summary, with a confirm button whose copy flips based on canvas state:
+1. **Use template** button in `builder-toolbar.tsx` is a shadcn `DropdownMenu`. It renders one `DropdownMenuItem` per template (passed via `templates` prop from prefetched API data) showing `name` + `description`, and calls `onTemplateSelect(template)` on click.
+2. The builder shell opens `TemplateDescriptionDialog` (`components/admin/orchestration/workflow-builder/template-description-dialog.tsx`) — a shadcn `Dialog` displaying name, description, pattern badges, use cases, and flow summary, with a confirm button whose copy flips based on canvas state:
    - Empty canvas → **Use this template** (no warning).
    - Canvas with nodes → **Replace canvas with template** plus an amber `role="alert"` warning that loading will replace every node and edge.
 3. Confirming runs `handleTemplateConfirm()`: `workflowDefinitionToFlow(template.workflowDefinition)` produces the new nodes/edges, the shell calls `setNodes` / `setEdges` / `setWorkflowName`, clears selection + save error, and closes the dialog. The mapper is the exact same helper the edit page uses to hydrate an existing workflow, so layout metadata is preserved.
@@ -276,7 +290,7 @@ Templates can only be loaded on a new workflow. In edit mode the shell passes `t
 
 ### DB rows for the list page
 
-`prisma/seed.ts` loops `BUILTIN_WORKFLOW_TEMPLATES` and upserts each as an `AiWorkflow` row with `isTemplate: true`, `isActive: true`, `patternsUsed: patterns.map(p => p.number)`, `createdBy: adminUser.id`, and `update: {}` for idempotency. Re-running `npm run db:seed` is safe — it never overwrites admin edits. These rows give templates a presence in `/admin/orchestration/workflows` (same CRUD as any other workflow); the builder's dropdown does **not** depend on them.
+`prisma/seeds/004-builtin-templates.ts` loops `BUILTIN_WORKFLOW_TEMPLATES` and upserts each as an `AiWorkflow` row with `isTemplate: true`, `isActive: true`, `patternsUsed`, `metadata: { flowSummary, useCases, patterns }`, and `createdBy: adminUser.id`. The `hashInputs` array lists all template source files so edits trigger re-seeding. Re-running `npm run db:seed` is safe — metadata is always overwritten (template-intrinsic, not admin-editable), but admin edits to other fields are preserved. The builder's dropdown depends on the API serving these rows.
 
 ## Layout persistence
 
@@ -297,10 +311,10 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - Full list table with search, pagination, active switch, delete.
 - Drag from palette, drop, snap-to-grid, connect handles, click-to-select, rename, delete.
 - Hydrated builder on `/[id]` from the stored `WorkflowDefinition`, including layout.
-- Per-step config editors for all nine step types (5.1b).
+- Per-step config editors for all twelve step types (5.1b).
 - Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
 - Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
-- 5 built-in templates loadable from the toolbar dropdown, with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
+- 8 built-in templates loadable from the toolbar dropdown (served via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
 
 **Deferred:**
 

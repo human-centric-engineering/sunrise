@@ -3,10 +3,8 @@
 /**
  * BuilderToolbar — top bar of the workflow builder.
  *
- * Owns the editable workflow name, a "Use template" dropdown (wired to
- * `BUILTIN_WORKFLOW_TEMPLATES` in 5.1c) and three action buttons:
- * Save / Validate / Execute. Session 5.1b enabled Save and Validate;
- * Execute stays disabled until Session 5.2 lands the engine.
+ * Owns the editable workflow name, a "Use template" dropdown and three
+ * action buttons: Save / Validate / Execute.
  */
 
 import Link from 'next/link';
@@ -23,10 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import {
-  BUILTIN_WORKFLOW_TEMPLATES,
-  type WorkflowTemplate,
-} from '@/lib/orchestration/workflows/templates';
+import type { TemplateItem } from './template-types';
 
 const EXECUTE_CREATE_TOOLTIP = 'Save the workflow before executing';
 
@@ -41,7 +36,9 @@ export interface BuilderToolbarProps {
   /** Called when the Execute button is clicked (edit mode only). */
   onExecute: () => void;
   /** Called when a template is picked from the dropdown. */
-  onTemplateSelect: (template: WorkflowTemplate) => void;
+  onTemplateSelect: (template: TemplateItem) => void;
+  /** Server-prefetched templates for the dropdown. */
+  templates: readonly TemplateItem[];
   /** True when the template dropdown should render its items as disabled (edit mode). */
   templatesDisabled: boolean;
   /** True while a save is in flight — Save shows a spinner. */
@@ -58,6 +55,7 @@ export function BuilderToolbar({
   onSave,
   onExecute,
   onTemplateSelect,
+  templates,
   templatesDisabled,
   saving,
   hasErrors,
@@ -100,7 +98,7 @@ export function BuilderToolbar({
               Templates can only be loaded on a new workflow.
             </p>
           )}
-          {BUILTIN_WORKFLOW_TEMPLATES.map((template) => (
+          {templates.map((template) => (
             <DropdownMenuItem
               key={template.slug}
               disabled={templatesDisabled}
@@ -111,7 +109,7 @@ export function BuilderToolbar({
               className="flex-col items-start gap-0.5"
             >
               <span className="text-sm font-medium">{template.name}</span>
-              <span className="text-muted-foreground text-xs">{template.shortDescription}</span>
+              <span className="text-muted-foreground text-xs">{template.description}</span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

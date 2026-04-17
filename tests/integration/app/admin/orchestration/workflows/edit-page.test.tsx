@@ -144,10 +144,10 @@ describe('EditWorkflowPage (server component)', () => {
   it('renders the WorkflowBuilder and does NOT call notFound on happy path', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }); // templates
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -158,9 +158,15 @@ describe('EditWorkflowPage (server component)', () => {
     expect(notFoundMock).not.toHaveBeenCalled();
   });
 
-  it('calls notFound when serverFetch returns ok=false', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('calls notFound when serverFetch returns ok=false for the workflow', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch)
+      .mockResolvedValueOnce({ ok: false } as Response) // workflow → not found
+      .mockResolvedValueOnce({ ok: true } as Response) // capabilities
+      .mockResolvedValueOnce({ ok: true } as Response); // templates
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }); // templates
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -176,13 +182,13 @@ describe('EditWorkflowPage (server component)', () => {
     expect(caught?.message).toBe('NEXT_NOT_FOUND');
   });
 
-  it('calls notFound when parseApiResponse returns success=false', async () => {
+  it('calls notFound when parseApiResponse returns success=false for the workflow', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Not found' },
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } }) // workflow
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }); // templates
 
     const { default: EditWorkflowPage } =
       await import('@/app/admin/orchestration/workflows/[id]/page');
@@ -202,10 +208,10 @@ describe('EditWorkflowPage (server component)', () => {
     const user = userEvent.setup();
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }); // templates
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =
@@ -227,10 +233,10 @@ describe('EditWorkflowPage (server component)', () => {
     const user = userEvent.setup();
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: TWO_STEP_WORKFLOW,
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
+      .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }); // templates
     vi.mocked(apiClient.patch).mockResolvedValue(TWO_STEP_WORKFLOW);
 
     const { default: EditWorkflowPage } =

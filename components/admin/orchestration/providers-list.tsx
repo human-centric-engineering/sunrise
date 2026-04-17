@@ -294,6 +294,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
               providerId={modelsDialogFor.id}
               providerName={modelsDialogFor.name}
               isLocal={modelsDialogFor.isLocal}
+              apiKeyPresent={modelsDialogFor.apiKeyPresent}
             />
           )}
         </DialogContent>
