@@ -48,6 +48,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
 // NOTE: validateWorkflow is NOT mocked — we test against the real implementation
 // to verify the full integration between the route and the validator.
 
+// Mock semantic validator — DB-backed checks are tested in their own unit tests.
+vi.mock('@/lib/orchestration/workflows/semantic-validator', () => ({
+  semanticValidateWorkflow: vi.fn(() => Promise.resolve({ ok: true, errors: [] })),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';

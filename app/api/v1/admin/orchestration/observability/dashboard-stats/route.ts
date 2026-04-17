@@ -19,6 +19,7 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
+import { computeETag, checkConditional } from '@/lib/api/etag';
 
 export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
@@ -89,13 +90,7 @@ export const GET = withAdminAuth(async (request, session) => {
 
   const errorRate = totalExecutions24h === 0 ? 0 : failedExecutions24h / totalExecutions24h;
 
-  log.info('Observability dashboard stats fetched', {
-    activeConversations,
-    todayRequests,
-    errorRate,
-  });
-
-  return successResponse({
+  const data = {
     activeConversations,
     todayRequests,
     errorRate,
@@ -104,5 +99,17 @@ export const GET = withAdminAuth(async (request, session) => {
       slug: row.capabilitySlug as string,
       count: row._count.id,
     })),
+  };
+
+  const etag = computeETag(data);
+  const notModified = checkConditional(request, etag);
+  if (notModified) return notModified;
+
+  log.info('Observability dashboard stats fetched', {
+    activeConversations,
+    todayRequests,
+    errorRate,
   });
+
+  return successResponse(data, undefined, { headers: { ETag: etag } });
 });
