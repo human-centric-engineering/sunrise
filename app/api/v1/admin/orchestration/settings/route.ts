@@ -22,6 +22,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
@@ -39,10 +40,15 @@ export const GET = withAdminAuth(async (request) => {
 
   const log = await getRouteLogger(request);
   const settings = await getOrchestrationSettings();
+
+  const etag = computeETag(settings);
+  const notModified = checkConditional(request, etag);
+  if (notModified) return notModified;
+
   log.info('Orchestration settings fetched', {
     hasGlobalCap: settings.globalMonthlyBudgetUsd !== null,
   });
-  return successResponse(settings);
+  return successResponse(settings, undefined, { headers: { ETag: etag } });
 });
 
 export const PATCH = withAdminAuth(async (request, session) => {

@@ -8,3 +8,12 @@
 
 export { validateWorkflow } from './validator';
 export type { WorkflowValidationResult, WorkflowValidationError } from './validator';
+
+export { semanticValidateWorkflow } from './semantic-validator';
+export type {
+  SemanticValidationResult,
+  SemanticValidationError,
+  SemanticErrorCode,
+} from './semantic-validator';
+
+export { extractTemplateVariables } from './template-scanner';

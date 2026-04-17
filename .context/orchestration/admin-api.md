@@ -18,6 +18,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row          |
 | `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail       |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version    |
+| `/api/v1/admin/orchestration/agents/:id/clone`                | POST               | Deep-clone agent with capability bindings            |
 | `/api/v1/admin/orchestration/agents/export`                   | POST               | Export selected agents as a versioned bundle         |
 | `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)            |
 | `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                           |
@@ -31,7 +32,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/models`                          | GET                | Aggregated model registry (all providers)            |
 | `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                              |
 | `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow               |
-| `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | DAG validation of the stored `workflowDefinition`    |
+| `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | Structural + semantic validation                     |
+| `/api/v1/admin/orchestration/workflows/:id/dry-run`           | POST               | Validate + check inputData against template vars     |
 | `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow — SSE `text/event-stream`             |
 | `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution row + parsed trace                 |
 | `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a `paused_for_approval` execution            |
@@ -180,6 +182,25 @@ Validated by `instructionsRevertSchema`. `versionIndex` is an index into the sto
 5. Writes the target version into `systemInstructions` and the grown history back to the column in a single Prisma `update`.
 
 Without step 4, an accidental revert would be permanent. Don't remove it.
+
+### Clone agent
+
+```
+POST /api/v1/admin/orchestration/agents/:id/clone
+```
+
+Deep-clones an agent including capability bindings in a single transaction. The new agent gets a fresh `systemInstructionsHistory` (empty) and the session user as `createdBy`.
+
+**Optional body** (defaults apply when omitted):
+
+| Field  | Type   | Default                  |
+| ------ | ------ | ------------------------ |
+| `name` | string | `"{source.name} (Copy)"` |
+| `slug` | string | `"{source.slug}-copy"`   |
+
+Slug collision: if the slug is taken, retries with `-copy-2`, `-copy-3`, up to 5 attempts. Returns **201** with the new agent on success, **409** if all slug variants are taken.
+
+Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
 
 ## Export / import
 
@@ -426,13 +447,17 @@ curl -X POST /api/v1/admin/orchestration/workflows \
 
 Validated by `createWorkflowSchema`. `PATCH` re-runs `updateWorkflowSchema` over provided fields — including the Zod validation of `workflowDefinition` — so a malformed update never slips in. `DELETE` is a **soft delete**.
 
-### Validate DAG structure
+### Validate workflow
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/workflows/<id>/validate
 ```
 
-Empty body. Runs `validateWorkflow(workflow.workflowDefinition)` from `lib/orchestration/workflows`. Response:
+Empty body. Runs structural validation (`validateWorkflow`) then semantic validation (`semanticValidateWorkflow`). Structural checks: DAG integrity, cycles, reachability, step-type configs. Semantic checks: model overrides exist in registry, their providers are active, capability slugs are active.
+
+**Structural error codes:** `MISSING_ENTRY`, `UNKNOWN_TARGET`, `UNREACHABLE_STEP`, `CYCLE_DETECTED`, `DUPLICATE_STEP_ID`, `MISSING_APPROVAL_PROMPT`, `MISSING_CAPABILITY_SLUG`, `MISSING_GUARD_RULES`, `MISSING_EVALUATE_RUBRIC`, `MISSING_EXTERNAL_URL`.
+
+**Semantic error codes:** `UNKNOWN_MODEL_OVERRIDE`, `INACTIVE_PROVIDER`, `INACTIVE_CAPABILITY`.
 
 ```json
 {
@@ -440,20 +465,39 @@ Empty body. Runs `validateWorkflow(workflow.workflowDefinition)` from `lib/orche
   "data": {
     "ok": false,
     "errors": [
-      {
-        "code": "UNKNOWN_TARGET",
-        "stepId": "a",
-        "message": "Step 'a' references unknown target 'ghost'"
-      },
-      { "code": "CYCLE_DETECTED", "path": ["a", "b", "a"], "message": "Cycle detected: a → b → a" }
+      { "code": "UNKNOWN_TARGET", "stepId": "a", "message": "..." },
+      { "code": "INACTIVE_PROVIDER", "stepId": "b", "message": "..." }
     ]
   }
 }
 ```
 
-Errors are **typed by `code`**, never just message strings — clients and the future workflow-editor UI should render them structurally. Every `code`, its meaning, and the validator's algorithm are documented in [`workflows.md`](./workflows.md).
+Errors are **typed by `code`**, never just message strings — clients and the workflow-editor UI should render them structurally.
 
-The validator is reused verbatim by `POST /workflows/:id/execute` as a pre-flight check before the engine call, and again by the engine's defence-in-depth pass on the stored definition.
+### Dry-run workflow
+
+```bash
+curl -X POST /api/v1/admin/orchestration/workflows/<id>/dry-run \
+  -d '{ "inputData": { "query": "test", "topic": "AI" } }'
+```
+
+Runs structural + semantic validation and extracts `{{input.key}}` template variables from step configs. Checks if `inputData` covers all referenced variables.
+
+```json
+{
+  "success": true,
+  "data": {
+    "ok": true,
+    "errors": [],
+    "warnings": ["Template variable \"{{input.missing}}\" is not provided in inputData"],
+    "extractedVariables": ["missing", "query", "topic"]
+  }
+}
+```
+
+`extractedVariables` includes `"__whole__"` when a step uses bare `{{input}}`. Warnings are informational — they don't set `ok: false`.
+
+Schema: `dryRunWorkflowBodySchema` in `lib/validations/orchestration.ts`.
 
 ## Executions
 
@@ -1154,6 +1198,28 @@ On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` 
 - `checkBudget()` in `lib/orchestration/llm/cost-tracker.ts` consults `globalMonthlyBudgetUsd` in addition to the per-agent cap. When the month-to-date cross-agent total meets or exceeds the cap it returns `{ withinBudget: false, globalCapExceeded: true }`, which the streaming chat handler translates into a `BUDGET_EXCEEDED_GLOBAL` error frame.
 
 Failures in the global-cap lookup are swallowed and the code falls back to the per-agent path so a flaky Prisma read can't lock up chat globally.
+
+## ETag Support
+
+Three frequently polled GET endpoints return weak ETags and support conditional requests via `If-None-Match`:
+
+| Endpoint                             | Purpose                 |
+| ------------------------------------ | ----------------------- |
+| `GET /costs/summary`                 | Cost dashboard totals   |
+| `GET /observability/dashboard-stats` | Observability dashboard |
+| `GET /settings`                      | Orchestration settings  |
+
+```bash
+# First request — get the ETag
+curl -i /api/v1/admin/orchestration/costs/summary
+# → ETag: W/"abc123..."
+
+# Subsequent poll — send it back
+curl -H 'If-None-Match: W/"abc123..."' /api/v1/admin/orchestration/costs/summary
+# → 304 Not Modified (no body)
+```
+
+Implementation: `computeETag()` and `checkConditional()` from `lib/api/etag.ts`. SHA-256 of the JSON response body, truncated to 27 base64url chars.
 
 - [`overview.md`](./overview.md) — Orchestration module layout and architecture decisions
 - [`workflows.md`](./workflows.md) — DAG validator, step shapes, error codes, Phase 5.2 roadmap

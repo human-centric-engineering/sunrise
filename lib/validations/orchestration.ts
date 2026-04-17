@@ -210,6 +210,17 @@ export const instructionsRevertSchema = z.object({
   versionIndex: z.number().int().min(0),
 });
 
+/**
+ * Clone agent body (POST /api/v1/admin/orchestration/agents/:id/clone)
+ *
+ * Both fields are optional — defaults to "{source.name} (Copy)" and
+ * "{source.slug}-copy".
+ */
+export const cloneAgentBodySchema = z.object({
+  name: z.string().min(1).max(100).trim().optional(),
+  slug: slugSchema.pipe(z.string().max(100)).optional(),
+});
+
 // ============================================================================
 // Capability Schemas
 // ============================================================================
@@ -487,6 +498,13 @@ export const workflowDefinitionSchema = z.object({
   steps: z.array(workflowStepSchema).min(1, 'Workflow must have at least one step'),
   entryStepId: z.string().min(1, 'Entry step ID is required'),
   errorStrategy: z.enum(['retry', 'fallback', 'fail']),
+});
+
+/**
+ * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run)
+ */
+export const dryRunWorkflowBodySchema = z.object({
+  inputData: z.record(z.string(), z.unknown()),
 });
 
 /**
@@ -1318,6 +1336,7 @@ export const messageMetadataSchema = z.object({
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 export type UpdateAgentInput = z.infer<typeof updateAgentSchema>;
+export type CloneAgentBody = z.infer<typeof cloneAgentBodySchema>;
 export type ListAgentsQuery = z.infer<typeof listAgentsQuerySchema>;
 export type SystemInstructionsHistoryEntry = z.infer<typeof systemInstructionsHistoryEntrySchema>;
 export type InstructionsRevertInput = z.infer<typeof instructionsRevertSchema>;
