@@ -65,6 +65,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/documents/:id/retry`    | POST               | Retry failed document ingestion                         | 5.1     |
 | `/knowledge/graph`                  | GET                | Knowledge graph data (nodes + links)                    | 5.1     |
 | `/knowledge/embedding-status`       | GET                | Embedding coverage stats + provider availability        | 3.3     |
+| `/knowledge/meta-tags`              | GET                | Distinct categories and keywords with chunk/doc counts  | 9.0     |
 | `/embedding-models`                 | GET                | Static registry of embedding models (filterable)        | 7.0     |
 | `/conversations`                    | GET                | List caller's conversations                             | 3.3     |
 | `/conversations/:id`                | GET, DELETE        | Read / delete one of the caller's conversations         | 3.3     |
@@ -434,19 +435,20 @@ Returns every chunk tagged with the given design pattern number, in source order
 
 ### `GET /knowledge/documents`
 
-Paginated document list. Query: `page`, `limit`, `status`, `q` (`listDocumentsQuerySchema`).
+Paginated document list. Query: `page`, `limit`, `status`, `category`, `q` (`listDocumentsQuerySchema`).
 
 ### `POST /knowledge/documents`
 
 **Multipart upload.** Critical contract:
 
-| Field        | Value                                                   |
-| ------------ | ------------------------------------------------------- |
-| Content-Type | `multipart/form-data`                                   |
-| Form field   | `file`                                                  |
-| Max size     | **10 MB** (`MAX_UPLOAD_BYTES` in the route)             |
-| Extensions   | **`.md`, `.markdown`, `.txt` only** (case-insensitive)  |
-| MIME type    | Advisory only — the extension is the load-bearing check |
+| Field        | Value                                                                               |
+| ------------ | ----------------------------------------------------------------------------------- |
+| Content-Type | `multipart/form-data`                                                               |
+| Form field   | `file` (required)                                                                   |
+| Form field   | `category` (optional — overrides any in-document `<!-- metadata: category=... -->`) |
+| Max size     | **10 MB** (`MAX_UPLOAD_BYTES` in the route)                                         |
+| Extensions   | **`.md`, `.markdown`, `.txt` only** (case-insensitive)                              |
+| MIME type    | Advisory only — the extension is the load-bearing check                             |
 
 PDF and HTML are **future work** — they'd need `pdf-parse` / `sanitize-html` and new chunker branches, and adding parsers without updating the extension whitelist leaves dormant code paths. Do not `POST` with `application/json`; the route only accepts multipart.
 
@@ -485,6 +487,32 @@ Response: `{ nodes, links, categories, stats: { documentCount, completedCount, c
 ### `GET /knowledge/embedding-status`
 
 Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
+
+### `GET /knowledge/meta-tags`
+
+Returns all distinct category and keyword values across knowledge base chunks, with counts of how many chunks and documents use each value. Used by the manage tab to display a meta-tags panel and by the upload form to power category autocomplete.
+
+**Auth:** `withAdminAuth` + `adminLimiter`
+
+**Response** (grouped by document scope):
+
+```json
+{
+  "success": true,
+  "data": {
+    "app": {
+      "categories": [{ "value": "sales", "chunkCount": 15, "documentCount": 3 }],
+      "keywords": [{ "value": "pricing", "chunkCount": 5, "documentCount": 1 }]
+    },
+    "system": {
+      "categories": [{ "value": "patterns", "chunkCount": 20, "documentCount": 1 }],
+      "keywords": []
+    }
+  }
+}
+```
+
+`app` contains tags from user-uploaded documents; `system` contains tags from the built-in seeded patterns. Categories come from the `category` column; keywords are extracted by unnesting the comma-separated `keywords` column via `string_to_array`. The SQL JOINs to `ai_knowledge_document` to get the `scope` field.
 
 ---
 

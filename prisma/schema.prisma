@@ -159,6 +159,7 @@ model AiAgent {
   maxTokens                 Int      @default(4096)
   monthlyBudgetUsd          Float?
   metadata                  Json?
+  knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
   createdBy                 String
@@ -339,6 +340,7 @@ model AiKnowledgeDocument {
   chunkCount   Int      @default(0)
   status       String // "processing", "ready", "failed"
   scope        String   @default("app") // "system" | "app"
+  category     String? // user-assigned or extracted from document metadata
   errorMessage String?  @db.Text
   uploadedBy   String
   createdAt    DateTime @default(now())
@@ -351,6 +353,7 @@ model AiKnowledgeDocument {
   @@index([uploadedBy])
   @@index([status])
   @@index([scope])
+  @@index([category])
   @@index([fileHash])
   @@map("ai_knowledge_document")
 }

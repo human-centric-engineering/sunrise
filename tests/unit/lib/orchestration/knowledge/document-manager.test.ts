@@ -25,11 +25,13 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiKnowledgeChunk: { deleteMany: vi.fn() },
     $executeRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
 vi.mock('@/lib/orchestration/knowledge/chunker', () => ({
   chunkMarkdownDocument: vi.fn(),
+  parseMetadataComments: vi.fn(() => ({})),
 }));
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
@@ -48,13 +50,17 @@ vi.mock('@/lib/logging', () => ({
 // --- Imports after mocks ---
 
 import { prisma } from '@/lib/db/client';
-import { chunkMarkdownDocument } from '@/lib/orchestration/knowledge/chunker';
+import {
+  chunkMarkdownDocument,
+  parseMetadataComments,
+} from '@/lib/orchestration/knowledge/chunker';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import {
   uploadDocument,
   deleteDocument,
   rechunkDocument,
   listDocuments,
+  listMetaTags,
 } from '@/lib/orchestration/knowledge/document-manager';
 
 // --- Helpers ---
@@ -144,6 +150,7 @@ describe('uploadDocument', () => {
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',
+        category: null,
       },
     });
   });
@@ -530,5 +537,135 @@ describe('listDocuments', () => {
     const result = await listDocuments();
 
     expect(result).toEqual([]);
+  });
+});
+
+describe('listMetaTags', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('returns categories and keywords grouped by scope', async () => {
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([
+        { scope: 'app', value: 'sales', chunk_count: BigInt(10), doc_count: BigInt(2) },
+        { scope: 'system', value: 'patterns', chunk_count: BigInt(5), doc_count: BigInt(1) },
+      ] as never)
+      .mockResolvedValueOnce([
+        { scope: 'app', value: 'pricing', chunk_count: BigInt(3), doc_count: BigInt(1) },
+        { scope: 'system', value: 'reasoning', chunk_count: BigInt(7), doc_count: BigInt(1) },
+      ] as never);
+
+    const result = await listMetaTags();
+
+    expect(result.app.categories).toEqual([{ value: 'sales', chunkCount: 10, documentCount: 2 }]);
+    expect(result.system.categories).toEqual([
+      { value: 'patterns', chunkCount: 5, documentCount: 1 },
+    ]);
+    expect(result.app.keywords).toEqual([{ value: 'pricing', chunkCount: 3, documentCount: 1 }]);
+    expect(result.system.keywords).toEqual([
+      { value: 'reasoning', chunkCount: 7, documentCount: 1 },
+    ]);
+  });
+
+  it('returns empty arrays for both scopes when no meta-tags exist', async () => {
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const result = await listMetaTags();
+
+    expect(result.app).toEqual({ categories: [], keywords: [] });
+    expect(result.system).toEqual({ categories: [], keywords: [] });
+  });
+
+  it('trims whitespace from tag values', async () => {
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([
+        { scope: 'app', value: '  sales  ', chunk_count: BigInt(1), doc_count: BigInt(1) },
+      ] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const result = await listMetaTags();
+
+    expect(result.app.categories[0].value).toBe('sales');
+  });
+});
+
+describe('uploadDocument with category', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('stores explicit category on the document record', async () => {
+    const content = '# Hello';
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    await uploadDocument(content, 'test.md', 'user-1', 'sales');
+
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ category: 'sales' }),
+      })
+    );
+  });
+
+  it('extracts category from document metadata when not provided explicitly', async () => {
+    const content = '<!-- metadata: category=engineering -->\n# Hello';
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+
+    vi.mocked(parseMetadataComments).mockReturnValue({ category: 'engineering' });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    await uploadDocument(content, 'test.md', 'user-1');
+
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ category: 'engineering' }),
+      })
+    );
+  });
+
+  it('sets category to null when no explicit category and no document metadata', async () => {
+    const content = '# No metadata here';
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+
+    vi.mocked(parseMetadataComments).mockReturnValue({});
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    await uploadDocument(content, 'test.md', 'user-1');
+
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ category: null }),
+      })
+    );
+  });
+
+  it('propagates document-level category to chunks that have no category', async () => {
+    const content = '# Hello';
+    const createdDoc = makeDocument({ id: 'doc-cat', status: 'processing' });
+    const updatedDoc = makeDocument({ id: 'doc-cat', status: 'ready', chunkCount: 1 });
+    const chunk = makeChunk({ category: null as unknown as string });
+
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
+    vi.mocked(embedBatch).mockResolvedValue([[0.1, 0.2]]);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    await uploadDocument(content, 'test.md', 'user-1', 'sales');
+
+    // The chunk's category should have been set to 'sales'
+    const rawInsertCall = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
+    // category is the 8th parameter (index 8) in the raw SQL
+    expect(rawInsertCall[8]).toBe('sales');
   });
 });

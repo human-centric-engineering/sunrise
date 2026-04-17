@@ -127,6 +127,7 @@ export const API = {
       EMBEDDING_MODELS: '/api/v1/admin/orchestration/embedding-models',
       KNOWLEDGE_EMBED: '/api/v1/admin/orchestration/knowledge/embed',
       KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
+      KNOWLEDGE_META_TAGS: '/api/v1/admin/orchestration/knowledge/meta-tags',
       WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
       COSTS: '/api/v1/admin/orchestration/costs',
