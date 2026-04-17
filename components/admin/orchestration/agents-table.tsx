@@ -29,12 +29,16 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  ArrowLeftRight,
   Copy,
   Download,
   Edit,
   FileUp,
+  Loader2,
   MoreHorizontal,
   Plus,
+  Power,
+  PowerOff,
   Search,
   Shield,
   Trash2,
@@ -262,6 +266,33 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     }
   }, [selected]);
 
+  const [bulkAction, setBulkAction] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  const handleBulkAction = useCallback(
+    async (action: 'activate' | 'deactivate' | 'delete') => {
+      if (selected.size === 0) return;
+      setBulkAction(action);
+      setListError(null);
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.AGENTS_BULK, {
+          body: { action, agentIds: [...selected] },
+        });
+        void fetchAgents(meta.page);
+      } catch (err) {
+        setListError(
+          err instanceof APIClientError
+            ? `Bulk ${action} failed: ${err.message}`
+            : `Bulk ${action} failed. Try again in a moment.`
+        );
+      } finally {
+        setBulkAction(null);
+        setBulkDeleteOpen(false);
+      }
+    },
+    [selected, fetchAgents, meta.page]
+  );
+
   const toggleRow = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -322,6 +353,62 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
             <Download className="mr-2 h-4 w-4" />
             Export selected ({selected.size})
           </Button>
+          {selected.size === 2 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const ids = Array.from(selected);
+                router.push(`/admin/orchestration/agents/compare?a=${ids[0]}&b=${ids[1]}`);
+              }}
+            >
+              <ArrowLeftRight className="mr-2 h-4 w-4" />
+              Compare
+            </Button>
+          )}
+          {selected.size > 0 && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleBulkAction('activate')}
+                disabled={!!bulkAction}
+              >
+                {bulkAction === 'activate' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Power className="mr-2 h-4 w-4" />
+                )}
+                Activate
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleBulkAction('deactivate')}
+                disabled={!!bulkAction}
+              >
+                {bulkAction === 'deactivate' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <PowerOff className="mr-2 h-4 w-4" />
+                )}
+                Deactivate
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={!!bulkAction}
+              >
+                {bulkAction === 'delete' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                Delete ({selected.size})
+              </Button>
+            </>
+          )}
           <Button asChild size="sm">
             <Link href="/admin/orchestration/agents/new">
               <Plus className="mr-2 h-4 w-4" />
@@ -578,6 +665,31 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               disabled={isLoading}
             >
               {isLoading ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk delete confirmation */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selected.size} agent{selected.size !== 1 ? 's' : ''}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This soft-deletes the selected agents — they become inactive and are hidden from
+              default lists, but their history is preserved. System agents are excluded.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleBulkAction('delete')}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={!!bulkAction}
+            >
+              {bulkAction === 'delete' ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

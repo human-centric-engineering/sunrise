@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionEvent, WorkflowStepType } from '@/types/orchestration';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 export function workflowStarted(executionId: string, workflowId: string): ExecutionEvent {
   return { type: 'workflow_started', executionId, workflowId };
@@ -35,6 +36,7 @@ export function stepFailed(stepId: string, error: string, willRetry: boolean): E
 }
 
 export function approvalRequired(stepId: string, payload: unknown): ExecutionEvent {
+  void dispatchWebhookEvent('approval_required', { stepId, payload });
   return { type: 'approval_required', stepId, payload };
 }
 
@@ -51,5 +53,6 @@ export function workflowCompleted(
 }
 
 export function workflowFailed(error: string, failedStepId?: string): ExecutionEvent {
+  void dispatchWebhookEvent('workflow_failed', { error, failedStepId });
   return { type: 'workflow_failed', error, failedStepId };
 }

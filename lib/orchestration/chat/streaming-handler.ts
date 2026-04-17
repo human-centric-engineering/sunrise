@@ -29,6 +29,7 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from './input-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
@@ -112,6 +113,12 @@ export class StreamingChatHandler {
           'budget_exceeded',
           `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
         );
+        void dispatchWebhookEvent('budget_exceeded', {
+          agentId: agent.id,
+          agentSlug: agent.slug,
+          usedUsd: budget.spent,
+          limitUsd: budget.limit,
+        });
         return;
       }
 

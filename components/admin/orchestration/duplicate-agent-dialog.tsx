@@ -1,17 +1,12 @@
 'use client';
 
 /**
- * DuplicateAgentDialog (Phase 4 Session 4.2)
+ * DuplicateAgentDialog
  *
- * Client-side duplicate flow — there is no `/duplicate` endpoint. When the
- * user confirms, we:
- *
- *   1. GET `/agents/:sourceId` to pick up the full source shape (in case the
- *      row in the table is stale).
- *   2. Build a `createAgentSchema`-shaped payload from the source, dropping
- *      `id` / timestamps / history and overwriting `name` and `slug` with
- *      the user's inputs.
- *   3. POST `/agents` and navigate to the new agent's edit page.
+ * Deep-clones an agent via `POST /agents/:id/clone`, which copies all
+ * fields and capability bindings in a single transaction. The user can
+ * override the new agent's `name` and `slug`. On success, navigates
+ * to the new agent's edit page.
  *
  * Failures render inline; raw API error text is only shown when it came from
  * our own APIClientError envelope.
@@ -66,24 +61,8 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
     setSubmitting(true);
     setError(null);
     try {
-      // Re-fetch source to avoid copying stale row data.
-      const fresh = await apiClient.get<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(source.id));
-
-      const payload = {
-        name: name.trim(),
-        slug: slug.trim(),
-        description: fresh.description,
-        systemInstructions: fresh.systemInstructions,
-        model: fresh.model,
-        provider: fresh.provider,
-        temperature: fresh.temperature,
-        maxTokens: fresh.maxTokens,
-        monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
-        isActive: false,
-      };
-
-      const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.AGENTS, {
-        body: payload,
+      const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.agentClone(source.id), {
+        body: { name: name.trim(), slug: slug.trim() },
       });
 
       onOpenChange(false);
@@ -105,8 +84,8 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
         <DialogHeader>
           <DialogTitle>Duplicate agent</DialogTitle>
           <DialogDescription>
-            Creates a new agent with the same model, instructions, and settings. The copy starts
-            inactive so you can review it before turning it on.
+            Creates a new agent with the same model, instructions, capabilities, and settings. The
+            copy starts inactive so you can review it before turning it on.
           </DialogDescription>
         </DialogHeader>
 

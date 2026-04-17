@@ -18,6 +18,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,11 @@ export class CircuitBreaker {
     if (this.failures.length >= this.config.failureThreshold) {
       this._state = 'open';
       this.openedAt = now;
+      void dispatchWebhookEvent('circuit_breaker_opened', {
+        providerSlug: this.slug,
+        failures: this.failures.length,
+        threshold: this.config.failureThreshold,
+      });
       logger.warn('Circuit breaker tripped', {
         provider: this.slug,
         failures: this.failures.length,

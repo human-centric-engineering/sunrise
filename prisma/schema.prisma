@@ -47,6 +47,7 @@ model User {
   aiKnowledgeDocuments AiKnowledgeDocument[] @relation("AiKnowledgeDocumentUploader")
   aiEvaluationSessions AiEvaluationSession[] @relation("AiEvaluationSessionUser")
   aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
+  aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
 
   @@unique([email])
   @@index([role])
@@ -461,6 +462,24 @@ model AiCostLog {
   @@index([operation])
   @@index([createdAt])
   @@map("ai_cost_log")
+}
+
+// Webhook subscriptions for outbound event notifications
+model AiWebhookSubscription {
+  id          String   @id @default(cuid())
+  url         String // destination URL (validated as safe)
+  secret      String // HMAC-SHA256 signing key
+  events      String[] // e.g. ["budget_exceeded","workflow_failed"]
+  isActive    Boolean  @default(true)
+  description String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation("AiWebhookUser", fields: [createdBy], references: [id])
+
+  @@index([isActive])
+  @@map("ai_webhook_subscription")
 }
 
 // Configured LLM providers
