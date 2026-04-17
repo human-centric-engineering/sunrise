@@ -25,11 +25,20 @@ vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
   ChatInterface: ({
     agentSlug,
     starterPrompts,
+    contextType,
+    contextId,
   }: {
     agentSlug: string;
     starterPrompts?: string[];
+    contextType?: string;
+    contextId?: string;
   }) => (
-    <div data-testid="chat-interface" data-agent={agentSlug}>
+    <div
+      data-testid="chat-interface"
+      data-agent={agentSlug}
+      data-context-type={contextType ?? ''}
+      data-context-id={contextId ?? ''}
+    >
       {starterPrompts?.map((p) => (
         <span key={p}>{p}</span>
       ))}
@@ -92,5 +101,32 @@ describe('LearningTabs', () => {
     await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
     expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
+  });
+
+  it('opens on the specified defaultTab', () => {
+    render(<LearningTabs patterns={MOCK_PATTERNS} defaultTab="advisor" />);
+
+    const advisorTab = screen.getByRole('tab', { name: /advisor/i });
+    expect(advisorTab).toHaveAttribute('data-state', 'active');
+  });
+
+  it('forwards contextType and contextId to advisor ChatInterface', () => {
+    render(
+      <LearningTabs
+        patterns={MOCK_PATTERNS}
+        defaultTab="advisor"
+        contextType="pattern"
+        contextId="5"
+      />
+    );
+
+    // The advisor ChatInterface should have context props set
+    const chatInterfaces = screen.getAllByTestId('chat-interface');
+    const advisorChat = chatInterfaces.find(
+      (el) => el.getAttribute('data-agent') === 'pattern-advisor'
+    );
+    expect(advisorChat).toBeDefined();
+    expect(advisorChat!.getAttribute('data-context-type')).toBe('pattern');
+    expect(advisorChat!.getAttribute('data-context-id')).toBe('5');
   });
 });

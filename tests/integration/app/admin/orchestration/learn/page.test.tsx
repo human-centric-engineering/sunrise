@@ -87,7 +87,7 @@ describe('LearnPage (server component)', () => {
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    render(await LearnPage());
+    render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByRole('heading', { name: /^learning$/i })).toBeInTheDocument();
   });
@@ -102,7 +102,7 @@ describe('LearnPage (server component)', () => {
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    render(await LearnPage());
+    render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByText('Chain of Thought')).toBeInTheDocument();
     expect(screen.getByText('ReAct')).toBeInTheDocument();
@@ -114,7 +114,7 @@ describe('LearnPage (server component)', () => {
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    render(await LearnPage());
+    render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByRole('heading', { name: /^learning$/i })).toBeInTheDocument();
     expect(screen.getByText(/no patterns found/i)).toBeInTheDocument();
@@ -128,7 +128,7 @@ describe('LearnPage (server component)', () => {
 
     let thrown = false;
     try {
-      render(await LearnPage());
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
     } catch {
       thrown = true;
     }
@@ -148,7 +148,7 @@ describe('LearnPage (server component)', () => {
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    render(await LearnPage());
+    render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
     await user.click(screen.getByRole('tab', { name: /advisor/i }));
 
@@ -166,7 +166,7 @@ describe('LearnPage (server component)', () => {
 
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
-    render(await LearnPage());
+    render(await LearnPage({ searchParams: Promise.resolve({}) }));
 
     await user.click(screen.getByRole('tab', { name: /quiz/i }));
 

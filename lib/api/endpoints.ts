@@ -127,6 +127,7 @@ export const API = {
         `/api/v1/admin/orchestration/evaluations/${id}/complete`,
       evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
       OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',
+      QUIZ_SCORES: '/api/v1/admin/orchestration/quiz-scores',
     },
   },
 

@@ -25,8 +25,12 @@ async function getPatterns(): Promise<PatternSummary[]> {
   }
 }
 
-export default async function LearnPage() {
-  const patterns = await getPatterns();
+interface PageProps {
+  searchParams: Promise<{ tab?: string; contextType?: string; contextId?: string }>;
+}
+
+export default async function LearnPage({ searchParams }: PageProps) {
+  const [patterns, params] = await Promise.all([getPatterns(), searchParams]);
 
   return (
     <div className="space-y-6">
@@ -67,7 +71,12 @@ export default async function LearnPage() {
         </p>
       </header>
 
-      <LearningTabs patterns={patterns} />
+      <LearningTabs
+        patterns={patterns}
+        defaultTab={params.tab}
+        contextType={params.contextType}
+        contextId={params.contextId}
+      />
     </div>
   );
 }
