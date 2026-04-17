@@ -17,7 +17,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -63,6 +63,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (!current) throw new NotFoundError(`Agent ${id} not found`);
 
   const body = await validateRequestBody(request, updateAgentSchema);
+
+  // System agents cannot be deactivated via PATCH (equivalent to deletion).
+  if (current.isSystem && body.isActive === false) {
+    throw new ForbiddenError('System agents cannot be deactivated');
+  }
 
   // Build the update payload. Only include fields the caller actually sent.
   const data: Prisma.AiAgentUpdateInput = {};
@@ -116,7 +121,17 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       fieldsChanged: Object.keys(data),
     });
 
-    return successResponse(agent);
+    const response = successResponse(agent);
+
+    // Warn callers when system agent instructions are modified.
+    if (current.isSystem && data.systemInstructions !== undefined) {
+      response.headers.set(
+        'X-System-Warning',
+        'System agent instructions have been modified. Use instructions-revert to restore if needed.'
+      );
+    }
+
+    return response;
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
@@ -138,6 +153,10 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   const current = await prisma.aiAgent.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Agent ${id} not found`);
+
+  if (current.isSystem) {
+    throw new ForbiddenError('System agents cannot be deleted');
+  }
 
   const agent = await prisma.aiAgent.update({
     where: { id },
