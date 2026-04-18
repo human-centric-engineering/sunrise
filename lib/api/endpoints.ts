@@ -141,6 +141,18 @@ export const API = {
       evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
       OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',
       QUIZ_SCORES: '/api/v1/admin/orchestration/quiz-scores',
+
+      /** MCP Server admin endpoints */
+      MCP_SETTINGS: '/api/v1/admin/orchestration/mcp/settings',
+      MCP_TOOLS: '/api/v1/admin/orchestration/mcp/tools',
+      mcpToolById: (id: string): string => `/api/v1/admin/orchestration/mcp/tools/${id}`,
+      MCP_RESOURCES: '/api/v1/admin/orchestration/mcp/resources',
+      mcpResourceById: (id: string): string => `/api/v1/admin/orchestration/mcp/resources/${id}`,
+      MCP_KEYS: '/api/v1/admin/orchestration/mcp/keys',
+      mcpKeyById: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}`,
+      MCP_AUDIT: '/api/v1/admin/orchestration/mcp/audit',
+      MCP_SESSIONS: '/api/v1/admin/orchestration/mcp/sessions',
+      mcpSessionById: (id: string): string => `/api/v1/admin/orchestration/mcp/sessions/${id}`,
     },
   },
 

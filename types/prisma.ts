@@ -42,6 +42,11 @@ export type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  McpServerConfig,
+  McpExposedTool,
+  McpExposedResource,
+  McpApiKey,
+  McpAuditLog,
 } from '@prisma/client';
 
 /**
