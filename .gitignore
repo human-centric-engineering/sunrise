@@ -182,5 +182,8 @@ yarn-debug.log*
 # Local file uploads (development only)
 public/uploads/
 
+# Playwright MCP debug output
+.playwright-mcp/
+
 # Sentry Config File
 .env.sentry-build-plugin
