@@ -80,18 +80,30 @@ describe('components/analytics/analytics-scripts', () => {
       expect(container.firstChild).toBeNull();
     });
 
-    it('should not load scripts when consent is false', () => {
-      // Arrange
-      mockUseHasOptionalConsent.mockReturnValue(false);
+    it('should render nothing when consent is undefined (indeterminate pending-consent state)', () => {
+      // Arrange — useHasOptionalConsent returns undefined before the user
+      // has responded to the consent banner; scripts must not load yet.
+      mockUseHasOptionalConsent.mockReturnValue(undefined);
       mockDetectProvider.mockReturnValue('ga4');
-      mockGetGA4Config.mockReturnValue({ measurementId: 'G-TEST123' });
 
       // Act
-      render(<AnalyticsScripts />);
+      const { container } = render(<AnalyticsScripts />);
 
-      // Assert
-      expect(screen.queryByTestId('script')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('gtag-init')).not.toBeInTheDocument();
+      // Assert — treat undefined the same as false: no scripts rendered
+      expect(container.firstChild).toBeNull();
+    });
+
+    it('should render nothing when consent is null', () => {
+      // Arrange — useHasOptionalConsent may return null before consent state resolves.
+      // The falsy guard (!hasConsent) must treat null the same as false/undefined.
+      mockUseHasOptionalConsent.mockReturnValue(null);
+      mockDetectProvider.mockReturnValue('ga4');
+
+      // Act
+      const { container } = render(<AnalyticsScripts />);
+
+      // Assert — all nullish values prevent script loading
+      expect(container.firstChild).toBeNull();
     });
   });
 
@@ -106,18 +118,6 @@ describe('components/analytics/analytics-scripts', () => {
 
       // Assert
       expect(container.firstChild).toBeNull();
-    });
-
-    it('should not load any scripts for console provider', () => {
-      // Arrange
-      mockUseHasOptionalConsent.mockReturnValue(true);
-      mockDetectProvider.mockReturnValue('console');
-
-      // Act
-      render(<AnalyticsScripts />);
-
-      // Assert
-      expect(screen.queryByTestId('script')).not.toBeInTheDocument();
     });
   });
 
@@ -143,11 +143,16 @@ describe('components/analytics/analytics-scripts', () => {
       mockGetGA4Config.mockReturnValue({ measurementId: 'G-TEST123' });
 
       // Act
-      render(<AnalyticsScripts />);
+      const { container } = render(<AnalyticsScripts />);
 
-      // Assert
-      const scripts = screen.getAllByTestId('script');
-      expect(scripts.length).toBeGreaterThan(0);
+      // Assert — contract: exactly 2 scripts (gtag loader + gtag-init).
+      // The mock renders inline scripts with their id as data-testid and external
+      // scripts without id as data-testid="script"; query by the shared
+      // data-component attribute to count all rendered Next.js Script elements.
+      // A weaker assertion (toBeGreaterThan) would silently pass if an
+      // accidental third script were introduced in a future refactor.
+      const scripts = container.querySelectorAll('[data-component="next-script"]');
+      expect(scripts).toHaveLength(2);
     });
 
     it('should render gtag.js script with measurement ID', () => {
@@ -159,16 +164,16 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert
-      const gtagScript = screen
-        .getAllByTestId('script')
-        .find((el) => el.getAttribute('data-src')?.includes('googletagmanager.com'));
+      // Assert — select the external gtag.js script by filtering on its src attribute value
+      const allScripts = screen.getAllByTestId('script');
+      const gtagScript = allScripts.find((el) =>
+        el.getAttribute('data-src')?.includes('gtag/js?id=')
+      );
 
-      expect(gtagScript).toBeDefined();
-      expect(gtagScript?.getAttribute('data-src')).toContain('G-ABCD1234');
       expect(gtagScript?.getAttribute('data-src')).toBe(
         'https://www.googletagmanager.com/gtag/js?id=G-ABCD1234'
       );
+      expect(gtagScript?.getAttribute('data-strategy')).toBe('afterInteractive');
     });
 
     it('should render gtag init script', () => {
@@ -196,11 +201,16 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert
-      const scripts = screen.getAllByTestId('script');
-      scripts.forEach((script) => {
+      // Assert — both the external gtag.js script AND the inline gtag-init script
+      // must use afterInteractive. getAllByTestId('script') only returns external scripts
+      // (no id); the inline gtag-init script has a different testId so must be checked separately.
+      const externalScripts = screen.getAllByTestId('script');
+      externalScripts.forEach((script) => {
         expect(script.getAttribute('data-strategy')).toBe('afterInteractive');
       });
+      expect(screen.getByTestId('gtag-init').getAttribute('data-strategy')).toBe(
+        'afterInteractive'
+      );
     });
 
     it('should render nothing if GA4 config is null', () => {
@@ -214,6 +224,21 @@ describe('components/analytics/analytics-scripts', () => {
 
       // Assert
       expect(container.firstChild).toBeNull();
+    });
+
+    it('renders nothing when GA4 config is undefined', () => {
+      // Arrange — undefined is the other falsy return a config getter might produce;
+      // the null guard in GA4Scripts must handle both null and undefined.
+      mockUseHasOptionalConsent.mockReturnValue(true);
+      mockDetectProvider.mockReturnValue('ga4');
+      mockGetGA4Config.mockReturnValue(undefined);
+
+      // Act
+      const { container } = render(<AnalyticsScripts />);
+
+      // Assert — no scripts should be rendered
+      expect(container.firstChild).toBeNull();
+      expect(container.querySelectorAll('[data-component="next-script"]')).toHaveLength(0);
     });
   });
 
@@ -283,6 +308,44 @@ describe('components/analytics/analytics-scripts', () => {
       // Assert
       expect(container.firstChild).toBeNull();
     });
+
+    it('renders nothing when PostHog config is undefined', () => {
+      // Arrange — undefined is the other falsy return a config getter might produce;
+      // the null guard in PostHogScripts must handle both null and undefined.
+      mockUseHasOptionalConsent.mockReturnValue(true);
+      mockDetectProvider.mockReturnValue('posthog');
+      mockGetPostHogConfig.mockReturnValue(undefined);
+
+      // Act
+      const { container } = render(<AnalyticsScripts />);
+
+      // Assert — no scripts should be rendered
+      expect(container.firstChild).toBeNull();
+      expect(container.querySelectorAll('[data-component="next-script"]')).toHaveLength(0);
+    });
+
+    it('should not inline apiKey or host in the PostHog stub script', () => {
+      // Arrange — the source explicitly states PostHogProvider owns init;
+      // the stub must NOT duplicate apiKey/host inline. This is a regression
+      // guard against an accidental inline posthog.init() call being added.
+      const fixtureApiKey = 'phc_fixture_key_abc123';
+      const fixtureHost = 'https://fixture.posthog.example.com';
+      mockUseHasOptionalConsent.mockReturnValue(true);
+      mockDetectProvider.mockReturnValue('posthog');
+      mockGetPostHogConfig.mockReturnValue({
+        apiKey: fixtureApiKey,
+        host: fixtureHost,
+      });
+
+      // Act
+      render(<AnalyticsScripts />);
+
+      // Assert — stub text must not contain either resolved config value
+      const stubScript = screen.getByTestId('posthog-stub');
+      const scriptText = stubScript.textContent ?? '';
+      expect(scriptText).not.toContain(fixtureApiKey);
+      expect(scriptText).not.toContain(fixtureHost);
+    });
   });
 
   describe('Plausible provider', () => {
@@ -296,11 +359,16 @@ describe('components/analytics/analytics-scripts', () => {
       });
 
       // Act
-      render(<AnalyticsScripts />);
+      const { container } = render(<AnalyticsScripts />);
 
-      // Assert
-      const scripts = screen.getAllByTestId('script');
-      expect(scripts.length).toBeGreaterThan(0);
+      // Assert — contract: exactly 2 scripts (script.js loader + plausible-init).
+      // The mock renders inline scripts with their id as data-testid and external
+      // scripts without id as data-testid="script"; query by the shared
+      // data-component attribute to count all rendered Next.js Script elements.
+      // A weaker assertion (toBeGreaterThan) would silently pass if an
+      // accidental third script were introduced in a future refactor.
+      const scripts = container.querySelectorAll('[data-component="next-script"]');
+      expect(scripts).toHaveLength(2);
     });
 
     it('should render Plausible script with domain attribute', () => {
@@ -315,13 +383,15 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert
-      const plausibleScript = screen
-        .getAllByTestId('script')
-        .find((el) => el.getAttribute('data-src')?.includes('plausible.io'));
-
-      expect(plausibleScript).toBeDefined();
-      expect(plausibleScript?.getAttribute('data-domain')).toBe('mysite.com');
+      // Assert — use getAllByTestId to get a descriptive failure if the element is missing,
+      // rather than .find() which returns undefined and causes a confusing chained-attribute throw.
+      // The plausible.io external script is the only script with a data-src containing 'plausible.io'.
+      const allScripts = screen.getAllByTestId('script');
+      const plausibleScript = allScripts.find((el) =>
+        el.getAttribute('data-src')?.includes('plausible.io')
+      );
+      expect(plausibleScript).not.toBeUndefined();
+      expect(plausibleScript!.getAttribute('data-domain')).toBe('mysite.com');
     });
 
     it('should render Plausible script with correct src URL', () => {
@@ -336,14 +406,39 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert
-      const plausibleScript = screen
-        .getAllByTestId('script')
-        .find((el) => el.getAttribute('data-src')?.includes('script.js'));
+      // Assert — select the external script and assert its src attribute directly.
+      // Also assert data-domain so a regression that drops the attribute on the custom-host
+      // code path would be caught here (complements the plausible.io host test above).
+      const allScripts = screen.getAllByTestId('script');
+      const plausibleScript = allScripts.find((el) =>
+        el.getAttribute('data-src')?.includes('/js/script.js')
+      );
 
-      expect(plausibleScript).toBeDefined();
       expect(plausibleScript?.getAttribute('data-src')).toBe(
         'https://analytics.example.com/js/script.js'
+      );
+      expect(plausibleScript?.getAttribute('data-domain')).toBe('example.com');
+    });
+
+    it('should normalize Plausible host with trailing slash', () => {
+      // Arrange
+      mockUseHasOptionalConsent.mockReturnValue(true);
+      mockDetectProvider.mockReturnValue('plausible');
+      mockGetPlausibleConfig.mockReturnValue({
+        domain: 'example.com',
+        host: 'https://plausible.example.com/',
+      });
+
+      // Act
+      render(<AnalyticsScripts />);
+
+      // Assert — trailing slash on host must not produce `//js/script.js`
+      const plausibleScript = screen
+        .getAllByTestId('script')
+        .find((el) => el.getAttribute('data-src')?.includes('/js/script.js'));
+
+      expect(plausibleScript?.getAttribute('data-src')).toBe(
+        'https://plausible.example.com/js/script.js'
       );
     });
 
@@ -377,11 +472,16 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert
-      const scripts = screen.getAllByTestId('script');
-      scripts.forEach((script) => {
+      // Assert — both the external script.js script AND the inline plausible-init script
+      // must use afterInteractive. getAllByTestId('script') only returns external scripts
+      // (no id); the inline plausible-init script has a different testId so must be checked separately.
+      const externalScripts = screen.getAllByTestId('script');
+      externalScripts.forEach((script) => {
         expect(script.getAttribute('data-strategy')).toBe('afterInteractive');
       });
+      expect(screen.getByTestId('plausible-init').getAttribute('data-strategy')).toBe(
+        'afterInteractive'
+      );
     });
 
     it('should render nothing if Plausible config is null', () => {
@@ -395,6 +495,21 @@ describe('components/analytics/analytics-scripts', () => {
 
       // Assert
       expect(container.firstChild).toBeNull();
+    });
+
+    it('renders nothing when Plausible config is undefined', () => {
+      // Arrange — undefined is the other falsy return a config getter might produce;
+      // the null guard in PlausibleScripts must handle both null and undefined.
+      mockUseHasOptionalConsent.mockReturnValue(true);
+      mockDetectProvider.mockReturnValue('plausible');
+      mockGetPlausibleConfig.mockReturnValue(undefined);
+
+      // Act
+      const { container } = render(<AnalyticsScripts />);
+
+      // Assert — no scripts should be rendered
+      expect(container.firstChild).toBeNull();
+      expect(container.querySelectorAll('[data-component="next-script"]')).toHaveLength(0);
     });
   });
 
@@ -427,6 +542,24 @@ describe('components/analytics/analytics-scripts', () => {
         // Assert — nonce attribute should be absent (null) when not supplied
         const initScript = screen.getByTestId('gtag-init');
         expect(initScript.getAttribute('nonce')).toBeNull();
+      });
+
+      it('should render GA4 external script without a nonce when nonce omitted', () => {
+        // Arrange — no nonce passed to AnalyticsScripts
+        mockUseHasOptionalConsent.mockReturnValue(true);
+        mockDetectProvider.mockReturnValue('ga4');
+        mockGetGA4Config.mockReturnValue({ measurementId: 'G-ABCD1234' });
+
+        // Act
+        render(<AnalyticsScripts />);
+
+        // Assert — the external gtag.js Script element must have no nonce attribute
+        const allScripts = screen.getAllByTestId('script');
+        const gtagScript = allScripts.find((el) =>
+          el.getAttribute('data-src')?.includes('gtag/js?id=')
+        );
+
+        expect(gtagScript?.getAttribute('nonce')).toBeNull();
       });
 
       it('should render PostHog inline script without nonce attribute when nonce is not provided', () => {

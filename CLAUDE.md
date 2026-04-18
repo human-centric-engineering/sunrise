@@ -148,6 +148,7 @@ Use these for implementation tasks:
 | `/test-review`       | Audit test quality                                  |
 | `/test-fix`          | Fast-path executor for 1–5 file review findings     |
 | `/test-coverage`     | Find coverage gaps and untested files               |
+| `/test-triage`       | Ledger-driven triage for codebase-wide remediation  |
 | `/security-hardener` | Rate limiting, CORS, CSP                            |
 | `/email-designer`    | React Email templates                               |
 | `/docs-writer`       | Create/update .context/ docs                        |
@@ -160,13 +161,14 @@ Testing has a dedicated command workflow. Use these commands instead of manually
 
 ### Testing Commands
 
-| Command          | Purpose                                                          |
-| ---------------- | ---------------------------------------------------------------- |
-| `/test-plan`     | Analyze code and produce a phased, prioritized test plan         |
-| `/test-write`    | Execute a plan by spawning test-engineer subagents               |
-| `/test-review`   | Audit test quality (weak assertions, missing edge cases)         |
-| `/test-fix`      | Fast-path applier for 1–5 file review findings (skips plan step) |
-| `/test-coverage` | Find coverage gaps and untested files                            |
+| Command          | Purpose                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan                                                                       |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents                                                                             |
+| `/test-review`   | Audit test quality (weak assertions, missing edge cases)                                                                       |
+| `/test-fix`      | Fast-path applier — two modes: review (applies `/test-review` findings) or `from-rescan` (applies `/test-triage` ledger NOTES) |
+| `/test-coverage` | Find coverage gaps and untested files                                                                                          |
+| `/test-triage`   | Grade test files (Clean/Minor/Bad/Rotten) for codebase remediation                                                             |
 
 ### Common Flows
 
@@ -205,6 +207,19 @@ Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and t
 /test-plan coverage         → produces multi-sprint plan
 /test-write plan            → executes sprint by sprint
 ```
+
+**Codebase-wide test remediation** (legacy green-bar cleanup, not coverage):
+
+```
+/test-triage scan <folder>       → grade files, write to ledger
+/test-triage worklist            → see prioritised queue (Rotten first)
+/test-triage fix <file>          → print both fix paths (A: rescan-driven fast path · B: full review)
+/test-fix from-rescan <file>     → path A: apply ledger NOTES directly (Minor/Bad with specific findings)
+/test-review <file> → /test-fix  → path B: full audit then apply (Rotten, or vague findings)
+/test-triage rescan <file>       → re-grade after fix, update ledger
+```
+
+Use `/test-triage` for quality remediation across 360+ files — it grades cheaply via regex + narrow Sonnet pass and tracks progress across sessions. Use `/test-review` for branch-scoped audit (1–10 file pairs).
 
 **Quick test for 1-2 files** (skips planning):
 

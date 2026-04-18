@@ -267,6 +267,182 @@ expect(mockIdentify).toHaveBeenCalledTimes(2);
 
 ---
 
+### 11. React 19 ErrorBoundary Tests Still Pollute `console.error`
+
+**Problem**: When testing that a component propagates errors to a nearest ErrorBoundary, React 19 logs the caught error to `console.error` twice per throw (one for the render error, one for the boundary's `componentDidCatch`) even when the boundary handles it correctly. The test assertion passes, but stderr fills with noisy stack traces that hide real failures in CI output and make `--reporter=verbose` unreadable.
+
+**Solution**: Spy on `console.error` with a no-op implementation for the duration of the test, then restore. Do not globally silence — that hides legitimate warnings from other tests.
+
+```typescript
+it('should propagate hook errors to the nearest error boundary', () => {
+  // Arrange — silence React's expected error logging for this test only
+  const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.mocked(useFeature).mockImplementation(() => {
+    throw new Error('Feature not initialized');
+  });
+
+  // Act
+  render(
+    <ErrorBoundary fallback={<div>caught</div>}>
+      <ComponentUnderTest />
+    </ErrorBoundary>
+  );
+
+  // Assert — boundary caught the throw; no assertion on console needed
+  expect(screen.getByText('caught')).toBeInTheDocument();
+
+  // Cleanup — restore per-test, not globally
+  consoleErrorSpy.mockRestore();
+});
+```
+
+**Why not `afterEach`**: If the spy lives in `afterEach`/`beforeEach`, it silences console for every test in the file, including ones where a `console.error` call would indicate a real bug. Scope the spy to the single `it` block that intentionally throws.
+
+**Status**: ✅ DOCUMENTED — Discovered while rewriting `page-tracker.tsx` hook-throws test against a real ErrorBoundary harness.
+
+---
+
+### 12. useEffect Re-Fire Requires a Dep Change, Even After a Ref Reset
+
+**Problem**: When testing components that use a `useRef` one-shot guard cleared by a _separate_ `useEffect` (e.g. a logout effect that resets `hasTrackedInitialRef`), it's tempting to write a test that goes "user A → null → user A again" and assert the side effect fires twice. It won't. The ref reset alone doesn't trigger React to re-run the first effect — at least one of its dep-array entries (`session?.user?.id`, `pathname`, `searchParams`, etc.) has to actually change between renders. Going `null → same user A` looks like a transition, but from React's perspective the dep value `session?.user?.id` ends up at the same string it started at, so the effect doesn't re-fire and the second side effect never happens. The test fails confusingly even though the ref-reset logic is correct.
+
+**Solution**: For isolation tests of "ref reset alone enables re-fire", combine the reset with a dep change you can defend as honest. Pick a different `pathname`, `searchParams`, or whichever dep makes the scenario realistic (post-logout, the user lands on a new route). Document the mechanism in a one-line comment so the next reader doesn't try to "simplify" it back to the broken form.
+
+```typescript
+// ✅ CORRECT — pathname change makes the dep array re-fire after the ref reset
+it('should re-fire page() after logout then re-login with new pathname', async () => {
+  // Arrange — user A on /dashboard
+  vi.mocked(useSession).mockReturnValue({ data: { user: userA } } as never);
+  vi.mocked(usePathname).mockReturnValue('/dashboard');
+  const { rerender } = render(<UserIdentifier />);
+  await waitFor(() => expect(mockPage).toHaveBeenCalledTimes(1));
+
+  // Act — logout (triggers second useEffect, clears hasTrackedInitialRef)
+  vi.mocked(useSession).mockReturnValue({ data: null } as never);
+  rerender(<UserIdentifier />);
+
+  // Re-login as same user but on a new route — dep change re-fires first useEffect
+  vi.mocked(useSession).mockReturnValue({ data: { user: userA } } as never);
+  vi.mocked(usePathname).mockReturnValue('/settings');
+  rerender(<UserIdentifier />);
+
+  // Assert — second page call happened because (a) ref was reset and (b) pathname dep changed
+  await waitFor(() => expect(mockPage).toHaveBeenCalledTimes(2));
+});
+
+// ❌ WRONG — same user, same pathname — dep array doesn't re-fire even though ref reset works
+// rerender with userA → null → userA at same pathname will fail this assertion
+```
+
+**When to combine vs. isolate**: cross-user re-login (the L453-style test in `user-identifier.test.tsx`) naturally exercises both the `identifiedUserRef` clear AND the `hasTrackedInitialRef` clear because the `session?.user?.id` dep changes. If you want to isolate just the `hasTrackedInitialRef` reset, you have to introduce a _different_ dep change — pathname is the cheapest and most realistic.
+
+**Status**: ✅ DOCUMENTED — Discovered during `/test-fix components/analytics` (2026-04-18) when adding a `hasTrackedInitialRef` reset isolation test for `UserIdentifier`. The test-fix prescription's first-choice phrasing ("user A → null → user A again") was structurally impossible; the agent fell back to the "+ new pathname" variant the prescription pre-authorized.
+
+---
+
+### 13. Importing `@/lib/auth/config` Triggers Module-Scope Side Effects
+
+**Problem**: Any test that imports a named export from `@/lib/auth/config` (e.g. `userCreateBeforeHook`, `userCreateAfterHook`, or future hook extractions for `sendResetPassword` / `afterEmailVerification`) will execute the full `betterAuth({...})` initialization AND `validateEmailConfig()` at module load. Without the right mocks in place, the import itself throws — typically with confusing Resend initialization errors, env-validation errors, or prisma-adapter errors that have nothing to do with the hook being tested.
+
+**Solution**: mock the full side-effect surface BEFORE importing the hook. Required mocks:
+
+```typescript
+// tests/unit/lib/auth/<whatever>.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Side-effect mocks — needed because importing @/lib/auth/config triggers betterAuth({...}) + validateEmailConfig()
+vi.mock('@/lib/email/client', () => ({
+  validateEmailConfig: vi.fn(),
+  getResendClient: vi.fn(() => null),
+  isEmailEnabled: vi.fn(() => false),
+}));
+
+vi.mock('better-auth', () => ({
+  betterAuth: vi.fn(() => ({
+    /* minimal shape — tests don't use `auth`, only the exported hooks */
+  })),
+}));
+
+vi.mock('better-auth/adapters/prisma', () => ({
+  prismaAdapter: vi.fn(() => ({})),
+}));
+
+vi.mock('better-auth/api', () => ({
+  getOAuthState: vi.fn(),
+  APIError: class APIError extends Error {
+    /* ... */
+  },
+}));
+
+// Plus the usual mocks for what the hook itself calls:
+vi.mock('@/lib/db/client', () => ({ prisma: { user: { update: vi.fn() } } }));
+vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+vi.mock('@/lib/utils/invitation-token', () => ({
+  validateInvitationToken: vi.fn(),
+  deleteInvitationToken: vi.fn(),
+  getValidInvitation: vi.fn(),
+}));
+
+// NOW safe to import
+import { userCreateBeforeHook, userCreateAfterHook } from '@/lib/auth/config';
+```
+
+**Why not just mock Resend directly**: some agents reach for `vi.mock('resend')` to silence the init error. That works but is tightly coupled to the current implementation and breaks when the email client changes. Mock `@/lib/email/client` (the Sunrise wrapper) instead — it's the stable boundary.
+
+**Status**: ✅ DOCUMENTED — Discovered during `/test-fix tests/unit/lib/auth/config-database-hook.test.ts` (2026-04-18) after extracting `userCreateBeforeHook` / `userCreateAfterHook` from the inline `betterAuth({...})` config. The previous test file never imported the config module because it used re-implementation helpers instead; the import-side-effect trap only surfaces once tests switch to calling real hook exports. Applies equally to the still-pending extractions for `sendResetPassword`, `afterEmailVerification`, and any other `@/lib/auth/config` hook.
+
+---
+
+### 14. Per-Test Env Toggling Requires a Closed-Over Mutable Object
+
+**Problem**: Tests that need to toggle an env variable between cases in the same file (e.g. `REQUIRE_EMAIL_VERIFICATION=false` for one test, `=true` for the next) can't use a static `vi.mock('@/lib/env', () => ({ env: { REQUIRE_EMAIL_VERIFICATION: false } }))` — the factory runs once at module-eval time and the returned object is effectively frozen per-test. Attempting to reassign the mock with `vi.mocked(env).mockReturnValue(...)` also fails because `env` is an object, not a function. Agents commonly fall into `vi.resetModules()` + `vi.doMock()` per test (which works but is fragile and slow) or write a single-branch test and miss the other case.
+
+**Solution**: declare a plain mutable `mockEnv` object at module scope of the test file and have `vi.mock` close over it in the factory. Reset defaults in `beforeEach`, mutate per-test.
+
+```typescript
+// Mutable object captured by the mock factory — per-test overrides happen via direct assignment.
+const mockEnv = {
+  REQUIRE_EMAIL_VERIFICATION: undefined as boolean | undefined,
+  NODE_ENV: 'test',
+  BETTER_AUTH_URL: 'http://localhost:3000',
+  BETTER_AUTH_SECRET: 'x'.repeat(32),
+  RESEND_API_KEY: 'test',
+  EMAIL_FROM: 'test@example.com',
+  // ... other env vars the module reads
+};
+
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+beforeEach(() => {
+  // Reset env to defaults — vi.clearAllMocks() does NOT touch plain objects
+  mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+  mockEnv.NODE_ENV = 'test';
+});
+
+it('sends welcome immediately when verification is disabled', async () => {
+  mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
+  await userCreateAfterHook(user, null);
+  expect(mockSendEmail).toHaveBeenCalledTimes(1);
+});
+
+it('skips welcome when verification is enabled', async () => {
+  mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+  await userCreateAfterHook(user, null);
+  expect(mockSendEmail).not.toHaveBeenCalled();
+});
+```
+
+**Why the closure works**: `vi.mock` hoists the factory to the top of the file at transform time, but the factory _body_ runs once lazily. Inside the factory, `mockEnv` is captured by reference, so mutating properties after the factory has run is visible to every subsequent `env.X` read in the module under test. `vi.clearAllMocks()` only resets `vi.fn()` spies — it leaves plain objects alone, which is exactly the behaviour this pattern needs.
+
+**When NOT to use this pattern**: if only one value of the env var is exercised across the whole test file, a plain static `vi.mock('@/lib/env', () => ({ env: { ... } }))` is simpler. The mutable-object pattern is the right call specifically when per-test branching is needed.
+
+**Status**: ✅ DOCUMENTED — Discovered during `/test-fix tests/unit/lib/auth/config-database-hook.test.ts` (2026-04-18) when splitting a mock-proving test (helper hard-coded `requiresVerification=false`) into separate `requiresVerification=true` / `=false` cases against the real `userCreateAfterHook`. Applies to any test that needs to exercise multiple env-branch paths in the same file.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:
