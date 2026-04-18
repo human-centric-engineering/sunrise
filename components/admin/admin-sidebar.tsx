@@ -25,6 +25,7 @@ import {
   DollarSign,
   GraduationCap,
   ClipboardCheck,
+  Plug,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -117,6 +118,12 @@ const navSections = [
         label: 'Evaluations',
         icon: ClipboardCheck,
         description: 'Agent test runs',
+      },
+      {
+        href: '/admin/orchestration/mcp',
+        label: 'MCP Server',
+        icon: Plug,
+        description: 'External tool access',
       },
     ],
   },
