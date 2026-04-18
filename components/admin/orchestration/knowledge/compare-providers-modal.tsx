@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpDown, Check, X } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronDown, ChevronUp, HelpCircle, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,7 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
   const [localOnly, setLocalOnly] = useState(false);
   const [sortField, setSortField] = useState<SortField>('provider');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [showGuide, setShowGuide] = useState(false);
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -87,13 +88,32 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
       <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Compare Embedding Providers</DialogTitle>
-          <DialogDescription>
-            Anthropic (Claude) does not provide an embeddings API. Choose from the providers below
-            for knowledge base vector search. Models marked{' '}
-            <span className="bg-primary text-primary-foreground inline-flex items-center rounded-md px-1 py-0 text-[10px] font-medium">
-              Compatible
-            </span>{' '}
-            can produce 1 536-dimension vectors that work with the current database schema.
+          <DialogDescription asChild>
+            <div className="space-y-2 text-sm">
+              <p>
+                Embeddings convert text into lists of numbers (vectors) so the database can find
+                semantically similar content. Claude handles the chat, but a separate embedding
+                model handles search &mdash; they are different tasks that use different models.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowGuide((v) => !v)}
+                className="text-primary hover:text-primary/80 inline-flex items-center gap-1 text-xs font-medium"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+                {showGuide ? 'Hide' : 'How do I choose? What does Compatible mean?'}
+                {showGuide ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+              {showGuide && (
+                <div className="max-h-[40vh] overflow-y-auto">
+                  <EmbeddingGuide />
+                </div>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
@@ -208,6 +228,105 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function EmbeddingGuide() {
+  return (
+    <div className="bg-muted/50 space-y-3 rounded-lg border p-3 text-xs leading-relaxed">
+      {/* What are dimensions? */}
+      <div>
+        <p className="mb-1 font-semibold">What are dimensions?</p>
+        <p>
+          Each embedding model outputs a fixed-length vector. A 1 024-dimension model turns every
+          piece of text into a list of 1 024 numbers; a 1 536-dimension model produces 1 536
+          numbers. More dimensions can capture finer-grained meaning, but they use more storage and
+          are slightly slower to search.
+        </p>
+      </div>
+
+      {/* What does Compatible / Incompatible mean? */}
+      <div>
+        <p className="mb-1 font-semibold">What does Compatible / Incompatible mean?</p>
+        <p>
+          The database column that stores embeddings is currently set to{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(1536)</code> &mdash;
+          it only accepts vectors with exactly 1 536 dimensions. A model marked{' '}
+          <span className="bg-primary text-primary-foreground inline-flex items-center rounded-md px-1 py-0 font-medium">
+            Compatible
+          </span>{' '}
+          either produces 1 536 dimensions natively, or has an API parameter to resize its output to
+          1 536. An{' '}
+          <span className="inline-flex items-center rounded-md border px-1 py-0 font-medium">
+            Incompatible
+          </span>{' '}
+          model produces a different dimension count (e.g. 768 or 1 024) with no option to resize.
+        </p>
+        <p className="mt-1">
+          <strong>The model is not broken</strong> &mdash; the constraint is on our side. You could
+          make any model work by running a database migration to change the column to match (e.g.{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(768)</code> for
+          Google or Ollama). The trade-off: you lose the ability to swap between models without
+          re-embedding all your documents, since vectors of different sizes are not interchangeable.
+        </p>
+      </div>
+
+      {/* Can I change my mind later? */}
+      <div>
+        <p className="mb-1 font-semibold">Can I change my mind later?</p>
+        <p>
+          Yes, but it takes work. Switching embedding models means every document must be
+          re-embedded with the new model, because different models place concepts at different
+          positions in vector space &mdash; a vector from OpenAI and a vector from Voyage are not
+          comparable even if they are the same length. If your knowledge base is small (hundreds of
+          documents), re-embedding takes minutes. At tens of thousands, it takes longer and costs
+          more. Pick a model you are comfortable with, but do not agonize &mdash; switching is
+          possible, just not free.
+        </p>
+      </div>
+
+      {/* How to decide */}
+      <div>
+        <p className="mb-1 font-semibold">How to decide</p>
+        <ul className="list-inside list-disc space-y-1">
+          <li>
+            <strong>Getting started / prototyping:</strong> Pick a compatible model with a free
+            tier. Voyage AI is the recommended default &mdash; high quality, generous free quota,
+            and built specifically for retrieval.
+          </li>
+          <li>
+            <strong>Tightest budget:</strong> OpenAI{' '}
+            <code className="font-mono">text-embedding-3-small</code> is the cheapest compatible
+            option. Google is even cheaper but requires a schema migration.
+          </li>
+          <li>
+            <strong>Best quality:</strong> OpenAI{' '}
+            <code className="font-mono">text-embedding-3-large</code> or Voyage 3 &mdash; both score
+            highest on retrieval benchmarks and are compatible.
+          </li>
+          <li>
+            <strong>Data privacy / air-gap:</strong> Ollama models run entirely on your machine.
+            Nothing leaves your network. They require a schema migration since they output 768 or 1
+            024 dimensions.
+          </li>
+          <li>
+            <strong>Multilingual content:</strong> Cohere Multilingual v3 is purpose-built for 100+
+            languages, but is currently incompatible (1 024-dim, needs a schema migration).
+          </li>
+        </ul>
+      </div>
+
+      {/* What if I pick the wrong one? */}
+      <div>
+        <p className="mb-1 font-semibold">What if I pick the wrong one?</p>
+        <p>
+          There is no catastrophically wrong choice. All models in this list are production-grade.
+          The worst case is that you switch later and re-embed &mdash; a reversible operation that
+          costs time and a small amount of money. Start with something compatible, upload a few
+          documents, test search quality. If it is good enough, ship it. If not, try another.
+        </p>
+      </div>
+    </div>
   );
 }
 
