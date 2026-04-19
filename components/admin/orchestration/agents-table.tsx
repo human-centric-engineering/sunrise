@@ -524,7 +524,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                         {agent.name}
                       </Link>
                       {agent.isSystem && (
-                        <Tip label="System agent — cannot be deleted or deactivated">
+                        <Tip label="System agent — used internally by the platform. Cannot be deleted or deactivated. See the agent's description for details.">
                           <Badge
                             variant="secondary"
                             className="gap-1 px-1.5 py-0 text-[10px] font-medium"

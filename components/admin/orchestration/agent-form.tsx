@@ -243,6 +243,16 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
 
         {/* ================= TAB 1 — GENERAL ================= */}
         <TabsContent value="general" className="space-y-4 pt-4">
+          {isEdit && agent?.isSystem && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+              <Shield className="h-4 w-4 shrink-0" />
+              <span>
+                This is a system agent used internally by the platform. It cannot be deleted or
+                deactivated. You can update its description but most fields are not relevant — check
+                the agent&apos;s description for how it is used.
+              </span>
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="name">
               Name{' '}

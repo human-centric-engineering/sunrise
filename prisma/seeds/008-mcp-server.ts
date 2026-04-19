@@ -38,14 +38,20 @@ const unit: SeedUnit = {
 
     await prisma.aiAgent.upsert({
       where: { slug: 'mcp-system' },
-      update: { isSystem: true },
+      update: {
+        isSystem: true,
+        description:
+          'System agent — do not edit. Used internally by the MCP server as the execution identity when external AI clients (Claude Desktop, Cursor, etc.) call tools. To expose capabilities to MCP clients, use the MCP Server → Tools page instead of assigning capabilities here.',
+        systemInstructions:
+          'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients. This agent never participates in LLM conversations — it exists solely as the execution identity for capability pipeline dispatch.',
+      },
       create: {
         name: 'MCP System',
         slug: 'mcp-system',
         description:
-          'Internal agent used by the MCP server to dispatch tool calls through the capability pipeline.',
+          'System agent — do not edit. Used internally by the MCP server as the execution identity when external AI clients (Claude Desktop, Cursor, etc.) call tools. To expose capabilities to MCP clients, use the MCP Server → Tools page instead of assigning capabilities here.',
         systemInstructions:
-          'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients.',
+          'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients. This agent never participates in LLM conversations — it exists solely as the execution identity for capability pipeline dispatch.',
         model: 'claude-sonnet-4-6',
         provider: 'anthropic',
         temperature: 0,
