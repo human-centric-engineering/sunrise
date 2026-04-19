@@ -28,6 +28,7 @@ import {
   Plug,
   BarChart3,
   Webhook,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -138,6 +139,12 @@ const navSections = [
         label: 'MCP Server',
         icon: Plug,
         description: 'External tool access',
+      },
+      {
+        href: '/admin/orchestration/settings',
+        label: 'Settings',
+        icon: Settings,
+        description: 'Global defaults',
       },
     ],
   },

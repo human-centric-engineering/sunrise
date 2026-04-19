@@ -89,6 +89,10 @@ export const API = {
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
       workflowById: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}`,
+      workflowSchedules: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/schedules`,
+      workflowScheduleById: (workflowId: string, scheduleId: string): string =>
+        `/api/v1/admin/orchestration/workflows/${workflowId}/schedules/${scheduleId}`,
       workflowValidate: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/validate`,
       workflowExecute: (id: string): string =>
@@ -111,6 +115,7 @@ export const API = {
       conversationMessages: (id: string): string =>
         `/api/v1/admin/orchestration/conversations/${id}/messages`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
+      CONVERSATIONS_EXPORT: '/api/v1/admin/orchestration/conversations/export',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
       knowledgeDocumentById: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,

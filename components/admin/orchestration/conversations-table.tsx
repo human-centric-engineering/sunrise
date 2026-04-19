@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Search } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -235,6 +235,18 @@ export function ConversationsTable({
               <SelectItem value="false">Inactive</SelectItem>
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const params = new URLSearchParams({ format: 'json' });
+              if (agentFilter && agentFilter !== 'all') params.set('agentId', agentFilter);
+              window.location.href = `${API.ADMIN.ORCHESTRATION.CONVERSATIONS_EXPORT}?${params}`;
+            }}
+            title="Export conversations as JSON"
+          >
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
         </div>
       </div>
 

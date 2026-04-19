@@ -6,6 +6,7 @@ import {
   type WorkflowBuilderProps,
 } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import { WorkflowSchedulesTab } from '@/components/admin/orchestration/workflow-schedules-tab';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -85,11 +86,15 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
   if (!workflow) notFound();
 
   return (
-    <WorkflowBuilder
-      mode="edit"
-      workflow={workflow}
-      initialCapabilities={capabilities}
-      initialTemplates={templates}
-    />
+    <div className="space-y-8">
+      <WorkflowBuilder
+        mode="edit"
+        workflow={workflow}
+        initialCapabilities={capabilities}
+        initialTemplates={templates}
+      />
+      <hr />
+      <WorkflowSchedulesTab workflowId={workflow.id} />
+    </div>
   );
 }
