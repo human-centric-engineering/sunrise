@@ -497,6 +497,27 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
     });
 
+    it('should return 400 for non-empty but malformed user ID format', async () => {
+      // Arrange — 'not-a-cuid' is non-empty so it hits the CUID format rule,
+      // exercising a different Zod rejection path than the empty-string test above.
+      const currentUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(currentUser);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams('not-a-cuid');
+
+      // Act
+      const response = await GET(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      // ID validation fires before DB access
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
     it('should handle database errors gracefully', async () => {
       // Arrange
       const currentUser = mockAuthenticatedUser('USER');
@@ -568,7 +589,7 @@ describe('GET /api/v1/users/[id]', () => {
         id: userId,
         name: 'Complete User',
         email: 'complete@example.com',
-        role: 'ADMIN',
+        role: 'USER', // Matches the USER session context — session.user.id === userId (self-access)
         emailVerified: true,
         image: 'https://example.com/image.jpg',
         bio: 'Complete profile',
@@ -1226,6 +1247,53 @@ describe('PATCH /api/v1/users/[id]', () => {
   });
 
   describe('Self-Role Change Prevention', () => {
+    it('should return 200 when admin sets own role to ADMIN (guard only fires for non-ADMIN role)', async () => {
+      // Arrange — source L125: guard fires only when `body.role && body.role !== 'ADMIN'`.
+      // Sending body={role:'ADMIN'} on self does NOT trigger the guard, so the update proceeds.
+      const adminUser = mockAdminUser();
+      const adminId = adminUser.user.id;
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const existingUser = {
+        id: adminId,
+        name: 'Admin User',
+        email: 'admin@example.com',
+        role: 'ADMIN',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      const updatedUser = {
+        ...existingUser,
+        updatedAt: new Date('2025-01-31'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockResolvedValue(updatedUser as any);
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { role: 'ADMIN' }, // Same role as current — guard condition NOT met
+      });
+      const params = createMockParams(adminId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert — guard did NOT fire; update proceeded and returned 200
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ role: 'ADMIN' }),
+        })
+      );
+    });
+
     it('should return 400 with SELF_ROLE_CHANGE when admin tries to change own role', async () => {
       // Arrange
       const adminUser = mockAdminUser();
@@ -1320,7 +1388,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('At least one field must be provided');
 
-      // Should not query database
+      // Empty-body guard at route.ts:111 fires before the findUnique existence check —
+      // findUnique is never reached.
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
     });

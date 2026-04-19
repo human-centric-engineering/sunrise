@@ -172,7 +172,6 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(response.status).toBe(403);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('FORBIDDEN');
-      expect(data.error.message).toEqual(expect.any(String));
       expect(data.error.message).toBe('Admin access required');
 
       // Should not query database when not authorized
@@ -270,6 +269,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error.message).toBe('Cannot delete an admin account. Demote the user first.');
+      // Source L210 passes no `code:` to errorResponse — pin the no-code contract.
+      expect(data.error.code).toBeUndefined();
 
       // Should check if user exists but not attempt deletion
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -438,6 +439,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Mock storage as enabled
       const { isStorageEnabled, deleteByPrefix } = await import('@/lib/storage/upload');
       vi.mocked(isStorageEnabled).mockReturnValue(true);
+      // test-review:accept mock-shape-drift — DeleteResult shape matches; prefix-as-key is valid
+      // per lib/storage/upload.ts:218. Shape is consistent throughout this file.
       vi.mocked(deleteByPrefix).mockResolvedValue({
         success: true,
         key: `avatars/${targetUserId}/`,
@@ -585,13 +588,17 @@ describe('DELETE /api/v1/users/[id]', () => {
   });
 
   describe('Error Handling', () => {
-    it('should return 400 for invalid user ID format', async () => {
-      // Arrange
+    it.each([
+      ['', 'empty string'],
+      ['invalid-id-format', 'malformed (non-CUID)'],
+    ])('should return 400 VALIDATION_ERROR for invalid user ID (%s — %s)', async (invalidId) => {
+      // Arrange — both inputs fail z.cuid() in userIdSchema; merged into one parameterised test
+      // since the schema has a single CUID rule (no distinct emptiness vs format rule).
       const adminUser = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
 
       const mockRequest = {} as NextRequest;
-      const params = createMockParams(''); // Empty ID
+      const params = createMockParams(invalidId);
 
       // Act
       const response = await DELETE(mockRequest, { params });
@@ -605,24 +612,6 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Should not attempt database operations
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
-    });
-
-    it('should return 400 for malformed user ID', async () => {
-      // Arrange
-      const adminUser = mockAdminUser();
-      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
-
-      const mockRequest = {} as NextRequest;
-      const params = createMockParams('invalid-id-format'); // Not a valid CUID
-
-      // Act
-      const response = await DELETE(mockRequest, { params });
-      const data = await parseResponse<ErrorResponse>(response);
-
-      // Assert
-      expect(response.status).toBe(400);
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('VALIDATION_ERROR');
     });
 
     it('should handle database errors gracefully', async () => {

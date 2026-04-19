@@ -5,7 +5,22 @@
  */
 
 import { vi } from 'vitest';
-import type { User } from '@/types/prisma';
+
+// Narrow to the shape better-auth actually exposes on session.user (see
+// lib/auth/config.ts — `role` is the only additionalField). The Prisma
+// User model has extended-profile fields (bio, phone, preferences, ...)
+// that the auth layer does NOT project onto session.user, so tests must
+// not reach for them.
+interface MockSessionUser {
+  id: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  image: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  role: 'USER' | 'ADMIN';
+}
 
 interface MockSession {
   session: {
@@ -16,7 +31,7 @@ interface MockSession {
     createdAt: Date;
     updatedAt: Date;
   };
-  user: User;
+  user: MockSessionUser;
 }
 
 /**
@@ -43,12 +58,6 @@ export function createMockAuthSession(overrides?: Partial<MockSession>): MockSes
       role: 'USER',
       createdAt: new Date(),
       updatedAt: new Date(),
-      // Extended profile fields (Phase 3.2)
-      bio: null,
-      phone: null,
-      timezone: 'UTC',
-      location: null,
-      preferences: {},
     },
     ...overrides,
   };
@@ -86,12 +95,6 @@ export function mockAuthenticatedUser(role: 'USER' | 'ADMIN' = 'USER') {
       role,
       createdAt: new Date(),
       updatedAt: new Date(),
-      // Extended profile fields (Phase 3.2)
-      bio: null,
-      phone: null,
-      timezone: 'UTC',
-      location: null,
-      preferences: {},
     },
   });
 }

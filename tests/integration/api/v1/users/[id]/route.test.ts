@@ -122,7 +122,8 @@ function makeDeleteRequest(id: string): NextRequest {
 
 /**
  * A representative non-admin user fixture returned by prisma.user.findUnique.
- * Fields match the select shape in the GET handler.
+ * Includes the full Prisma User shape (not just the handler's select projection)
+ * because `mockResolvedValue` is typed against the Prisma model.
  */
 function makeUserFixture(overrides: Record<string, unknown> = {}) {
   return {
@@ -184,23 +185,18 @@ describe('GET /api/v1/users/:id', () => {
     });
 
     it('should return 403 with FORBIDDEN envelope when non-admin requests another user profile, and not call DB', async () => {
-      // Arrange — authenticated as a regular USER whose ID differs from the target
+      // Arrange — authenticated as a regular USER whose ID differs from the target.
       vi.mocked(auth.api.getSession).mockResolvedValue(
         createMockAuthSession({
           user: {
-            id: ADMIN_USER_ID, // Different from TARGET_USER_ID
+            id: ADMIN_USER_ID, // Different from TARGET_USER_ID — triggers 403
             email: 'user-a@example.com',
             name: 'User A',
             emailVerified: true,
             image: null,
-            role: 'USER',
+            role: 'USER', // Non-admin — the only role field the guard checks
             createdAt: new Date(),
             updatedAt: new Date(),
-            bio: null,
-            phone: null,
-            timezone: 'UTC',
-            location: null,
-            preferences: {},
           },
         })
       );
@@ -238,11 +234,6 @@ describe('GET /api/v1/users/:id', () => {
             role: 'USER',
             createdAt: new Date('2025-06-01T00:00:00.000Z'),
             updatedAt: new Date('2025-06-01T00:00:00.000Z'),
-            bio: null,
-            phone: null,
-            timezone: 'UTC',
-            location: null,
-            preferences: {},
           },
         })
       );
@@ -339,7 +330,9 @@ describe('PATCH /api/v1/users/:id', () => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(null);
     vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
-    vi.mocked(prisma.user.update).mockResolvedValue(undefined as never);
+    // Default to a valid fixture so tests that override findUnique+update independently
+    // don't receive undefined from update and produce a garbled response body.
+    vi.mocked(prisma.user.update).mockResolvedValue(makeUserFixture() as never);
   });
 
   describe('Auth boundary (withAdminAuth)', () => {
@@ -373,11 +366,6 @@ describe('PATCH /api/v1/users/:id', () => {
             role: 'USER',
             createdAt: new Date(),
             updatedAt: new Date(),
-            bio: null,
-            phone: null,
-            timezone: 'UTC',
-            location: null,
-            preferences: {},
           },
         })
       );
@@ -407,44 +395,47 @@ describe('PATCH /api/v1/users/:id', () => {
       // afterUpdatedAt is derived from the fake clock rather than a hardcoded literal,
       // preventing calendar drift when the real date rolls past the hardcoded value.
       vi.useFakeTimers({ now: new Date('2026-04-19T12:00:00.000Z') });
-      const beforeUpdatedAt = new Date('2025-01-01T00:00:00.000Z');
-      const afterUpdatedAt = new Date(); // == faked now: 2026-04-19T12:00:00.000Z
+      try {
+        const beforeUpdatedAt = new Date('2025-01-01T00:00:00.000Z');
+        const afterUpdatedAt = new Date(); // == faked now: 2026-04-19T12:00:00.000Z
 
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.user.findUnique).mockResolvedValue(
-        makeUserFixture({ updatedAt: beforeUpdatedAt })
-      );
-      vi.mocked(prisma.user.update).mockResolvedValue(
-        makeUserFixture({ name: 'Updated Name', updatedAt: afterUpdatedAt })
-      );
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+        vi.mocked(prisma.user.findUnique).mockResolvedValue(
+          makeUserFixture({ updatedAt: beforeUpdatedAt })
+        );
+        vi.mocked(prisma.user.update).mockResolvedValue(
+          makeUserFixture({ name: 'Updated Name', updatedAt: afterUpdatedAt })
+        );
 
-      const request = makePatchRequest(TARGET_USER_ID, { name: 'Updated Name' });
-      const context = makeContext(TARGET_USER_ID);
+        const request = makePatchRequest(TARGET_USER_ID, { name: 'Updated Name' });
+        const context = makeContext(TARGET_USER_ID);
 
-      // Act
-      const response = await PATCH(request, context);
+        // Act
+        const response = await PATCH(request, context);
 
-      // Assert — status first
-      expect(response.status).toBe(200);
-      const body = await parseResponse<{
-        success: boolean;
-        data: { updatedAt: string; name: string };
-      }>(response);
-      expect(body.success).toBe(true);
-      // DB-state readback: updatedAt in the response comes from the update return value,
-      // not from the request body — proving the handler actually persisted the change.
-      expect(new Date(body.data.updatedAt).getTime()).toBe(afterUpdatedAt.getTime());
-      expect(new Date(body.data.updatedAt).getTime()).not.toBe(beforeUpdatedAt.getTime());
-      // Also confirm the update was called with the body fields
-      expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: TARGET_USER_ID },
-          data: expect.objectContaining({ name: 'Updated Name' }),
-        })
-      );
-
-      // Restore real timers — scoped cleanup prevents siblings from running under fake timers.
-      vi.useRealTimers();
+        // Assert — status first
+        expect(response.status).toBe(200);
+        const body = await parseResponse<{
+          success: boolean;
+          data: { updatedAt: string; name: string };
+        }>(response);
+        expect(body.success).toBe(true);
+        // DB-state readback: updatedAt in the response comes from the update return value,
+        // not from the request body — proving the handler actually persisted the change.
+        expect(new Date(body.data.updatedAt).getTime()).toBe(afterUpdatedAt.getTime());
+        expect(new Date(body.data.updatedAt).getTime()).not.toBe(beforeUpdatedAt.getTime());
+        // Also confirm the update was called with the body fields
+        expect(prisma.user.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: TARGET_USER_ID },
+            data: expect.objectContaining({ name: 'Updated Name' }),
+          })
+        );
+      } finally {
+        // Restore real timers in finally so siblings are not left under fake timers
+        // even if an assertion above throws.
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -463,11 +454,6 @@ describe('PATCH /api/v1/users/:id', () => {
             role: 'ADMIN',
             createdAt: new Date(),
             updatedAt: new Date(),
-            bio: null,
-            phone: null,
-            timezone: 'UTC',
-            location: null,
-            preferences: {},
           },
         })
       );
@@ -511,6 +497,46 @@ describe('PATCH /api/v1/users/:id', () => {
       // Proves handler short-circuited before any DB access
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
     });
+
+    it('should return 400 with VALIDATION_ERROR envelope for invalid ID format, and not call DB', async () => {
+      // Arrange — 'not-a-cuid' fails the userIdSchema (z.cuid() pattern) at source L103
+      // before any body parsing or DB access.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const request = makePatchRequest('not-a-cuid', { name: 'x' });
+      const context = makeContext('not-a-cuid');
+
+      // Act
+      const response = await PATCH(request, context);
+
+      // Assert — status first, then full error envelope
+      expect(response.status).toBe(400);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      // ID validation fires before any DB access
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 with NOT_FOUND envelope when PATCH targets a non-existent user', async () => {
+      // Arrange — valid ID format but user does not exist in the DB.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      const request = makePatchRequest(TARGET_USER_ID, { name: 'x' });
+      const context = makeContext(TARGET_USER_ID);
+
+      // Act
+      const response = await PATCH(request, context);
+
+      // Assert — status first, then full error envelope
+      expect(response.status).toBe(404);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('NOT_FOUND');
+      // User doesn't exist — update must not have been called
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -553,11 +579,6 @@ describe('DELETE /api/v1/users/:id', () => {
             role: 'USER',
             createdAt: new Date(),
             updatedAt: new Date(),
-            bio: null,
-            phone: null,
-            timezone: 'UTC',
-            location: null,
-            preferences: {},
           },
         })
       );
@@ -652,12 +673,56 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(response.status).toBe(400);
       const body = await parseResponse<{
         success: boolean;
-        error: { message: string };
+        error: { code?: string; message: string };
       }>(response);
       expect(body.success).toBe(false);
       // Source L209: "Cannot delete an admin account. Demote the user first."
       expect(body.error.message).toMatch(/admin account/i);
+      // Source L210 passes no `code:` argument to errorResponse — pin the no-code contract
+      // so a future regression adding code: 'FORBIDDEN' is caught.
+      expect(body.error.code).toBeUndefined();
       // Proves the guard prevented the actual DB delete
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 with NOT_FOUND envelope when DELETE targets a non-existent user', async () => {
+      // Arrange — valid ID format but user does not exist; source L204 throws NotFoundError.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      const request = makeDeleteRequest(TARGET_USER_ID);
+      const context = makeContext(TARGET_USER_ID);
+
+      // Act
+      const response = await DELETE(request, context);
+
+      // Assert — status first, then full error envelope
+      expect(response.status).toBe(404);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('NOT_FOUND');
+      // Existence check fired but delete must not have been called
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 with VALIDATION_ERROR envelope for invalid DELETE ID format, and not call DB', async () => {
+      // Arrange — 'not-a-cuid' fails the userIdSchema at source L187 before the self-delete
+      // guard or any DB access.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const request = makeDeleteRequest('not-a-cuid');
+      const context = makeContext('not-a-cuid');
+
+      // Act
+      const response = await DELETE(request, context);
+
+      // Assert — status first, then full error envelope
+      expect(response.status).toBe(400);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      // ID validation fires before any DB access
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
     });
   });
