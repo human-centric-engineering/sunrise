@@ -7,6 +7,8 @@ Analyze code and produce a detailed, phased test plan. This is the planning step
 
 **Context discipline:** When consuming a prior `/test-review` or `/test-coverage` file, **trust its findings** — do not re-read source files to "verify" them; the reviewer already did that work. Only read source files in fresh-analysis mode (branch-diff or direct folder/file arg), and for 4+ files delegate the per-file analysis to parallel Sonnet subagents.
 
+**Test type:** the plan covers BOTH unit and integration tests. A single source file (typically an API route under `app/api/**`) may need a unit test, an integration test, or both. Type is detected per plan item from the test path: `tests/integration/**` → integration; everything else → unit. When a route handler has no existing test, the planner proposes one item per appropriate type (see Step 2b).
+
 ## Input
 
 $ARGUMENTS — determines scope and may incorporate prior command findings:
@@ -114,8 +116,9 @@ The analysis strategy depends on where the file list came from:
   - `Coverage Completeness` → **Add** (a missing test case).
   - `Assertion Quality` / `Mock Realism` / `Test-Code Alignment` / `Brittleness & Structure` → **Rewrite** (fix an existing test at the named line).
   - If two findings target the same test at the same line, merge into one Rewrite item (record both concerns in the "why" field).
+  - **Carry the finding's `TYPE` (unit | integration) onto the plan item.** Review reports emit `TYPE: unit | integration` per finding; the planner preserves this so `/test-write` dispatches each item to an appropriately-scoped test-engineer run. Detect the type from the test path if a review report predates the TYPE field.
 - **Source Findings** — decision captured in Step 1's gate: `fix` → Source Decisions (Step 5.5); `document` → per-test Rewrite with a documenting comment; `skip` → test finding already dropped upstream.
-- **Coverage gaps** → Add items with the gap description as the "why".
+- **Coverage gaps** → Add items with the gap description as the "why". Type is inferred from the coverage item's target test path (or target source — for API routes, default to unit unless coverage explicitly named the integration path).
 - **File type, complexity, dependencies**: infer from the file path and the prior command's observations. If the review/coverage file didn't capture a piece of metadata you need for batching (rare), spot-`Read` only that file — not the entire target list.
 
 This path should produce a plan with zero source-file Reads in the main context.
@@ -139,7 +142,12 @@ Work through each target file and extract:
 2. **Complexity** — score using function count (×2), Prisma/db (+10), better-auth (+8), external APIs (+8), file system (+5), side effects (×3), branching (×2). <10 simple, 10–24 medium, 25+ complex.
 3. **Dependencies to mock** — Prisma, auth, logger, Next.js headers/cookies, fetch, etc.
 4. **Key behaviors** — happy path, validation/error cases, edge cases, security paths.
-5. **Existing test state** — check for the corresponding test file (`tests/unit/...`, `tests/integration/...`). If present, classify existing tests as **keep**, **rewrite**, or **delete** (tests that reference functions/exports no longer present in the source, or describe behaviour the source no longer has) and note what's **missing** (uncovered scenarios). Delete items represent stale tests for removed code — they go into the plan's per-file Delete count and get removed by `/test-write`.
+5. **Existing test state — check BOTH unit and integration locations.** A single source file may have a unit test, an integration test, or both. Compute both candidate paths and Glob each:
+   - **Unit**: mirror the source under `tests/unit/`. Examples: `lib/foo/bar.ts` → `tests/unit/lib/foo/bar.test.ts`; `app/api/v1/foo/route.ts` → `tests/unit/app/api/v1/foo/route.test.ts`.
+   - **Integration**: under `tests/integration/`, stripping the `app/` prefix for route handlers. Examples: `app/api/v1/foo/route.ts` → `tests/integration/api/v1/foo/route.test.ts`. Non-API source files (`lib/...`, `components/...`) rarely have integration tests — skip the integration probe unless the source is under `app/`.
+   - For each existing test file found, classify its tests as **keep**, **rewrite**, or **delete** (tests that reference functions/exports no longer present in the source, or describe behaviour the source no longer has) and note what's **missing**. Delete items represent stale tests for removed code — they go into the plan's per-file Delete count and get removed by `/test-write`.
+   - When a source file has BOTH a unit and integration test, emit **two separate plan items** (one per type). Each carries its own Keep/Rewrite/Add/Delete breakdown because the two tests cover different contract layers (unit = function/handler logic under mocks; integration = request → validation → auth → handler → DB → response under real DB).
+6. **Type decision when no test exists (api-route only):** if the source is an API route (`app/api/**/route.ts`) with no existing test, default to proposing a **unit** plan item. Add a second **integration** plan item when the route: (a) enforces auth via `withAuth()`/`withAdminAuth()`, (b) performs a DB mutation (POST/PATCH/DELETE), (c) touches multiple collaborators (auth + DB + email, etc.). Non-route source files default to unit only.
 
 **Parallelization for fresh analysis:**
 
@@ -148,24 +156,29 @@ Work through each target file and extract:
 
 **Subagent prompt template (fresh analysis, 4+ files only):**
 
-> You are a test planner. Analyze one source file and, if present, its existing test file, and produce structured planning metadata.
+> You are a test planner. Analyze one source file and, if present, its existing test file(s) — checking BOTH unit and integration locations — and produce structured planning metadata.
 >
 > **Source file**: `{source_path}`
-> **Existing test file** (if it exists): `{test_path}` — check with Read; skip gracefully if not found.
+> **Unit test candidate**: `{unit_test_path}` — check with Read; skip gracefully if not found.
+> **Integration test candidate**: `{integration_test_path}` — check with Read; skip gracefully if not found. Empty string if the source file is not under `app/` (non-routes rarely have integration tests).
 >
-> Read both files (or just the source if no test exists). Extract the fields below and return them in the exact format specified. No preamble, no summary.
+> Read the source plus whichever test files exist. Extract the fields below and return them in the exact format specified. No preamble, no summary.
 >
-> Fields to extract: file type, complexity (simple/medium/complex), dependencies to mock, key behaviors (happy path + error/edge cases), existing-test classifications (keep/rewrite/delete/missing).
+> Fields: file type, complexity (simple/medium/complex), dependencies to mock, key behaviors (happy path + error/edge cases), per-test-type classifications (keep/rewrite/delete/missing).
+>
+> Emit ONE block per test type that has an existing file OR is worth planning for (see "Type decision" rule in Step 2b: unit is always worth planning; integration is worth planning for API routes with auth/mutation/multi-collaborator behaviour). If a test type is neither existing nor worth planning, omit its block entirely.
 >
 > ```
 > PLAN: {source_path}
-> TYPE: {file type}
+> FILE_TYPE: {classification}
 > COMPLEXITY: simple | medium | complex
 > MOCKS: {comma-separated dependencies}
-> TEST_FILE: {test path or "none"}
 >
 > BEHAVIORS:
 > - {behavior — happy path, edge, error}
+>
+> --- UNIT ---
+> TEST_FILE: {test path or "none"}
 >
 > KEEP:
 > - {test name} L{N}
@@ -174,13 +187,28 @@ Work through each target file and extract:
 > - {test name} L{N} — {reason} | SHOULD: {what to assert}
 >
 > DELETE:
-> - {test name} L{N} — {reason: references removed function/export, asserts behaviour the source no longer has}
+> - {test name} L{N} — {reason}
 >
 > MISSING:
 > - {scenario} — {why}
+>
+> --- INTEGRATION ---
+> TEST_FILE: {test path or "none"}
+>
+> KEEP:
+> - {test name} L{N}
+>
+> REWRITE:
+> - {test name} L{N} — {reason} | SHOULD: {what to assert}
+>
+> DELETE:
+> - {test name} L{N} — {reason}
+>
+> MISSING:
+> - {scenario} — {why — for integration, include contract layer: auth boundary, full envelope, DB persistence, rate limit, etc.}
 > ```
 >
-> Omit any section with no entries. Keep lines under ~200 chars.
+> Omit any section (KEEP/REWRITE/DELETE/MISSING) with no entries. Omit an entire `--- UNIT ---` or `--- INTEGRATION ---` block if the type isn't applicable. Keep lines under ~200 chars.
 
 After subagents return, aggregate their outputs — do not re-read the files.
 
@@ -227,12 +255,13 @@ Within each priority level, order by:
 
 ### Step 4: Build per-file work instructions
 
-For each file, produce structured instructions that `/test-write` will pass to test-engineer agents:
+For each plan item (one per source+type combination — a single source may produce a unit item AND an integration item), produce structured instructions that `/test-write` will pass to test-engineer agents:
 
 ```
-### {source file path}
+### {source file path} — {unit | integration}
 **Test file**: {path} (CREATE / UPDATE)
-**Type**: {file type}
+**Test type**: unit | integration
+**File type**: {classification}
 **Complexity**: simple / medium / complex
 **Coverage target**: {percentage based on module type}
 
@@ -246,8 +275,10 @@ For each file, produce structured instructions that `/test-write` will pass to t
 - {scenario description} — {why: error path / edge case / uncovered branch at source line N}
 
 **Mocking requirements**:
-- {dependency}: {mock strategy}
+- {dependency}: {mock strategy — for integration items, note which boundaries stay real (DB via testcontainer) vs mocked (external HTTP, email sender, LLM providers)}
 ```
+
+For integration items, the **Add** section should additionally cover (when applicable): 401 unauthenticated, 403 wrong-role, 429 rate-limit exceeded, DB-state readback after mutation, full `errorResponse()` envelope on failure paths. Don't force items that don't apply — a public GET route doesn't need 401/403 coverage; note "public route, no auth coverage needed" in the item's notes.
 
 **Self-check before writing each file's instructions:**
 
@@ -300,6 +331,8 @@ Group the work into **sprints** (phases) that can be executed independently. Eac
 - **Complex batch** (API routes, database, auth): 1 file per agent
 
 Files in the same batch should share similar mocking requirements.
+
+**Test-type batching:** never mix unit and integration items in the same batch. Integration tests use testcontainer setup and different mocking strategies; bundling them with unit items inflates mocking requirements and confuses the test-engineer. Two plan items for the same source file (a unit item + an integration item) go into separate batches — typically the unit item lands in an earlier sprint (cheaper, faster feedback) and the integration item follows.
 
 ### Step 5.5: Build the Source Decisions audit block
 
@@ -358,7 +391,8 @@ generated: { ISO 8601 UTC timestamp }
 # Test Plan
 
 **Source**: {what drove this plan — branch name, folder paths, or prior command + its file}
-**Target files**: {count}
+**Target files**: {count} ({source_file_count} source files · {plan_item_count} plan items across types)
+**Test types**: {unit_item_count} unit · {integration_item_count} integration
 **Estimated complexity**: {simple} simple, {medium} medium, {complex} complex
 **Sprints**: {count}
 **Source decisions**: {count} — {fix_count} Fix, {document_count} Document, skipped dependents dropped during planning
@@ -402,7 +436,9 @@ Captured during Step 1's source-finding gate. `/test-write` reads these to pick 
 
 ## Brittle Patterns to Avoid
 
-Test-engineer agents must check this list before writing or rewriting any test in this plan. Authoritative source (and extensions): `.claude/docs/test-brittle-patterns.md`.
+Test-engineer agents must check this list before writing or rewriting any test in this plan. Authoritative source: `.claude/docs/test-brittle-patterns.md`.
+
+**General patterns** (always include):
 
 - **Multi-render `toHaveBeenNthCalledWith` in one `it` block** — index-dependent assertions shift on earlier failures. Split into separate `it` blocks.
 - **`.not.toThrow()` on empty arrow functions** — `expect(() => {}).not.toThrow()` is tautological. Assert an observable post-error state instead.
@@ -411,6 +447,16 @@ Test-engineer agents must check this list before writing or rewriting any test i
 - **`.toBeDefined()` after `.find()`** — produces unhelpful failure messages. Assert the specific element/property, or query with a selector that throws descriptively when missing.
 - **Add/Rewrite overlap in your assignment** — if an Add duplicates what a Rewrite already asserts, flag it in your final output and merge rather than writing both tests.
 
+**Integration patterns** (include ONLY if this plan touches any file under `tests/integration/**` — omit the section entirely otherwise):
+
+- **Status code is part of the contract** — every handler invocation gets `expect(response.status).toBe(N)`. Body shape alone is not enough.
+- **Persistence asserted only via response body** — for POST/PATCH/DELETE, read the DB back (even under Prisma mock) and assert on handler-derived fields (id, createdAt, computed defaults), not echoed request fields.
+- **Error envelope drift** — assert the full `{ success: false, error: { code, message } }` shape, not `body.error.code` alone or an ad-hoc `{ error: 'string' }`.
+- **Missing 401/403 coverage on guarded routes** — if the route uses `withAuth`/`withAdminAuth`, write the unauthenticated AND (if role-based) wrong-role tests. Public routes are exempt; note it in a comment.
+- **Module-level state not reset** — `vi.clearAllMocks()` does NOT reset rate limiter counters, in-memory caches, or singleton Prisma instances. Explicitly `.mockReturnValue()` every accessor whose default state matters in each test's arrange step.
+- **Serial test dependency** — each `it()` arranges its own fixtures. No "should create X" → "should update X" chains sharing state.
+- **Real `DATABASE_URL` leaking into test setup** — integration tests use the testcontainer-provided URL from `beforeAll`; never read `process.env.DATABASE_URL` directly.
+
 ---
 
 ## Sprint 1: {name}
@@ -418,6 +464,8 @@ Test-engineer agents must check this list before writing or rewriting any test i
 **Files**: {count} · **Estimated agents**: {count} · **Priority**: {level}
 
 ### Batch 1.1: {description}
+
+**Test type**: unit | integration (every item in the batch shares this type — see Step 5's test-type batching rule)
 
 | #   | File   | Action        | Complexity            | Keep    | Rewrite | Add     | Delete  |
 | --- | ------ | ------------- | --------------------- | ------- | ------- | ------- | ------- |
@@ -443,9 +491,9 @@ Test-engineer agents must check this list before writing or rewriting any test i
 
 ## Summary
 
-| Sprint | Files   | Agents  | Priority   | Scope   |
-| ------ | ------- | ------- | ---------- | ------- |
-| 1      | {count} | {count} | {priority} | {brief} |
+| Sprint | Type                | Files   | Agents  | Priority   | Scope   |
+| ------ | ------------------- | ------- | ------- | ---------- | ------- |
+| 1      | unit \| integration | {count} | {count} | {priority} | {brief} |
 
 ## Notes
 
@@ -461,7 +509,7 @@ Format:
 ```
 ## Test Plan — {scope}
 
-{N} files · {simple}/{medium}/{complex} simple/medium/complex · {S} sprint{s}{If source decisions: · **{D} source decision{s} carried forward ({R} resolved, {A} accepted)**}{If sanity-check flags: · **{F} sanity flag{s} — review before /test-write**}
+{N} plan items ({U} unit · {I} integration) · {simple}/{medium}/{complex} simple/medium/complex · {S} sprint{s}{If source decisions: · **{D} source decision{s} carried forward ({R} resolved, {A} accepted)**}{If sanity-check flags: · **{F} sanity flag{s} — review before /test-write**}
 Full plan: `.claude/tmp/test-plan.md`
 
 {If sanity-check flags present, show BEFORE source decisions and sprint table — this is the signal the user most needs to act on:}
@@ -474,11 +522,11 @@ Full plan: `.claude/tmp/test-plan.md`
 {Up to 3 highest-impact, one per line: `- source/path.ts:NN — Fix: {refactor summary}` or `- source/path.ts:NN — Document: {reason}`}
 {If >3: "(+{N} more in file)"}
 
-| Sprint | Batch | Files | Priority | Focus |
-|--------|-------|-------|----------|-------|
-| 1 | 1.1 | {count} | {priority} | {brief — e.g., "Validation schemas"} |
-| 1 | 1.2 | {count} | {priority} | {brief} |
-| 2 | 2.1 | {count} | {priority} | {brief} |
+| Sprint | Batch | Type | Files | Priority | Focus |
+|--------|-------|------|-------|----------|-------|
+| 1 | 1.1 | unit | {count} | {priority} | {brief — e.g., "Validation schemas"} |
+| 1 | 1.2 | unit | {count} | {priority} | {brief} |
+| 2 | 2.1 | integration | {count} | {priority} | {brief — e.g., "Auth + DB mutations"} |
 
 ### Notes
 {Up to 3 bullets covering test-strategy notes — tight coupling, shared mock setup, ordering dependencies. If none, write "None — plan is self-contained."}

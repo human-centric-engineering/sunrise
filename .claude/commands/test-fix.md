@@ -199,7 +199,9 @@ The prompt must include:
    >
    > Skip the full onboarding reading list — the brittle patterns are embedded below.
 
-2. **Brittle patterns inline** (copy the 6-bullet list from `.claude/docs/test-brittle-patterns.md`):
+2. **Brittle patterns inline** (copy from `.claude/docs/test-brittle-patterns.md`). Inspect the test file paths of the queued findings and classify each as unit (`tests/unit/**`) or integration (`tests/integration/**`). Always embed the general bullet list; additionally embed the integration bullet list if ANY target test is an integration test.
+
+   **General patterns** (always embed):
 
    > Before writing or rewriting any test, check against these known anti-patterns:
    >
@@ -209,6 +211,18 @@ The prompt must include:
    > - Dead `vi.mock(...)` blocks → delete them.
    > - `.toBeDefined()` after `.find()` → assert specific elements.
    > - If a finding's fix overlaps with another, merge the edit — don't add duplicate tests.
+
+   **Integration patterns** (embed ONLY if ANY target test is under `tests/integration/**`):
+
+   > Integration-specific anti-patterns (apply to any test file under `tests/integration/**`):
+   >
+   > - Assert `response.status` explicitly on every handler invocation — body shape alone is not the contract.
+   > - For POST/PATCH/DELETE, read the DB back (via Prisma mock) and assert on handler-derived fields (id, createdAt, computed defaults) — not just echoed request fields.
+   > - Error responses must match `{ success: false, error: { code, message, details? } }` — assert `body.success === false` AND `body.error.code`, not just one.
+   > - Guarded routes (`withAuth`/`withAdminAuth`) require tests for 401 (unauthenticated) and — if role-based — 403 (wrong role). Public routes are exempt; say so in a comment.
+   > - `vi.clearAllMocks()` does NOT reset module-scoped state (rate limiters, caches, singletons) — explicitly `.mockReturnValue()` every accessor whose default state matters, in each test's arrange step.
+   > - Each `it()` arranges its own fixtures. No "should create X" → "should update X" chains that share the created record across tests.
+   > - Never touch real `DATABASE_URL` — integration tests use the testcontainer-provided URL from `beforeAll` setup.
 
 3. **Source refactors to apply first** (if any from Step 5):
 
@@ -395,7 +409,7 @@ Spawn ONE foreground test-engineer. The prompt includes:
 
 1. **Identity and trimmed reading list** (same two docs as review mode: `.context/testing/patterns.md` and `.context/testing/mocking.md`; skip the rest).
 
-2. **Brittle patterns inline** (same 6-bullet list from review mode).
+2. **Brittle patterns inline** — embed the general bullet list from review mode Step 5.2 (always). Additionally embed the integration bullet list from review mode Step 5.2 if the target test file (known from Step 1) is under `tests/integration/**`. Unit files skip the integration bullets.
 
 3. **Scope**:
    - Test file: `{test path}`

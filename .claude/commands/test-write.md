@@ -11,6 +11,8 @@ For each file in the plan, the agent handles whichever combination is needed:
 - **Add**: Test file exists but missing test cases → add new cases
 - **Rewrite**: Test file exists with quality issues → rewrite weak tests while preserving good ones
 
+**Test type:** supports BOTH unit and integration tests. Every plan item carries a `Test type:` field (`unit` | `integration`) from `/test-plan`; `/test-write` propagates that onto the spawned test-engineer so it reads the right brittle-pattern list and applies type-appropriate quality requirements. Batches are homogeneous — the plan guarantees each batch contains only one test type.
+
 **Important:** This command spawns test-engineer agents in the **foreground** (never background) — they need Write/Edit tool access.
 
 ## Input
@@ -73,11 +75,12 @@ After the plan parses, inspect the `## Source Decisions` block (if present).
 
 - This is a trivially small scope — generate a minimal plan inline:
   - Read each source file
-  - Check for existing test files and read them if present
+  - **Determine test type per source** — default to `unit`. If the source is an API route (`app/api/**/route.ts`) that enforces auth (`withAuth()`/`withAdminAuth()`) OR mutates the DB (POST/PATCH/DELETE) OR touches multiple collaborators (auth + DB + email, etc.), prefer `integration` for the full-contract pass; generate BOTH `unit` and `integration` items for the same source only if the user explicitly asks or existing tests of both types are present.
+  - Check for existing test files and read them if present — check BOTH `tests/unit/<path>` and `tests/integration/<path>` locations for API routes (integration path strips the `app/` prefix per the project's source↔test mapping).
   - Classify each existing test as keep/rewrite, identify missing tests
   - Determine mocking requirements
-  - Create a single-batch plan
-- Confirm with the user before executing
+  - Create a single-batch plan — if both unit and integration items are needed, create TWO single-batch sprints (never mix types in one batch)
+- Confirm with the user before executing, showing the type(s) chosen
 
 **If 3+ file paths are provided:**
 
@@ -102,12 +105,14 @@ Before spawning any agents, show the user what will happen:
 **Files**: {count}
 **Agent batches**: {count}
 **Estimated agents to spawn**: {count}
+**Test types**: {U} unit plan items · {I} integration plan items (every batch is single-type — never mixed)
 **Source Decisions**: {R} resolved, {A} accepted (0 pending — verified in Step 1.5)
 
-| Batch | Files | Action | Agent Scope |
-|-------|-------|--------|-------------|
-| 1.1 | 3 | CREATE (2), UPDATE (1) | Validation schemas — simple, no mocking |
-| 1.2 | 1 | UPDATE | Auth guards — complex, auth + db mocking |
+| Batch | Type | Files | Action | Agent Scope |
+|-------|------|-------|--------|-------------|
+| 1.1 | unit | 3 | CREATE (2), UPDATE (1) | Validation schemas — simple, no mocking |
+| 1.2 | unit | 1 | UPDATE | Auth guards — auth + db mocking |
+| 1.3 | integration | 1 | CREATE | POST /api/v1/users — full-contract: status, body envelope, 401/403, DB readback |
 
 {If any decisions were `accepted` with `Document` or `Skip`, list them briefly so the user can spot a mistake before agents start:}
 **Accepted decisions** (source not changed — tests will assert current behavior):
@@ -121,13 +126,21 @@ Wait for user confirmation before spawning agents. If the user wants to adjust, 
 
 ### Step 3: Execute agent batches sequentially
 
-For each batch in the sprint, spawn a **foreground** test-engineer agent. The prompt must include:
+For each batch in the sprint, spawn a **foreground** test-engineer agent. Read the batch's `**Test type**:` header from the plan — the prompt differs based on type (brittle patterns and quality requirements are type-aware). Every batch is homogeneous (the plan guarantees this); if you see a batch containing both types, stop and report a plan error rather than dispatching.
 
-1. **The per-file work instructions** from the plan (keep/rewrite/add details for each file)
+The prompt must include:
 
-2. **Test quality guidance:**
+1. **Batch type header** (always first line of the prompt):
 
-> **Test quality requirements:**
+> **Test type for this batch**: `{unit | integration}`
+>
+> Every file in this batch is the same type. Apply the {unit | integration}-specific guidance throughout.
+
+2. **The per-file work instructions** from the plan (keep/rewrite/add details for each file)
+
+3. **Test quality guidance (general — applies to all batches):**
+
+> **Test quality requirements — general:**
 >
 > - Every test must follow AAA (Arrange-Act-Assert) pattern
 > - Test the code's INTENT and CONTRACT, not just its current output
@@ -139,7 +152,26 @@ For each batch in the sprint, spawn a **foreground** test-engineer agent. The pr
 > - When a test fails: determine if the code or the test is wrong before fixing (see "When Tests Fail" in agent definition)
 > - Read `.claude/skills/testing/gotchas.md` before writing any tests
 
-3. **Mid-sprint source-bug protocol:**
+3a. **Test quality guidance (integration batches only — omit if unit):**
+
+> **Test quality requirements — integration-specific:**
+>
+> Integration tests exercise the full route contract (request → validation → auth → handler → DB → response). Apply these in addition to the general requirements:
+>
+> - **Status code first**: every handler invocation asserts `expect(response.status).toBe(N)` BEFORE asserting body shape. Status + body together IS the contract — body-only assertions let status regressions ship silently.
+> - **Full error envelope**: error-path tests assert the complete `{ success: false, error: { code, message, details? } }` shape from `errorResponse()` — not a partial body match, not just `body.error.code` in isolation. `body.success === false` AND `body.error.code === '{CODE}'` minimum.
+> - **Auth boundary coverage**: routes using `withAuth()` / `withAdminAuth()` / manual session checks MUST have a 401 unauthenticated test AND (if role-based) a 403 wrong-role test, each asserting the full error envelope. Public routes are exempt — add a one-line comment saying so.
+> - **DB state readback on mutations**: POST/PATCH/DELETE tests verify persistence by reading the DB back (via Prisma `findUnique`/`findFirst` — mock-backed is fine) and asserting on handler-derived fields (`id`, `createdAt`, computed defaults, normalized strings). Echoing input fields back from the response body is NOT evidence of persistence.
+> - **Rate-limit exercise** (where applicable): if the route calls `checkRateLimit()` / `apiLimiter` / `authLimiter`, add a 429 test that trips the limiter and asserts the error envelope.
+> - **Module-level state reset**: `vi.clearAllMocks()` only clears call history. For rate-limiter counters, singleton Prisma clients, session accessors, and env accessors, re-set the return value in `beforeEach` explicitly — never rely on `clearAllMocks` to reset module-scoped state.
+> - **No test-order coupling**: every `it()` arranges its own fixtures. Do not share created records across tests ("create X" → "update X"). Extract shared helpers (`makeUser()`, `seedPosts()`) to keep setup cheap without the coupling.
+> - **No real `DATABASE_URL`**: tests mock `@/lib/db/client` (or the equivalent project-specific Prisma accessor). Never instantiate `new PrismaClient()` directly in an integration test — the mock IS the boundary.
+
+4. **Brittle patterns — read from the plan file before writing anything:**
+
+> Open `.claude/tmp/test-plan.md` and read the `## Brittle Patterns to Avoid` section in full. The **General patterns** block applies to every test you write. If this batch's type is `integration`, the **Integration patterns** block also applies — the plan conditionally emits it only when integration files are in scope, so if the section is missing this plan's batches are all unit. Apply both blocks when they're present.
+
+5. **Mid-sprint source-bug protocol:**
 
 > If, while writing a test, you discover a **new** suspected source bug that is NOT already covered by a Source Decision in the plan (e.g. a rewritten assertion against the honest contract fails because the source is broken), you MUST:
 >
@@ -152,29 +184,41 @@ For each batch in the sprint, spawn a **foreground** test-engineer agent. The pr
 > 3. Leave the file in a clean state — either revert the rewrite-in-progress or mark the failing test with `it.todo(...)` and a `// MID-SPRINT FINDING: see sprint output` comment. Never commit a green test that hides the finding.
 > 4. Continue to the next file in your batch (other files are not blocked by one file's finding).
 
-4. **Validation requirements:**
+6. **Validation requirements:**
 
 > After completing all changes:
 >
-> 1. Run `npm test -- {test file paths}` — all must pass (tests parked with `it.todo` due to mid-sprint findings count as a known gap, not a failure)
+> 1. Run `npm test -- {test file paths}` — all must pass (tests parked with `it.todo` due to mid-sprint findings count as a known gap, not a failure). Unit AND integration tests both run under this command (Vitest is the single runner in this project).
 > 2. Run `npm run lint` — no new errors
 > 3. Run `npm run type-check` — no new errors
 > 4. Run `npm run format:check` — must be clean. If it fails, run `npx prettier --write {edited paths}` and re-verify.
 >    Do NOT mark complete until all four pass.
+>
+> **Integration-batch extras** (only if this batch's type is `integration`):
+>
+> - Confirm NO test in your assignment reads `process.env.DATABASE_URL` or calls `new PrismaClient()` directly — all DB access must go through the mocked `@/lib/db/client` boundary.
+> - Confirm every handler invocation in the file asserts both `response.status` AND body shape. `grep -n "status" {test file}` should show one status assertion per `POST`/`GET`/`PATCH`/`DELETE` call — if any handler invocation has no adjacent status assertion, fix it before marking complete.
+> - If the source uses `withAuth()` / `withAdminAuth()` / a manual session check, confirm at least one 401 test exists (and a 403 test if role-based). Absence is a completeness gap, not a soft preference.
 
 ### Step 4: Report batch results
 
 After each agent completes, report:
 
 ```
-### Batch {N} Results
+### Batch {N} Results (type: {unit | integration})
 
-| File | Test File | Action | Kept | Rewritten | Added | Todo | Total | Pass | Status |
-|------|-----------|--------|------|-----------|-------|------|-------|------|--------|
-| `lib/auth/guards.ts` | `tests/unit/lib/auth/guards.test.ts` | UPDATE | 4 | 2 | 3 | 0 | 9 | 9/9 | DONE |
-| `lib/api/client.ts` | `tests/unit/lib/api/client.test.ts` | CREATE | — | — | 12 | 0 | 12 | 12/12 | DONE |
+| File | Test File | Type | Action | Kept | Rewritten | Added | Todo | Total | Pass | Status |
+|------|-----------|------|--------|------|-----------|-------|------|-------|------|--------|
+| `lib/auth/guards.ts` | `tests/unit/lib/auth/guards.test.ts` | unit | UPDATE | 4 | 2 | 3 | 0 | 9 | 9/9 | DONE |
+| `lib/api/client.ts` | `tests/unit/lib/api/client.test.ts` | unit | CREATE | — | — | 12 | 0 | 12 | 12/12 | DONE |
+| `app/api/v1/users/route.ts` | `tests/integration/api/v1/users/route.test.ts` | integration | CREATE | — | — | 8 | 0 | 8 | 8/8 | DONE |
 
 {Any issues encountered. If the agent reported mid-sprint findings, add them to the running `New Source Findings` list — see Step 4.5.}
+
+{If this was an integration batch, also report the contract-coverage checklist the agent confirmed before marking DONE:}
+- Status assertions: {count} handler invocations, {count} with adjacent status assertion (must match)
+- Auth boundary tests: 401 present: Yes/No/N-A · 403 present: Yes/No/N-A
+- DB-state readback on mutations: {count} mutations, {count} with post-action DB read
 ```
 
 The `Todo` column counts tests parked with `it.todo(...)` because of a mid-sprint source finding — those are known gaps, not regressions, but they must be resolved before the sprint can be considered complete.
@@ -201,11 +245,15 @@ After all batches in the sprint complete. The sprint is considered **Complete** 
 ```
 ## Sprint {N} {Complete | Complete with open findings}: {name}
 
-**Files processed**: {count}
+**Files processed**: {count} ({unit_count} unit · {integration_count} integration)
 - Created: {count} new test files
 - Updated: {count} existing test files ({rewritten} tests rewritten, {added} tests added, {kept} tests kept)
 **Total tests**: {count} ({todo} parked as `it.todo` pending source decision)
 **All passing**: Yes / No (excluding `it.todo`)
+
+**Per-type breakdown:**
+- Unit: {U_files} files · {U_tests} tests · {U_pass}/{U_tests} passing
+- Integration: {I_files} files · {I_tests} tests · {I_pass}/{I_tests} passing
 
 ### Coverage Impact
 | File | Before | After | Target | Status |

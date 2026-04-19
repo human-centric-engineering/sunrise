@@ -567,6 +567,6 @@ Follow the prompt's file list and behavior requirements — don't add scope beyo
 3. **`.context/testing/mocking.md`** - Dependency mocking strategies
 4. **`.claude/skills/testing/gotchas.md`** - Common pitfalls and how to avoid them
 5. **`.claude/skills/testing/SKILL.md`** - Overall testing workflow and patterns
-6. **`.claude/docs/test-brittle-patterns.md`** - Test-writing anti-patterns to avoid
+6. **`.claude/docs/test-brittle-patterns.md`** - Test-writing anti-patterns. Two sections: general patterns (apply to every test) and integration patterns (apply when writing anything under `tests/integration/**`). Read both; consult the integration section specifically before touching an integration file.
 
 Your ultimate goal is to make the codebase robust, maintainable, and confidence-inspiring through comprehensive, well-designed tests. Every test you write should add value and catch real bugs.

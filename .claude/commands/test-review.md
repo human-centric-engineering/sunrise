@@ -17,6 +17,8 @@ Review existing tests for quality issues with a **confidence-scored diagnostic r
 
 **Parallelism:** 5 specialised Sonnet agents run in parallel, each covering one quality axis across all file pairs in scope. Main (Opus) agent only aggregates and writes the report — does not read source or test files itself.
 
+**Test type:** both unit and integration tests are supported. Type is auto-detected per file from its path (`tests/integration/**` → integration; everything else → unit). Each agent's axis prompt includes type-specific criteria; per-pair type tagging tells the agent which criteria apply to which pair.
+
 **Accept annotations:** `// test-review:accept <issue-type> — <rationale>` in a test file drops any matching finding before it reaches the report. Agents respect these as user overrides. See "Accept annotations" below.
 
 ## Input
@@ -67,10 +69,14 @@ If the first argument IS `pr`:
 
 **If arguments are source files or folders**:
 
-- Map to corresponding test files using project conventions:
-  - `lib/foo/bar.ts` → `tests/unit/lib/foo/bar.test.ts`
-  - `app/api/v1/foo/route.ts` → `tests/unit/app/api/v1/foo/route.test.ts`
-  - For folders, find all test files that correspond to source files in the folder.
+- Map to corresponding test files using project conventions. A source file may have a unit test, an integration test, or both — include every matching test file found:
+  - **Unit**: mirror under `tests/unit/`. Examples:
+    - `lib/foo/bar.ts` → `tests/unit/lib/foo/bar.test.ts`
+    - `app/api/v1/foo/route.ts` → `tests/unit/app/api/v1/foo/route.test.ts`
+  - **Integration**: under `tests/integration/`, with the `app/` prefix stripped for route handlers. Examples:
+    - `app/api/v1/foo/route.ts` → `tests/integration/api/v1/foo/route.test.ts`
+    - `app/api/v1/contact/route.ts` → `tests/integration/api/v1/contact/route.test.ts`
+  - For folders, find all test files (unit AND integration) corresponding to source files in the folder.
 
 **If no arguments** (branch diff mode):
 
@@ -93,9 +99,12 @@ If no test files are found, report "No test files found to review" and stop. In 
 
 Resolve pairs by path only — **do NOT read the files into the main context**.
 
-- For each test file, compute its source counterpart (mirror of `tests/unit/` into source tree; `.test.tsx` → `.tsx`).
+- **Detect test type** from each test path: `tests/integration/**` → integration; everything else → unit.
+- **Compute the source counterpart** per type:
+  - **Unit** (`tests/unit/**`): strip the `tests/unit/` prefix, replace `.test.ts` → `.ts` / `.test.tsx` → `.tsx`.
+  - **Integration** (`tests/integration/**`): strip the `tests/integration/` prefix; if the next segment is `api/`, prepend `app/`; replace `.test.ts` → `.ts`. Example: `tests/integration/api/v1/contact/route.test.ts` → `app/api/v1/contact/route.ts`.
 - Use `Glob` to verify paths exist. If a test file exists but source doesn't, flag it separately ("orphan test — likely rename or deletion"). Keep the orphan in the report but skip agent review.
-- Emit the list: `[{ testFile, sourceFile }, ...]`.
+- Emit the list: `[{ testFile, sourceFile, type: "unit" | "integration" }, ...]`.
 
 ### Step 3: Scope check
 
@@ -115,24 +124,24 @@ Resolve pairs by path only — **do NOT read the files into the main context**.
 ### Step 4: Load project context
 
 - Read `CLAUDE.md` (root) and `.context/testing/patterns.md` for project testing standards.
-- Read `.claude/docs/test-brittle-patterns.md` for the known anti-pattern list.
-- Summarise as a short brief for the agents — do NOT forward full file contents; agents will read what they need themselves.
+- Read `.claude/docs/test-brittle-patterns.md` for the known anti-pattern list. The doc has two sections: `## Patterns` (general — apply to every test) and `## Integration Patterns` (#7–#13 — apply additionally to any pair tagged `type: integration`).
+- Summarise as a short brief for the agents — do NOT forward full file contents; agents will read what they need themselves. If ANY pair is integration-typed, the brief MUST include the integration section headers so agents know to consult them.
 
 ### Step 5: Launch 5 parallel Sonnet review agents
 
 Send a **single message with 5 Agent tool calls** (one per axis) using `model: "sonnet"`. Each agent receives:
 
-- The complete list of `{testFile, sourceFile}` pairs.
+- The complete list of `{testFile, sourceFile, type}` tuples — type is `unit` or `integration`.
 - A brief summary of CLAUDE.md + `.context/testing/` standards.
-- The known-anti-patterns list from `test-brittle-patterns.md`.
-- Their specific review axis (below).
+- The known-anti-patterns list from `test-brittle-patterns.md` — both sections (`## Patterns` and `## Integration Patterns`) when any pair is integration-typed.
+- Their specific review axis (below) — each includes type-specific criteria. Apply general criteria to every pair; apply integration criteria ONLY to pairs tagged `type: integration`.
 - The accept-annotation grammar (so they filter annotated findings before emitting).
 
 **Agent 1: Assertion Quality**
 
 > Read each test file in the list. For each test file, identify assertions that would give false confidence — assertions that pass even if the code under test were deleted, or that fail to name a real contract.
 >
-> Look for:
+> **General (all pairs):**
 >
 > - Mock-proving: assertions that only check what the mock was set up to return, with no transformation or post-condition checked.
 > - Degenerate assertions: `expect(result).toBe(true)` on functions returning structured data; `.toBeDefined()` / `.toBeTruthy()` where the specific value IS the contract; `.toHaveBeenCalled()` without argument shape when args are the contract.
@@ -140,11 +149,19 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > - Missing assertions: tests that run code but never check the result.
 > - `.not.toThrow()` on empty arrow functions — asserts nothing.
 >
-> For each finding, emit confidence 0–100 using the scoring guide below. Do NOT flag legitimate structural assertions (e.g. `expect(result.isPending).toBe(true)` where `isPending` is a boolean field) — score those low or don't emit.
+> **Integration-only (pairs tagged `type: integration`):**
+>
+> - **Status code missing** — test invokes the handler (`POST(...)`, `GET(...)`, etc.) but never asserts on `response.status`. The HTTP status IS part of the contract; body-only assertions let 200/500/etc. drift silently. See integration pattern #7 in `test-brittle-patterns.md`.
+> - **Error envelope drift** — test asserts `{ error: 'string' }` or only `body.error.code` without checking `body.success === false`. Sunrise's error envelope is `{ success: false, error: { code, message, details? } }` — partial checks let shape drift ship. See integration pattern #9.
+> - **Persistence asserted through the response body only** — for POST/PATCH/DELETE tests, flag when the test asserts on `body.data.X` fields that the request body trivially echoes (e.g. `expect(body.data.user.email).toBe(requestBody.email)`) and never reads the DB back. This proves the handler echoed input, not that the write landed. See integration pattern #8.
+>
+> For each finding, emit confidence 0–100 using the scoring guide below. Do NOT flag legitimate structural assertions (e.g. `expect(result.isPending).toBe(true)` where `isPending` is a boolean field, or `expect(body.success).toBe(true)` where `success` is the API envelope field) — score those low or don't emit.
 
 **Agent 2: Coverage Completeness**
 
-> Read each (test, source) pair in the list. For each pair, walk the source file and enumerate:
+> Read each (test, source) pair in the list. For each pair, walk the source file and enumerate contract points; then check whether each has a corresponding test.
+>
+> **General (all pairs):**
 >
 > - `throw` statements and error-returning branches
 > - `catch` blocks and error handlers
@@ -153,20 +170,37 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > - Boundary conditions (empty arrays, null, zero, max length)
 > - Conditional branches with non-trivial behaviour differences
 >
-> Then check whether each has a corresponding test. Flag any untested branches of a contract the source explicitly handles. Ignore defensive branches with no documented contract (e.g. pure paranoia `if` with no observable behaviour difference).
+> **Integration-only (pairs tagged `type: integration`):**
+>
+> - **Auth boundary missing** — if the route uses `withAuth()`, `withAdminAuth()`, or a manual session check, the auth gate IS part of the public contract. Flag missing 401 (unauthenticated) tests and, for role-based routes, missing 403 (wrong role) tests. Public routes are exempt — note that in evidence. See integration pattern #10.
+> - **Rate limiter not exercised** — if the handler calls `checkRateLimit()` or uses a limiter wrapper, flag if there's no 429 path test.
+> - **DB-state unchecked** — for POST/PATCH/DELETE, flag when no test reads the DB back (via Prisma `findUnique`/`findFirst`/`findMany`) after the mutation to verify persistence, or the read-back only covers fields the request trivially dictates (no check of handler-derived fields like `id`, `createdAt`, computed defaults, normalized strings).
+> - **Error response shape drift from `errorResponse()` contract** — flag tests that assert error bodies without matching the full `{ success: false, error: { code, message, details? } }` envelope.
+>
+> Flag any untested branches of a contract the source explicitly handles. Ignore defensive branches with no documented contract (e.g. pure paranoia `if` with no observable behaviour difference).
 
 **Agent 3: Mock Realism**
 
-> Read each (test, source) pair in the list. For each pair, check whether the test's mocks and helpers reflect the real boundary contracts:
+> Read each (test, source) pair in the list. For each pair, check whether the test's mocks and helpers reflect the real boundary contracts.
+>
+> **General (all pairs):**
 >
 > - Flag helpers that re-implement source logic inline rather than importing and calling the real code (the "simulate\*" anti-pattern).
 > - Flag mocks of internal implementation details rather than external boundaries (DB, API, filesystem, auth library).
 > - Flag mocks that drift from the real module's API shape.
 > - Flag tests that mock the code-under-test itself.
+>
+> **Integration-only (pairs tagged `type: integration`):**
+>
+> - **Real `DATABASE_URL` leak** — flag any `new PrismaClient()` instantiation in the test file that bypasses the testcontainer setup, or any test that reads `process.env.DATABASE_URL` directly. Integration tests must route through the testcontainer-aware factory so a misconfigured local run can't write to the dev DB. See integration pattern #13.
+> - **Over-mocking the handler's own dependencies** — flag when an integration test mocks Prisma entirely (defeating the purpose of integration coverage) OR mocks a lib function that's core to the route's behaviour (should be exercised end-to-end). Mocking external boundaries (email sender, LLM provider, third-party HTTP) is fine; mocking internal server code is not.
+> - **Session/auth mocking drift** — flag when `auth.api.getSession()` mocks return shapes that don't match the real better-auth session contract (user id, email, role fields).
 
 **Agent 4: Brittleness & Structure**
 
-> Read each test file in the list. Flag structural issues that make tests likely to fail spuriously or hide regressions:
+> Read each test file in the list. Flag structural issues that make tests likely to fail spuriously or hide regressions.
+>
+> **General (all pairs):**
 >
 > - Time-dependent hardcoded values (`Date.now()`, today's date) without `vi.useFakeTimers`.
 > - Shared mutable state between tests without `beforeEach` reset.
@@ -174,15 +208,28 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > - Mid-test `vi.clearAllMocks()` before `not.toHaveBeenCalled()` — masks earlier calls.
 > - Dead `vi.mock(...)` blocks where no test interacts with the mock.
 > - Tests that mock and then assert on the mock's setup rather than code behaviour.
+>
+> **Integration-only (pairs tagged `type: integration`):**
+>
+> - **Serial test dependency** — flag "should create X" followed by "should update X" that share state across `it()` blocks. A single failure cascades, parallelisation breaks, test names lie about what they verify. Each `it()` must arrange its own fixtures. See integration pattern #12.
+> - **Module-level state not reset between tests** — flag when a test depends on clean state for rate-limiter counters, in-memory caches, singleton Prisma clients, or module-scoped counters, but only calls `vi.clearAllMocks()` in `beforeEach`. `clearAllMocks` does NOT reset module-scoped state. See integration pattern #11.
+> - **Shared fixture pollution** — flag tests that seed global fixtures (users, records) in `beforeAll` but mutate them in individual tests without `beforeEach` cleanup.
 
 **Agent 5: Test-Code Alignment**
 
-> Read each (test, source) pair in the list. Flag mismatches between what tests claim and what they verify:
+> Read each (test, source) pair in the list. Flag mismatches between what tests claim and what they verify.
+>
+> **General (all pairs):**
 >
 > - Test title/comment describes behaviour A; assertion actually checks behaviour B.
 > - Test references mocked dependencies the source no longer uses.
 > - Test asserts on an older source shape (arguments, return type, error codes).
 > - Test name says "should X when Y" but fixture/setup doesn't establish Y.
+>
+> **Integration-only (pairs tagged `type: integration`):**
+>
+> - **Status code mismatch with test name** — test named "should return 400 for invalid input" that never asserts `response.status === 400` (it may only check the body, letting a 500 regression pass).
+> - **Error code drift** — test name references an error code (`USER_NOT_FOUND`, `RATE_LIMIT_EXCEEDED`) that no longer matches what the source throws.
 
 **Shared instructions for all 5 agents:**
 
@@ -208,6 +255,7 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > FINDINGS:
 > - FILE: {test file path}
 >   LINE: {line number}
+>   TYPE: {unit | integration}
 >   CATEGORY: {axis}
 >   CONFIDENCE: {0-100}
 >   ISSUE: {one-line description}
@@ -244,16 +292,16 @@ Use this format:
 
 **Reviewed:** {ISO date}
 **Branch:** {branch} · **HEAD:** {head-short}
-**File pairs reviewed:** {count}
+**File pairs reviewed:** {count} ({unit_count} unit · {integration_count} integration)
 **Findings:** {above-threshold count} (filtered from {total count})
 
-{One-paragraph summary: overall quality, themes that emerged, whether the test suite appears to give real confidence.}
+{One-paragraph summary: overall quality, themes that emerged, whether the test suite appears to give real confidence. If both unit and integration pairs were reviewed, note any type-specific patterns in the findings.}
 
 ## Critical Findings (90–100)
 
 ### 1. {one-line issue}
 
-**File:** `{test path}:{line}`
+**File:** `{test path}:{line}` ({unit | integration})
 **Source:** `{source path}`
 **Category:** {axis}
 **Confidence:** {score}
@@ -413,4 +461,3 @@ Source-level concerns (where the test's problem is really a source problem) cann
 - **No convergence loop.** One review, one report. If you re-run after fixes, it's a new report on new state — not an attempt to converge.
 - **No gate on "production ready".** The report informs shipping decisions; it doesn't block them. `/pre-pr` may surface the report; the human judges.
 - **No per-file prescriptions.** Findings are point-in-file observations. For per-test Keep/Rewrite/Add/Delete planning, use `/test-plan review` on the report (separate command — kept for multi-file coverage work).
-- **No integration test support (v1).** `tests/integration/` has different patterns. Separate review axis later if needed.
