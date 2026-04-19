@@ -86,7 +86,7 @@ vi.mock('@/lib/security/rate-limit', () => ({
 import { prisma } from '@/lib/db/client';
 import { sendEmail } from '@/lib/email/send';
 import { contactLimiter } from '@/lib/security/rate-limit';
-import { mockEmailSuccess, mockEmailFailure } from '@/tests/helpers/email';
+import { mockEmailSuccess, mockEmailFailure, mockEmailError } from '@/tests/helpers/email';
 import { env } from '@/lib/env';
 
 /**
@@ -193,6 +193,7 @@ describe('POST /api/v1/contact', () => {
 
       // Assert: HTTP 200 with the canonical success message
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — body.success is the documented API envelope boolean ({ success: true, data }); structural, not a trivial "it worked" check
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
@@ -262,6 +263,7 @@ describe('POST /api/v1/contact', () => {
       resolveSendEmail({ success: true, status: 'sent', id: 'email-reg-001' });
       await handlerPromise;
 
+      // test-review:accept tobe_true — settled is a test-local flag tracking promise resolution order; structural state check, not a degenerate assertion
       expect(settled).toBe(true);
     });
   });
@@ -284,10 +286,42 @@ describe('POST /api/v1/contact', () => {
 
       // Assert: submission was saved and the user sees success
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms non-fatal path returns the correct envelope shape
       expect(body.success).toBe(true);
 
       // Assert: submission was stored despite email failure
       expect(vi.mocked(prisma.contactSubmission.create)).toHaveBeenCalledOnce();
+    });
+
+    it('should return 200 even when sendEmail throws (network error / exception)', async () => {
+      // Arrange: DB write succeeds; sendEmail throws instead of returning { success: false }
+      // This exercises the catch block at route.ts:149 (emailError catch).
+      const submission = makeMockSubmission();
+      vi.mocked(prisma.contactSubmission.create).mockResolvedValue(submission);
+      mockEmailError(vi.mocked(sendEmail), new Error('Network connection failed'));
+
+      const request = createMockRequest(validPayload);
+
+      // Act
+      const response = await POST(request);
+      const body = await parseResponse<SuccessResponseBody>(response);
+
+      // Assert: the thrown email error is caught and non-fatal — user still sees 200
+      expect(response.status).toBe(200);
+      // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms thrown-email-error path still returns the correct envelope shape
+      expect(body.success).toBe(true);
+      expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
+
+      // Assert: the DB submission was created before the email throw (throw happens after the DB write)
+      expect(vi.mocked(prisma.contactSubmission.create)).toHaveBeenCalledOnce();
+      expect(vi.mocked(prisma.contactSubmission.create)).toHaveBeenCalledWith({
+        data: {
+          name: validPayload.name,
+          email: validPayload.email,
+          subject: validPayload.subject,
+          message: validPayload.message,
+        },
+      });
     });
   });
 
@@ -307,6 +341,7 @@ describe('POST /api/v1/contact', () => {
 
       // Assert: silent 200 to avoid tipping off the bot
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — body.success is the documented API envelope boolean; honeypot path must return the same envelope shape as a real submission
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
@@ -430,6 +465,7 @@ describe('POST /api/v1/contact', () => {
 
         // Assert: handler succeeds
         expect(response.status).toBe(200);
+        // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms missing-email-config path still returns the correct envelope shape
         expect(body.success).toBe(true);
 
         // Assert: submission was stored
