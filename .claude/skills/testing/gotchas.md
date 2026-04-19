@@ -443,6 +443,36 @@ it('skips welcome when verification is enabled', async () => {
 
 ---
 
+### 15. Plan Batch-Table Add Count Can Drift From the Prose Add List
+
+**Problem**: `/test-plan` emits two representations of the work for each batch: a one-row table cell (`Add: 10`) and a prose list (`**Add** (new test cases needed):` followed by bullets). These are generated independently and can disagree — the table cell sometimes rounds up or reflects an earlier draft count. If the test-engineer agent trusts the table header and tries to write exactly that many tests, it will either invent filler tests to hit the number or genuinely overshoot the plan's prescriptions (violating the Add/Rewrite overlap guardrail).
+
+**Solution**: count the prose Add bullets yourself before writing. The prose list — not the table cell — is the authoritative count. If the two disagree, note it in the final "Deviations from the plan" output and implement the prose list. Do NOT invent extra tests to match a higher table number.
+
+```typescript
+// Plan table says: Add: 10
+// Plan prose says:
+//   **Add** (new test cases needed):
+//   - Test 1 — ...
+//   - Test 2 — ...
+//   ... (9 bullets total)
+//
+// ✅ CORRECT — implement 9, note the drift in Deviations
+// ❌ WRONG — invent a 10th test to match the table header
+
+// In the final output summary:
+// "Plan batch-table said 10 Adds; prose Add list enumerated 9.
+//  Implemented 9 per the prose list — the table cell was a minor arithmetic error."
+```
+
+**Why this happens**: the batch table is written in Step 4 of the planner (per-file work instructions) using a summary count that the planner derives before the prose bullets are finalized. Late edits to the prose list don't always propagate back to the table cell. The planner should be fixed, but the test-engineer sees the plan as-is and must treat the prose list as canonical.
+
+**Signal for the planner**: if you're authoring `/test-plan` improvements, add a Step 6 self-check that counts prose `- ` bullets under each `**Add**` heading and asserts it matches the batch table's `Add` column before writing the file. Cheap to enforce at plan-write time; expensive (one agent round-trip) to discover downstream.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing `/test-write plan` Sprint 1 (CSP report endpoint) on `app/api/csp-report/route.ts` during the testing-commands dogfood run. Plan header said `Add: 10`; prose list had 9 distinct scenarios. Agent correctly implemented 9 and flagged the drift.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:
