@@ -80,16 +80,17 @@ The `resolveApiKey()` function in `lib/auth/api-keys.ts` handles:
 
 ## Schema: `AiApiKey`
 
-| Field        | Type        | Description                |
-| ------------ | ----------- | -------------------------- |
-| `userId`     | `String`    | Owner                      |
-| `name`       | `String`    | Admin-friendly label       |
-| `keyHash`    | `String`    | SHA-256 hash (unique)      |
-| `keyPrefix`  | `String`    | First 8 chars for display  |
-| `scopes`     | `String[]`  | Granted scopes             |
-| `lastUsedAt` | `DateTime?` | Last usage timestamp       |
-| `expiresAt`  | `DateTime?` | Expiry (null = never)      |
-| `revokedAt`  | `DateTime?` | Revocation (null = active) |
+| Field          | Type        | Description                                         |
+| -------------- | ----------- | --------------------------------------------------- |
+| `userId`       | `String`    | Owner                                               |
+| `name`         | `String`    | Admin-friendly label                                |
+| `keyHash`      | `String`    | SHA-256 hash (unique)                               |
+| `keyPrefix`    | `String`    | First 8 chars for display                           |
+| `scopes`       | `String[]`  | Granted scopes                                      |
+| `lastUsedAt`   | `DateTime?` | Last usage timestamp                                |
+| `expiresAt`    | `DateTime?` | Expiry (null = never)                               |
+| `revokedAt`    | `DateTime?` | Revocation (null = active)                          |
+| `rateLimitRpm` | `Int?`      | Per-key rate limit (req/min); null = global default |
 
 ## Module Layout
 

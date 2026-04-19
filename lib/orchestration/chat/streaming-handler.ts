@@ -160,12 +160,15 @@ export class StreamingChatHandler {
           // Never log message content
         });
 
-        let guardMode: string = 'log_only';
-        try {
-          const settings = await getOrchestrationSettings();
-          guardMode = settings.inputGuardMode;
-        } catch {
-          // Settings unavailable — fall back to log_only
+        // Agent-level override takes precedence over global setting
+        let guardMode: string = agent.inputGuardMode ?? 'log_only';
+        if (!agent.inputGuardMode) {
+          try {
+            const settings = await getOrchestrationSettings();
+            guardMode = settings.inputGuardMode;
+          } catch {
+            // Settings unavailable — fall back to log_only
+          }
         }
 
         if (guardMode === 'block') {
@@ -229,9 +232,10 @@ export class StreamingChatHandler {
         select: { key: true, value: true },
       });
 
-      // Resolve the model's context window for token-aware truncation
+      // Resolve the context window for token-aware truncation.
+      // Agent-level maxHistoryTokens overrides the model's context window.
       const modelInfo = getModel(agent.model);
-      const contextWindowTokens = modelInfo?.maxContext ?? undefined;
+      const contextWindowTokens = agent.maxHistoryTokens ?? modelInfo?.maxContext ?? undefined;
 
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
@@ -273,6 +277,13 @@ export class StreamingChatHandler {
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
+
+        // Emit thinking indicator before each LLM turn
+        if (iteration === 1) {
+          yield { type: 'status', message: 'Thinking...' };
+        } else {
+          yield { type: 'status', message: 'Processing tool results...' };
+        }
 
         let assistantText = '';
         const toolCalls = new Map<number, LlmToolCall>();
@@ -420,12 +431,15 @@ export class StreamingChatHandler {
                 builtInMatches: outputScan.builtInMatches,
               });
 
-              let outputMode: string = 'log_only';
-              try {
-                const settings = await getOrchestrationSettings();
-                outputMode = settings.outputGuardMode;
-              } catch {
-                // Settings unavailable — fall back to log_only
+              // Agent-level override takes precedence over global setting
+              let outputMode: string = agent.outputGuardMode ?? 'log_only';
+              if (!agent.outputGuardMode) {
+                try {
+                  const settings = await getOrchestrationSettings();
+                  outputMode = settings.outputGuardMode;
+                } catch {
+                  // Settings unavailable — fall back to log_only
+                }
               }
 
               if (outputMode === 'block') {
@@ -446,7 +460,7 @@ export class StreamingChatHandler {
           }
 
           getBreaker(usedSlug).recordSuccess();
-          yield buildDoneEvent(agent.model, usage);
+          yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
           return;
         }
 
@@ -491,7 +505,7 @@ export class StreamingChatHandler {
 
           if (result.skipFollowup) {
             getBreaker(usedSlug).recordSuccess();
-            yield buildDoneEvent(agent.model, usage);
+            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
             return;
           }
 
@@ -563,7 +577,7 @@ export class StreamingChatHandler {
 
           if (anySkipFollowup) {
             getBreaker(usedSlug).recordSuccess();
-            yield buildDoneEvent(agent.model, usage);
+            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
             return;
           }
 
@@ -686,7 +700,8 @@ function errorEvent(code: string, message: string): ChatEvent {
 
 function buildDoneEvent(
   model: string,
-  usage: { inputTokens: number; outputTokens: number } | null
+  usage: { inputTokens: number; outputTokens: number } | null,
+  providerSlug?: string | null
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
@@ -699,5 +714,7 @@ function buildDoneEvent(
       totalTokens: inputTokens + outputTokens,
     },
     costUsd,
+    provider: providerSlug ?? undefined,
+    model,
   };
 }

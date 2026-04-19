@@ -257,20 +257,25 @@ describe('StreamingChatHandler', () => {
 
     const events = await collect(streamChat(baseRequest));
 
-    // Event sequence
+    // Event sequence (status "Thinking..." inserted before LLM turn)
     expect(events[0]).toMatchObject({ type: 'start' });
-    expect(events[1]).toMatchObject({ type: 'content', delta: 'Hello ' });
-    expect(events[2]).toMatchObject({ type: 'content', delta: 'world!' });
-    expect(events[3]).toMatchObject({ type: 'done' });
-    expect(events).toHaveLength(4);
+    expect(events[1]).toMatchObject({ type: 'status', message: 'Thinking...' });
+    expect(events[2]).toMatchObject({ type: 'content', delta: 'Hello ' });
+    expect(events[3]).toMatchObject({ type: 'content', delta: 'world!' });
+    expect(events[4]).toMatchObject({ type: 'done' });
+    expect(events).toHaveLength(5);
 
-    // done event carries correct token totals
-    const done = events[3] as {
+    // done event carries correct token totals + provider/model
+    const done = events[4] as {
       type: 'done';
       tokenUsage: { totalTokens: number };
       costUsd: number;
+      provider?: string;
+      model?: string;
     };
     expect(done.tokenUsage.totalTokens).toBe(15);
+    expect(done.provider).toBe('anthropic');
+    expect(done.model).toBe('claude-sonnet-4-6');
 
     // User message persisted
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
@@ -434,16 +439,18 @@ describe('StreamingChatHandler', () => {
 
     const events = await collect(streamChat(baseRequest));
 
-    // Event sequence
+    // Event sequence (status "Thinking..." inserted before each LLM turn)
     expect(events[0]).toMatchObject({ type: 'start' });
-    expect(events[1]).toMatchObject({ type: 'content', delta: 'Let me check. ' });
-    expect(events[2]).toMatchObject({ type: 'status', message: 'Executing search_knowledge_base' });
-    expect(events[3]).toMatchObject({
+    expect(events[1]).toMatchObject({ type: 'status', message: 'Thinking...' });
+    expect(events[2]).toMatchObject({ type: 'content', delta: 'Let me check. ' });
+    expect(events[3]).toMatchObject({ type: 'status', message: 'Executing search_knowledge_base' });
+    expect(events[4]).toMatchObject({
       type: 'capability_result',
       capabilitySlug: 'search_knowledge_base',
     });
-    expect(events[4]).toMatchObject({ type: 'content', delta: 'Here is the answer.' });
-    expect(events[5]).toMatchObject({ type: 'done' });
+    expect(events[5]).toMatchObject({ type: 'status', message: 'Processing tool results...' });
+    expect(events[6]).toMatchObject({ type: 'content', delta: 'Here is the answer.' });
+    expect(events[7]).toMatchObject({ type: 'done' });
 
     // Dispatcher called with correct args
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(

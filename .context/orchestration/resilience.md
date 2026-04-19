@@ -118,6 +118,22 @@ Dual rate limiting on `POST /chat/stream`:
 
 Both configured in `lib/security/rate-limit.ts` via `SECURITY_CONSTANTS.RATE_LIMIT.LIMITS`.
 
+### Per-Agent Rate Limiting
+
+Agents can have a custom `rateLimitRpm` (nullable Int on `AiAgent`). When set, the chat stream applies a per-agent limit keyed by `${agentId}:${userId}` instead of the global default. When null, the global `chatLimiter` applies.
+
+Created via `createDynamicLimiter(namespace, defaultRpm)` in `lib/security/rate-limit.ts`. The dynamic limiter supports per-key custom RPM overrides.
+
+API keys (`AiApiKey`) also support an optional `rateLimitRpm` field for per-key rate limiting on webhook triggers.
+
+## Per-Agent Guard Mode Override
+
+Both input and output guards support per-agent mode overrides via `AiAgent.inputGuardMode` and `AiAgent.outputGuardMode` (nullable strings). When set, the agent-level mode takes precedence over the global `AiOrchestrationSettings` default. When null, the global setting applies.
+
+Valid modes: `log_only`, `warn_and_continue`, `block`.
+
+Use case: A customer-facing FAQ bot may use `block` mode to prevent any flagged content, while an internal reasoning agent uses `log_only` to avoid false-positive interruptions.
+
 ## SSE Resilience
 
 ### Server-side

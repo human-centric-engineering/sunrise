@@ -63,13 +63,31 @@ Returns `{ processed, succeeded, failed, errors }`.
 
 ### Scheduler Tick (admin-auth required)
 
-`POST /api/v1/admin/orchestration/schedules/tick` — calls `processDueSchedules()`. Designed to be called by Vercel Cron, Railway Cron, or system crontab.
+`POST /api/v1/admin/orchestration/schedules/tick` — calls `processDueSchedules()`. Legacy single-purpose endpoint.
+
+### Unified Maintenance Tick (admin-auth required, **preferred**)
+
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call:
+
+1. `processDueSchedules()` — workflow cron schedules
+2. `processPendingRetries()` — webhook delivery retry queue
+3. `reapZombieExecutions()` — mark stale `running` executions as `failed` (30 min threshold)
+4. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding
+5. `enforceRetentionPolicies()` — delete conversations past per-agent retention window
+
+Each function runs via `Promise.allSettled` — individual failures don't block others. Results are returned per-function.
+
+**Deployment:** Configure one external cron to call this endpoint every 60 seconds:
+
+```bash
+* * * * * curl -s -X POST -H "Authorization: Bearer sk_..." https://your-app/api/v1/admin/orchestration/maintenance/tick
+```
 
 ### Webhook Trigger (API key auth required)
 
 `POST /api/v1/webhooks/trigger/:slug` — starts a workflow execution using the request body as input. Requires a bearer token with the `webhook` scope (or `admin`). Only active workflows can be triggered.
 
-Authentication: `Authorization: Bearer sk_...` header. Create keys with `scopes: ["webhook"]` via `POST /api/v1/user/api-keys`.
+Authentication: `Authorization: Bearer sk_...` header. Create keys with `scopes: ["webhook"]` via `POST /api/v1/user/api-keys`. Per-key rate limiting is supported via the `rateLimitRpm` field on `AiApiKey` — when set, it overrides the global rate limit for that key.
 
 Returns `{ executionId, workflowId, workflowSlug, status: 'pending' }` with status 201.
 

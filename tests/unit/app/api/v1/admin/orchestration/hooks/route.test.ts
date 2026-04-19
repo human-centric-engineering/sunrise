@@ -47,6 +47,7 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET as ListHooks, POST as CreateHook } from '@/app/api/v1/admin/orchestration/hooks/route';
 import {
@@ -120,6 +121,11 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset rate limiter to allow-by-default after each test
+  vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+  vi.mocked(createRateLimitResponse).mockReturnValue(
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  );
 });
 
 describe('GET /hooks', () => {
@@ -279,6 +285,79 @@ describe('PATCH /hooks/:id', () => {
       })
     );
   });
+
+  it('returns 404 when hook does not exist on PATCH', async () => {
+    // Arrange: hook not found
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(null);
+
+    // Act
+    const response = await UpdateHook(makePatchRequest({ name: 'Updated' }), makeParams(HOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(404);
+    expect(prisma.aiEventHook.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for invalid eventType in PATCH body', async () => {
+    // Arrange: hook exists but body contains invalid eventType
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+
+    // Act
+    const response = await UpdateHook(
+      makePatchRequest({ eventType: 'not.a.valid.event' }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for invalid webhook URL in PATCH body', async () => {
+    // Arrange: hook exists but action contains a bad URL
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+
+    // Act
+    const response = await UpdateHook(
+      makePatchRequest({ action: { type: 'webhook', url: 'not-a-url' } }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for invalid hook id on PATCH', async () => {
+    // Arrange: non-CUID id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act
+    const response = await UpdateHook(makePatchRequest({ name: 'Updated' }), makeParams('bad-id'));
+
+    // Assert
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 429 when rate limited on PATCH', async () => {
+    // Arrange: rate limit exceeded
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    } as never);
+
+    // Act
+    const response = await UpdateHook(makePatchRequest({ name: 'Updated' }), makeParams(HOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(429);
+  });
 });
 
 describe('DELETE /hooks/:id', () => {
@@ -300,5 +379,33 @@ describe('DELETE /hooks/:id', () => {
 
     const response = await DeleteHook(makeDeleteRequest(), makeParams(HOOK_ID));
     expect(response.status).toBe(404);
+  });
+
+  it('returns 400 for invalid hook id on DELETE', async () => {
+    // Arrange: non-CUID id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act
+    const response = await DeleteHook(makeDeleteRequest(), makeParams('not-valid'));
+
+    // Assert
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 429 when rate limited on DELETE', async () => {
+    // Arrange: rate limit exceeded
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    } as never);
+
+    // Act
+    const response = await DeleteHook(makeDeleteRequest(), makeParams(HOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(429);
   });
 });

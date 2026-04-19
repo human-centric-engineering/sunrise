@@ -21,7 +21,7 @@ import { listConversationsQuerySchema } from '@/lib/validations/orchestration';
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, agentId, userId, isActive, q, messageSearch, dateFrom, dateTo } =
+  const { page, limit, agentId, userId, isActive, q, messageSearch, tag, dateFrom, dateTo } =
     validateQueryParams(searchParams, listConversationsQuerySchema);
   const skip = (page - 1) * limit;
 
@@ -32,6 +32,9 @@ export const GET = withAdminAuth(async (request, _session) => {
   if (q) where.title = { contains: q, mode: 'insensitive' };
   if (messageSearch) {
     where.messages = { some: { content: { contains: messageSearch, mode: 'insensitive' } } };
+  }
+  if (tag) {
+    where.tags = { has: tag };
   }
   if (dateFrom || dateTo) {
     where.updatedAt = {

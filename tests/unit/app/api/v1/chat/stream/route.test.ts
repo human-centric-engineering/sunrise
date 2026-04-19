@@ -35,6 +35,10 @@ vi.mock('@/lib/db/client', () => ({
     aiAgent: {
       findFirst: vi.fn(),
     },
+    aiAgentInviteToken: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
+    },
   },
 }));
 
@@ -93,6 +97,7 @@ import { auth } from '@/lib/auth/config';
 import {
   apiLimiter,
   consumerChatLimiter,
+  agentChatLimiter,
   createRateLimitResponse,
 } from '@/lib/security/rate-limit';
 import { streamChat } from '@/lib/orchestration/chat';
@@ -440,6 +445,202 @@ describe('POST /api/v1/chat/stream', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
       expect(streamChat).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6. Per-agent rate limiting
+  // ---------------------------------------------------------------------------
+
+  describe('Per-agent rate limiting', () => {
+    it('should return 429 when the per-agent rate limit is exceeded', async () => {
+      // Arrange: IP and user limits pass but agent-level limit fails
+      vi.mocked(agentChatLimiter.check).mockReturnValue(makeRateLimitResult(false, 0));
+      const request = createMockRequest(validPayload);
+
+      // Act
+      const response = await POST(request);
+
+      // Assert
+      expect(response.status).toBe(429);
+      expect(createRateLimitResponse).toHaveBeenCalledOnce();
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('should pass agent rateLimitRpm to the per-agent limiter', async () => {
+      // Arrange: agent has a custom RPM limit
+      const agentWithRateLimit = { ...mockPublicAgent, rateLimitRpm: 5 };
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(agentWithRateLimit as never);
+      vi.mocked(agentChatLimiter.check).mockReturnValue(makeRateLimitResult(true));
+      const request = createMockRequest(validPayload);
+
+      // Act
+      await POST(request);
+
+      // Assert: agent limiter called with agent:user key and custom RPM
+      expect(agentChatLimiter.check).toHaveBeenCalledWith(
+        `${agentWithRateLimit.id}:user_test123`,
+        5
+      );
+      expect(streamChat).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. Invite-only agent access control
+  // ---------------------------------------------------------------------------
+
+  describe('Invite-only agent', () => {
+    const mockInviteOnlyAgent = {
+      id: 'agent-002',
+      slug: 'private-bot',
+      visibility: 'invite_only',
+      rateLimitRpm: null,
+    };
+
+    beforeEach(() => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockInviteOnlyAgent as never);
+    });
+
+    it('should return 403 when invite token is missing for invite_only agent', async () => {
+      // Arrange: no inviteToken in payload
+      const request = createMockRequest({ ...validPayload, agentSlug: 'private-bot' });
+
+      // Act
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponseBody>(response);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('should return 403 when invite token is invalid or revoked', async () => {
+      // Arrange: token not found in DB
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue(null);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'bad-token',
+      });
+
+      // Act
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponseBody>(response);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('should return 403 when invite token has expired', async () => {
+      // Arrange: token exists but expiresAt is in the past
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+        id: 'tok-1',
+        agentId: 'agent-002',
+        token: 'expired-token',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() - 1000), // expired 1 second ago
+        maxUses: null,
+        useCount: 0,
+      } as never);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'expired-token',
+      });
+
+      // Act
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponseBody>(response);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('should return 403 when invite token has reached its usage limit', async () => {
+      // Arrange: token has maxUses=5 and useCount=5
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+        id: 'tok-2',
+        agentId: 'agent-002',
+        token: 'maxed-token',
+        revokedAt: null,
+        expiresAt: null,
+        maxUses: 5,
+        useCount: 5,
+      } as never);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'maxed-token',
+      });
+
+      // Act
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponseBody>(response);
+
+      // Assert
+      expect(response.status).toBe(403);
+      expect(body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('should allow access and increment use count with a valid invite token', async () => {
+      // Arrange: valid token, not expired, not maxed
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+        id: 'tok-3',
+        agentId: 'agent-002',
+        token: 'valid-token',
+        revokedAt: null,
+        expiresAt: null,
+        maxUses: 10,
+        useCount: 3,
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.update).mockResolvedValue({} as never);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'valid-token',
+      });
+
+      // Act
+      const response = await POST(request);
+
+      // Assert: stream started and use count incremented
+      expect(response.status).toBe(200);
+      expect(sseResponse).toHaveBeenCalledOnce();
+      expect(prisma.aiAgentInviteToken.update).toHaveBeenCalledWith({
+        where: { id: 'tok-3' },
+        data: { useCount: { increment: 1 } },
+      });
+    });
+
+    it('should allow access with unlimited token (maxUses null)', async () => {
+      // Arrange: valid token with no use cap
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+        id: 'tok-4',
+        agentId: 'agent-002',
+        token: 'unlimited-token',
+        revokedAt: null,
+        expiresAt: null,
+        maxUses: null,
+        useCount: 9999,
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.update).mockResolvedValue({} as never);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'unlimited-token',
+      });
+
+      // Act
+      const response = await POST(request);
+
+      // Assert: maxUses=null means no cap — stream proceeds
+      expect(response.status).toBe(200);
+      expect(sseResponse).toHaveBeenCalledOnce();
     });
   });
 });

@@ -172,6 +172,10 @@ model AiAgent {
   topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
   brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
   rateLimitRpm              Int?     // per-agent rate limit (requests per minute); null = use global default
+  inputGuardMode            String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
+  outputGuardMode           String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
+  maxHistoryTokens          Int?     // override token-aware history truncation; null = use model context window
+  retentionDays             Int?     // auto-delete conversations older than N days; null = keep forever
   visibility                String   @default("internal") // "internal" | "public" | "invite_only"
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
@@ -375,6 +379,7 @@ model AiConversation {
   metadata              Json?
   summary               String?   @db.Text
   summaryUpToMessageId  String?
+  tags                  String[]  @default([])
   isActive              Boolean   @default(true)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt

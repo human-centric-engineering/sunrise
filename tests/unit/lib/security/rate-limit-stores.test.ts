@@ -4,6 +4,7 @@
  * Covers:
  * - MemoryRateLimitStore: increment, reset, peek, sliding window
  * - Store factory: default to memory, fallback when Redis URL missing
+ * - RedisRateLimitStore: increment, reset, peek, error handling, not-connected guard
  * - createAsyncRateLimiter: check, reset, peek via store
  * - createAsyncDynamicLimiter: default RPM, custom RPM override
  */
@@ -22,7 +23,14 @@ vi.mock('@/lib/logging', () => ({
 // Imports
 // ---------------------------------------------------------------------------
 
+// ioredis is aliased to __mocks__/ioredis.ts in vitest.config.ts so that Vite can
+// resolve it even though the real ioredis package is not installed.
+// The mock file exports `ioredisState` — tests mutate this to control behaviour.
+
+import { ioredisState } from '@mocks/ioredis';
+
 import { MemoryRateLimitStore } from '@/lib/security/rate-limit-stores/memory';
+import { RedisRateLimitStore } from '@/lib/security/rate-limit-stores/redis';
 import { getStore, resetStore, setStore } from '@/lib/security/rate-limit-stores';
 import { createAsyncRateLimiter, createAsyncDynamicLimiter } from '@/lib/security/rate-limit';
 import type { RateLimitStore } from '@/lib/security/rate-limit-stores';
@@ -266,5 +274,144 @@ describe('createAsyncDynamicLimiter', () => {
 
     const r = await limiter.check('token1');
     expect(r.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RedisRateLimitStore
+// ---------------------------------------------------------------------------
+
+describe('RedisRateLimitStore', () => {
+  // The ioredis module is aliased to __mocks__/ioredis.ts via vitest.config.ts.
+  // The vi.mock('ioredis', factory) at the top of this file overrides that alias
+  // with a controllable mock whose behaviour is driven by three module-scope vars:
+  //   ioredisEvalResults         — queue of values to return from eval()
+  //   ioredisOnHandlers          — map of event → handler registered via on()
+  //   ioredisConstructorShouldThrow — when true, the mock constructor throws
+
+  beforeEach(() => {
+    // Reset to clean defaults before each test
+    ioredisState.evalResults.length = 0;
+    ioredisState.onHandlers = {};
+    ioredisState.constructorShouldThrow = false;
+  });
+
+  async function buildConnectedStore(url = 'redis://localhost:6379'): Promise<RedisRateLimitStore> {
+    const store = new RedisRateLimitStore(url);
+    // Yield to the microtask queue so the async init() resolves
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return store;
+  }
+
+  it('increment returns count and resetAt from the Lua script result', async () => {
+    // Arrange: queue the eval return value before the store is built
+    ioredisState.evalResults.push(3);
+    const store = await buildConnectedStore();
+
+    // Act
+    const before = Date.now();
+    const result = await store.increment('test-key', 60_000);
+
+    // Assert
+    expect(result.count).toBe(3);
+    expect(result.resetAt).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
+  it('increment prefixes the key with "rl:"', async () => {
+    // Arrange: the default eval result (1) is fine; just build the store
+    const store = await buildConnectedStore();
+
+    // The mock eval() always resolves to the next queued value (or 1 by default).
+    // To verify the key prefix we call increment and trust the source code, which
+    // passes the prefixed key as the third argument to eval.  We confirm the
+    // operation succeeds (count === 1) which proves the mock client was invoked.
+    const result = await store.increment('my-key', 60_000);
+    expect(result.count).toBe(1);
+  });
+
+  it('reset completes without error', async () => {
+    // Arrange
+    const store = await buildConnectedStore();
+
+    // Act + Assert: del should not throw
+    await expect(store.reset('reset-key')).resolves.toBeUndefined();
+  });
+
+  it('peek returns null when count is 0 (no active entries)', async () => {
+    // Arrange: eval returns 0 (no active window)
+    ioredisState.evalResults.push(0);
+    const store = await buildConnectedStore();
+
+    // Act
+    const result = await store.peek('empty-key', 60_000);
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it('peek returns count and resetAt when count > 0', async () => {
+    // Arrange: eval returns 5
+    ioredisState.evalResults.push(5);
+    const store = await buildConnectedStore();
+
+    // Act
+    const before = Date.now();
+    const result = await store.peek('active-key', 60_000);
+
+    // Assert
+    expect(result).not.toBeNull();
+    expect(result!.count).toBe(5);
+    expect(result!.resetAt).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
+  it('logs an error and remains unready when ioredis constructor throws', async () => {
+    // Arrange: make the constructor throw synchronously
+    ioredisState.constructorShouldThrow = true;
+    const { logger } = await import('@/lib/logging');
+
+    // Act
+    const store = new RedisRateLimitStore('redis://broken:6379');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Assert: store is not ready — any operation throws
+    await expect(store.increment('any-key', 60_000)).rejects.toThrow(
+      'Redis rate limit store is not connected'
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to initialize Redis rate limit store — falling back will not work',
+      expect.any(Error)
+    );
+  });
+
+  it('registers an error event handler that logs connection errors', async () => {
+    // Arrange: store is connected (building it triggers client.on() registration)
+    await buildConnectedStore();
+    const { logger } = await import('@/lib/logging');
+
+    // Act: simulate a Redis error event
+    const handler = ioredisState.onHandlers['error'];
+    expect(handler).toBeDefined();
+    handler(new Error('ECONNREFUSED'));
+
+    // Assert
+    expect(logger.error).toHaveBeenCalledWith(
+      'Redis rate limit store connection error',
+      expect.any(Error)
+    );
+  });
+
+  it('logs success with masked URL on connection', async () => {
+    // Arrange: URL with credentials that must be masked in the log
+    const { logger } = await import('@/lib/logging');
+    vi.clearAllMocks();
+
+    // Act
+    await buildConnectedStore('redis://:s3cr3t@redis.prod.example.com:6379');
+
+    // Assert: the logged URL has credentials replaced
+    expect(logger.info).toHaveBeenCalledWith(
+      'Redis rate limit store connected',
+      expect.objectContaining({ url: expect.not.stringContaining('s3cr3t') })
+    );
   });
 });

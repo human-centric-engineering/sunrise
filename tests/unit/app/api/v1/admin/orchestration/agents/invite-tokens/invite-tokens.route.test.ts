@@ -140,6 +140,27 @@ describe('Invite Token Endpoints', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('returns 429 when rate limited on GET', async () => {
+      // Arrange: rate limit exceeded
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await GET(makeGetRequest(), makeAgentParams());
+
+      expect(res.status).toBe(429);
+    });
+
+    it('returns 400 for invalid agent id (non-CUID) on GET', async () => {
+      // Arrange: non-CUID agent id
+      const res = await GET(makeGetRequest(), { params: Promise.resolve({ id: 'bad-id' }) });
+
+      expect(res.status).toBe(400);
+    });
   });
 
   // ── POST — Create token ────────────────────────────────────────────────
@@ -187,6 +208,51 @@ describe('Invite Token Endpoints', () => {
       const res = await POST(makePostRequest({}), makeAgentParams());
 
       expect(res.status).toBe(404);
+    });
+
+    it('returns 429 when rate limited on POST', async () => {
+      // Arrange: rate limit exceeded
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await POST(makePostRequest({}), makeAgentParams());
+
+      expect(res.status).toBe(429);
+    });
+
+    it('returns 400 for invalid agent id (non-CUID) on POST', async () => {
+      // Arrange: non-CUID agent id
+      const res = await POST(makePostRequest({}), { params: Promise.resolve({ id: 'bad-id' }) });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('creates a token with expiry date', async () => {
+      // Arrange: token with expiresAt
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        id: AGENT_ID,
+        visibility: 'invite_only',
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.create).mockResolvedValue({
+        id: TOKEN_ID,
+        token: 'tok_exp123',
+        label: null,
+        maxUses: null,
+        useCount: 0,
+        expiresAt: new Date(expiresAt),
+        createdAt: new Date(),
+      } as never);
+
+      const res = await POST(makePostRequest({ expiresAt }), makeAgentParams());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(201);
+      expect(json.data.token.expiresAt).toBeDefined();
     });
   });
 

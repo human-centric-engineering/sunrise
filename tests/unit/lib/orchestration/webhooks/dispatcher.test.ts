@@ -279,4 +279,125 @@ describe('processPendingRetries', () => {
     expect(count).toBe(2);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('queries for failed deliveries past their nextRetryAt with attempts < MAX', async () => {
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
+
+    await processPendingRetries();
+
+    expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'failed',
+          attempts: { lt: 3 },
+        }),
+      })
+    );
+  });
+});
+
+// ─── Delivery failure / retry exhaustion ────────────────────────────────────
+
+describe('delivery failure behaviour', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue(makeDelivery() as never);
+    vi.mocked(prisma.aiWebhookDelivery.update).mockResolvedValue(makeDelivery() as never);
+  });
+
+  it('marks delivery as exhausted when attempts reach MAX_ATTEMPTS', async () => {
+    // Arrange: delivery already at attempt 2 (next attempt = 3 = MAX)
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 2 }) as never
+    );
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'exhausted',
+        }),
+      })
+    );
+  });
+
+  it('marks delivery as failed (not exhausted) on first failure', async () => {
+    // Arrange: fresh delivery (0 attempts)
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 0 }) as never
+    );
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'failed',
+        }),
+      })
+    );
+  });
+
+  it('skips update gracefully when delivery record is gone after failure', async () => {
+    // Arrange: findUnique returns null after the fetch fails
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(null);
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    // Should not throw
+    await expect(
+      dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' })
+    ).resolves.toBeUndefined();
+  });
+
+  it('logs top-level error when prisma subscription query throws', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockRejectedValue(
+      new Error('DB connection lost')
+    );
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'a' });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'Webhook dispatch error',
+      expect.objectContaining({ error: 'DB connection lost' })
+    );
+  });
+
+  it('records lastResponseCode on non-ok response', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 0 }) as never
+    );
+    mockFetch.mockResolvedValue({ ok: false, status: 422 });
+
+    await dispatchWebhookEvent('budget_exceeded', {});
+
+    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lastResponseCode: 422 }),
+      })
+    );
+  });
+
+  it('records AbortError (timeout) as string error message', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 0 }) as never
+    );
+    // Simulate abort from timeout
+    const abortErr = new DOMException('The operation was aborted.', 'AbortError');
+    mockFetch.mockRejectedValue(abortErr);
+
+    await dispatchWebhookEvent('budget_exceeded', {});
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Webhook delivery failed',
+      expect.objectContaining({ error: expect.stringContaining('aborted') })
+    );
+  });
 });

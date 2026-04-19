@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     $executeRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -20,6 +21,8 @@ vi.mock('@/lib/logging', () => ({
   logger: {
     debug: vi.fn(),
     warn: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
@@ -28,7 +31,10 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
 import { logger } from '@/lib/logging';
-import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
+import {
+  queueMessageEmbedding,
+  backfillMissingEmbeddings,
+} from '@/lib/orchestration/chat/message-embedder';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -104,5 +110,46 @@ describe('queueMessageEmbedding', () => {
         expect.anything()
       );
     });
+  });
+});
+
+describe('backfillMissingEmbeddings', () => {
+  it('returns zero when no messages are missing embeddings', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+
+    const result = await backfillMissingEmbeddings();
+
+    expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('processes messages missing embeddings', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'msg-10', content: 'This is a test message that needs embedding' },
+      { id: 'msg-11', content: 'Another message that also needs embedding' },
+    ]);
+
+    const result = await backfillMissingEmbeddings();
+
+    expect(result).toEqual({ processed: 2, failed: 0 });
+    expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts failures without stopping the batch', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'msg-10', content: 'Good message that will embed fine' },
+      { id: 'msg-11', content: 'Bad message that will fail embedding' },
+    ]);
+    vi.mocked(prisma.$executeRawUnsafe)
+      .mockResolvedValueOnce(1)
+      .mockRejectedValueOnce(new Error('Embedding provider down'));
+
+    const result = await backfillMissingEmbeddings();
+
+    expect(result).toEqual({ processed: 1, failed: 1 });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Embedding backfill failed for message',
+      expect.objectContaining({ messageId: 'msg-11' })
+    );
   });
 });

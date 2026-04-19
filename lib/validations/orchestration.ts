@@ -110,6 +110,23 @@ export const createAgentSchema = z.object({
     .nullable()
     .optional(),
 
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z
+    .number()
+    .int('Max history tokens must be an integer')
+    .min(1000, 'Max history tokens must be at least 1000')
+    .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  retentionDays: z
+    .number()
+    .int('Retention days must be an integer')
+    .min(1, 'Retention days must be at least 1')
+    .max(3650, 'Retention days must be at most 3650')
+    .nullable()
+    .optional(),
+
   visibility: agentVisibilitySchema.default('internal'),
 
   isActive: z.boolean().default(true),
@@ -187,6 +204,23 @@ export const updateAgentSchema = z.object({
     .int('Rate limit must be an integer')
     .min(1, 'Rate limit must be at least 1 RPM')
     .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
+
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z
+    .number()
+    .int('Max history tokens must be an integer')
+    .min(1000, 'Max history tokens must be at least 1000')
+    .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  retentionDays: z
+    .number()
+    .int('Retention days must be an integer')
+    .min(1, 'Retention days must be at least 1')
+    .max(3650, 'Retention days must be at most 3650')
     .nullable()
     .optional(),
 
@@ -1109,10 +1143,19 @@ export const listConversationsQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().min(1).max(200).optional(),
   /** Full-text search across message content (case-insensitive). */
   messageSearch: z.string().trim().min(1).max(500).optional(),
+  /** Filter by tag (exact match on any tag in the array). */
+  tag: z.string().trim().min(1).max(100).optional(),
   /** ISO 8601 date — conversations updated on or after this date. */
   dateFrom: z.string().datetime().optional(),
   /** ISO 8601 date — conversations updated on or before this date. */
   dateTo: z.string().datetime().optional(),
+});
+
+/** Update conversation schema (PATCH /admin/orchestration/conversations/[id]). */
+export const updateConversationSchema = z.object({
+  title: z.string().min(1).max(200).trim().optional(),
+  tags: z.array(z.string().trim().min(1).max(100)).max(20, 'At most 20 tags').optional(),
+  isActive: z.boolean().optional(),
 });
 
 /** Export format for conversation export endpoint. */
@@ -1645,6 +1688,7 @@ export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchem
 export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+export type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
 export type ConversationExportQuery = z.infer<typeof conversationExportQuerySchema>;
 export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;
 export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;

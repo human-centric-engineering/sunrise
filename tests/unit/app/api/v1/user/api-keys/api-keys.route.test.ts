@@ -127,12 +127,40 @@ describe('API Key Endpoints', () => {
       expect(json.data.keys[0].name).toBe('My CI Key');
     });
 
+    it('returns empty list when user has no keys', async () => {
+      // Arrange: no keys
+      vi.mocked(prisma.aiApiKey.findMany).mockResolvedValue([]);
+
+      // Act
+      const res = await GET(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      // Assert
+      expect(res.status).toBe(200);
+      expect(json.data.keys).toHaveLength(0);
+    });
+
     it('rejects unauthenticated requests', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
       const res = await GET(makeGetRequest());
 
       expect(res.status).toBe(401);
+    });
+
+    it('returns 429 when rate limited on GET', async () => {
+      // Arrange: rate limit exceeded
+      vi.mocked(apiLimiter.check).mockReturnValue({
+        success: false,
+        limit: 20,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await GET(makeGetRequest());
+
+      expect(res.status).toBe(429);
+      expect(prisma.aiApiKey.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -190,6 +218,71 @@ describe('API Key Endpoints', () => {
       const res = await POST(makePostRequest({ name: 'Admin Key', scopes: ['admin'] }));
 
       expect(res.status).toBe(201);
+    });
+
+    it('creates a key with an expiry date when expiresAt is provided', async () => {
+      // Arrange: key with future expiry
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      vi.mocked(prisma.aiApiKey.create).mockResolvedValue({
+        id: KEY_ID,
+        name: 'Expiring Key',
+        keyPrefix: 'sk_test1',
+        scopes: ['chat'],
+        expiresAt: new Date(expiresAt),
+        createdAt: new Date(),
+      } as never);
+
+      // Act
+      const res = await POST(
+        makePostRequest({ name: 'Expiring Key', scopes: ['chat'], expiresAt })
+      );
+      const json = JSON.parse(await res.text());
+
+      // Assert: expiry passed to Prisma
+      expect(res.status).toBe(201);
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ expiresAt: new Date(expiresAt) }),
+        })
+      );
+      expect(json.data.key.rawKey).toMatch(/^sk_/);
+    });
+
+    it('creates a key without expiry when expiresAt is omitted', async () => {
+      // Arrange
+      vi.mocked(prisma.aiApiKey.create).mockResolvedValue({
+        id: KEY_ID,
+        name: 'Permanent Key',
+        keyPrefix: 'sk_test1',
+        scopes: ['chat'],
+        expiresAt: null,
+        createdAt: new Date(),
+      } as never);
+
+      // Act
+      await POST(makePostRequest({ name: 'Permanent Key', scopes: ['chat'] }));
+
+      // Assert: expiresAt is null
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ expiresAt: null }),
+        })
+      );
+    });
+
+    it('returns 429 when rate limited on POST', async () => {
+      // Arrange: rate limit exceeded
+      vi.mocked(apiLimiter.check).mockReturnValue({
+        success: false,
+        limit: 20,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await POST(makePostRequest({ name: 'My Key', scopes: ['chat'] }));
+
+      expect(res.status).toBe(429);
+      expect(prisma.aiApiKey.create).not.toHaveBeenCalled();
     });
   });
 

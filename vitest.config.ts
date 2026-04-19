@@ -61,6 +61,12 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './'),
+      // ioredis is an optional peer dependency not installed in this project.
+      // Aliasing it to the manual mock stub allows RedisRateLimitStore to be
+      // imported in unit tests without a real Redis connection.
+      ioredis: path.resolve(__dirname, './__mocks__/ioredis.ts'),
+      // Allow tests to import mock helpers via @mocks/ alias
+      '@mocks': path.resolve(__dirname, './__mocks__'),
     },
   },
 });

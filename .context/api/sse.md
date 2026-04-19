@@ -29,6 +29,10 @@ interface SseResponseOptions {
 
 Each yielded event must have a `type: string` — it becomes the SSE `event:` line and the whole object (including `type`) is JSON-encoded as the `data:` payload.
 
+## Event Type Sanitization
+
+The `event.type` is validated against `/^[a-z0-9_]+$/i` before being written to the SSE `event:` line. If it contains characters outside this set (e.g. newlines, colons, or other injection vectors), it is replaced with `unknown`. This prevents SSE frame injection via crafted event types — a malicious `type` containing `\nevent: spoofed\ndata: ...` would be caught and neutralized.
+
 ## Framing Contract
 
 One SSE frame per event:

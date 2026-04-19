@@ -35,10 +35,22 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+vi.mock('@/lib/security/rate-limit', () => ({
+  adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { adminLimiter } from '@/lib/security/rate-limit';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET as ListVersions } from '@/app/api/v1/admin/orchestration/agents/[id]/versions/route';
 import {
@@ -109,6 +121,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset rate limiter to allow-by-default after each test
+  vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
 });
 
 describe('GET /agents/:id/versions (list)', () => {
@@ -182,6 +196,30 @@ describe('GET /agents/:id/versions/:versionId (detail)', () => {
     const data = await parseJson<{ data: { snapshot: Record<string, unknown> } }>(response);
     expect(data.data.snapshot.systemInstructions).toBe('old instructions');
   });
+
+  it('returns 400 for invalid agent id on GET detail', async () => {
+    // Arrange: non-CUID agent id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GetVersion(
+      makeDetailRequest('bad-id', VERSION_ID),
+      makeDetailParams('bad-id', VERSION_ID)
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for invalid version id on GET detail', async () => {
+    // Arrange: non-CUID version id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GetVersion(
+      makeDetailRequest(AGENT_ID, 'bad-version-id'),
+      makeDetailParams(AGENT_ID, 'bad-version-id')
+    );
+
+    expect(response.status).toBe(400);
+  });
 });
 
 describe('POST /agents/:id/versions/:versionId (restore)', () => {
@@ -249,5 +287,119 @@ describe('POST /agents/:id/versions/:versionId (restore)', () => {
 
     // Verify transaction was called
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 400 when version snapshot is malformed', async () => {
+    // Arrange: snapshot is missing required 'model' field
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: AGENT_ID,
+      systemInstructions: 'current',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      fallbackProviders: [],
+      temperature: null,
+      maxTokens: null,
+      topicBoundaries: [],
+      brandVoiceInstructions: null,
+      metadata: null,
+      knowledgeCategories: [],
+      rateLimitRpm: null,
+      visibility: 'internal',
+    } as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
+      makeVersion({
+        snapshot: { /* missing model and provider */ systemInstructions: 'old' },
+      }) as never
+    );
+
+    const response = await RestoreVersion(
+      makeDetailRequest(AGENT_ID, VERSION_ID),
+      makeDetailParams(AGENT_ID, VERSION_ID)
+    );
+
+    expect(response.status).toBe(400);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when rate limited on POST restore', async () => {
+    // Arrange: rate limit exceeded
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    } as never);
+
+    const response = await RestoreVersion(
+      makeDetailRequest(AGENT_ID, VERSION_ID),
+      makeDetailParams(AGENT_ID, VERSION_ID)
+    );
+
+    expect(response.status).toBe(429);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for invalid agent id on POST restore', async () => {
+    // Arrange: non-CUID agent id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await RestoreVersion(
+      makeDetailRequest('bad-agent', VERSION_ID),
+      makeDetailParams('bad-agent', VERSION_ID)
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for invalid version id on POST restore', async () => {
+    // Arrange: non-CUID version id
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await RestoreVersion(
+      makeDetailRequest(AGENT_ID, 'bad-version'),
+      makeDetailParams(AGENT_ID, 'bad-version')
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it('uses version number 1 when no prior versions exist (lastVersion is null)', async () => {
+    // Arrange: no prior versions — nextVersion should be 1
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique)
+      .mockResolvedValueOnce({
+        id: AGENT_ID,
+        systemInstructions: 'current',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        fallbackProviders: [],
+        temperature: null,
+        maxTokens: null,
+        topicBoundaries: [],
+        brandVoiceInstructions: null,
+        metadata: null,
+        knowledgeCategories: [],
+        rateLimitRpm: null,
+        visibility: 'internal',
+      } as never)
+      .mockResolvedValueOnce({ id: AGENT_ID } as never);
+
+    vi.mocked(prisma.aiAgentVersion.findFirst)
+      .mockResolvedValueOnce(makeVersion() as never) // version lookup
+      .mockResolvedValueOnce(null); // lastVersion: no prior versions
+
+    vi.mocked(prisma.$transaction).mockResolvedValue([{}, {}] as never);
+
+    const response = await RestoreVersion(
+      makeDetailRequest(AGENT_ID, VERSION_ID),
+      makeDetailParams(AGENT_ID, VERSION_ID)
+    );
+    expect(response.status).toBe(200);
+
+    const data = await parseJson<{ data: { newVersion: number } }>(response);
+    // nextVersion = (null?.version ?? 0) + 1 = 1
+    expect(data.data.newVersion).toBe(1);
   });
 });

@@ -155,6 +155,27 @@ describe('Analytics API', () => {
       expect(res.status).toBe(200);
       expect(json.data.questions).toHaveLength(1);
     });
+
+    it('rejects unauthenticated requests', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+      const res = await getUnanswered(makeGetRequest());
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 429 when rate limited', async () => {
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await getUnanswered(makeGetRequest());
+
+      expect(res.status).toBe(429);
+    });
   });
 
   // ── Engagement Endpoint ─────────────────────────────────────────────────
@@ -195,6 +216,48 @@ describe('Analytics API', () => {
       expect(json.data.gaps).toHaveLength(1);
       expect(json.data.gaps[0].topic).toBe('Refunds');
       expect(json.data.gaps[0].gapRatio).toBe(0.7);
+    });
+
+    it('returns empty array when no content gaps', async () => {
+      // Arrange: all topics answered well
+      vi.mocked(getContentGaps).mockResolvedValue([]);
+
+      const res = await getGaps(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.gaps).toHaveLength(0);
+    });
+
+    it('rejects unauthenticated requests', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+      const res = await getGaps(makeGetRequest());
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 429 when rate limited', async () => {
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await getGaps(makeGetRequest());
+
+      expect(res.status).toBe(429);
+    });
+
+    it('passes agentId query param to service', async () => {
+      vi.mocked(getContentGaps).mockResolvedValue([]);
+
+      await getGaps(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
+
+      expect(getContentGaps).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+      );
     });
   });
 

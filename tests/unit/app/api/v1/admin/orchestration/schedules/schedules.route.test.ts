@@ -325,5 +325,54 @@ describe('Schedule CRUD API', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('returns 429 when rate limited', async () => {
+      // Arrange: rate limit exceeded
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await tickScheduler(makePostRequest({}));
+
+      expect(res.status).toBe(429);
+      expect(processDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it('returns partial results when some schedules fail', async () => {
+      // Arrange: 3 processed, 2 succeeded, 1 failed
+      vi.mocked(processDueSchedules).mockResolvedValue({
+        processed: 3,
+        succeeded: 2,
+        failed: 1,
+        errors: [{ scheduleId: 'sched-1', error: 'Workflow execution failed' }],
+      });
+
+      const res = await tickScheduler(makePostRequest({}));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.processed).toBe(3);
+      expect(json.data.failed).toBe(1);
+      expect(json.data.errors).toHaveLength(1);
+    });
+
+    it('returns zero counts when no schedules are due', async () => {
+      // Arrange: nothing to process
+      vi.mocked(processDueSchedules).mockResolvedValue({
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        errors: [],
+      });
+
+      const res = await tickScheduler(makePostRequest({}));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.processed).toBe(0);
+    });
   });
 });

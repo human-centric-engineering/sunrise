@@ -173,3 +173,7 @@ All consumer schemas live in `lib/validations/orchestration.ts`:
 | `apiLimiter`          | Per IP      | 100/min | `/chat/stream`, DELETE operations |
 
 Defined in `lib/security/rate-limit.ts`. Consumer chat is deliberately stricter than admin chat (10 vs 20 msgs/min) to protect against cost abuse by end-users.
+
+### Per-Agent Rate Limiting
+
+Agents with `rateLimitRpm` set (nullable Int on `AiAgent`) override the global `consumerChatLimiter` default. The per-agent limit is keyed by `${agentId}:${userId}`. When `rateLimitRpm` is null, the global limit applies.

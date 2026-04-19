@@ -26,6 +26,7 @@ import {
   GraduationCap,
   ClipboardCheck,
   Plug,
+  BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -100,6 +101,12 @@ const navSections = [
         label: 'Knowledge Base',
         icon: BookOpen,
         description: 'Docs and patterns',
+      },
+      {
+        href: '/admin/orchestration/analytics',
+        label: 'Analytics',
+        icon: BarChart3,
+        description: 'Usage and insights',
       },
       {
         href: '/admin/orchestration/costs',

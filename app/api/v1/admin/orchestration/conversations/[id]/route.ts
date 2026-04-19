@@ -1,7 +1,8 @@
 /**
- * Admin Orchestration — Single conversation (GET, DELETE)
+ * Admin Orchestration — Single conversation (GET, PATCH, DELETE)
  *
- * GET  /api/v1/admin/orchestration/conversations/:id
+ * GET    /api/v1/admin/orchestration/conversations/:id
+ * PATCH  /api/v1/admin/orchestration/conversations/:id
  * DELETE /api/v1/admin/orchestration/conversations/:id
  *
  * Scoped to the caller's own conversations. Attempting to access
@@ -21,6 +22,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
+import { updateConversationSchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
@@ -42,6 +44,40 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   log.info('Conversation fetched', { conversationId: id });
   return successResponse(conversation);
+});
+
+export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  const log = await getRouteLogger(request);
+  const { id: rawId } = await params;
+  const parsed = cuidSchema.safeParse(rawId);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+  }
+  const id = parsed.data;
+
+  const body: unknown = await request.json();
+  const data = updateConversationSchema.parse(body);
+
+  const existing = await prisma.aiConversation.findFirst({
+    where: { id, userId: session.user.id },
+  });
+  if (!existing) throw new NotFoundError(`Conversation ${id} not found`);
+
+  const updated = await prisma.aiConversation.update({
+    where: { id },
+    data,
+    include: {
+      agent: { select: { id: true, name: true, slug: true } },
+      _count: { select: { messages: true } },
+    },
+  });
+
+  log.info('Conversation updated', { conversationId: id, fields: Object.keys(data) });
+  return successResponse(updated);
 });
 
 export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {

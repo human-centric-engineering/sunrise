@@ -594,4 +594,177 @@ describe('executeExternalCall', () => {
       code: 'host_not_allowed',
     });
   });
+
+  // ─── Response body parsing edge cases ───────────────────────────────
+
+  it('parses JSON when body starts with [ (array)', async () => {
+    const arr = [1, 2, 3];
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(arr), {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' }, // no json content-type
+      })
+    );
+
+    const result = await executeExternalCall(makeStep(), makeCtx());
+    // Body starts with '[' so JSON.parse should kick in
+    expect(result.output).toMatchObject({ status: 200, body: [1, 2, 3] });
+  });
+
+  it('returns raw text when JSON parse fails despite json-looking content type', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('not valid json {{', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await executeExternalCall(makeStep(), makeCtx());
+    // Falls through to raw text on parse failure
+    expect(result.output).toMatchObject({ status: 200, body: 'not valid json {{' });
+  });
+
+  it('throws response_too_large when content-length header exceeds maxResponseBytes', async () => {
+    // Simulate a response that reports a large content-length without actually
+    // sending a large body (to test the header check specifically).
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('small body', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Content-Length': '2000000', // 2 MB
+        },
+      })
+    );
+
+    const step = makeStep({ maxResponseBytes: 500 });
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+    expect(err.code).toBe('response_too_large');
+  });
+
+  // ─── Response transformation ─────────────────────────────────────────
+
+  it('applies jmespath transform to extract a nested field', async () => {
+    const mockBody = { results: [{ id: 1, name: 'Alice' }], total: 1 };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const step = makeStep({
+      responseTransform: { type: 'jmespath', expression: 'results[0].name' },
+    });
+
+    const result = await executeExternalCall(step, makeCtx());
+    expect(result.output).toMatchObject({ status: 200, body: 'Alice' });
+  });
+
+  it('applies template transform to interpolate body fields', async () => {
+    const mockBody = { user: { name: 'Bob', id: '42' } };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const step = makeStep({
+      responseTransform: { type: 'template', expression: 'Hello {{user.name}} (id={{user.id}})' },
+    });
+
+    const result = await executeExternalCall(step, makeCtx());
+    expect(result.output).toMatchObject({ status: 200, body: 'Hello Bob (id=42)' });
+  });
+
+  it('template transform returns empty string for missing path', async () => {
+    const mockBody = { name: 'Charlie' };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const step = makeStep({
+      responseTransform: { type: 'template', expression: 'Name={{name}}, Missing={{nonexistent}}' },
+    });
+
+    const result = await executeExternalCall(step, makeCtx());
+    expect(result.output).toMatchObject({ status: 200, body: 'Name=Charlie, Missing=' });
+  });
+
+  it('returns full body with _transformError when transform throws', async () => {
+    // Arrange: jmespath with an invalid expression
+    const mockBody = { value: 42 };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const step = makeStep({
+      responseTransform: {
+        type: 'jmespath',
+        // jmespath throws on invalid syntax
+        expression: '[[[[invalid syntax',
+      },
+    });
+
+    const result = await executeExternalCall(step, makeCtx());
+    // Non-fatal: full body returned with _transformError key
+    expect(result.output).toMatchObject({
+      status: 200,
+      body: mockBody,
+      _transformError: expect.any(String),
+    });
+  });
+
+  // ─── Abort signal propagation ────────────────────────────────────────
+
+  it('throws request_failed with AbortError message on timeout', async () => {
+    // Simulate a fetch that throws an AbortError (as from a timeout)
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError);
+
+    const step = makeStep({ timeoutMs: 1 });
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+
+    expect(err.code).toBe('request_failed');
+    expect(err.message).toContain('timed out');
+  });
+
+  // ─── Custom headers passthrough ──────────────────────────────────────
+
+  it('merges custom headers into request', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    );
+
+    const step = makeStep({ headers: { 'X-Custom-Header': 'custom-value' } });
+    await executeExternalCall(step, makeCtx());
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Custom-Header': 'custom-value' }),
+      })
+    );
+  });
+
+  // ─── Default method is POST ──────────────────────────────────────────
+
+  it('defaults to POST when method is not specified', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    );
+
+    const step = makeStep({ method: undefined });
+    await executeExternalCall(step, makeCtx());
+
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(init.method).toBe('POST');
+  });
 });

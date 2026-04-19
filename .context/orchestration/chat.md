@@ -95,10 +95,10 @@ Concretely:
 
 1. **`start`** — always emitted first, once the user message has been persisted and the conversation resolved. Carries `conversationId` and the persisted user `messageId`.
 2. **`content`** — zero or more. One per `text` chunk from the provider. The `delta` is the incremental text; concatenate for the full assistant message.
-3. **`status`** — emitted before dispatching a tool call. Carries a human-readable `message` such as `Executing search_knowledge_base`.
+3. **`status`** — emitted before each LLM turn (`Thinking...` for the first, `Processing tool results...` for follow-ups) and before dispatching a tool call (e.g. `Executing search_knowledge_base`).
 4. **`capability_result`** — emitted after the dispatcher resolves. Carries `capabilitySlug` and the raw `CapabilityResult` object (including any `success: false` gates like `requires_approval`).
 5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
-6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn) and `costUsd` (final turn cost only — the chat handler logs per-turn `CostOperation.CHAT` rows fire-and-forget).
+6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
 7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
 
 ## Tool Loop Semantics

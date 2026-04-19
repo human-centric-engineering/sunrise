@@ -416,4 +416,155 @@ describe('executeAgentCall', () => {
       })
     );
   });
+
+  // ── agent_call_depth_exceeded ─────────────────────────────────────────────
+
+  it('throws agent_call_depth_exceeded when depth >= MAX_AGENT_CALL_DEPTH (3)', async () => {
+    // Arrange: depth is already at the maximum
+    const ctx = makeCtx({ variables: { agentCallDepth: 3 } });
+    // Act / Assert
+    await expect(executeAgentCall(makeStep(), ctx)).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'agent_call_depth_exceeded',
+      retriable: false,
+    });
+    // Agent should not even be loaded
+    expect(prisma.aiAgent.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('does NOT throw when depth is 2 (below maximum)', async () => {
+    // Arrange: depth 2 is below the hard cap of 3
+    const ctx = makeCtx({ variables: { agentCallDepth: 2 } });
+    // Act / Assert: should proceed normally
+    const result = await executeAgentCall(makeStep(), ctx);
+    expect(result.output).toBe('Summary result');
+  });
+
+  // ── null temperature / maxTokens passthrough ──────────────────────────────
+
+  it('omits temperature from chat options when agent temperature is null', async () => {
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+      ...MOCK_AGENT,
+      temperature: null,
+    } as never);
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    const options = mockChat.mock.calls[0][1];
+    expect(options).not.toHaveProperty('temperature');
+  });
+
+  it('omits maxTokens from chat options when agent maxTokens is null', async () => {
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+      ...MOCK_AGENT,
+      maxTokens: null,
+    } as never);
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    const options = mockChat.mock.calls[0][1];
+    expect(options).not.toHaveProperty('maxTokens');
+  });
+
+  // ── multi-turn mode ──────────────────────────────────────────────────────
+
+  it('multi-turn: returns structured output with response, turns, and history', async () => {
+    // Arrange: single turn, no follow-up question in response
+    mockChat.mockResolvedValue({
+      content: 'Analysis complete.',
+      usage: { inputTokens: 50, outputTokens: 30 },
+      finishReason: 'stop',
+    });
+
+    const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
+    // Act
+    const result = await executeAgentCall(step, makeCtx());
+
+    // Assert: output is the structured multi-turn object
+    expect(typeof result.output).toBe('object');
+    const output = result.output as { response: string; turns: number; history: unknown[] };
+    expect(output.response).toBe('Analysis complete.');
+    expect(output.turns).toBeGreaterThan(0);
+    expect(Array.isArray(output.history)).toBe(true);
+  });
+
+  it('multi-turn: continues for another turn when response ends with a question', async () => {
+    // Arrange: first response ends with '?', second does not
+    mockChat
+      .mockResolvedValueOnce({
+        content: 'Could you provide more context?',
+        usage: { inputTokens: 40, outputTokens: 20 },
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: 'Based on the context, here is the analysis.',
+        usage: { inputTokens: 60, outputTokens: 40 },
+        finishReason: 'stop',
+      });
+
+    const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
+    const ctx = makeCtx({ stepOutputs: { step0: 'some prior output' } });
+    // Act
+    const result = await executeAgentCall(step, ctx);
+
+    // Assert: two turns were run (chat called twice per turn)
+    expect(mockChat.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const output = result.output as { response: string; turns: number };
+    expect(output.turns).toBeGreaterThan(1);
+    expect(output.response).toBe('Based on the context, here is the analysis.');
+  });
+
+  it('multi-turn: stops at maxTurns even if responses keep asking questions', async () => {
+    // Arrange: always returns a question
+    mockChat.mockResolvedValue({
+      content: 'Can you clarify what you mean?',
+      usage: { inputTokens: 30, outputTokens: 15 },
+      finishReason: 'stop',
+    });
+
+    const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
+    // Act
+    const result = await executeAgentCall(step, makeCtx());
+
+    const output = result.output as { turns: number };
+    // maxTurns: 2: turn 0 appends assistant + followup user; turn 1 appends assistant.
+    // history = [user(initial), assistant, user(followup), assistant] = 4 entries
+    expect(output.turns).toBe(4);
+  });
+
+  it('multi-turn: accumulates tokens and cost across turns', async () => {
+    vi.mocked(calculateCost)
+      .mockReturnValueOnce({
+        totalCostUsd: 0.01,
+        isLocal: false,
+        inputCostUsd: 0.004,
+        outputCostUsd: 0.006,
+      })
+      .mockReturnValueOnce({
+        totalCostUsd: 0.02,
+        isLocal: false,
+        inputCostUsd: 0.008,
+        outputCostUsd: 0.012,
+      });
+
+    mockChat
+      .mockResolvedValueOnce({
+        content: 'Could you clarify?',
+        usage: { inputTokens: 50, outputTokens: 20 },
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: 'Thank you for clarifying.',
+        usage: { inputTokens: 80, outputTokens: 30 },
+        finishReason: 'stop',
+      });
+
+    const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
+    const ctx = makeCtx({ stepOutputs: { s: 'context' } });
+    const result = await executeAgentCall(step, ctx);
+
+    // Tokens from both chat calls should be summed
+    expect(result.tokensUsed).toBe(180); // (50+20) + (80+30)
+    expect(result.costUsd).toBe(0.03); // 0.01 + 0.02
+  });
 });
