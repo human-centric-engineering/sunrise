@@ -43,11 +43,15 @@ model User {
   aiAgents             AiAgent[]             @relation("AiAgentCreator")
   aiWorkflows          AiWorkflow[]          @relation("AiWorkflowCreator")
   aiWorkflowExecutions AiWorkflowExecution[] @relation("AiWorkflowExecutionUser")
+  aiWorkflowSchedules  AiWorkflowSchedule[]  @relation("AiWorkflowScheduleCreator")
   aiConversations      AiConversation[]      @relation("AiConversationUser")
+  aiUserMemories       AiUserMemory[]        @relation("AiUserMemoryUser")
   aiKnowledgeDocuments AiKnowledgeDocument[] @relation("AiKnowledgeDocumentUploader")
   aiEvaluationSessions AiEvaluationSession[] @relation("AiEvaluationSessionUser")
   aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
   aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
+  aiInviteTokens         AiAgentInviteToken[]    @relation("InviteTokenCreator")
+  aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
 
   // MCP Server relations
   mcpApiKeys McpApiKey[] @relation("McpApiKeyCreator")
@@ -163,6 +167,9 @@ model AiAgent {
   monthlyBudgetUsd          Float?
   metadata                  Json?
   knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
+  topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
+  brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
+  visibility                String   @default("internal") // "internal" | "public" | "invite_only"
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
   createdBy                 String
@@ -173,13 +180,37 @@ model AiAgent {
   creator       User                  @relation("AiAgentCreator", fields: [createdBy], references: [id])
   capabilities  AiAgentCapability[]
   conversations AiConversation[]
+  userMemories  AiUserMemory[]
   evaluations   AiEvaluationSession[]
   costLogs      AiCostLog[]
+  inviteTokens  AiAgentInviteToken[]
 
   @@index([createdBy])
   @@index([provider])
   @@index([isActive])
+  @@index([visibility])
   @@map("ai_agent")
+}
+
+// Invite token for invite_only agent access
+model AiAgentInviteToken {
+  id        String    @id @default(cuid())
+  agentId   String
+  token     String    @unique @default(cuid()) // opaque token shared with invitees
+  label     String?   // admin-friendly label (e.g. "Beta testers", "Partner X")
+  maxUses   Int?      // null = unlimited
+  useCount  Int       @default(0)
+  expiresAt DateTime? // null = never expires
+  revokedAt DateTime? // non-null = revoked
+  createdBy String
+  createdAt DateTime  @default(now())
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("InviteTokenCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([token])
+  @@map("ai_agent_invite_token")
 }
 
 // A discrete tool/function an agent can call
@@ -248,11 +279,35 @@ model AiWorkflow {
   // Relations
   creator    User                  @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
   executions AiWorkflowExecution[]
+  schedules  AiWorkflowSchedule[]
 
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
   @@map("ai_workflow")
+}
+
+// Cron-based workflow scheduling
+model AiWorkflowSchedule {
+  id            String    @id @default(cuid())
+  workflowId    String
+  name          String
+  cronExpression String   @db.VarChar(100)
+  inputTemplate Json      @default("{}")
+  isEnabled     Boolean   @default(true)
+  lastRunAt     DateTime?
+  nextRunAt     DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  creator  User       @relation("AiWorkflowScheduleCreator", fields: [createdBy], references: [id])
+
+  @@index([workflowId])
+  @@index([isEnabled, nextRunAt])
+  @@map("ai_workflow_schedule")
 }
 
 // Runtime workflow instances
@@ -323,6 +378,8 @@ model AiMessage {
   metadata       Json? // {tokenUsage, modelUsed, latencyMs, costUsd}
   capabilitySlug String?
   toolCallId     String?
+  rating         Int? // -1 = thumbs down, 1 = thumbs up, null = unrated
+  ratedAt        DateTime?
   createdAt      DateTime @default(now())
 
   // Relations
@@ -332,7 +389,27 @@ model AiMessage {
   @@index([conversationId])
   @@index([role])
   @@index([createdAt])
+  @@index([rating])
   @@map("ai_message")
+}
+
+// Per-user-per-agent key-value memory (preferences, prior topics, facts)
+model AiUserMemory {
+  id        String   @id @default(cuid())
+  userId    String
+  agentId   String
+  key       String   @db.VarChar(255)
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user  User    @relation("AiUserMemoryUser", fields: [userId], references: [id])
+  agent AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentId, key])
+  @@index([userId, agentId])
+  @@map("ai_user_memory")
 }
 
 // Source documents uploaded to the knowledge base
@@ -346,6 +423,7 @@ model AiKnowledgeDocument {
   scope        String   @default("app") // "system" | "app"
   category     String? // user-assigned or extracted from document metadata
   errorMessage String?  @db.Text
+  metadata     Json? // format-specific metadata, preview data for pending_review docs
   uploadedBy   String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -517,6 +595,26 @@ model AiProviderConfig {
   @@map("ai_provider_config")
 }
 
+// Per-user API key for programmatic access (alternative to session auth)
+model AiApiKey {
+  id           String    @id @default(cuid())
+  userId       String
+  name         String    // admin-friendly label (e.g. "My CI Key")
+  keyHash      String    @unique // SHA-256 hash of the API key (key itself never stored)
+  keyPrefix    String    // first 8 chars for display (e.g. "sk_abc12...")
+  scopes       String[]  @default(["chat"]) // "chat", "analytics", "knowledge", "admin"
+  lastUsedAt   DateTime?
+  expiresAt    DateTime? // null = never expires
+  revokedAt    DateTime? // non-null = revoked
+  createdAt    DateTime  @default(now())
+
+  user User @relation("AiApiKeyUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([keyHash])
+  @@map("ai_api_key")
+}
+
 /// Singleton settings row for agent orchestration, keyed by `slug = "global"`.
 ///
 /// Holds admin-editable defaults that cross-cut the orchestration layer:
@@ -537,6 +635,7 @@ model AiOrchestrationSettings {
   defaultApprovalTimeoutMs Int? // ms before auto-action on approval gates; null = no timeout
   approvalDefaultAction  String?   @default("deny") // "deny" or "allow"
   inputGuardMode         String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 

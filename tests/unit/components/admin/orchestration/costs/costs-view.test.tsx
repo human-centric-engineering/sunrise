@@ -142,6 +142,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   defaultApprovalTimeoutMs: null,
   approvalDefaultAction: 'deny',
   inputGuardMode: 'log_only',
+  outputGuardMode: 'log_only',
   createdAt: NOW,
   updatedAt: NOW,
 };

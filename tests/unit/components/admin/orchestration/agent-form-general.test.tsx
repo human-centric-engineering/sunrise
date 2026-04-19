@@ -166,6 +166,9 @@ describe('AgentForm — General tab', () => {
         systemInstructionsHistory: [],
         metadata: {},
         knowledgeCategories: [],
+        topicBoundaries: [],
+        brandVoiceInstructions: null,
+        visibility: 'internal',
         deletedAt: null,
         fallbackProviders: [],
       };

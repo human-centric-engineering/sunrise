@@ -1,6 +1,6 @@
 # Agent Orchestration — Overview
 
-The orchestration layer lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. Everything lives under `/admin/orchestration` in the UI and `/api/v1/admin/orchestration` in the API.
+The orchestration layer lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. Admin management lives under `/admin/orchestration` in the UI and `/api/v1/admin/orchestration` in the API. Consumer-facing chat endpoints live under `/api/v1/chat` (see `.context/api/consumer-chat.md`).
 
 ## Architecture
 

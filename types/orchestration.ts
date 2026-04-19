@@ -147,6 +147,7 @@ export const KNOWN_STEP_TYPES = [
   'guard',
   'evaluate',
   'external_call',
+  'agent_call',
 ] as const;
 
 /** A conditional edge connecting workflow steps */
@@ -446,6 +447,9 @@ export type ApprovalDefaultAction = 'deny' | 'allow';
 /** Input guard behaviour for prompt injection detection. */
 export type InputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
 
+/** Output guard behaviour for topic boundary enforcement. */
+export type OutputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -464,6 +468,8 @@ export interface OrchestrationSettings {
   approvalDefaultAction: ApprovalDefaultAction | null;
   /** Input guard behaviour for prompt injection detection. */
   inputGuardMode: InputGuardMode;
+  /** Output guard behaviour for topic boundary enforcement. */
+  outputGuardMode: OutputGuardMode;
   createdAt: Date;
   updatedAt: Date;
 }

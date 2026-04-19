@@ -158,6 +158,25 @@ When conversation history exceeds `MAX_HISTORY_MESSAGES` (20), the streaming han
 
 **Staleness:** A summary is considered stale when `summaryUpToMessageId` is null or messages exist beyond that point in the dropped window. Once generated, the summary is reused until new messages push past the window again.
 
+## User Memory
+
+Per-user-per-agent persistent memory that survives across conversations. Stored in the `AiUserMemory` model as key-value pairs scoped to `(userId, agentId)`.
+
+**How it works:**
+
+1. Before building the message array, the handler loads all memories for `(request.userId, agent.id)` from `AiUserMemory`, ordered by `updatedAt DESC`, capped at 50 entries.
+2. If memories exist, they're injected as a `[User memories]` system message after the context block but before conversation history. Format: `- key: value` per entry.
+3. Agents read/write memories via two built-in capabilities: `read_user_memory` and `write_user_memory`.
+
+**Capabilities:**
+
+| Capability          | Parameters                     | Behavior                                                           |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| `read_user_memory`  | `key?: string`                 | Returns all memories (or single by key) for the current user+agent |
+| `write_user_memory` | `key: string`, `value: string` | Upserts a memory — creates if new, updates if existing             |
+
+**Schema:** `AiUserMemory` has a compound unique `(userId, agentId, key)`. Keys are limited to 255 chars, values to 5000 chars.
+
 ## Input Guard Modes
 
 The input guard (`scanForInjection`) behavior is now configurable via `OrchestrationSettings.inputGuardMode`:

@@ -276,9 +276,16 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Orchestration Engine    | `.context/orchestration/engine.md`                   | Runtime executor, registry, events, strategies           |
 | External Calls          | `.context/orchestration/external-calls.md`           | HTTP executor, outbound rate limits, auth, response caps |
 | Resilience & Errors     | `.context/orchestration/resilience.md`               | Circuit breaker, fallback, budget UX, input guard        |
+| Output Guard            | `.context/orchestration/output-guard.md`             | Topic boundaries, PII detection, brand voice             |
+| Agent Visibility        | `.context/orchestration/agent-visibility.md`         | Visibility modes, invite tokens, access control          |
+| API Keys                | `.context/orchestration/api-keys.md`                 | Self-service API keys, scopes, key resolution            |
 | MCP Server              | `.context/orchestration/mcp.md`                      | MCP protocol, tools, resources, keys, audit              |
 | Orchestration Admin API | `.context/orchestration/admin-api.md`                | Agents, capabilities, chat, knowledge, executions        |
-| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`            | Consumer HTTP reference for all 65 routes                |
+| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`            | Admin HTTP reference for all 65 routes                   |
+| Consumer Chat API       | `.context/api/consumer-chat.md`                      | End-user chat endpoints, agent visibility, rate limits   |
+| Document Ingestion      | `.context/orchestration/document-ingestion.md`       | Multi-format parsing, PDF preview flow, parser arch      |
+| Scheduling & Webhooks   | `.context/orchestration/scheduling.md`               | Cron schedules, webhook triggers, scheduler tick         |
+| Client Analytics        | `.context/orchestration/analytics.md`                | Popular topics, unanswered questions, engagement, gaps   |
 | SSE Bridge              | `.context/api/sse.md`                                | `sseResponse` helper, framing, sanitization              |
 | Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`          | Admin landing page, data sources, layout                 |
 | Agents List / Pages     | `.context/admin/orchestration-agents.md`             | List, create, edit shells; table, bulk export            |

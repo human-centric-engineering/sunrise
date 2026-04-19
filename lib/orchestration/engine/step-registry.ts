@@ -17,6 +17,7 @@
  */
 
 import {
+  Bot,
   BrainCircuit,
   ClipboardCheck,
   GitBranch,
@@ -204,6 +205,18 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     patternNumber: 15,
     defaultConfig: { url: '', method: 'POST', timeoutMs: 30000, authType: 'none' },
     estimatedDuration: '~1-10s',
+  },
+  {
+    type: 'agent_call',
+    label: 'Agent Call',
+    description: 'Invoke a configured agent with its full system prompt, model, and tools.',
+    category: 'agent',
+    icon: Bot,
+    inputs: 1,
+    outputs: 1,
+    patternNumber: 8,
+    defaultConfig: { agentSlug: '', message: '{{input}}', maxToolIterations: 5 },
+    estimatedDuration: '~3-15s',
   },
 ] as const;
 

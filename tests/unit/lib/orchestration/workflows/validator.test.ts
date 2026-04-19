@@ -336,4 +336,33 @@ describe('validateWorkflow', () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  it('flags agent_call step missing agentSlug', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [{ id: 'a', name: 'A', type: 'agent_call', config: {}, nextSteps: [] }],
+      })
+    );
+    const err = result.errors.find((e) => e.code === 'MISSING_AGENT_SLUG');
+    expect(err?.stepId).toBe('a');
+  });
+
+  it('accepts agent_call step with agentSlug', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'agent_call',
+            config: { agentSlug: 'summarizer' },
+            nextSteps: [],
+          },
+        ],
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
 });

@@ -16,6 +16,9 @@ import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 // Shared Schemas
 // ============================================================================
 
+/** Valid agent visibility values */
+export const agentVisibilitySchema = z.enum(['internal', 'public', 'invite_only']);
+
 /** Reusable metadata schema — safe primitive values only */
 const metadataSchema = z
   .record(z.string().max(100), z.union([z.string().max(5000), z.number(), z.boolean(), z.null()]))
@@ -99,6 +102,8 @@ export const createAgentSchema = z.object({
 
   metadata: metadataSchema,
 
+  visibility: agentVisibilitySchema.default('internal'),
+
   isActive: z.boolean().default(true),
 });
 
@@ -168,6 +173,8 @@ export const updateAgentSchema = z.object({
     .optional(),
 
   metadata: metadataSchema,
+
+  visibility: agentVisibilitySchema.optional(),
 
   isActive: z.boolean().optional(),
 });
@@ -777,7 +784,10 @@ export const documentUploadSchema = z.object({
     .string()
     .min(1, 'File name is required')
     .max(500, 'File name must be less than 500 characters')
-    .regex(/\.(md|txt|pdf|json|csv|html)$/i, 'File must be .md, .txt, .pdf, .json, .csv, or .html'),
+    .regex(
+      /\.(md|txt|pdf|json|csv|html|epub|docx)$/i,
+      'File must be .md, .txt, .pdf, .json, .csv, .html, .epub, or .docx'
+    ),
 
   fileHash: z
     .string()
@@ -1081,7 +1091,7 @@ export const clearConversationsBodySchema = z
 
 /** List knowledge documents query (GET /admin/orchestration/knowledge/documents). */
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+  status: z.enum(['pending', 'processing', 'ready', 'failed', 'pending_review']).optional(),
   scope: documentScopeSchema.optional(),
   category: z.string().max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
@@ -1415,6 +1425,70 @@ export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   maxResponseBytes: z.number().int().positive().optional(),
 });
 
+export const agentCallConfigSchema = stepErrorConfigSchema.extend({
+  agentSlug: z.string().optional(),
+  message: z.string().optional(),
+  maxToolIterations: z.number().int().min(0).max(20).optional(),
+});
+
+// ---------- Workflow Schedule ─────────────────────────────────────────────
+
+export const createScheduleSchema = z.object({
+  name: z.string().min(1).max(200),
+  cronExpression: z.string().min(1).max(100),
+  inputTemplate: z.record(z.string(), z.unknown()).optional(),
+  isEnabled: z.boolean().optional(),
+});
+
+export const updateScheduleSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  cronExpression: z.string().min(1).max(100).optional(),
+  inputTemplate: z.record(z.string(), z.unknown()).optional(),
+  isEnabled: z.boolean().optional(),
+});
+
+// ---------- Analytics Query ─────────────────────────────────────────────────
+
+/** Shared date-range + agent filter for analytics endpoints */
+export const analyticsQuerySchema = z.object({
+  /** ISO date string — start of range (inclusive). Defaults to 30 days ago. */
+  from: z.string().datetime().optional(),
+  /** ISO date string — end of range (inclusive). Defaults to now. */
+  to: z.string().datetime().optional(),
+  /** Filter to a specific agent by ID. */
+  agentId: cuidSchema.optional(),
+  /** Max results to return (default 20, max 100). */
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+// ---------- Message Rating ──────────────────────────────────────────────────
+
+/** Thumbs up/down rating for assistant messages */
+export const rateMessageSchema = z.object({
+  rating: z.union([z.literal(1), z.literal(-1)]),
+});
+
+// ---------- Agent Invite Tokens ----------
+
+/** Create an invite token for an invite_only agent */
+export const createInviteTokenSchema = z.object({
+  label: z.string().max(200).optional(),
+  maxUses: z.number().int().min(1).optional(),
+  expiresAt: z.string().datetime().optional(),
+});
+
+// ---------- API Keys ----------
+
+/** Create a new API key */
+export const createApiKeySchema = z.object({
+  name: z.string().min(1, 'Name is required').max(200),
+  scopes: z
+    .array(z.enum(['chat', 'analytics', 'knowledge', 'webhook', 'admin']))
+    .min(1, 'At least one scope is required')
+    .default(['chat']),
+  expiresAt: z.string().datetime().optional(),
+});
+
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
 
 export const messageMetadataSchema = z.object({
@@ -1452,9 +1526,36 @@ export type WorkflowDefinitionRevertInput = z.infer<typeof workflowDefinitionRev
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;
 export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
+export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
 export type WorkflowExecutionInput = z.infer<typeof workflowExecutionSchema>;
 export type EvaluationSessionInput = z.infer<typeof evaluationSessionSchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchSchema>;
+/** Supported document formats and their MIME types. */
+export const SUPPORTED_DOCUMENT_FORMATS = {
+  '.md': 'text/markdown',
+  '.txt': 'text/plain',
+  '.epub': 'application/epub+zip',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pdf': 'application/pdf',
+} as const;
+
+/** Max document size: 50 MB. */
+export const MAX_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Confirm a previewed document for chunking + embedding.
+ * Used after the preview step for PDF uploads.
+ */
+export const confirmDocumentPreviewSchema = z.object({
+  /** The document ID created during the preview step. */
+  documentId: cuidSchema,
+  /** Optionally supply edited/corrected text to replace the parsed content. */
+  correctedContent: z.string().max(5_000_000, 'Content must be less than 5 MB').optional(),
+  /** Optional category override. */
+  category: z.string().max(100).optional(),
+});
+
+export type ConfirmDocumentPreviewInput = z.infer<typeof confirmDocumentPreviewSchema>;
 export type DocumentUploadInput = z.infer<typeof documentUploadSchema>;
 export type CostQueryInput = z.infer<typeof costQuerySchema>;
 export type ProviderConfigInput = z.infer<typeof providerConfigSchema>;
@@ -1477,6 +1578,38 @@ export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
 export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
 export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;
 export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestrationSettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Consumer chat (non-admin) schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Consumer chat request schema (POST /api/v1/chat/stream).
+ * Simpler than admin — no contextType/contextId/entityContext.
+ */
+export const consumerChatRequestSchema = z.object({
+  message: z
+    .string()
+    .min(1, 'Message is required')
+    .max(50000, 'Message must be less than 50000 characters')
+    .trim(),
+
+  agentSlug: slugSchema,
+
+  conversationId: cuidSchema.optional(),
+
+  /** Invite token for accessing invite_only agents */
+  inviteToken: z.string().optional(),
+});
+
+/** Consumer conversations list query (GET /api/v1/chat/conversations). */
+export const consumerConversationsQuerySchema = paginationQuerySchema.extend({
+  agentSlug: slugSchema.optional(),
+});
+
+export type ConsumerChatRequestInput = z.infer<typeof consumerChatRequestSchema>;
+export type ConsumerConversationsQuery = z.infer<typeof consumerConversationsQuerySchema>;
+export type AgentVisibility = z.infer<typeof agentVisibilitySchema>;
 
 // ---------------------------------------------------------------------------
 // Quiz scores

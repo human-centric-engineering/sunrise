@@ -277,12 +277,22 @@ export const cspReportLimiter = createRateLimiter({
 });
 
 /**
- * Chat stream limiter — 20 messages per minute per user ID.
+ * Chat stream limiter (admin) — 20 messages per minute per user ID.
  * Keyed on user ID (not IP) to catch runaway admin usage.
  */
 export const chatLimiter = createRateLimiter({
   interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
   maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CHAT,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
+ * Consumer chat limiter — 10 messages per minute per user ID.
+ * Stricter than admin to protect against end-user cost abuse.
+ */
+export const consumerChatLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CONSUMER_CHAT,
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 

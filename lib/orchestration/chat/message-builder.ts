@@ -23,6 +23,11 @@ export interface HistoryRow {
   toolCallId?: string | null;
 }
 
+export interface UserMemoryEntry {
+  key: string;
+  value: string;
+}
+
 export interface BuildMessagesArgs {
   systemInstructions: string;
   contextBlock: string | null;
@@ -30,6 +35,10 @@ export interface BuildMessagesArgs {
   newUserMessage: string;
   /** Rolling summary of messages older than the truncation window. */
   conversationSummary?: string;
+  /** Per-user-per-agent memories to inject into context. */
+  userMemories?: UserMemoryEntry[];
+  /** Brand voice instructions appended to the system prompt. */
+  brandVoiceInstructions?: string | null;
 }
 
 /**
@@ -37,10 +46,21 @@ export interface BuildMessagesArgs {
  * context, prior conversation rows, and the new user turn.
  */
 export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: args.systemInstructions }];
+  const systemPrompt = args.brandVoiceInstructions
+    ? `${args.systemInstructions}\n\n[Brand Voice]\n${args.brandVoiceInstructions}`
+    : args.systemInstructions;
+  const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
 
   if (args.contextBlock) {
     messages.push({ role: 'system', content: args.contextBlock });
+  }
+
+  if (args.userMemories && args.userMemories.length > 0) {
+    const formatted = args.userMemories.map((m) => `- ${m.key}: ${m.value}`).join('\n');
+    messages.push({
+      role: 'system',
+      content: `[User memories]\nThe following are things you have previously remembered about this user:\n${formatted}`,
+    });
   }
 
   const history = args.history;

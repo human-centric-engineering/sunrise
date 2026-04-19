@@ -204,4 +204,137 @@ describe('buildMessages', () => {
       expect.objectContaining({ role: 'moderator' })
     );
   });
+
+  // ── userMemories injection ────────────────────────────────────────────────
+
+  it('injects user memories as a system message after the context block', () => {
+    const messages = buildMessages({
+      systemInstructions: 'System.',
+      contextBlock: '=== LOCKED CONTEXT ===\nfoo\n=== END LOCKED CONTEXT ===',
+      history: [],
+      newUserMessage: 'Hi',
+      userMemories: [
+        { key: 'language', value: 'TypeScript' },
+        { key: 'topic', value: 'agents' },
+      ],
+    });
+
+    // Expected order: system instructions → context block → memories → user
+    expect(messages[0].role).toBe('system'); // instructions
+    expect(messages[1].role).toBe('system'); // context block
+    expect(messages[1].content).toContain('LOCKED CONTEXT');
+
+    const memMsg = messages[2];
+    expect(memMsg.role).toBe('system');
+    expect(memMsg.content).toContain('[User memories]');
+    expect(memMsg.content).toContain('- language: TypeScript');
+    expect(memMsg.content).toContain('- topic: agents');
+
+    expect(messages[3]).toEqual({ role: 'user', content: 'Hi' });
+  });
+
+  it('formats each memory as a "- key: value" bullet', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'go',
+      userMemories: [
+        { key: 'preferred_language', value: 'Python' },
+        { key: 'project_name', value: 'sunrise' },
+      ],
+    });
+
+    const memMsg = messages.find((m) => m.content.includes('[User memories]'));
+    expect(memMsg).toBeDefined();
+    expect(memMsg?.content).toContain('- preferred_language: Python');
+    expect(memMsg?.content).toContain('- project_name: sunrise');
+  });
+
+  it('does not inject a memory message when userMemories is undefined', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'hi',
+    });
+
+    expect(messages.find((m) => m.content.includes('[User memories]'))).toBeUndefined();
+    // Only system instructions + user message
+    expect(messages).toHaveLength(2);
+  });
+
+  it('does not inject a memory message when userMemories is an empty array', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'hi',
+      userMemories: [],
+    });
+
+    expect(messages.find((m) => m.content.includes('[User memories]'))).toBeUndefined();
+    expect(messages).toHaveLength(2);
+  });
+
+  // ── brandVoiceInstructions injection ─────────────────────────────────────
+
+  it('appends brand voice instructions to system prompt', () => {
+    const messages = buildMessages({
+      systemInstructions: 'You are a helpful agent.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      brandVoiceInstructions: 'Always respond in a friendly, casual tone. Use simple language.',
+    });
+
+    expect(messages[0].role).toBe('system');
+    expect(messages[0].content).toContain('You are a helpful agent.');
+    expect(messages[0].content).toContain('[Brand Voice]');
+    expect(messages[0].content).toContain('Always respond in a friendly, casual tone.');
+  });
+
+  it('does not add brand voice section when null', () => {
+    const messages = buildMessages({
+      systemInstructions: 'You are a helpful agent.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      brandVoiceInstructions: null,
+    });
+
+    expect(messages[0].content).toBe('You are a helpful agent.');
+    expect(messages[0].content).not.toContain('[Brand Voice]');
+  });
+
+  it('does not add brand voice section when omitted', () => {
+    const messages = buildMessages({
+      systemInstructions: 'System.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+    });
+
+    expect(messages[0].content).toBe('System.');
+    expect(messages[0].content).not.toContain('[Brand Voice]');
+  });
+
+  it('injects memories before history messages', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [
+        { role: 'user', content: 'earlier message' },
+        { role: 'assistant', content: 'earlier reply' },
+      ],
+      newUserMessage: 'new',
+      userMemories: [{ key: 'lang', value: 'Go' }],
+    });
+
+    const memIdx = messages.findIndex((m) => m.content.includes('[User memories]'));
+    const histIdx = messages.findIndex((m) => m.content === 'earlier message');
+
+    expect(memIdx).toBeGreaterThan(-1);
+    expect(histIdx).toBeGreaterThan(memIdx);
+  });
 });

@@ -728,7 +728,7 @@ describe('documentUploadSchema', () => {
   });
 
   it('should reject a disallowed file extension', () => {
-    const result = documentUploadSchema.safeParse({ ...VALID_DOCUMENT, fileName: 'doc.docx' });
+    const result = documentUploadSchema.safeParse({ ...VALID_DOCUMENT, fileName: 'doc.xls' });
     expect(result.success).toBe(false);
   });
 

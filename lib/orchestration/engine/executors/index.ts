@@ -21,3 +21,4 @@ import './rag-retrieve';
 import './guard';
 import './evaluate';
 import './external-call';
+import './agent-call';

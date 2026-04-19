@@ -56,6 +56,7 @@ function makeRow(
     defaultApprovalTimeoutMs: number | null;
     approvalDefaultAction: string | null;
     inputGuardMode: string | null;
+    outputGuardMode: string | null;
   }> = {}
 ) {
   return {
@@ -73,6 +74,7 @@ function makeRow(
     defaultApprovalTimeoutMs: null as number | null,
     approvalDefaultAction: 'deny' as string | null,
     inputGuardMode: 'log_only' as string | null,
+    outputGuardMode: 'log_only' as string | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

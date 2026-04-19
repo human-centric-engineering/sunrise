@@ -74,6 +74,7 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
 | `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
 | `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
+| `MISSING_AGENT_SLUG`      | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                 |
 
 ### Example error payload
 
@@ -124,6 +125,7 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 | `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                   |
 | `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider         |
 | `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability |
+| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent     |
 
 The `/validate` and `/dry-run` endpoints run both structural and semantic validation. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
 

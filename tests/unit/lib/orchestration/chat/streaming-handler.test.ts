@@ -18,6 +18,7 @@ vi.mock('@/lib/db/client', () => ({
     aiAgent: { findFirst: vi.fn() },
     aiConversation: { findFirst: vi.fn(), create: vi.fn() },
     aiMessage: { findMany: vi.fn(), create: vi.fn() },
+    aiUserMemory: { findMany: vi.fn() },
   },
 }));
 
@@ -196,6 +197,7 @@ beforeEach(() => {
   (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(makeAgent());
   (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(makeConversation());
   (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     async ({ data }: { data: Record<string, unknown> }) =>
@@ -697,6 +699,7 @@ describe('StreamingChatHandler', () => {
       makeConversation()
     );
     (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       async ({ data }: { data: Record<string, unknown> }) =>

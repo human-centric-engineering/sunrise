@@ -32,6 +32,7 @@ import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cos
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
+import { scanOutput } from '@/lib/orchestration/chat/output-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
@@ -207,12 +208,22 @@ export class StreamingChatHandler {
           ? await buildContext(request.contextType, request.contextId)
           : null;
 
+      // Load per-user-per-agent memories for context injection
+      const memoryRows = await prisma.aiUserMemory.findMany({
+        where: { userId: request.userId, agentId: agent.id },
+        orderBy: { updatedAt: 'desc' },
+        take: 50,
+        select: { key: true, value: true },
+      });
+
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
         contextBlock,
         history: historyRows,
         newUserMessage: request.message,
         conversationSummary,
+        userMemories: memoryRows.length > 0 ? memoryRows : undefined,
+        brandVoiceInstructions: agent.brandVoiceInstructions,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
@@ -295,6 +306,42 @@ export class StreamingChatHandler {
         }
 
         if (!toolCall) {
+          // Output guard — scan assistant response for topic violations
+          if (assistantText.length > 0) {
+            const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
+            if (outputScan.flagged) {
+              log.warn('Output guard triggered', {
+                agentSlug: request.agentSlug,
+                conversationId: conversation.id,
+                topicMatches: outputScan.topicMatches,
+                builtInMatches: outputScan.builtInMatches,
+              });
+
+              let outputMode: string = 'log_only';
+              try {
+                const settings = await getOrchestrationSettings();
+                outputMode = settings.outputGuardMode;
+              } catch {
+                // Settings unavailable — fall back to log_only
+              }
+
+              if (outputMode === 'block') {
+                yield errorEvent(
+                  'output_blocked',
+                  'Response blocked by content policy. Please rephrase your question.'
+                );
+                return;
+              }
+              if (outputMode === 'warn_and_continue') {
+                yield {
+                  type: 'warning',
+                  code: 'output_flagged',
+                  message: 'The response was flagged for review.',
+                };
+              }
+            }
+          }
+
           getBreaker(usedSlug).recordSuccess();
           yield buildDoneEvent(agent.model, usage);
           return;
