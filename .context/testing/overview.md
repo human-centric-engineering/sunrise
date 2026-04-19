@@ -274,11 +274,14 @@ The commands break down into three jobs — pick the one that matches the situat
 **Codebase-wide remediation (Floor)** — legacy green-bar cleanup:
 
 ```bash
-/test-triage scan <folder>        # Grade files, write to ledger
+/test-triage scan <folder>        # Grade files, write to ledger (--all to re-scan reviewed files)
 /test-triage worklist             # See prioritised queue (Rotten first)
-/test-fix from-rescan <file>      # Apply ledger NOTES directly (Minor/Bad files)
+/test-triage fix <file>           # Print fix paths (Path 0: annotate, A: rescan, B: full review)
+/test-fix from-rescan <file>      # Path A: apply ledger NOTES directly (Minor/Bad files)
 /test-triage rescan <file>        # Re-grade after fix
 ```
+
+Both `scan` and `worklist` accept `--type=unit|integration` to filter by test type.
 
 For Rotten files or vague NOTES, escalate to `/test-review <file>` → `/test-fix --all`.
 
