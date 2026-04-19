@@ -321,11 +321,41 @@ npm run smoke:chat
 
 Run this whenever you touch `streaming-handler.ts`, `provider-manager.ts`, or the `AiConversation`/`AiMessage`/`AiCostLog` schema — unit tests mock Prisma, so a broken FK chain or import binding can slip through vitest but not the smoke script. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for safety rules and the template to follow when adding more smoke scripts.
 
+## Context Window Management
+
+The message builder supports token-aware truncation to prevent exceeding model context limits. Configured via `contextWindowTokens` and `reserveTokens` on `BuildMessagesArgs`.
+
+**How it works:**
+
+1. System prompt, user message, and history are assembled
+2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens`
+3. `truncateToTokenBudget()` drops the oldest history messages until the remaining messages fit the budget
+4. At least one history message is always kept
+
+Token estimation uses a character-based heuristic (`1 token ≈ 3.5 chars` + 4 tokens overhead per message) from `lib/orchestration/chat/token-estimator.ts`. This is intentionally conservative — it slightly over-estimates, truncating earlier rather than exceeding the context window.
+
+When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 20` limit.
+
+**Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
+
+## Mid-Stream Retry & Recovery
+
+If the LLM stream fails mid-response (network error, provider outage), the handler automatically retries with the next fallback provider:
+
+1. On stream failure, the handler records a circuit breaker failure for the current provider
+2. If the error is an `AbortError` (client disconnect), it throws immediately — no retry
+3. Otherwise, it shifts the next slug from `remainingFallbacks` and emits a `{ type: 'warning', code: 'provider_retry' }` SSE event
+4. Accumulated content and tool calls are reset, and the stream restarts from the new provider
+5. After `MAX_STREAM_RETRIES` (2) attempts or no more fallbacks, the error propagates
+
+This differs from the initial provider fallback (`getProviderWithFallbacks`) which only selects the starting provider based on circuit breaker state. Mid-stream retry handles failures that occur after the stream has started producing chunks.
+
 ## Error Handling & Resilience
 
 See [Resilience](./resilience.md) for full details. Key points for the chat handler:
 
 - **Provider fallback**: `getProviderWithFallbacks()` checks circuit breakers and falls back through `agent.fallbackProviders` before throwing `all_providers_exhausted`.
+- **Mid-stream retry**: if a stream fails after starting, automatically retries with the next fallback provider (up to 2 retries). Emits `provider_retry` warning event.
 - **Circuit breaker**: `getBreaker(slug).recordSuccess()` / `.recordFailure()` called after each LLM turn.
 - **Budget warning**: at 80% usage, yields `{ type: 'warning', code: 'budget_warning' }` before continuing.
 - **Input guard**: `scanForInjection(message)` runs on every user message — log-only, never blocks.

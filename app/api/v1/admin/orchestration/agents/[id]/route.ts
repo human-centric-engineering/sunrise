@@ -93,6 +93,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.rateLimitRpm !== undefined) data.rateLimitRpm = body.rateLimitRpm;
   if (body.visibility !== undefined) data.visibility = body.visibility;
   if (body.fallbackProviders !== undefined) data.fallbackProviders = body.fallbackProviders;
+  if (body.inputGuardMode !== undefined) data.inputGuardMode = body.inputGuardMode;
+  if (body.outputGuardMode !== undefined) data.outputGuardMode = body.outputGuardMode;
+  if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
+  if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
 
   // Audit: if systemInstructions actually changed, push the old value
   // onto the history column before writing the new one.

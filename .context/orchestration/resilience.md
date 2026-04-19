@@ -134,6 +134,18 @@ Valid modes: `log_only`, `warn_and_continue`, `block`.
 
 Use case: A customer-facing FAQ bot may use `block` mode to prevent any flagged content, while an internal reasoning agent uses `log_only` to avoid false-positive interruptions.
 
+## Mid-Stream Retry
+
+If the LLM stream fails after starting (network error, provider crash), the streaming handler automatically retries with the next fallback provider:
+
+1. Record a circuit breaker failure for the current provider
+2. Emit `{ type: 'warning', code: 'provider_retry' }` SSE event
+3. Reset accumulated content and tool calls
+4. Resolve the next provider from `agent.fallbackProviders`
+5. Restart the stream from the new provider
+
+Maximum retries: 2 (`MAX_STREAM_RETRIES`). `AbortError` (client disconnect) bypasses retry — no point retrying if nobody's listening. See [Streaming Chat Handler](./chat.md#mid-stream-retry--recovery) for details.
+
 ## SSE Resilience
 
 ### Server-side

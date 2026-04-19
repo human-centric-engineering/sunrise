@@ -62,7 +62,39 @@ interface LlmProvider {
 }
 ```
 
-`LlmMessage` supports roles `system | user | assistant | tool` and assistant messages can carry `toolCalls`. `StreamChunk` is a discriminated union: `{ type: 'text' }`, `{ type: 'tool_call' }`, or `{ type: 'done', usage, finishReason }`.
+`LlmMessage` supports roles `system | user | assistant | tool` with content as `string | ContentPart[]` for multimodal input. Assistant messages can carry `toolCalls`. `StreamChunk` is a discriminated union: `{ type: 'text' }`, `{ type: 'tool_call' }`, or `{ type: 'done', usage, finishReason }`.
+
+### `LlmOptions`
+
+Key options passed to `chat()` and `chatStream()`:
+
+| Field            | Type                | Description                                  |
+| ---------------- | ------------------- | -------------------------------------------- |
+| `model`          | `string`            | Model identifier (e.g., `claude-sonnet-4-6`) |
+| `temperature`    | `number`            | Sampling temperature                         |
+| `maxTokens`      | `number`            | Max output tokens                            |
+| `tools`          | `LlmToolDef[]`      | Tool definitions for function calling        |
+| `responseFormat` | `LlmResponseFormat` | Request structured output (see below)        |
+| `signal`         | `AbortSignal`       | Cancellation signal                          |
+
+### Structured Output / JSON Mode
+
+The `responseFormat` option requests structured JSON responses from LLMs:
+
+```typescript
+type LlmResponseFormat =
+  | { type: 'json_object' } // any valid JSON
+  | { type: 'json_schema'; name: string; schema: Record<string, unknown>; strict?: boolean }; // constrained
+```
+
+**Provider implementations:**
+
+- **OpenAI-compatible**: passes `response_format` directly to the API (native support)
+- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments
+
+**Usage in agents:** Set `responseFormat` on `AiAgent` config for agents that always return structured data. In workflows, the `llm_call` step config supports `responseFormat` for structured extraction steps.
+
+**Validation:** When `json_schema` is used, the response is parsed and validated against the schema before returning. Invalid responses emit an `error` event.
 
 ## Concrete Providers
 
