@@ -22,6 +22,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import {
   apiLimiter,
   consumerChatLimiter,
+  agentChatLimiter,
   createRateLimitResponse,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -50,12 +51,16 @@ export const POST = withAuth(async (request, session) => {
       isActive: true,
       visibility: { in: ['public', 'invite_only'] },
     },
-    select: { id: true, slug: true, visibility: true },
+    select: { id: true, slug: true, visibility: true, rateLimitRpm: true },
   });
 
   if (!agent) {
     throw new NotFoundError(`Agent "${body.agentSlug}" not found`);
   }
+
+  // Per-agent rate limit (overrides global default when configured)
+  const agentLimit = agentChatLimiter.check(`${agent.id}:${session.user.id}`, agent.rateLimitRpm);
+  if (!agentLimit.success) return createRateLimitResponse(agentLimit);
 
   // For invite_only agents, verify the invite token
   if (agent.visibility === 'invite_only') {

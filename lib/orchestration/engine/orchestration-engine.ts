@@ -76,6 +76,7 @@ import {
   workflowStarted,
 } from '@/lib/orchestration/engine/events';
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
@@ -90,10 +91,25 @@ const BUDGET_WARN_FRACTION = 0.8;
 /** Hard cap on steps walked in a single run — guards against pathological loops. */
 const MAX_STEPS_PER_RUN = 1000;
 
+/**
+ * Callback-based subscriber for execution events.
+ *
+ * Use when you need push-based delivery rather than pull-based
+ * (AsyncIterable) — e.g., forwarding events to WebSocket connections,
+ * test harnesses, or in-process event buses.
+ */
+export type ExecutionSubscriber = (event: ExecutionEvent) => void;
+
 export interface ExecuteOptions {
   userId: string;
   budgetLimitUsd?: number;
   signal?: AbortSignal;
+  /**
+   * Optional subscriber that receives every event in addition to the
+   * AsyncIterable. Useful for tapping events without consuming the
+   * iterator (e.g., progress logging, webhook dispatch).
+   */
+  subscriber?: ExecutionSubscriber;
   /**
    * When set, the engine resumes from the named execution row instead
    * of creating a new one. Used by the approval flow to continue a
@@ -129,6 +145,11 @@ export class OrchestrationEngine {
     );
 
     yield workflowStarted(executionId, workflow.id);
+    emitHookEvent('workflow.started', {
+      executionId,
+      workflowId: workflow.id,
+      userId: options.userId,
+    });
 
     // --------------------------------------------------------------
     // 2. DAG walk
@@ -314,6 +335,13 @@ export class OrchestrationEngine {
     if (!failed) {
       await this.finalize(executionId, ctx, trace, WorkflowStatus.COMPLETED, null);
       yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
+      emitHookEvent('workflow.completed', {
+        executionId,
+        workflowId: workflow.id,
+        userId: options.userId,
+        tokensUsed: ctx.totalTokensUsed,
+        costUsd: ctx.totalCostUsd,
+      });
     } else {
       await this.finalize(
         executionId,
@@ -322,6 +350,35 @@ export class OrchestrationEngine {
         WorkflowStatus.FAILED,
         failureReason ?? 'Execution did not complete'
       );
+      emitHookEvent('workflow.failed', {
+        executionId,
+        workflowId: workflow.id,
+        userId: options.userId,
+        reason: failureReason ?? 'Execution did not complete',
+      });
+    }
+  }
+
+  /**
+   * Execute with subscriber notification. Each yielded event is also
+   * pushed to `options.subscriber` if present. This is the recommended
+   * entry point when a callback-based consumer needs real-time events.
+   */
+  async *executeWithSubscriber(
+    workflow: ExecuteWorkflowArg,
+    inputData: Record<string, unknown>,
+    options: ExecuteOptions
+  ): AsyncIterable<ExecutionEvent> {
+    const subscriber = options.subscriber;
+    for await (const event of this.execute(workflow, inputData, options)) {
+      if (subscriber) {
+        try {
+          subscriber(event);
+        } catch {
+          // Subscriber errors must never break the engine
+        }
+      }
+      yield event;
     }
   }
 

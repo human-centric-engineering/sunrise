@@ -40,6 +40,10 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
+    aiAgentVersion: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 

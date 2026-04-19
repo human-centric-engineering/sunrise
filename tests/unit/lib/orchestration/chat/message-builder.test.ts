@@ -12,6 +12,7 @@ vi.mock('@/lib/logging', () => ({
 const { logger } = await import('@/lib/logging');
 const { buildMessages } = await import('@/lib/orchestration/chat/message-builder');
 const { MAX_HISTORY_MESSAGES } = await import('@/lib/orchestration/chat/types');
+const { getTextContent } = await import('@/lib/orchestration/llm/types');
 
 const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
 
@@ -84,7 +85,9 @@ describe('buildMessages', () => {
       'msg 4',
     ]);
     // No truncation marker
-    expect(messages.find((m) => m.content.includes('older messages omitted'))).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('older messages omitted'))
+    ).toBeUndefined();
   });
 
   it('truncates history over the cap and inserts an omission marker', () => {
@@ -100,7 +103,9 @@ describe('buildMessages', () => {
       newUserMessage: 'new',
     });
 
-    const marker = messages.find((m) => m.content.includes('older messages omitted'));
+    const marker = messages.find((m) =>
+      getTextContent(m.content).includes('older messages omitted')
+    );
     expect(marker).toBeDefined();
     expect(marker?.role).toBe('system');
     expect(marker?.content).toContain('5 older messages omitted');
@@ -144,14 +149,18 @@ describe('buildMessages', () => {
       conversationSummary: 'User asked about deployment; assistant explained Docker.',
     });
 
-    const summaryMsg = messages.find((m) => m.content.includes('Conversation summary'));
+    const summaryMsg = messages.find((m) =>
+      getTextContent(m.content).includes('Conversation summary')
+    );
     expect(summaryMsg).toBeDefined();
     expect(summaryMsg?.role).toBe('system');
     expect(summaryMsg?.content).toContain('3 earlier messages');
     expect(summaryMsg?.content).toContain('User asked about deployment');
 
     // Old marker should NOT appear
-    expect(messages.find((m) => m.content.includes('older messages omitted'))).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('older messages omitted'))
+    ).toBeUndefined();
   });
 
   it('ignores conversationSummary when history is within the cap', () => {
@@ -168,8 +177,12 @@ describe('buildMessages', () => {
       conversationSummary: 'Some summary that should not appear.',
     });
 
-    expect(messages.find((m) => m.content.includes('Conversation summary'))).toBeUndefined();
-    expect(messages.find((m) => m.content.includes('Some summary'))).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('Conversation summary'))
+    ).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('Some summary'))
+    ).toBeUndefined();
   });
 
   it('falls back to old marker when history exceeds cap but no summary provided', () => {
@@ -185,7 +198,9 @@ describe('buildMessages', () => {
       newUserMessage: 'new',
     });
 
-    const marker = messages.find((m) => m.content.includes('older messages omitted'));
+    const marker = messages.find((m) =>
+      getTextContent(m.content).includes('older messages omitted')
+    );
     expect(marker).toBeDefined();
     expect(marker?.content).toContain('2 older messages omitted');
   });
@@ -245,7 +260,7 @@ describe('buildMessages', () => {
       ],
     });
 
-    const memMsg = messages.find((m) => m.content.includes('[User memories]'));
+    const memMsg = messages.find((m) => getTextContent(m.content).includes('[User memories]'));
     expect(memMsg).toBeDefined();
     expect(memMsg?.content).toContain('- preferred_language: Python');
     expect(memMsg?.content).toContain('- project_name: sunrise');
@@ -259,7 +274,9 @@ describe('buildMessages', () => {
       newUserMessage: 'hi',
     });
 
-    expect(messages.find((m) => m.content.includes('[User memories]'))).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('[User memories]'))
+    ).toBeUndefined();
     // Only system instructions + user message
     expect(messages).toHaveLength(2);
   });
@@ -273,7 +290,9 @@ describe('buildMessages', () => {
       userMemories: [],
     });
 
-    expect(messages.find((m) => m.content.includes('[User memories]'))).toBeUndefined();
+    expect(
+      messages.find((m) => getTextContent(m.content).includes('[User memories]'))
+    ).toBeUndefined();
     expect(messages).toHaveLength(2);
   });
 
@@ -331,7 +350,7 @@ describe('buildMessages', () => {
       userMemories: [{ key: 'lang', value: 'Go' }],
     });
 
-    const memIdx = messages.findIndex((m) => m.content.includes('[User memories]'));
+    const memIdx = messages.findIndex((m) => getTextContent(m.content).includes('[User memories]'));
     const histIdx = messages.findIndex((m) => m.content === 'earlier message');
 
     expect(memIdx).toBeGreaterThan(-1);

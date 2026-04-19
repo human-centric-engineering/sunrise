@@ -24,13 +24,31 @@ export interface LlmToolCall {
 }
 
 /**
- * A message in a chat exchange. `content` may be an empty string when
- * the message carries only `toolCalls` (assistant) or a tool result
- * referenced by `toolCallId` (tool role).
+ * A single content part in a multimodal message. When `LlmMessage.content`
+ * is a `ContentPart[]`, the provider maps each part to the appropriate
+ * wire format (e.g., Anthropic `source`, OpenAI `image_url`).
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: { type: 'base64'; mediaType: string; data: string } | { type: 'url'; url: string };
+    }
+  | {
+      type: 'document';
+      source: { type: 'base64'; mediaType: string; data: string };
+      name: string;
+    };
+
+/**
+ * A message in a chat exchange. `content` may be a plain string (most
+ * common), an empty string when the message carries only `toolCalls`,
+ * or a `ContentPart[]` array for multimodal messages containing images
+ * or document files.
  */
 export interface LlmMessage {
   role: LlmRole;
-  content: string;
+  content: string | ContentPart[];
   /** Present when `role === 'tool'` — references the call this result answers. */
   toolCallId?: string;
   /** Present when the assistant decided to call one or more tools. */
@@ -49,6 +67,14 @@ export interface LlmToolDefinition {
 /** How the model should decide whether to call a tool. */
 export type LlmToolChoice = 'auto' | 'none' | { name: string };
 
+/**
+ * Response format for structured output. `json_object` requests any valid
+ * JSON; `json_schema` constrains the response to match a specific schema.
+ */
+export type LlmResponseFormat =
+  | { type: 'json_object' }
+  | { type: 'json_schema'; name: string; schema: Record<string, unknown>; strict?: boolean };
+
 /** Per-call options passed to a provider. */
 export interface LlmOptions {
   /** Model id understood by the target provider. */
@@ -57,6 +83,8 @@ export interface LlmOptions {
   maxTokens?: number;
   tools?: LlmToolDefinition[];
   toolChoice?: LlmToolChoice;
+  /** Request structured JSON output from the model. */
+  responseFormat?: LlmResponseFormat;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */
@@ -127,6 +155,15 @@ export interface ProviderConfig {
 export interface EmbedOptions {
   /** Whether the text is a stored document or a search query. */
   inputType?: 'document' | 'query';
+}
+
+/** Extract the text content from a message's content field. */
+export function getTextContent(content: string | ContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((p): p is Extract<ContentPart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join('');
 }
 
 /** Coarse cost/capability band used for routing and display. */

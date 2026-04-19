@@ -297,6 +297,10 @@ export type ChatEvent =
   | { type: 'content'; delta: string }
   | { type: 'status'; message: string }
   | { type: 'capability_result'; capabilitySlug: string; result: unknown }
+  | {
+      type: 'capability_results';
+      results: Array<{ capabilitySlug: string; result: unknown }>;
+    }
   | { type: 'warning'; code: string; message: string }
   | { type: 'done'; tokenUsage: TokenUsage; costUsd: number }
   | { type: 'error'; code: string; message: string };

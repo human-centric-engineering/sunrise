@@ -19,7 +19,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { apiLimiter, apiKeyChatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
 
@@ -47,6 +47,13 @@ export async function POST(
       status: 403,
     });
   }
+
+  // Per-API-key rate limit (overrides global default when configured)
+  const keyLimit = apiKeyChatLimiter.check(
+    `apikey:${resolved.session.user.id}`,
+    resolved.rateLimitRpm
+  );
+  if (!keyLimit.success) return createRateLimitResponse(keyLimit);
 
   const { slug } = await params;
 

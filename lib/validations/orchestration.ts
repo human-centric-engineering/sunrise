@@ -102,6 +102,14 @@ export const createAgentSchema = z.object({
 
   metadata: metadataSchema,
 
+  rateLimitRpm: z
+    .number()
+    .int('Rate limit must be an integer')
+    .min(1, 'Rate limit must be at least 1 RPM')
+    .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
+
   visibility: agentVisibilitySchema.default('internal'),
 
   isActive: z.boolean().default(true),
@@ -174,7 +182,28 @@ export const updateAgentSchema = z.object({
 
   metadata: metadataSchema,
 
+  rateLimitRpm: z
+    .number()
+    .int('Rate limit must be an integer')
+    .min(1, 'Rate limit must be at least 1 RPM')
+    .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
+
   visibility: agentVisibilitySchema.optional(),
+
+  knowledgeCategories: z
+    .array(z.string().max(100))
+    .max(20, 'At most 20 knowledge categories')
+    .optional(),
+
+  topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
+
+  brandVoiceInstructions: z
+    .string()
+    .max(10000, 'Brand voice instructions must be less than 10000 characters')
+    .nullable()
+    .optional(),
 
   isActive: z.boolean().optional(),
 });
@@ -443,6 +472,13 @@ const WEBHOOK_EVENT_TYPES = [
   'workflow_failed',
   'approval_required',
   'circuit_breaker_opened',
+  'conversation_started',
+  'conversation_completed',
+  'message_created',
+  'agent_updated',
+  'budget_threshold_reached',
+  'execution_completed',
+  'execution_failed',
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
@@ -1065,12 +1101,27 @@ export const chatStreamRequestSchema = z.object({
 /** List conversations query (GET /admin/orchestration/conversations). */
 export const listConversationsQuerySchema = paginationQuerySchema.extend({
   agentId: cuidSchema.optional(),
+  /** Filter by user ID. When omitted, returns all users' conversations (admin audit). */
+  userId: z.string().max(100).optional(),
   isActive: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),
   q: z.string().trim().min(1).max(200).optional(),
   /** Full-text search across message content (case-insensitive). */
   messageSearch: z.string().trim().min(1).max(500).optional(),
+  /** ISO 8601 date — conversations updated on or after this date. */
+  dateFrom: z.string().datetime().optional(),
+  /** ISO 8601 date — conversations updated on or before this date. */
+  dateTo: z.string().datetime().optional(),
+});
+
+/** Export format for conversation export endpoint. */
+export const conversationExportQuerySchema = z.object({
+  format: z.enum(['json', 'csv']).default('json'),
+  agentId: cuidSchema.optional(),
+  userId: z.string().max(100).optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
 });
 
 /**
@@ -1348,11 +1399,23 @@ export const stepErrorConfigSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+/** Structured output format for LLM calls. */
+export const llmResponseFormatSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('json_object') }),
+  z.object({
+    type: z.literal('json_schema'),
+    name: z.string(),
+    schema: z.record(z.string(), z.unknown()),
+    strict: z.boolean().optional(),
+  }),
+]);
+
 export const llmCallConfigSchema = stepErrorConfigSchema.extend({
   prompt: z.string().optional(),
   modelOverride: z.string().optional(),
   temperature: z.number().optional(),
   maxTokens: z.number().optional(),
+  responseFormat: llmResponseFormatSchema.optional(),
 });
 
 export const toolCallConfigSchema = stepErrorConfigSchema.extend({
@@ -1411,6 +1474,14 @@ export const evaluateConfigSchema = stepErrorConfigSchema.extend({
   temperature: z.number().optional(),
 });
 
+/** Response transformation config for external-call steps. */
+export const responseTransformSchema = z.object({
+  /** Transformation type. `jmespath` for structured extraction. `template` for string templates. */
+  type: z.enum(['jmespath', 'template']),
+  /** JMESPath expression or Handlebars-style template string. */
+  expression: z.string().min(1).max(2000),
+});
+
 export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   url: z.string().optional(),
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
@@ -1423,12 +1494,18 @@ export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   authQueryParam: z.string().optional(),
   /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
   maxResponseBytes: z.number().int().positive().optional(),
+  /** Optional transformation to apply to the response body before returning step output. */
+  responseTransform: responseTransformSchema.optional(),
 });
 
 export const agentCallConfigSchema = stepErrorConfigSchema.extend({
   agentSlug: z.string().optional(),
   message: z.string().optional(),
   maxToolIterations: z.number().int().min(0).max(20).optional(),
+  /** 'single-turn' (default) — one prompt/response. 'multi-turn' — back-and-forth with maxTurns. */
+  mode: z.enum(['single-turn', 'multi-turn']).optional(),
+  /** Max conversation turns in multi-turn mode (default 3, max 10). */
+  maxTurns: z.number().int().min(1).max(10).optional(),
 });
 
 // ---------- Workflow Schedule ─────────────────────────────────────────────
@@ -1568,6 +1645,7 @@ export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchem
 export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+export type ConversationExportQuery = z.infer<typeof conversationExportQuerySchema>;
 export type ClearConversationsBodyInput = z.infer<typeof clearConversationsBodySchema>;
 export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;
 export type GetPatternParamInput = z.infer<typeof getPatternParamSchema>;
@@ -1587,6 +1665,23 @@ export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestratio
  * Consumer chat request schema (POST /api/v1/chat/stream).
  * Simpler than admin — no contextType/contextId/entityContext.
  */
+/** Attachment validation for multimodal chat messages. */
+export const chatAttachmentSchema = z.object({
+  name: z.string().min(1).max(255),
+  mediaType: z.enum([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'text/markdown',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ]),
+  data: z.string().min(1), // base64-encoded content
+});
+
 export const consumerChatRequestSchema = z.object({
   message: z
     .string()
@@ -1600,6 +1695,9 @@ export const consumerChatRequestSchema = z.object({
 
   /** Invite token for accessing invite_only agents */
   inviteToken: z.string().optional(),
+
+  /** File attachments (images, documents) — max 10 per message. */
+  attachments: z.array(chatAttachmentSchema).max(10).optional(),
 });
 
 /** Consumer conversations list query (GET /api/v1/chat/conversations). */

@@ -38,6 +38,7 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   apiLimiter: { check: vi.fn(() => ({ success: true })) },
+  apiKeyChatLimiter: { check: vi.fn(() => ({ success: true })), reset: vi.fn() },
   createRateLimitResponse: vi.fn(() =>
     Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
   ),
@@ -97,6 +98,7 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
     vi.mocked(resolveApiKey).mockResolvedValue({
       session: { user: { id: 'u1' } } as never,
       scopes: ['webhook'],
+      rateLimitRpm: null,
     });
     vi.mocked(hasScope).mockReturnValue(true);
   });
@@ -238,6 +240,7 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
     vi.mocked(resolveApiKey).mockResolvedValue({
       session: { user: { id: 'u1' } } as never,
       scopes: ['chat'],
+      rateLimitRpm: null,
     });
     vi.mocked(hasScope).mockReturnValue(false);
 

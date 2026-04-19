@@ -27,7 +27,8 @@ import type { ChatEvent, MessageMetadata } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
-import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -40,6 +41,8 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
 import {
   MAX_HISTORY_MESSAGES,
@@ -137,6 +140,16 @@ export class StreamingChatHandler {
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
 
+      // Emit hook event for message creation
+      emitHookEvent('message.created', {
+        conversationId: conversation.id,
+        messageId: userMessage.id,
+        agentSlug: request.agentSlug,
+        agentId: agent.id,
+        userId: request.userId,
+        role: 'user',
+      });
+
       // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
@@ -216,14 +229,21 @@ export class StreamingChatHandler {
         select: { key: true, value: true },
       });
 
+      // Resolve the model's context window for token-aware truncation
+      const modelInfo = getModel(agent.model);
+      const contextWindowTokens = modelInfo?.maxContext ?? undefined;
+
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
         contextBlock,
         history: historyRows,
         newUserMessage: request.message,
+        attachments: request.attachments,
         conversationSummary,
         userMemories: memoryRows.length > 0 ? memoryRows : undefined,
         brandVoiceInstructions: agent.brandVoiceInstructions,
+        contextWindowTokens,
+        reserveTokens: agent.maxTokens ?? undefined,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
@@ -239,43 +259,116 @@ export class StreamingChatHandler {
       );
       resolvedProviderSlug = usedSlug;
 
+      // Extract responseFormat from agent metadata if configured
+      const agentMetadata = agent.metadata as Record<string, unknown> | null;
+      const responseFormat = agentMetadata?.responseFormat as
+        | import('@/lib/orchestration/llm/types').LlmResponseFormat
+        | undefined;
+
+      // Remaining fallback providers for mid-stream retry
+      const remainingFallbacks = [...(agent.fallbackProviders ?? [])];
+      let currentProvider = provider;
+      let currentProviderSlug = usedSlug;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
 
         let assistantText = '';
-        let toolCall: LlmToolCall | null = null;
+        const toolCalls = new Map<number, LlmToolCall>();
         let usage: { inputTokens: number; outputTokens: number } | null = null;
 
-        const stream = provider.chatStream(messages, {
+        const llmOptions = {
           model: agent.model,
           ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
           ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
+          ...(responseFormat && toolDefinitions.length === 0 ? { responseFormat } : {}),
           ...(request.signal ? { signal: request.signal } : {}),
-        });
+        };
 
-        for await (const chunk of stream) {
-          if (chunk.type === 'text') {
-            // Suppress further text once we've captured a tool call —
-            // we're about to dispatch and loop, so any trailing prose
-            // from the same turn gets folded into the next turn's
-            // context via the appended assistant message.
-            if (toolCall) continue;
-            assistantText += chunk.content;
-            yield { type: 'content', delta: chunk.content };
-          } else if (chunk.type === 'tool_call') {
-            // Capture the first tool call. Multi-tool-per-turn is a
-            // later slice; for now we keep draining so the trailing
-            // `done` chunk (which carries usage) still lands.
-            if (!toolCall) toolCall = chunk.toolCall;
-          } else if (chunk.type === 'done') {
-            usage = chunk.usage;
+        // Stream with mid-stream retry: if the stream fails, try the
+        // next fallback provider and re-emit content from scratch.
+        let streamSucceeded = false;
+        let streamRetries = 0;
+        const MAX_STREAM_RETRIES = 2;
+
+        while (!streamSucceeded && streamRetries <= MAX_STREAM_RETRIES) {
+          try {
+            const stream = currentProvider.chatStream(messages, llmOptions);
+
+            let toolCallIndex = 0;
+            for await (const chunk of stream) {
+              if (chunk.type === 'text') {
+                if (toolCalls.size > 0) continue;
+                assistantText += chunk.content;
+                yield { type: 'content', delta: chunk.content };
+              } else if (chunk.type === 'tool_call') {
+                toolCalls.set(toolCallIndex++, chunk.toolCall);
+              } else if (chunk.type === 'done') {
+                usage = chunk.usage;
+              }
+            }
+            streamSucceeded = true;
+          } catch (streamErr) {
+            streamRetries++;
+            getBreaker(currentProviderSlug).recordFailure();
+
+            // If aborted, don't retry
+            if (
+              streamErr instanceof Error &&
+              (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
+            ) {
+              throw streamErr;
+            }
+
+            // Try next fallback provider
+            const nextSlug = remainingFallbacks.shift();
+            if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
+              log.error('Stream failed, no more fallback providers', streamErr as Error, {
+                agentSlug: request.agentSlug,
+                provider: currentProviderSlug,
+                retries: streamRetries,
+              });
+              throw streamErr;
+            }
+
+            log.warn('Stream failed, retrying with fallback provider', {
+              failedProvider: currentProviderSlug,
+              nextProvider: nextSlug,
+              error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+            });
+
+            yield {
+              type: 'warning',
+              code: 'provider_retry',
+              message: `Retrying with fallback provider...`,
+            };
+
+            // Reset accumulated content for the retry
+            assistantText = '';
+            toolCalls.clear();
+            usage = null;
+
+            try {
+              currentProvider = await getProvider(nextSlug);
+              currentProviderSlug = nextSlug;
+              resolvedProviderSlug = nextSlug;
+            } catch {
+              log.error(
+                'Failed to load fallback provider',
+                new Error(`Provider ${nextSlug} not available`),
+                {
+                  agentSlug: request.agentSlug,
+                }
+              );
+              throw streamErr;
+            }
           }
         }
 
         if (assistantText.length > 0) {
-          await this.persistMessage({
+          const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
@@ -291,6 +384,16 @@ export class StreamingChatHandler {
                 }
               : {}),
           });
+          // Queue async embedding for semantic search (non-blocking)
+          queueMessageEmbedding(assistantMsg.id, assistantText);
+          emitHookEvent('message.created', {
+            conversationId: conversation.id,
+            messageId: assistantMsg.id,
+            agentSlug: request.agentSlug,
+            agentId: agent.id,
+            userId: request.userId,
+            role: 'assistant',
+          });
         }
 
         if (usage) {
@@ -305,7 +408,7 @@ export class StreamingChatHandler {
           });
         }
 
-        if (!toolCall) {
+        if (toolCalls.size === 0) {
           // Output guard — scan assistant response for topic violations
           if (assistantText.length > 0) {
             const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
@@ -347,60 +450,131 @@ export class StreamingChatHandler {
           return;
         }
 
-        // Tool call path.
-        yield { type: 'status', message: `Executing ${toolCall.name}` };
-
-        const result = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
+        // Tool call path — dispatch all tool calls from this turn.
+        const toolCallArray = [...toolCalls.values()];
+        const dispatchContext = {
           userId: request.userId,
           agentId: agent.id,
           conversationId: conversation.id,
           ...(request.entityContext ? { entityContext: request.entityContext } : {}),
-        });
+        };
 
-        yield { type: 'capability_result', capabilitySlug: toolCall.name, result };
+        if (toolCallArray.length === 1) {
+          // Single tool call — preserve original event format for
+          // backward compatibility with existing SSE consumers.
+          const tc = toolCallArray[0];
+          yield { type: 'status', message: `Executing ${tc.name}` };
 
-        await this.persistMessage({
-          conversationId: conversation.id,
-          role: 'tool',
-          content: JSON.stringify(result),
-          capabilitySlug: toolCall.name,
-          toolCallId: toolCall.id,
-          metadata: {
-            toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
-            result,
-          },
-        });
+          const result = await capabilityDispatcher.dispatch(
+            tc.name,
+            tc.arguments,
+            dispatchContext
+          );
 
-        // If the tool could have mutated the entity the conversation
-        // is locked to, drop the cached context so the next turn
-        // re-fetches. Phase 2c has no mutating capabilities, so this
-        // is a no-op in practice — the hook is wired for future
-        // slices.
-        if (request.contextType && request.contextId) {
-          invalidateContext(request.contextType, request.contextId);
-        }
+          yield { type: 'capability_result', capabilitySlug: tc.name, result };
 
-        if (result.skipFollowup) {
-          getBreaker(usedSlug).recordSuccess();
-          yield buildDoneEvent(agent.model, usage);
-          return;
-        }
-
-        // Rebuild message array with assistant turn + tool result
-        // appended, then loop back to the LLM for its follow-up.
-        messages = [
-          ...messages,
-          {
-            role: 'assistant',
-            content: assistantText,
-            toolCalls: [toolCall],
-          },
-          {
+          await this.persistMessage({
+            conversationId: conversation.id,
             role: 'tool',
             content: JSON.stringify(result),
-            toolCallId: toolCall.id,
-          },
-        ];
+            capabilitySlug: tc.name,
+            toolCallId: tc.id,
+            metadata: {
+              toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+              result,
+            },
+          });
+
+          if (request.contextType && request.contextId) {
+            invalidateContext(request.contextType, request.contextId);
+          }
+
+          if (result.skipFollowup) {
+            getBreaker(usedSlug).recordSuccess();
+            yield buildDoneEvent(agent.model, usage);
+            return;
+          }
+
+          messages = [
+            ...messages,
+            { role: 'assistant', content: assistantText, toolCalls: [tc] },
+            { role: 'tool', content: JSON.stringify(result), toolCallId: tc.id },
+          ];
+        } else {
+          // Multiple tool calls — dispatch in parallel for performance.
+          const names = toolCallArray.map((tc) => tc.name).join(', ');
+          yield { type: 'status', message: `Executing ${toolCallArray.length} tools: ${names}` };
+
+          const settled = await Promise.allSettled(
+            toolCallArray.map((tc) =>
+              capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext)
+            )
+          );
+
+          const results: Array<{ capabilitySlug: string; result: unknown }> = [];
+          const toolResultMessages: LlmMessage[] = [];
+          let anySkipFollowup = false;
+
+          for (let i = 0; i < toolCallArray.length; i++) {
+            const tc = toolCallArray[i];
+            const outcome = settled[i];
+            const result =
+              outcome.status === 'fulfilled'
+                ? outcome.value
+                : {
+                    success: false,
+                    error: {
+                      code: 'execution_error',
+                      message:
+                        outcome.reason instanceof Error
+                          ? outcome.reason.message
+                          : 'Capability execution failed',
+                    },
+                  };
+
+            results.push({ capabilitySlug: tc.name, result });
+
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(result),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: {
+                toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+                result,
+              },
+            });
+
+            toolResultMessages.push({
+              role: 'tool',
+              content: JSON.stringify(result),
+              toolCallId: tc.id,
+            });
+
+            if (result.skipFollowup) anySkipFollowup = true;
+          }
+
+          yield { type: 'capability_results', results };
+
+          if (request.contextType && request.contextId) {
+            invalidateContext(request.contextType, request.contextId);
+          }
+
+          if (anySkipFollowup) {
+            getBreaker(usedSlug).recordSuccess();
+            yield buildDoneEvent(agent.model, usage);
+            return;
+          }
+
+          // Rebuild messages with the assistant turn (carrying all tool
+          // calls) followed by each tool result message.
+          messages = [
+            ...messages,
+            { role: 'assistant', content: assistantText, toolCalls: toolCallArray },
+            ...toolResultMessages,
+          ];
+        }
       }
 
       log.warn('Chat tool loop hit iteration cap', {

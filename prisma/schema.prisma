@@ -51,7 +51,9 @@ model User {
   aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
   aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
   aiInviteTokens         AiAgentInviteToken[]    @relation("InviteTokenCreator")
+  aiAgentVersions        AiAgentVersion[]        @relation("AgentVersionCreator")
   aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
+  aiEventHooks           AiEventHook[]           @relation("AiEventHookCreator")
 
   // MCP Server relations
   mcpApiKeys McpApiKey[] @relation("McpApiKeyCreator")
@@ -169,6 +171,7 @@ model AiAgent {
   knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
   topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
   brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
+  rateLimitRpm              Int?     // per-agent rate limit (requests per minute); null = use global default
   visibility                String   @default("internal") // "internal" | "public" | "invite_only"
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
@@ -184,6 +187,7 @@ model AiAgent {
   evaluations   AiEvaluationSession[]
   costLogs      AiCostLog[]
   inviteTokens  AiAgentInviteToken[]
+  versions      AiAgentVersion[]
 
   @@index([createdBy])
   @@index([provider])
@@ -211,6 +215,24 @@ model AiAgentInviteToken {
   @@index([agentId])
   @@index([token])
   @@map("ai_agent_invite_token")
+}
+
+// Version snapshot of agent configuration for audit and rollback
+model AiAgentVersion {
+  id            String   @id @default(cuid())
+  agentId       String
+  version       Int // monotonically increasing per agent
+  snapshot      Json // full agent config at this point in time
+  changeSummary String?  @db.Text // auto-generated description of what changed
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("AgentVersionCreator", fields: [createdBy], references: [id])
+
+  @@unique([agentId, version])
+  @@index([agentId])
+  @@map("ai_agent_version")
 }
 
 // A discrete tool/function an agent can call
@@ -271,6 +293,7 @@ model AiWorkflow {
   patternsUsed              Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
+  templateSource     String?  // null = regular workflow, "builtin" = seed template, "custom" = admin-created
   metadata           Json?
   createdBy          String
   createdAt          DateTime @default(now())
@@ -383,14 +406,49 @@ model AiMessage {
   createdAt      DateTime @default(now())
 
   // Relations
-  conversation   AiConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  evaluationLogs AiEvaluationLog[]
+  conversation     AiConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  evaluationLogs   AiEvaluationLog[]
+  messageEmbedding AiMessageEmbedding?
 
   @@index([conversationId])
   @@index([role])
   @@index([createdAt])
   @@index([rating])
   @@map("ai_message")
+}
+
+// Embedding vector for semantic search over conversation messages
+model AiMessageEmbedding {
+  id        String                       @id @default(cuid())
+  messageId String                       @unique
+  embedding Unsupported("vector(1024)")
+
+  message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("ai_message_embedding")
+}
+
+// Configurable event hooks for orchestration events
+// Fires on events like conversation.started, message.created,
+// workflow.completed, etc. Supports webhook and internal action types.
+model AiEventHook {
+  id        String   @id @default(cuid())
+  name      String
+  eventType String   @db.VarChar(100) // e.g. "conversation.started", "workflow.completed"
+  action    Json     // { type: 'webhook', url, headers } or { type: 'internal', handler }
+  filter    Json?    // optional event filtering e.g. { agentSlug: 'support-bot' }
+  isEnabled Boolean  @default(true)
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  creator User @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+
+  @@index([eventType])
+  @@index([isEnabled])
+  @@map("ai_event_hook")
 }
 
 // Per-user-per-agent key-value memory (preferences, prior topics, facts)
@@ -563,10 +621,33 @@ model AiWebhookSubscription {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation("AiWebhookUser", fields: [createdBy], references: [id])
+  user       User                 @relation("AiWebhookUser", fields: [createdBy], references: [id])
+  deliveries AiWebhookDelivery[]
 
   @@index([isActive])
   @@map("ai_webhook_subscription")
+}
+
+// Webhook delivery tracking — records each delivery attempt for audit + retry
+model AiWebhookDelivery {
+  id               String    @id @default(cuid())
+  subscriptionId   String
+  eventType        String
+  payload          Json
+  status           String    @default("pending") // pending, delivered, failed, exhausted
+  attempts         Int       @default(0)
+  lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  lastResponseCode Int?
+  lastError        String?   @db.Text
+  createdAt        DateTime  @default(now())
+
+  subscription AiWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("ai_webhook_delivery")
 }
 
 // Configured LLM providers
@@ -603,6 +684,7 @@ model AiApiKey {
   keyHash      String    @unique // SHA-256 hash of the API key (key itself never stored)
   keyPrefix    String    // first 8 chars for display (e.g. "sk_abc12...")
   scopes       String[]  @default(["chat"]) // "chat", "analytics", "knowledge", "admin"
+  rateLimitRpm Int?      // per-key rate limit (requests per minute); null = use global default
   lastUsedAt   DateTime?
   expiresAt    DateTime? // null = never expires
   revokedAt    DateTime? // non-null = revoked

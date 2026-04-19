@@ -20,6 +20,7 @@
  *   - HTTP errors classified as retriable vs non-retriable for smart retry.
  */
 
+import jmespath from 'jmespath';
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { externalCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -336,11 +337,77 @@ export async function executeExternalCall(
     latencyMs,
   });
 
+  // ── Apply response transformation ────────────────────────────────────
+  let transformedBody = responseBody;
+  if (config.responseTransform) {
+    try {
+      transformedBody = applyResponseTransform(responseBody, config.responseTransform);
+    } catch (err) {
+      // Transform failure is non-fatal — return full response with error info
+      logger.warn('External call: response transform failed', {
+        stepId: step.id,
+        transformType: config.responseTransform.type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        output: {
+          status: response.status,
+          body: responseBody,
+          _transformError: err instanceof Error ? err.message : String(err),
+        },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
+    }
+  }
+
   return {
-    output: { status: response.status, body: responseBody },
+    output: { status: response.status, body: transformedBody },
     tokensUsed: 0,
     costUsd: 0,
   };
+}
+
+// ─── Response Transformation ───────────────────────────────────────────────
+
+/**
+ * Apply a response transformation to the response body.
+ *
+ * Supported types:
+ * - `jmespath`: JMESPath expression for structured data extraction.
+ * - `template`: Simple `{{path.to.field}}` template string interpolation.
+ */
+function applyResponseTransform(
+  body: unknown,
+  transform: { type: 'jmespath' | 'template'; expression: string }
+): unknown {
+  if (transform.type === 'jmespath') {
+    return jmespath.search(body, transform.expression);
+  }
+
+  if (transform.type === 'template') {
+    // Simple template interpolation: replace {{path}} with values from body
+    return transform.expression.replace(/\{\{([^}]+)\}\}/g, (_match, path: string) => {
+      const value = getNestedValue(body, path.trim());
+      if (value === undefined) return '';
+      return typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value as string | number | boolean);
+    });
+  }
+
+  return body;
+}
+
+/** Resolve a dot-separated path on an object. */
+function getNestedValue(obj: unknown, path: string): unknown {
+  const parts = path.split('.');
+  let current: unknown = obj;
+  for (const part of parts) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
 }
 
 registerStepType('external_call', executeExternalCall);

@@ -6,6 +6,7 @@
  *   - `modelOverride?: string`
  *   - `temperature?: number`
  *   - `maxTokens?: number`
+ *   - `responseFormat?: LlmResponseFormat` — request structured JSON output
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
@@ -31,6 +32,7 @@ export async function executeLlmCall(
     modelOverride: config.modelOverride,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
+    responseFormat: config.responseFormat,
   });
 
   return {

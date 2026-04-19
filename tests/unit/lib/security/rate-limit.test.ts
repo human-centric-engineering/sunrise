@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   createRateLimiter,
+  createDynamicLimiter,
   authLimiter,
   apiLimiter,
   passwordResetLimiter,
@@ -204,6 +205,72 @@ describe('Rate Limiter', () => {
       const result = passwordResetLimiter.check(`pwd-test-${Date.now()}`);
       expect(result.limit).toBe(3);
       passwordResetLimiter.reset(`pwd-test-${Date.now()}`);
+    });
+  });
+
+  describe('createDynamicLimiter', () => {
+    it('should use the default RPM when no custom limit is provided', () => {
+      const limiter = createDynamicLimiter('test', 5);
+      const token = `dyn-default-${Date.now()}`;
+
+      for (let i = 0; i < 5; i++) {
+        expect(limiter.check(token).success).toBe(true);
+      }
+      expect(limiter.check(token).success).toBe(false);
+    });
+
+    it('should use custom RPM when provided', () => {
+      const limiter = createDynamicLimiter('test', 5);
+      const token = `dyn-custom-${Date.now()}`;
+
+      // Custom limit of 2
+      expect(limiter.check(token, 2).success).toBe(true);
+      expect(limiter.check(token, 2).success).toBe(true);
+      expect(limiter.check(token, 2).success).toBe(false);
+    });
+
+    it('should fall back to default when customRpm is null', () => {
+      const limiter = createDynamicLimiter('test', 3);
+      const token = `dyn-null-${Date.now()}`;
+
+      for (let i = 0; i < 3; i++) {
+        expect(limiter.check(token, null).success).toBe(true);
+      }
+      expect(limiter.check(token, null).success).toBe(false);
+    });
+
+    it('should track different tokens independently', () => {
+      const limiter = createDynamicLimiter('test', 2);
+      const tokenA = `dyn-a-${Date.now()}`;
+      const tokenB = `dyn-b-${Date.now()}`;
+
+      expect(limiter.check(tokenA).success).toBe(true);
+      expect(limiter.check(tokenA).success).toBe(true);
+      expect(limiter.check(tokenA).success).toBe(false);
+
+      // Token B should be independent
+      expect(limiter.check(tokenB).success).toBe(true);
+    });
+
+    it('should reset a token', () => {
+      const limiter = createDynamicLimiter('test', 1);
+      const token = `dyn-reset-${Date.now()}`;
+
+      expect(limiter.check(token).success).toBe(true);
+      expect(limiter.check(token).success).toBe(false);
+
+      limiter.reset(token);
+      expect(limiter.check(token).success).toBe(true);
+    });
+
+    it('should return correct remaining count with custom RPM', () => {
+      const limiter = createDynamicLimiter('test', 10);
+      const token = `dyn-remaining-${Date.now()}`;
+
+      const result = limiter.check(token, 5);
+      expect(result.success).toBe(true);
+      expect(result.limit).toBe(5);
+      expect(result.remaining).toBe(4);
     });
   });
 

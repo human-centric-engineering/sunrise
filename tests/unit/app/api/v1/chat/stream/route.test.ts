@@ -55,6 +55,10 @@ vi.mock('@/lib/security/rate-limit', () => ({
   consumerChatLimiter: {
     check: vi.fn(),
   },
+  agentChatLimiter: {
+    check: vi.fn(() => ({ success: true })),
+    reset: vi.fn(),
+  },
   createRateLimitResponse: vi.fn(() =>
     Response.json(
       { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' } },
@@ -167,7 +171,12 @@ function createMockSession(userId = 'user_test123') {
 /**
  * A public, active agent record
  */
-const mockPublicAgent = { id: 'agent-001', slug: 'helper-bot' };
+const mockPublicAgent = {
+  id: 'agent-001',
+  slug: 'helper-bot',
+  visibility: 'public',
+  rateLimitRpm: null,
+};
 
 /**
  * Valid request payload
@@ -226,7 +235,7 @@ describe('POST /api/v1/chat/stream', () => {
           isActive: true,
           visibility: { in: ['public', 'invite_only'] },
         },
-        select: { id: true, slug: true, visibility: true },
+        select: { id: true, slug: true, visibility: true, rateLimitRpm: true },
       });
 
       // Assert: streamChat called with correct args

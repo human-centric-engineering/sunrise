@@ -45,6 +45,7 @@ import {
   type ProviderTestResult,
 } from './provider';
 import type {
+  ContentPart,
   LlmFinishReason,
   LlmMessage,
   LlmOptions,
@@ -55,6 +56,7 @@ import type {
   ProviderConfig,
   StreamChunk,
 } from './types';
+import { getTextContent } from './types';
 
 /** Model used for cheap connectivity pings. */
 const PING_MODEL = 'claude-haiku-4-5';
@@ -145,11 +147,19 @@ export class AnthropicProvider implements LlmProvider {
 
     const content: string[] = [];
     const toolCalls: LlmToolCall[] = [];
+    const isStructuredExtraction =
+      options.responseFormat?.type === 'json_schema' && !options.tools?.length;
+
     for (const block of message.content) {
       if (block.type === 'text') {
         content.push(block.text);
       } else if (block.type === 'tool_use') {
-        toolCalls.push(toolUseBlockToToolCall(block));
+        if (isStructuredExtraction && block.name.startsWith('__structured_')) {
+          // Structured output extraction — convert tool arguments to JSON text
+          content.push(JSON.stringify(block.input));
+        } else {
+          toolCalls.push(toolUseBlockToToolCall(block));
+        }
       }
     }
 
@@ -160,7 +170,7 @@ export class AnthropicProvider implements LlmProvider {
         outputTokens: message.usage.output_tokens,
       },
       model: message.model,
-      finishReason: mapStopReason(message.stop_reason),
+      finishReason: isStructuredExtraction ? 'stop' : mapStopReason(message.stop_reason),
     };
     if (toolCalls.length > 0) response.toolCalls = toolCalls;
     return response;
@@ -181,6 +191,9 @@ export class AnthropicProvider implements LlmProvider {
     } catch (err) {
       throw toProviderError(err, 'Anthropic chat stream failed');
     }
+
+    const isStructuredExtraction =
+      options.responseFormat?.type === 'json_schema' && !options.tools?.length;
 
     let inputTokens = 0;
     let outputTokens = 0;
@@ -222,14 +235,20 @@ export class AnthropicProvider implements LlmProvider {
           case 'content_block_stop': {
             const buf = toolBuffers.get(event.index);
             if (buf) {
-              yield {
-                type: 'tool_call',
-                toolCall: {
-                  id: buf.id,
-                  name: buf.name,
-                  arguments: safeParseJson(buf.partial),
-                },
-              };
+              if (isStructuredExtraction && buf.name.startsWith('__structured_')) {
+                // Structured output — emit the JSON as text content
+                const parsed = safeParseJson(buf.partial);
+                yield { type: 'text', content: JSON.stringify(parsed) };
+              } else {
+                yield {
+                  type: 'tool_call',
+                  toolCall: {
+                    id: buf.id,
+                    name: buf.name,
+                    arguments: safeParseJson(buf.partial),
+                  },
+                };
+              }
               toolBuffers.delete(event.index);
             }
             break;
@@ -254,7 +273,7 @@ export class AnthropicProvider implements LlmProvider {
     yield {
       type: 'done',
       usage: { inputTokens, outputTokens },
-      finishReason,
+      finishReason: isStructuredExtraction ? 'stop' : finishReason,
     };
   }
 
@@ -308,6 +327,28 @@ export class AnthropicProvider implements LlmProvider {
       const toolChoice = mapToolChoice(options.toolChoice);
       if (toolChoice) params.tool_choice = toolChoice;
     }
+    // Structured output: Anthropic doesn't support response_format natively.
+    // We use a tool-based extraction pattern: define a tool with the schema,
+    // force the model to use it, and extract the structured data from the
+    // tool call arguments. This is only applied when no other tools are present
+    // (structured output and regular tool use are mutually exclusive per turn).
+    if (options.responseFormat && !options.tools?.length) {
+      if (options.responseFormat.type === 'json_schema') {
+        const extractionToolName = `__structured_${options.responseFormat.name}`;
+        params.tools = [
+          {
+            name: extractionToolName,
+            description: `Extract structured data matching the ${options.responseFormat.name} schema.`,
+            input_schema: buildToolInputSchema(options.responseFormat.schema),
+          },
+        ];
+        params.tool_choice = { type: 'tool', name: extractionToolName };
+      } else if (options.responseFormat.type === 'json_object') {
+        // For json_object mode, instruct the model via system message prefix
+        // since Anthropic has no native JSON mode. The caller's system
+        // instructions should already request JSON output.
+      }
+    }
     return params;
   }
 
@@ -339,7 +380,8 @@ function splitSystemMessages(messages: LlmMessage[]): {
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      if (msg.content) systemParts.push(msg.content);
+      const text = getTextContent(msg.content);
+      if (text) systemParts.push(text);
       continue;
     }
     if (msg.role === 'tool') {
@@ -349,7 +391,7 @@ function splitSystemMessages(messages: LlmMessage[]): {
           {
             type: 'tool_result',
             tool_use_id: msg.toolCallId ?? '',
-            content: msg.content,
+            content: getTextContent(msg.content),
           },
         ],
       });
@@ -357,7 +399,8 @@ function splitSystemMessages(messages: LlmMessage[]): {
     }
     if (msg.role === 'assistant' && msg.toolCalls?.length) {
       const blocks: ContentBlockParam[] = [];
-      if (msg.content) blocks.push({ type: 'text', text: msg.content });
+      const text = getTextContent(msg.content);
+      if (text) blocks.push({ type: 'text', text });
       for (const call of msg.toolCalls) {
         blocks.push({
           type: 'tool_use',
@@ -369,6 +412,12 @@ function splitSystemMessages(messages: LlmMessage[]): {
       conversation.push({ role: 'assistant', content: blocks });
       continue;
     }
+    // Multimodal content — convert ContentPart[] to Anthropic blocks
+    if (Array.isArray(msg.content)) {
+      const blocks: ContentBlockParam[] = toAnthropicBlocks(msg.content);
+      conversation.push({ role: msg.role, content: blocks });
+      continue;
+    }
     conversation.push({ role: msg.role, content: msg.content });
   }
 
@@ -376,6 +425,57 @@ function splitSystemMessages(messages: LlmMessage[]): {
     system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
     conversation,
   };
+}
+
+/** Convert platform-neutral ContentPart[] to Anthropic ContentBlockParam[]. */
+function toAnthropicBlocks(parts: ContentPart[]): ContentBlockParam[] {
+  const blocks: ContentBlockParam[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      blocks.push({ type: 'text', text: part.text });
+    } else if (part.type === 'image') {
+      if (part.source.type === 'base64') {
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: part.source.mediaType as
+              | 'image/jpeg'
+              | 'image/png'
+              | 'image/gif'
+              | 'image/webp',
+            data: part.source.data,
+          },
+        });
+      } else {
+        blocks.push({
+          type: 'image',
+          source: { type: 'url', url: part.source.url },
+        });
+      }
+    } else if (part.type === 'document') {
+      // Anthropic supports native PDF via document blocks; for other
+      // formats, fall back to text extraction (content should already
+      // have been extracted by the chat handler before reaching here).
+      if (part.source.mediaType === 'application/pdf') {
+        blocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: part.source.data,
+          },
+        });
+      } else {
+        // Non-PDF documents: treat extracted text as a text block
+        blocks.push({
+          type: 'text',
+          text: `[Document: ${part.name}]\n${Buffer.from(part.source.data, 'base64').toString('utf-8')}`,
+        });
+      }
+    }
+  }
+  return blocks;
 }
 
 function mapToolChoice(choice: LlmToolChoice | undefined): ToolChoice | undefined {

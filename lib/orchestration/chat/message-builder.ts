@@ -14,8 +14,13 @@
  */
 
 import { logger } from '@/lib/logging';
-import type { LlmMessage, LlmRole } from '@/lib/orchestration/llm/types';
+import type { ContentPart, LlmMessage, LlmRole } from '@/lib/orchestration/llm/types';
+import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
+import {
+  estimateMessagesTokens,
+  truncateToTokenBudget,
+} from '@/lib/orchestration/chat/token-estimator';
 
 export interface HistoryRow {
   role: string;
@@ -33,12 +38,21 @@ export interface BuildMessagesArgs {
   contextBlock: string | null;
   history: HistoryRow[];
   newUserMessage: string;
+  /** File attachments (images, documents) to include with the user message. */
+  attachments?: ChatAttachment[];
   /** Rolling summary of messages older than the truncation window. */
   conversationSummary?: string;
   /** Per-user-per-agent memories to inject into context. */
   userMemories?: UserMemoryEntry[];
   /** Brand voice instructions appended to the system prompt. */
   brandVoiceInstructions?: string | null;
+  /**
+   * Model's context window size in tokens. When set, token-aware
+   * truncation is used instead of the fixed message count limit.
+   */
+  contextWindowTokens?: number;
+  /** Tokens to reserve for the model's response (default: 4096). */
+  reserveTokens?: number;
 }
 
 /**
@@ -65,18 +79,51 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
 
   const history = args.history;
   let truncated = history;
+  let droppedCount = 0;
+
+  // Hard cap to avoid loading too many messages
   if (history.length > MAX_HISTORY_MESSAGES) {
-    const dropped = history.length - MAX_HISTORY_MESSAGES;
+    droppedCount = history.length - MAX_HISTORY_MESSAGES;
     truncated = history.slice(-MAX_HISTORY_MESSAGES);
+  }
+
+  // Token-aware truncation: if we know the context window, calculate
+  // how much budget is available for history after accounting for
+  // system messages, the new user message, and the response reserve.
+  if (args.contextWindowTokens && args.contextWindowTokens > 0) {
+    const reserveTokens = args.reserveTokens ?? 4096;
+    const systemTokens = estimateMessagesTokens(messages);
+    const userTokens = estimateMessagesTokens([{ role: 'user', content: args.newUserMessage }]);
+    const historyBudget = args.contextWindowTokens - reserveTokens - systemTokens - userTokens;
+
+    if (historyBudget > 0) {
+      const historyMessages: LlmMessage[] = truncated.map((row) => ({
+        role: normaliseRole(row.role),
+        content: row.content,
+        ...(row.toolCallId ? { toolCallId: row.toolCallId } : {}),
+      }));
+      const { droppedCount: tokenDropped } = truncateToTokenBudget(historyMessages, historyBudget);
+      if (tokenDropped > 0) {
+        droppedCount += tokenDropped;
+        truncated = truncated.slice(tokenDropped);
+      }
+    } else {
+      // No budget for history at all
+      droppedCount += truncated.length;
+      truncated = [];
+    }
+  }
+
+  if (droppedCount > 0) {
     if (args.conversationSummary) {
       messages.push({
         role: 'system',
-        content: `[Conversation summary of ${dropped} earlier messages]\n\n${args.conversationSummary}`,
+        content: `[Conversation summary of ${droppedCount} earlier messages]\n\n${args.conversationSummary}`,
       });
     } else {
       messages.push({
         role: 'system',
-        content: `[... ${dropped} older messages omitted for context window ...]`,
+        content: `[... ${droppedCount} older messages omitted for context window ...]`,
       });
     }
   }
@@ -90,7 +137,35 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
     }
   }
 
-  messages.push({ role: 'user', content: args.newUserMessage });
+  // Build the user message — multimodal if attachments are present
+  if (args.attachments && args.attachments.length > 0) {
+    const parts: ContentPart[] = [{ type: 'text', text: args.newUserMessage }];
+    for (const attachment of args.attachments) {
+      if (attachment.mediaType.startsWith('image/')) {
+        parts.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            mediaType: attachment.mediaType,
+            data: attachment.data,
+          },
+        });
+      } else {
+        parts.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            mediaType: attachment.mediaType,
+            data: attachment.data,
+          },
+          name: attachment.name,
+        });
+      }
+    }
+    messages.push({ role: 'user', content: parts });
+  } else {
+    messages.push({ role: 'user', content: args.newUserMessage });
+  }
   return messages;
 }
 

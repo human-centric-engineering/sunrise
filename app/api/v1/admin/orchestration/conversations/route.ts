@@ -3,10 +3,9 @@
  *
  * GET /api/v1/admin/orchestration/conversations
  *
- * Returns only the caller's own conversations. Admins using these
- * endpoints are still scoped to `session.user.id`; a cross-user audit
- * view is out of scope for this session (would be a separate endpoint
- * with its own auth model).
+ * Returns conversations across all users for admin audit. Supports
+ * filtering by agent, user, date range, and text search. When `userId`
+ * is provided, results are scoped to that user.
  *
  * Authentication: Admin role required.
  */
@@ -19,23 +18,26 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { listConversationsQuerySchema } from '@/lib/validations/orchestration';
 
-export const GET = withAdminAuth(async (request, session) => {
+export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, agentId, isActive, q, messageSearch } = validateQueryParams(
-    searchParams,
-    listConversationsQuerySchema
-  );
+  const { page, limit, agentId, userId, isActive, q, messageSearch, dateFrom, dateTo } =
+    validateQueryParams(searchParams, listConversationsQuerySchema);
   const skip = (page - 1) * limit;
 
-  const where: Prisma.AiConversationWhereInput = {
-    userId: session.user.id,
-  };
+  const where: Prisma.AiConversationWhereInput = {};
+  if (userId) where.userId = userId;
   if (agentId) where.agentId = agentId;
   if (isActive !== undefined) where.isActive = isActive;
   if (q) where.title = { contains: q, mode: 'insensitive' };
   if (messageSearch) {
     where.messages = { some: { content: { contains: messageSearch, mode: 'insensitive' } } };
+  }
+  if (dateFrom || dateTo) {
+    where.updatedAt = {
+      ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+      ...(dateTo ? { lte: new Date(dateTo) } : {}),
+    };
   }
 
   const [conversations, total] = await Promise.all([

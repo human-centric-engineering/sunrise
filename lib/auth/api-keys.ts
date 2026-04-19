@@ -50,7 +50,7 @@ export function validateScopes(scopes: string[]): scopes is ApiKeyScope[] {
  */
 export async function resolveApiKey(
   request: NextRequest
-): Promise<{ session: AuthSession; scopes: string[] } | null> {
+): Promise<{ session: AuthSession; scopes: string[]; rateLimitRpm: number | null } | null> {
   const authHeader = request.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer sk_')) return null;
 
@@ -99,7 +99,7 @@ export async function resolveApiKey(
     },
   };
 
-  return { session, scopes: apiKey.scopes };
+  return { session, scopes: apiKey.scopes, rateLimitRpm: apiKey.rateLimitRpm };
 }
 
 /**

@@ -5,12 +5,11 @@
  *
  * @see app/api/v1/admin/orchestration/conversations/[id]/messages/route.ts
  *
- * Key security assertions:
+ * Key assertions:
  * - Admin auth required (401/403 otherwise)
- * - Ownership is enforced via findFirst({ where: { id, userId } })
- * - Cross-user access returns 404 (NOT 403) — we never confirm existence
- *   of resources owned by other users.
+ * - Returns messages for any conversation (cross-user admin audit)
  * - Bad CUID returns 400
+ * - Non-existent conversation returns 404
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -35,7 +34,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiConversation: {
-      findFirst: vi.fn(),
+      findUnique: vi.fn(),
     },
     aiMessage: {
       findMany: vi.fn(),
@@ -50,15 +49,15 @@ import { prisma } from '@/lib/db/client';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
-const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwu2';
 const CONV_ID = 'cmjbv4i3x00003wsloputgwu3';
+const USER_ID = 'cmjbv4i3x00003wsloputgwu7';
 const INVALID_ID = 'not-a-cuid';
 
 function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: CONV_ID,
-    userId: ADMIN_ID,
+    userId: USER_ID,
     agentId: AGENT_ID,
     title: 'Test Conversation',
     isActive: true,
@@ -125,9 +124,9 @@ describe('GET /api/v1/admin/orchestration/conversations/:id/messages', () => {
   });
 
   describe('Successful retrieval', () => {
-    it('returns 200 with messages for an owned conversation', async () => {
+    it('returns 200 with messages and conversation metadata', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(makeConversation() as never);
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(makeConversation() as never);
       vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
         makeMessage({ createdAt: new Date('2025-01-01T10:00:00Z') }),
         makeMessage({
@@ -141,28 +140,32 @@ describe('GET /api/v1/admin/orchestration/conversations/:id/messages', () => {
       const response = await GET(makeRequest(), makeParams(CONV_ID));
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: { messages: unknown[] } }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: { conversation: { userId: string }; messages: unknown[] };
+      }>(response);
       expect(data.success).toBe(true);
       expect(data.data.messages).toHaveLength(2);
+      expect(data.data.conversation.userId).toBe(USER_ID);
     });
 
-    it('queries conversation with both id and userId for ownership check', async () => {
+    it('looks up conversation by id (cross-user admin audit)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(makeConversation() as never);
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(makeConversation() as never);
       vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([]);
 
       await GET(makeRequest(), makeParams(CONV_ID));
 
-      expect(vi.mocked(prisma.aiConversation.findFirst)).toHaveBeenCalledWith(
+      expect(vi.mocked(prisma.aiConversation.findUnique)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: CONV_ID, userId: ADMIN_ID }),
+          where: { id: CONV_ID },
         })
       );
     });
 
     it('returns messages ordered ascending by createdAt', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(makeConversation() as never);
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(makeConversation() as never);
       vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([]);
 
       await GET(makeRequest(), makeParams(CONV_ID));
@@ -175,19 +178,14 @@ describe('GET /api/v1/admin/orchestration/conversations/:id/messages', () => {
     });
   });
 
-  describe('Cross-user access (CRITICAL — must be 404, not 403)', () => {
-    it('returns 404 when conversation is not found or belongs to another user', async () => {
-      // findFirst returns null because { id, userId } does not match.
-      // This is the intended behavior: we never confirm existence of
-      // resources owned by other users.
+  describe('Not found', () => {
+    it('returns 404 when conversation does not exist', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(null);
 
       const response = await GET(makeRequest(), makeParams(CONV_ID));
 
       expect(response.status).toBe(404);
-      // Explicitly NOT 403 — must not confirm the resource exists
-      expect(response.status).not.toBe(403);
     });
   });
 

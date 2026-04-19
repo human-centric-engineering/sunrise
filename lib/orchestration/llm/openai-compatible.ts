@@ -49,6 +49,7 @@ import {
   type ProviderTestResult,
 } from './provider';
 import type {
+  ContentPart,
   LlmFinishReason,
   LlmMessage,
   LlmOptions,
@@ -58,6 +59,7 @@ import type {
   ModelInfo,
   StreamChunk,
 } from './types';
+import { getTextContent } from './types';
 
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
@@ -353,6 +355,22 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       const choice = mapToolChoice(options.toolChoice);
       if (choice) params.tool_choice = choice;
     }
+    if (options.responseFormat) {
+      if (options.responseFormat.type === 'json_object') {
+        params.response_format = { type: 'json_object' };
+      } else if (options.responseFormat.type === 'json_schema') {
+        params.response_format = {
+          type: 'json_schema',
+          json_schema: {
+            name: options.responseFormat.name,
+            schema: options.responseFormat.schema,
+            ...(options.responseFormat.strict !== undefined
+              ? { strict: options.responseFormat.strict }
+              : {}),
+          },
+        };
+      }
+    }
     return params;
   }
 }
@@ -364,14 +382,20 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 function toSdkMessage(msg: LlmMessage): ChatCompletionMessageParam {
   switch (msg.role) {
     case 'system':
-      return { role: 'system', content: msg.content };
-    case 'user':
+      return { role: 'system', content: getTextContent(msg.content) };
+    case 'user': {
+      // Multimodal content — convert ContentPart[] to OpenAI format
+      if (Array.isArray(msg.content)) {
+        return { role: 'user', content: toOpenAiParts(msg.content) };
+      }
       return { role: 'user', content: msg.content };
+    }
     case 'assistant': {
+      const text = getTextContent(msg.content);
       if (msg.toolCalls?.length) {
         return {
           role: 'assistant',
-          content: msg.content || null,
+          content: text || null,
           tool_calls: msg.toolCalls.map((call) => ({
             id: call.id,
             type: 'function' as const,
@@ -379,15 +403,41 @@ function toSdkMessage(msg: LlmMessage): ChatCompletionMessageParam {
           })),
         };
       }
-      return { role: 'assistant', content: msg.content };
+      return { role: 'assistant', content: text };
     }
     case 'tool':
       return {
         role: 'tool',
         tool_call_id: msg.toolCallId ?? '',
-        content: msg.content,
+        content: getTextContent(msg.content),
       };
   }
+}
+
+/** Convert platform-neutral ContentPart[] to OpenAI ChatCompletionContentPart[]. */
+function toOpenAiParts(
+  parts: ContentPart[]
+): import('openai/resources/chat/completions/completions').ChatCompletionContentPart[] {
+  return parts.map((part) => {
+    if (part.type === 'text') {
+      return { type: 'text' as const, text: part.text };
+    }
+    if (part.type === 'image') {
+      if (part.source.type === 'base64') {
+        return {
+          type: 'image_url' as const,
+          image_url: { url: `data:${part.source.mediaType};base64,${part.source.data}` },
+        };
+      }
+      return { type: 'image_url' as const, image_url: { url: part.source.url } };
+    }
+    // Documents: for OpenAI, embed as text (OpenAI doesn't have native doc blocks)
+    if (part.type === 'document') {
+      const text = Buffer.from(part.source.data, 'base64').toString('utf-8');
+      return { type: 'text' as const, text: `[Document: ${part.name}]\n${text}` };
+    }
+    return { type: 'text' as const, text: '' };
+  });
 }
 
 function mapToolChoice(

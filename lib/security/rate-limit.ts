@@ -23,6 +23,8 @@
 
 import { LRUCache } from 'lru-cache';
 import { SECURITY_CONSTANTS } from './constants';
+import { getStore } from '@/lib/security/rate-limit-stores';
+import type { RateLimitStore } from '@/lib/security/rate-limit-stores';
 
 /**
  * Options for creating a rate limiter
@@ -295,6 +297,235 @@ export const consumerChatLimiter = createRateLimiter({
   maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CONSUMER_CHAT,
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
+
+// =============================================================================
+// Dynamic Rate Limiter Factory
+// =============================================================================
+
+/**
+ * A dynamic rate limiter whose per-token limit can be overridden at check time.
+ *
+ * Used for per-agent and per-API-key rate limiting where different entities
+ * have different RPM limits configured in the database.
+ */
+export interface DynamicRateLimiter {
+  /**
+   * Check if a request is allowed for the given token.
+   *
+   * @param token - Unique key (e.g., `${agentId}:${userId}`)
+   * @param customRpm - Override the default RPM for this token. When null/undefined, uses the default.
+   */
+  check: (token: string, customRpm?: number | null) => RateLimitResult;
+  /** Reset the rate limit for a token. */
+  reset: (token: string) => void;
+}
+
+/**
+ * Create a dynamic rate limiter that supports per-token RPM overrides.
+ *
+ * Unlike `createRateLimiter`, this factory creates a single LRU cache but
+ * allows each `check()` call to specify a custom `maxRequests` value. This
+ * lets per-agent or per-API-key limits be read from the database without
+ * creating a separate limiter instance for each entity.
+ *
+ * @param namespace - Prefix for log messages / debugging
+ * @param defaultRpm - Default requests per minute when no custom limit is set
+ *
+ * @example
+ * ```typescript
+ * const agentLimiter = createDynamicLimiter('agent-chat', 10);
+ *
+ * // Use global default (10 RPM)
+ * const r1 = agentLimiter.check('agent123:user456');
+ *
+ * // Use per-agent override (50 RPM)
+ * const r2 = agentLimiter.check('agent789:user456', 50);
+ * ```
+ */
+export function createDynamicLimiter(_namespace: string, defaultRpm: number): DynamicRateLimiter {
+  const interval = SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL; // 1 minute
+
+  const cache = new LRUCache<string, number[]>({
+    max: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+    ttl: interval,
+  });
+
+  function getWindowRequests(token: string): number[] {
+    const now = Date.now();
+    const windowStart = now - interval;
+    const requests = cache.get(token) ?? [];
+    return requests.filter((time) => time > windowStart);
+  }
+
+  function getResetTime(): number {
+    return Math.ceil((Date.now() + interval) / 1000);
+  }
+
+  return {
+    check(token: string, customRpm?: number | null): RateLimitResult {
+      const maxRequests = customRpm ?? defaultRpm;
+      const now = Date.now();
+      const windowRequests = getWindowRequests(token);
+      const currentCount = windowRequests.length;
+
+      const success = currentCount < maxRequests;
+      const remaining = Math.max(0, maxRequests - currentCount - (success ? 1 : 0));
+
+      if (success) {
+        windowRequests.push(now);
+        cache.set(token, windowRequests);
+      }
+
+      return {
+        success,
+        limit: maxRequests,
+        remaining,
+        reset: getResetTime(),
+      };
+    },
+
+    reset(token: string): void {
+      cache.delete(token);
+    },
+  };
+}
+
+/**
+ * Per-agent rate limiter for consumer chat.
+ *
+ * Keyed on `${agentId}:${userId}`. The `customRpm` parameter accepts the
+ * agent's `rateLimitRpm` field — when null, falls back to the consumer
+ * chat default (10 RPM).
+ */
+export const agentChatLimiter = createDynamicLimiter(
+  'agent-chat',
+  SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.CONSUMER_CHAT
+);
+
+/**
+ * Per-API-key rate limiter for webhook triggers.
+ *
+ * Keyed on the API key hash. The `customRpm` parameter accepts the
+ * key's `rateLimitRpm` field — when null, falls back to the general
+ * API default (100 RPM).
+ */
+export const apiKeyChatLimiter = createDynamicLimiter(
+  'api-key',
+  SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.API
+);
+
+// =============================================================================
+// Store-Backed Rate Limiters (async — for distributed deployments)
+// =============================================================================
+
+/**
+ * Async rate limiter backed by the pluggable store (`RATE_LIMIT_STORE`).
+ *
+ * Use this when you need distributed rate limiting across multiple
+ * server instances (Redis). For single-server deployments, the store
+ * defaults to in-memory and behaves identically to the sync variants.
+ *
+ * Existing sync `createRateLimiter` instances continue to work for
+ * single-server deployments with no code changes.
+ */
+export interface AsyncRateLimiter {
+  check: (token: string) => Promise<RateLimitResult>;
+  reset: (token: string) => Promise<void>;
+  peek: (token: string) => Promise<RateLimitResult>;
+}
+
+/**
+ * Create an async rate limiter backed by the configured store.
+ *
+ * @param options - Same options as `createRateLimiter`
+ * @param store - Optional store override (defaults to `getStore()`)
+ */
+export function createAsyncRateLimiter(
+  options: RateLimitOptions,
+  store?: RateLimitStore
+): AsyncRateLimiter {
+  const { interval, maxRequests } = options;
+  const resolvedStore = store ?? getStore();
+
+  function getResetTime(): number {
+    return Math.ceil((Date.now() + interval) / 1000);
+  }
+
+  return {
+    async check(token: string): Promise<RateLimitResult> {
+      const entry = await resolvedStore.increment(token, interval);
+      const success = entry.count <= maxRequests;
+      const remaining = Math.max(0, maxRequests - entry.count);
+
+      return {
+        success,
+        limit: maxRequests,
+        remaining,
+        reset: getResetTime(),
+      };
+    },
+
+    async reset(token: string): Promise<void> {
+      await resolvedStore.reset(token);
+    },
+
+    async peek(token: string): Promise<RateLimitResult> {
+      const entry = await resolvedStore.peek(token, interval);
+      const count = entry?.count ?? 0;
+
+      return {
+        success: count < maxRequests,
+        limit: maxRequests,
+        remaining: Math.max(0, maxRequests - count),
+        reset: getResetTime(),
+      };
+    },
+  };
+}
+
+/**
+ * Async dynamic rate limiter backed by the configured store.
+ *
+ * Like `createDynamicLimiter` but uses the pluggable store for
+ * distributed deployments.
+ */
+export interface AsyncDynamicRateLimiter {
+  check: (token: string, customRpm?: number | null) => Promise<RateLimitResult>;
+  reset: (token: string) => Promise<void>;
+}
+
+export function createAsyncDynamicLimiter(
+  _namespace: string,
+  defaultRpm: number,
+  store?: RateLimitStore
+): AsyncDynamicRateLimiter {
+  const interval = SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL;
+  const resolvedStore = store ?? getStore();
+
+  function getResetTime(): number {
+    return Math.ceil((Date.now() + interval) / 1000);
+  }
+
+  return {
+    async check(token: string, customRpm?: number | null): Promise<RateLimitResult> {
+      const maxRequests = customRpm ?? defaultRpm;
+      const entry = await resolvedStore.increment(token, interval);
+      const success = entry.count <= maxRequests;
+      const remaining = Math.max(0, maxRequests - entry.count);
+
+      return {
+        success,
+        limit: maxRequests,
+        remaining,
+        reset: getResetTime(),
+      };
+    },
+
+    async reset(token: string): Promise<void> {
+      await resolvedStore.reset(token);
+    },
+  };
+}
 
 // =============================================================================
 // Response Helpers

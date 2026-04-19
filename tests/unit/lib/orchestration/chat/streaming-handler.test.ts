@@ -77,7 +77,8 @@ vi.mock('@/lib/orchestration/chat/context-builder', () => ({
 
 const { prisma } = await import('@/lib/db/client');
 const { logger } = await import('@/lib/logging');
-const { getProviderWithFallbacks } = await import('@/lib/orchestration/llm/provider-manager');
+const { getProviderWithFallbacks, getProvider } =
+  await import('@/lib/orchestration/llm/provider-manager');
 const { checkBudget, logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 // Registry mocks are established via vi.mock above; no direct assertion needed here.
@@ -1113,5 +1114,406 @@ describe('StreamingChatHandler', () => {
 
     // calculateCost must NOT have been called — cost is hard-coded 0 when usage is null
     expect(calculateCost).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Parallel tool calling
+  // ---------------------------------------------------------------------------
+
+  // 28 ----------------------------------------------------------------------
+  it('parallel tool calls: dispatches multiple tool calls concurrently and yields capability_results', async () => {
+    const provider = mockProvider([
+      // Turn 1: two tool calls in the same turn
+      [
+        { type: 'text', content: 'Let me look that up. ' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'react' } },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-b', name: 'get_weather', arguments: { city: 'London' } },
+        },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: final answer using both tool results
+      [
+        { type: 'text', content: 'Here are both results.' },
+        { type: 'done', usage: { inputTokens: 40, outputTokens: 10 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    let _dispatchCount = 0;
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) => {
+      _dispatchCount++;
+      return Promise.resolve({ success: true, data: { source: slug } });
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // Dispatcher called twice — once per tool call
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledTimes(2);
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search_knowledge_base',
+      { query: 'react' },
+      expect.objectContaining({ userId: 'u1', agentId: 'agent-1' })
+    );
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'get_weather',
+      { city: 'London' },
+      expect.objectContaining({ userId: 'u1', agentId: 'agent-1' })
+    );
+
+    // Event sequence includes capability_results (plural) with both results
+    const capResults = events.find(
+      (e) => (e as { type: string }).type === 'capability_results'
+    ) as {
+      type: 'capability_results';
+      results: Array<{ capabilitySlug: string; result: unknown }>;
+    };
+    expect(capResults).toBeDefined();
+    expect(capResults.results).toHaveLength(2);
+    expect(capResults.results[0].capabilitySlug).toBe('search_knowledge_base');
+    expect(capResults.results[1].capabilitySlug).toBe('get_weather');
+
+    // Two tool messages persisted
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const toolMsgs = createCalls.filter((c: any) => c[0].data.role === 'tool');
+    expect(toolMsgs).toHaveLength(2);
+    expect((toolMsgs[0] as any)[0].data.toolCallId).toBe('tc-a');
+    expect((toolMsgs[1] as any)[0].data.toolCallId).toBe('tc-b');
+
+    // Second LLM turn received both tool results in messages
+    expect(provider.chatStream).toHaveBeenCalledTimes(2);
+    const turn2Messages = (
+      provider.chatStream.mock.calls[1] as unknown as unknown[][]
+    )[0] as Array<{
+      role: string;
+      toolCallId?: string;
+      toolCalls?: unknown[];
+    }>;
+    // The assistant message should carry both tool calls
+    const assistantMsg = turn2Messages.find((m) => m.role === 'assistant' && m.toolCalls);
+    expect(assistantMsg?.toolCalls).toHaveLength(2);
+    // Both tool result messages should be present
+    const toolResultMsgs = turn2Messages.filter((m) => m.role === 'tool');
+    expect(toolResultMsgs).toHaveLength(2);
+
+    // Final done event present
+    const done = events.find((e) => (e as { type: string }).type === 'done');
+    expect(done).toBeDefined();
+  });
+
+  // 29 ----------------------------------------------------------------------
+  it('parallel tool calls: any skipFollowup result short-circuits after all dispatches', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-x', name: 'tool_a', arguments: {} },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-y', name: 'tool_b', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ success: true, data: {} })
+      .mockResolvedValueOnce({ success: true, data: {}, skipFollowup: true });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // chatStream only called once — no follow-up turn
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+    expect(types).toContain('capability_results');
+    expect(types).toContain('done');
+  });
+
+  // 30 ----------------------------------------------------------------------
+  it('parallel tool calls: one rejection in Promise.allSettled returns error result for that tool', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-ok', name: 'good_tool', arguments: {} },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-fail', name: 'bad_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: LLM handles the mixed results
+      [
+        { type: 'text', content: 'One tool failed.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 3 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ success: true, data: { ok: true } })
+      .mockRejectedValueOnce(new Error('Capability crashed'));
+
+    const events = await collect(streamChat(baseRequest));
+
+    const capResults = events.find(
+      (e) => (e as { type: string }).type === 'capability_results'
+    ) as {
+      type: 'capability_results';
+      results: Array<{
+        capabilitySlug: string;
+        result: { success: boolean; error?: { code: string } };
+      }>;
+    };
+
+    expect(capResults.results[0].result.success).toBe(true);
+    expect(capResults.results[1].result.success).toBe(false);
+    expect(capResults.results[1].result.error?.code).toBe('execution_error');
+
+    // LLM still gets a follow-up turn with both results
+    expect(provider.chatStream).toHaveBeenCalledTimes(2);
+  });
+
+  // 31 ----------------------------------------------------------------------
+  it('single tool call still uses backward-compatible capability_result event', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-single', name: 'one_tool', arguments: { x: 1 } },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // Should use singular capability_result, NOT capability_results
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+    expect(types).toContain('capability_result');
+    expect(types).not.toContain('capability_results');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Mid-stream retry & recovery
+  // ---------------------------------------------------------------------------
+
+  describe('Mid-stream retry & recovery', () => {
+    it('retries with fallback provider when stream fails mid-turn', async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          yield { type: 'text', content: 'partial...' };
+          throw new Error('Connection reset');
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'Recovered response' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      const events = await collect(streamChat(baseRequest));
+      const types = (events as Array<{ type: string }>).map((e) => e.type);
+
+      // Should emit warning about retry, then content from fallback
+      expect(types).toContain('warning');
+      const warning = (events as Array<{ type: string; code?: string }>).find(
+        (e) => e.type === 'warning' && e.code === 'provider_retry'
+      );
+      expect(warning).toBeDefined();
+
+      // Should have content from the fallback provider, not the partial
+      const contentEvents = (events as Array<{ type: string; delta?: string }>).filter(
+        (e) => e.type === 'content'
+      );
+      // The partial "partial..." is from the failing stream before error;
+      // after retry, "Recovered response" from fallback
+      expect(contentEvents.some((e) => e.delta === 'Recovered response')).toBe(true);
+
+      expect(types).toContain('done');
+      expect(getProvider).toHaveBeenCalledWith('openai');
+    });
+
+    it('records circuit breaker failure on stream error before retrying', async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new Error('Provider down');
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'OK' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      await collect(streamChat(baseRequest));
+
+      // Circuit breaker should have recorded failure for the failing provider
+      expect(mockBreaker.recordFailure).toHaveBeenCalled();
+      // And success for the recovered stream
+      expect(mockBreaker.recordSuccess).toHaveBeenCalled();
+    });
+
+    it('does not retry on AbortError — rethrows immediately', async () => {
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw abortError;
+        }),
+      };
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      const events = await collect(streamChat(baseRequest));
+      const types = (events as Array<{ type: string }>).map((e) => e.type);
+
+      // start event is emitted before the stream, then internal_error
+      expect(types).toContain('start');
+      expect(types[types.length - 1]).toBe('error');
+      expect(events[events.length - 1]).toMatchObject({ type: 'error', code: 'internal_error' });
+      // Should NOT call getProvider for fallback
+      expect(getProvider).not.toHaveBeenCalled();
+    });
+
+    it('surfaces error when no fallback providers remain', async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new Error('Provider error');
+        }),
+      };
+
+      // No fallback providers
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      const events = await collect(streamChat(baseRequest));
+      const last = events[events.length - 1];
+
+      expect(last).toMatchObject({ type: 'error', code: 'internal_error' });
+      expect(getProvider).not.toHaveBeenCalled();
+    });
+
+    it('surfaces error when fallback provider fails to load', async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new Error('Stream error');
+        }),
+      };
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Provider not configured')
+      );
+
+      const events = await collect(streamChat(baseRequest));
+      const last = events[events.length - 1];
+
+      expect(last).toMatchObject({ type: 'error', code: 'internal_error' });
+    });
   });
 });
