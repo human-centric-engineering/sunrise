@@ -514,7 +514,7 @@ export const bulkAgentActionSchema = z.object({
 // Webhook Schemas
 // ============================================================================
 
-const WEBHOOK_EVENT_TYPES = [
+export const WEBHOOK_EVENT_TYPES = [
   'budget_exceeded',
   'workflow_failed',
   'approval_required',

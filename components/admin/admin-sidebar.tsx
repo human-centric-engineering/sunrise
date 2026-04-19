@@ -27,6 +27,7 @@ import {
   ClipboardCheck,
   Plug,
   BarChart3,
+  Webhook,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -95,6 +96,12 @@ const navSections = [
         label: 'Workflows',
         icon: GitBranch,
         description: 'Multi-step flows',
+      },
+      {
+        href: '/admin/orchestration/webhooks',
+        label: 'Webhooks',
+        icon: Webhook,
+        description: 'Event subscriptions',
       },
       {
         href: '/admin/orchestration/knowledge',

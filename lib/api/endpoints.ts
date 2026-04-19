@@ -130,6 +130,10 @@ export const API = {
       KNOWLEDGE_META_TAGS: '/api/v1/admin/orchestration/knowledge/meta-tags',
       WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
+      webhookDeliveries: (id: string): string =>
+        `/api/v1/admin/orchestration/webhooks/${id}/deliveries`,
+      retryDelivery: (id: string): string =>
+        `/api/v1/admin/orchestration/webhooks/deliveries/${id}/retry`,
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
