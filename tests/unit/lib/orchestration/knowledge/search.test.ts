@@ -412,7 +412,7 @@ describe('listPatterns', () => {
     expect(result[0].complexity).toBeNull();
   });
 
-  it('should truncate description to 300 characters for TL;DR content', async () => {
+  it('should return full first paragraph from TL;DR content (no truncation)', async () => {
     const longContent = 'A'.repeat(400);
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
@@ -423,11 +423,11 @@ describe('listPatterns', () => {
 
     const result = await listPatterns();
 
-    // TL;DR path truncates to 300
-    expect(result[0].description).toHaveLength(300);
+    // firstParagraph returns full content (single paragraph, no blank lines)
+    expect(result[0].description).toHaveLength(400);
   });
 
-  it('should truncate description to 200 characters when falling back to overview', async () => {
+  it('should return full first paragraph when falling back to overview', async () => {
     const longContent = 'A'.repeat(300);
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
@@ -438,8 +438,8 @@ describe('listPatterns', () => {
 
     const result = await listPatterns();
 
-    // Overview fallback truncates to 200
-    expect(result[0].description).toHaveLength(200);
+    // Overview fallback also returns full first paragraph
+    expect(result[0].description).toHaveLength(300);
   });
 
   it('should return null complexity when metadata is not an object', async () => {

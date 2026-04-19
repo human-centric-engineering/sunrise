@@ -221,8 +221,12 @@ describe('POST /api/v1/chat/stream', () => {
 
       // Assert: agent lookup used the correct filters
       expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith({
-        where: { slug: 'helper-bot', isActive: true, visibility: 'public' },
-        select: { id: true, slug: true },
+        where: {
+          slug: 'helper-bot',
+          isActive: true,
+          visibility: { in: ['public', 'invite_only'] },
+        },
+        select: { id: true, slug: true, visibility: true },
       });
 
       // Assert: streamChat called with correct args

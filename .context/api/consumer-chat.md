@@ -4,7 +4,7 @@ End-user-facing chat endpoints for interacting with publicly visible AI agents. 
 
 **Base path:** `/api/v1/chat`
 **Authentication:** Every endpoint requires an authenticated session (`withAuth` in `lib/auth/guards.ts`). Any role is accepted (not admin-only). Unauthenticated callers get `401`.
-**Agent visibility:** Only agents with `visibility = 'public'` and `isActive = true` are accessible. Internal and invite-only agents return `404`.
+**Agent visibility:** Agents with `visibility = 'public'` or `'invite_only'` (with valid invite token) and `isActive = true` are accessible. Internal agents return `404`.
 **Rate limiting:** Chat stream uses `consumerChatLimiter` (10 msg/min per user) + `apiLimiter` (100 req/min per IP). Other endpoints use `apiLimiter` for mutations only.
 
 ## Quick reference
@@ -149,13 +149,13 @@ Fetch messages for a conversation. Only returns safe fields: `id`, `role`, `cont
 
 The `AiAgent` model has a `visibility` field with three values:
 
-| Value         | Description                                     | Consumer access          |
-| ------------- | ----------------------------------------------- | ------------------------ |
-| `internal`    | Admin-only (default for all existing agents)    | No                       |
-| `public`      | Visible to all authenticated users              | Yes                      |
-| `invite_only` | Reserved for future invite-based access control | No (not yet implemented) |
+| Value         | Description                                  | Consumer access  |
+| ------------- | -------------------------------------------- | ---------------- |
+| `internal`    | Admin-only (default for all existing agents) | No               |
+| `public`      | Visible to all authenticated users           | Yes              |
+| `invite_only` | Accessible with a valid invite token         | Yes (with token) |
 
-Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter exclusively on `visibility = 'public'`.
+Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
 
 ## Validation Schemas
 
