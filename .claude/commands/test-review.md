@@ -103,7 +103,7 @@ Resolve pairs by path only — **do NOT read the files into the main context**.
 - **Compute the source counterpart** per type:
   - **Unit** (`tests/unit/**`): strip the `tests/unit/` prefix, replace `.test.ts` → `.ts` / `.test.tsx` → `.tsx`.
   - **Integration** (`tests/integration/**`): strip the `tests/integration/` prefix; if the next segment is `api/`, prepend `app/`; replace `.test.ts` → `.ts`. Example: `tests/integration/api/v1/contact/route.test.ts` → `app/api/v1/contact/route.ts`.
-- Use `Glob` to verify paths exist. If a test file exists but source doesn't, flag it separately ("orphan test — likely rename or deletion"). Keep the orphan in the report but skip agent review.
+- Use `Read` (not `Glob`) to verify each computed mirror path exists. Next.js dynamic-route segments (`[id]`, `[slug]`, `[...params]`) contain square brackets, which `Glob` treats as character classes — a pattern like `tests/integration/api/v1/users/[id]/route.test.ts` matches nothing even when the file exists. `Read` takes paths literally and errors cleanly on absence, which is the signal you want. If a test file exists but its source counterpart doesn't, flag it separately ("orphan test — likely rename or deletion"). Keep the orphan in the report but skip agent review.
 - Emit the list: `[{ testFile, sourceFile, type: "unit" | "integration" }, ...]`.
 
 ### Step 3: Scope check

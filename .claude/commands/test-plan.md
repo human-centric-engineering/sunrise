@@ -142,9 +142,10 @@ Work through each target file and extract:
 2. **Complexity** — score using function count (×2), Prisma/db (+10), better-auth (+8), external APIs (+8), file system (+5), side effects (×3), branching (×2). <10 simple, 10–24 medium, 25+ complex.
 3. **Dependencies to mock** — Prisma, auth, logger, Next.js headers/cookies, fetch, etc.
 4. **Key behaviors** — happy path, validation/error cases, edge cases, security paths.
-5. **Existing test state — check BOTH unit and integration locations.** A single source file may have a unit test, an integration test, or both. Compute both candidate paths and Glob each:
+5. **Existing test state — check BOTH unit and integration locations.** A single source file may have a unit test, an integration test, or both. Compute both candidate paths and check each with `Read` (not `Glob`):
    - **Unit**: mirror the source under `tests/unit/`. Examples: `lib/foo/bar.ts` → `tests/unit/lib/foo/bar.test.ts`; `app/api/v1/foo/route.ts` → `tests/unit/app/api/v1/foo/route.test.ts`.
    - **Integration**: under `tests/integration/`, stripping the `app/` prefix for route handlers. Examples: `app/api/v1/foo/route.ts` → `tests/integration/api/v1/foo/route.test.ts`. Non-API source files (`lib/...`, `components/...`) rarely have integration tests — skip the integration probe unless the source is under `app/`.
+   - **Dynamic-route paths (`[id]`, `[slug]`, `[...params]`):** Next.js dynamic segments use square brackets. `Glob` treats `[id]` as a character class (matching `i` OR `d`), so a Glob pattern `tests/unit/app/api/v1/users/[id]/route.test.ts` silently matches nothing even when the file exists. Use `Read` for mirror-path existence checks — it takes the path literally and errors cleanly when absent, which is the signal you want. Reserve `Glob` for wildcard folder scans (`tests/unit/<folder>/**/*.test.{ts,tsx}`) where `**` traverses bracket directories correctly.
    - For each existing test file found, classify its tests as **keep**, **rewrite**, or **delete** (tests that reference functions/exports no longer present in the source, or describe behaviour the source no longer has) and note what's **missing**. Delete items represent stale tests for removed code — they go into the plan's per-file Delete count and get removed by `/test-write`.
    - When a source file has BOTH a unit and integration test, emit **two separate plan items** (one per type). Each carries its own Keep/Rewrite/Add/Delete breakdown because the two tests cover different contract layers (unit = function/handler logic under mocks; integration = request → validation → auth → handler → DB → response under real DB).
 6. **Type decision when no test exists (api-route only):** if the source is an API route (`app/api/**/route.ts`) with no existing test, default to proposing a **unit** plan item. Add a second **integration** plan item when the route: (a) enforces auth via `withAuth()`/`withAdminAuth()`, (b) performs a DB mutation (POST/PATCH/DELETE), (c) touches multiple collaborators (auth + DB + email, etc.). Non-route source files default to unit only.
@@ -209,6 +210,14 @@ Work through each target file and extract:
 > ```
 >
 > Omit any section (KEEP/REWRITE/DELETE/MISSING) with no entries. Omit an entire `--- UNIT ---` or `--- INTEGRATION ---` block if the type isn't applicable. Keep lines under ~200 chars.
+>
+> **Integration MISSING — auth-guard branch enumeration**: when the source handler has an ownership-or-admin guard (e.g. `if (session.user.id !== id && session.user.role !== 'ADMIN')`, `if (resource.ownerId !== session.user.id)`, any mixed `self === id` + `role === 'ADMIN'` check), the guard has THREE branches, not two. Enumerate each as a separate MISSING entry unless already covered:
+>
+> 1. Unauthenticated (401) — no session.
+> 2. Wrong principal (403) — authenticated non-owner, non-admin.
+> 3. **Self-access sub-path** (200 or the guard's happy result) — authenticated principal whose `session.user.id === targetId`. This is the branch that lets a USER through without the ADMIN role and is easy to miss because it's structurally asymmetric with 401/403.
+>
+> Also enumerate self-action guards on mutations — e.g. DELETE's "cannot delete self" (`session.user.id === id` guard at handler body, not the auth wrapper), PATCH's "cannot demote self". Each self-action guard is its own MISSING entry with expected status + error envelope shape.
 
 After subagents return, aggregate their outputs — do not re-read the files.
 
@@ -279,6 +288,13 @@ For each plan item (one per source+type combination — a single source may prod
 ```
 
 For integration items, the **Add** section should additionally cover (when applicable): 401 unauthenticated, 403 wrong-role, 429 rate-limit exceeded, DB-state readback after mutation, full `errorResponse()` envelope on failure paths. Don't force items that don't apply — a public GET route doesn't need 401/403 coverage; note "public route, no auth coverage needed" in the item's notes.
+
+**Auth-guard branch enumeration (integration items only):** if the source has an ownership-or-admin guard (`if (session.user.id !== id && session.user.role !== 'ADMIN')` and variants) OR a self-action guard on a mutation (`if (session.user.id === id) return errorResponse(...)`), every branch of the guard becomes its own Add item unless already covered:
+
+- **Ownership-or-admin guards** produce three Add items: 401 (no session), 403 (authenticated non-owner, non-admin), and the **self-access sub-path** (authenticated principal whose `session.user.id === targetId` — the branch that lets a USER through without ADMIN role). The self-access branch is asymmetric with the 401/403 pair and is the one most likely to be forgotten.
+- **Self-action guards on mutations** (e.g. DELETE "cannot delete self", PATCH "cannot change own role") produce one Add item each with the expected status + error envelope shape, including the `code` if one is set.
+
+Never collapse these into "covered by unit" — the unit test exercises the handler body with a mocked session; the integration test exercises the full wrapper → guard → handler → response chain. A regression that reorders the auth-wrapper's guards or changes the session shape would only be caught integration-side.
 
 **Self-check before writing each file's instructions:**
 
