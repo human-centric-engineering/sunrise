@@ -362,7 +362,10 @@ Expect exactly `from-rescan <test-file>`. Hard-stop if the file argument is miss
 
 ### Step 3: Staleness check
 
-- Resolve the source path from the test path using project conventions (mirror of `tests/unit/` into source tree).
+- Detect test type from path: `tests/integration/**` → integration, else unit. Keep this for use in Step 4 and Step 5.
+- Resolve the source path from the test path:
+  - **Unit**: strip `tests/unit/` prefix, replace `.test.ts` → `.ts` / `.test.tsx` → `.tsx`.
+  - **Integration**: strip `tests/integration/` prefix, prepend `app/` if the next segment is `api/`, replace `.test.ts` → `.ts`.
 - `git log -1 --format=%H -- <source>` for the source's current HEAD.
 - If the current source HEAD differs from the row's `last_head`, pause:
   > Ledger row for `{file}` was written at source HEAD `{last_head-short}`, but source is now at `{current-short}`. The NOTES may target drifted code. Run `/test-triage rescan {file}` first? (Y/n)
@@ -373,6 +376,7 @@ Expect exactly `from-rescan <test-file>`. Hard-stop if the file argument is miss
 ```
 ## /test-fix from-rescan — {file}
 
+**Type**: {unit | integration}
 **Source**: `{source}`
 **Grade**: {grade} · {sig_hits} sigs · block: {block_summary}
 **Last scanned**: {last_scanned} at HEAD {last_head-short}
@@ -396,17 +400,29 @@ Spawn ONE foreground test-engineer. The prompt includes:
 3. **Scope**:
    - Test file: `{test path}`
    - Source file: `{source path}`
+   - Test type: `{unit | integration}` — block pattern set and translations below match this type
    - Current grade: `{grade}` — block breakdown `{block_summary}`, signature hits `{sig_hits}`
    - Ledger NOTES: `{notes}` (verbatim — this is your primary prescription)
 
 4. **Task**:
 
-   > Read both files. The NOTES above come from a narrow Sonnet triage pass — they name specific quality gaps but do not provide per-test prescriptions. Translate each NOTE into the minimum edit that addresses it:
+   > Read both files. The NOTES above come from a narrow Sonnet triage pass — they name specific quality gaps but do not provide per-test prescriptions. Translate each NOTE into the minimum edit that addresses it.
    >
-   > - Untested code path ("X throws Y", "source has branch Z no test covers") → add one focused `it()` block covering it. Use existing test scaffolding — don't invent new mock infrastructure.
-   > - Test/code mismatch ("title says A, assertion tests B") → rename the test OR restructure its assertion to match its name, whichever is closer to the source's actual contract.
-   > - Mock-proving ("N tests pass even if code under test is deleted") → rewrite the flagged assertion(s) against a real observable contract (return value shape, side-effect, state change).
-   > - Missing-error ("source defines error E, no test covers it") → add the error-path test.
+   > **Unit block-pattern translations** (apply if test type is `unit`):
+   >
+   > - `happy-path-only` / untested code path ("X throws Y", "source has branch Z no test covers") → add one focused `it()` block covering it. Use existing test scaffolding — don't invent new mock infrastructure.
+   > - `test-code-mismatch` ("title says A, assertion tests B") → rename the test OR restructure its assertion to match its name, whichever is closer to the source's actual contract.
+   > - `mock-proving` ("N tests pass even if code under test is deleted") → rewrite the flagged assertion(s) against a real observable contract (return value shape, side-effect, state change).
+   > - `missing-error` ("source defines error E, no test covers it") → add the error-path test.
+   >
+   > **Integration block-pattern translations** (apply if test type is `integration`):
+   >
+   > - `auth-boundary-missing` ("route enforces withAuth/withAdminAuth but no 401/403 test") → add one `it()` block per missing auth-failure test. For 401: call the handler with no session mock (or `mockSession.mockResolvedValue(null)`). For 403: mock a session with the wrong role. Assert `response.status === 401|403` AND the `errorResponse()` shape (`body.success === false`, `body.error.code === 'UNAUTHORIZED'|'FORBIDDEN'`).
+   > - `status-code-missing` ("N tests assert body but never check response.status") → for each flagged test, add `expect(response.status).toBe(<expected>)` alongside the existing body assertions. Don't rewrite the body assertions — just add the status check.
+   > - `db-state-unchecked` ("N mutation tests don't read DB back") → after the handler call in each flagged mutation test, add a `prisma.<model>.findUnique/findFirst` call verifying the _derived_ state the handler created (timestamps, generated IDs, relation rows, computed fields). Skip fields the request body trivially dictated — they prove nothing.
+   > - `error-response-mismatch` ("tests assert `{error: 'string'}` but route returns `{success:false, error:{code,message}}`") → update the error-path assertions to match the Sunrise `errorResponse()` contract. Check `body.success === false`, `body.error.code === '<code>'`, and `body.error.message` if named.
+   >
+   > **Structural-sigs / annotation-fixable NOTES** (both types): if NOTES say "all sigs structural — annotation-fixable" and `block_sum == 0`, the correct edit is to ADD `// test-review:accept <sig-key> — <rationale>` comments above each flagged assertion (or above the `it()` block if the same pattern repeats). NOT to rewrite the assertions. The rationale must name the contract being asserted (e.g. "structural assertion on Sunrise API `{ success, data }` envelope"). This mode is usually run via `/test-triage fix` Path 0 manually, but if `from-rescan` is invoked on a pure-annotation case, do the annotation and note in output that no test logic changed.
    >
    > Scope discipline: only address what the NOTES call out. Do NOT rewrite unrelated tests. Do NOT re-audit the file looking for extras. If a note is ambiguous (multiple valid interpretations, or you can't locate the referenced code), record it under "Ambiguous notes" and leave the test alone — don't guess.
 
