@@ -325,6 +325,51 @@ export async function afterEmailVerificationHook(user: {
 }
 
 /**
+ * Send verification email to new users (unless they're accepting an invitation).
+ *
+ * Invitation acceptances skip the verification email because the accept-invite
+ * route marks the email as verified immediately. For regular signups, the default
+ * callbackURL is rewritten to point at the verification callback page that handles
+ * both success and error states.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function sendVerificationEmailHook({
+  user,
+  url,
+}: {
+  user: { id: string; email: string; name: string | null };
+  url: string;
+  token: string;
+}): Promise<void> {
+  // Check if this is an invitation acceptance - if so, skip verification email
+  // The invitation acceptance flow marks email as verified immediately
+  const invitation = await getValidInvitation(user.email);
+
+  if (invitation) {
+    logger.info('Skipping verification email for invitation acceptance', {
+      userId: user.id,
+      email: user.email,
+    });
+    return; // Don't send verification email for invitation acceptance
+  }
+
+  // Replace the default callbackURL (/) with our verification callback page
+  // This page handles both success (redirect to dashboard) and error states (show resend option)
+  const verificationUrl = url.replace('callbackURL=%2F', 'callbackURL=%2Fverify-email%2Fcallback');
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify your email address',
+    react: VerifyEmailEmail({
+      userName: user.name || 'User',
+      verificationUrl,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+    }),
+  });
+}
+
+/**
  * Better Auth Configuration
  *
  * Provides authentication using email/password and social providers (Google).
@@ -378,44 +423,10 @@ export const auth = betterAuth({
     // Token expiration time in seconds (24 hours to match email messaging)
     expiresIn: 86400, // 24 hours
 
-    // Send verification email callback (better-auth calls this)
-    sendVerificationEmail: async ({
-      user,
-      url,
-    }: {
-      user: { id: string; email: string; name: string | null };
-      url: string;
-      token: string;
-    }) => {
-      // Check if this is an invitation acceptance - if so, skip verification email
-      // The invitation acceptance flow marks email as verified immediately
-      const invitation = await getValidInvitation(user.email);
-
-      if (invitation) {
-        logger.info('Skipping verification email for invitation acceptance', {
-          userId: user.id,
-          email: user.email,
-        });
-        return; // Don't send verification email for invitation acceptance
-      }
-
-      // Replace the default callbackURL (/) with our verification callback page
-      // This page handles both success (redirect to dashboard) and error states (show resend option)
-      const verificationUrl = url.replace(
-        'callbackURL=%2F',
-        'callbackURL=%2Fverify-email%2Fcallback'
-      );
-
-      await sendEmail({
-        to: user.email,
-        subject: 'Verify your email address',
-        react: VerifyEmailEmail({
-          userName: user.name || 'User',
-          verificationUrl,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-        }),
-      });
-    },
+    // Send verification email callback (better-auth calls this).
+    // Hook body is defined above as `sendVerificationEmailHook` so unit tests
+    // can import and call it directly.
+    sendVerificationEmail: sendVerificationEmailHook,
 
     // Callback after successful email verification
     afterEmailVerification: afterEmailVerificationHook,
