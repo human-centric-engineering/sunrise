@@ -903,6 +903,59 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           })
         );
       });
+
+      it('should send welcome email immediately for password invitation acceptance even when REQUIRE_EMAIL_VERIFICATION is true', async () => {
+        // Arrange: verification required globally, but this is an invited password user.
+        // The isPasswordInvitation disjunct in shouldSendWelcomeNow overrides the
+        // verification gate — invited users accept via accept-invite route which marks
+        // email verified, so we must not defer the welcome email.
+        mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+
+        const mockUser = makeUserCreateData({
+          id: 'invited-password-user',
+          email: 'invited@example.com',
+          name: 'Invited User',
+        });
+
+        // Arrange: getValidInvitation returns a non-null invitation (password invitation accepted)
+        const mockInvitation = {
+          email: 'invited@example.com',
+          expiresAt: new Date(Date.now() + 86400000),
+          createdAt: new Date(),
+          metadata: {
+            name: 'Invited User',
+            role: 'USER',
+            invitedBy: 'admin@example.com',
+            invitedAt: new Date().toISOString(),
+          },
+        };
+        mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act
+        await userCreateAfterHook(mockUser, ctx);
+
+        // Assert: 'Detected password invitation acceptance' was logged with userId + email
+        expect(mocks.logger.info).toHaveBeenCalledWith('Detected password invitation acceptance', {
+          userId: mockUser.id,
+          email: mockUser.email,
+        });
+
+        // Assert: welcome email was sent immediately (invitation bypasses verification gate)
+        expect(mocks.sendEmail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: mockUser.email,
+            subject: 'Welcome to Sunrise',
+          })
+        );
+
+        // Assert: skip message was NOT logged (email was NOT deferred)
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'Skipping welcome email (will send after email verification)',
+          expect.any(Object)
+        );
+      });
     });
 
     describe('Default preferences setting', () => {

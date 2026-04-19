@@ -414,6 +414,7 @@ tests/
    - Execute tests and ensure they pass: `npm test`
    - **Run linter and verify clean**: `npm run lint` - MUST pass with 0 errors
    - **Run type-check and verify clean**: `npm run type-check` - MUST pass with 0 errors
+   - **Run format check and verify clean**: `npm run format:check` - MUST pass (if it fails, run `npx prettier --write` on the affected paths and re-verify)
    - Check coverage report: `npm run test:coverage`
    - Verify tests fail when code is broken (test the tests)
 
@@ -427,6 +428,7 @@ tests/
 - ✅ Tests pass (`npm test`)
 - ✅ Linting clean (`npm run lint` - 0 errors, 0 warnings in test files)
 - ✅ Type-check pass (`npm run type-check` - 0 errors)
+- ✅ Format check pass (`npm run format:check` - run `npx prettier --write` on edited paths if this fails)
 - ✅ Coverage meets thresholds (80%+ overall, 90%+ critical paths)
 
 **If any validation fails, fix the issues before proceeding. Do NOT skip validation steps.**

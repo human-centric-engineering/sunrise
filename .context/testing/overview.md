@@ -215,51 +215,51 @@ Tests can override these mocks per-file using `vi.mock()` at the top of the test
 
 Use these commands to plan, write, review, and verify tests. All default to branch diff mode but accept file/folder paths.
 
-| Command          | Purpose                                                                                 |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| `/test-plan`     | Analyze code and produce a phased, prioritized test plan with agent batching            |
-| `/test-write`    | Execute a plan by spawning test-engineer subagents (create, add, rewrite tests)         |
-| `/test-review`   | Audit test quality — find weak assertions, happy-path-only coverage, missing edge cases |
-| `/test-fix`      | Fast-path applier for 1–5 file review findings (skips the plan step)                    |
-| `/test-coverage` | Find coverage gaps, untested files, and below-threshold modules                         |
+The commands break down into three jobs — pick the one that matches the situation:
+
+- **Floor** (ongoing): `/test-triage` graders + `/test-fix from-rescan` for legacy green-bar cleanup.
+- **Ceiling** (one-shot, critical modules): `/test-coverage` → `/test-plan coverage` → `/test-write plan` → `/test-review` → `/test-fix`.
+- **Gate** (every PR): `/test-review` (branch diff) or `/test-review pr` (posts GitHub comment).
+
+| Command          | Purpose                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan with agent batching                                                |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents (create, add, rewrite tests)                                             |
+| `/test-review`   | Confidence-scored quality report (filter ≥80). Writes `.reviews/tests-{slug}.md`. `pr` mode posts a GitHub PR comment.      |
+| `/test-fix`      | Apply findings from a `.reviews/tests-{slug}.md` report (`--all` or `--findings=N,N,N`). Second mode: `from-rescan <file>`. |
+| `/test-coverage` | Find coverage gaps, untested files, and below-threshold modules                                                             |
+| `/test-triage`   | Grade test files (Clean/Minor/Bad/Rotten) against a persistent ledger                                                       |
 
 ### Example Flows
 
-**Add tests for branch changes** (most common):
+**PR gate** (most common — every branch before merge):
 
 ```bash
-/test-plan              # Analyze branch diff → phased plan
-/test-write plan        # Execute Sprint 1
-/test-review            # Audit quality
-/test-plan review       # Plan fixes from review findings
-/test-write plan        # Execute fixes
-/test-coverage branch   # Verify coverage for branch files
+/test-review               # Branch diff → .reviews/tests-branch-{name}.md
+/test-fix --all            # Apply every finding ≥80 from the latest report
+# Or: /test-fix --findings=1,3,5  # Pick specific findings
+# Or: /test-review pr              # Post a PR comment (silent if no findings ≥80)
 ```
 
-**Improve tests in a folder**:
+`/test-review` is diagnostic — the human (or PR reviewer) judges what to action. `/test-fix` does not re-audit after applying; rerun `/test-review` only if the source changed or on the next PR.
+
+**Add tests for branch changes** (no existing tests yet):
 
 ```bash
-/test-review lib/auth       # Find quality issues
-/test-plan review lib/auth  # Plan fixes
-/test-write plan            # Execute
+/test-plan           # Analyze branch diff → phased plan
+/test-write plan     # Execute Sprint 1
+/test-review         # Audit quality
+/test-fix --all      # Apply findings ≥80
 ```
 
-**Quick quality fix after review** (1–5 files, skips plan step):
+**Ceiling pass** (one-shot on a critical module):
 
 ```bash
-/test-review components/x   # Find quality issues
-/test-fix components/x      # Apply review findings directly
-```
-
-Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and the work is quality fixes, not coverage expansion. For 6+ files or coverage-driven work, use the `/test-plan review` → `/test-write plan` path.
-
-**Fill coverage gaps in a folder**:
-
-```bash
-/test-coverage components/analytics   # Scoped scan → categorized gaps
-/test-plan coverage                   # Plan from coverage findings (scope carried from prior command)
-/test-write plan all                  # Execute all sprints
-/test-review components/analytics     # Audit quality (pass scope — bare /test-review uses branch diff)
+/test-coverage lib/auth        # Scoped scan → categorized gaps
+/test-plan coverage lib/auth   # Produce phased plan
+/test-write plan all           # Execute all sprints
+/test-review lib/auth          # Audit quality
+/test-fix --all                # Apply findings ≥80
 ```
 
 **Fill repo-wide coverage gaps**:
@@ -271,6 +271,17 @@ Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and t
 /test-write plan sprint 2   # Execute Sprint 2 (business logic)
 ```
 
+**Codebase-wide remediation (Floor)** — legacy green-bar cleanup:
+
+```bash
+/test-triage scan <folder>        # Grade files, write to ledger
+/test-triage worklist             # See prioritised queue (Rotten first)
+/test-fix from-rescan <file>      # Apply ledger NOTES directly (Minor/Bad files)
+/test-triage rescan <file>        # Re-grade after fix
+```
+
+For Rotten files or vague NOTES, escalate to `/test-review <file>` → `/test-fix --all`.
+
 **Quick test for 1-2 files** (skips planning):
 
 ```bash
@@ -279,17 +290,22 @@ Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and t
 
 ### How Commands Chain
 
-Commands produce structured output that feeds into the next step:
+`/test-review` writes a **confidence-scored report** to `.reviews/tests-{slug}.md`: 5 parallel Sonnet agents score findings 0–100, filter ≥80, and the user picks what to action with `/test-fix`. There is no auto-loop.
 
 ```
-/test-coverage <scope>  →  /test-plan coverage  →  /test-write plan  →  /test-review <scope>  →  repeat
-/test-review <scope>    →  /test-plan review     →  /test-write plan  →  /test-review <scope>  →  repeat
-/test-review <scope>    →  /test-fix <scope>                                                 (1–5 files)
+# Gate (PR / branch review)
+/test-review [scope|pr]      → .reviews/tests-{slug}.md  → /test-fix --all | --findings=N,N,N
+
+# Ceiling (build out a critical module)
+/test-coverage <scope>       → /test-plan coverage       → /test-write plan  → /test-review → /test-fix
+
+# Floor (codebase-wide remediation)
+/test-triage scan / rescan   → ledger NOTES              → /test-fix from-rescan <file>
 ```
 
-**Always pass the same scope to `/test-review` as you passed to `/test-coverage` or `/test-review` at the start.** Without a scope, `/test-review` defaults to branch diff mode, which will find nothing if no source files changed on the branch.
+**Always pass the same scope to `/test-review` as you passed to `/test-coverage` at the start.** Without a scope, `/test-review` defaults to branch diff mode, which will find nothing if no source files changed on the branch.
 
-`/test-plan` is the single planning hub. `/test-write` is purely an executor. `/test-review` and `/test-coverage` are analysis tools whose findings feed back into planning.
+`/test-plan` is the planning hub for coverage-driven work. `/test-write` is purely an executor. `/test-review` and `/test-coverage` are analysis tools; `/test-fix` consumes review reports directly (no plan step needed for branch-scoped quality fixes).
 
 ### Command Definitions
 
@@ -297,9 +313,10 @@ Commands are defined in `.claude/commands/`:
 
 - `test-plan.md` — full planning logic, priority system, sprint design
 - `test-write.md` — plan execution, agent batching, progress tracking
-- `test-review.md` — quality audit checks (7 categories), structured findings output
-- `test-fix.md` — fast-path review applier (1–5 file scope cap, single agent spawn)
+- `test-review.md` — confidence-scored quality report (5 parallel Sonnet agents, ≥80 filter, `pr` mode)
+- `test-fix.md` — review applier (`--all` / `--findings=N,N,N`) + `from-rescan` mode for ledger NOTES
 - `test-coverage.md` — gap analysis, module-specific thresholds, categorization
+- `test-triage.md` — ledger-driven grading for codebase-wide remediation
 
 The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test-write` — don't invoke it directly.
 

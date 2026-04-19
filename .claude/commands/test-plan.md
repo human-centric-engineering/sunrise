@@ -35,26 +35,41 @@ When `review` or `coverage` is specified, use the **most recent** matching comma
 
 **If `review` keyword is present:**
 
-- Read `.claude/tmp/test-review.md` and follow the reader protocol in `.claude/docs/test-command-file-protocol.md` (same steps as coverage above).
-- If the file does not exist, tell the user to run `/test-review` first and stop.
-- **Hard-stop on pending Source Findings.** Inspect the `## Source Findings` section. If any finding has `Status: pending`, STOP and tell the user:
+- Resolve the review file under `.reviews/`:
+  - `review` with an optional scope arg (e.g. `review lib/auth`) — compute slug (`lib/auth` → `lib-auth`); look for `.reviews/tests-{slug}.md`.
+  - `review` alone — pick the most recently modified `.reviews/tests-*.md` by mtime.
+  - If no matching report exists, tell the user to run `/test-review [scope]` first and stop.
+- Print a provenance line (`Review: .reviews/tests-{slug}.md — {age} old · branch {branch} · HEAD {head-short}`).
+- Soft-warn on age >1h; hard-pause on age >24h OR branch/HEAD drift against the review's metadata — the user must explicitly continue.
+- Parse the report:
+  - `## Critical Findings (90–100)` and `## Important Findings (80–89)` — assign continuous 1-based indices.
+  - `## Source Findings` — assign `S1, S2, …`.
+  - Dependency map: any finding whose `Suggested fix` mentions "Source Finding N" / "Depends on Source Finding N" depends on the matching `S{N}`.
 
-  > `{count}` source finding{s} in `.claude/tmp/test-review.md` {is/are} still `pending`. `/test-plan review` refuses to run until every finding is either:
-  >
-  > - **resolved** — source change landed and verified. Say **"fix them"** (to apply defaults inline) or **"findings are fixed"** / **"sync the review"** (if you fixed them externally) in the review conversation; the review handler will verify and flip status.
-  > - **accepted** — you explicitly overrode the default by saying **"document {finding}"** or **"skip {finding}"** in the review conversation.
-  >
-  > Pending findings:
-  >
-  > - `{source path}:{line}` — {summary} (Decision: {current})
-  >   {...one per pending finding}
-  >
-  > Do not proceed. Return to the review conversation to resolve these.
+**Source finding gate (review mode only, runs inline during Step 1):**
 
-  Do not offer to patch the review yourself — the status flips are the user's explicit authorization, and they belong in the review conversation where the source context already lives.
+New reviews are confidence-scored reports, not state machines — there is no `Status: pending/resolved/accepted`. Instead, the planner surfaces each referenced source finding to the user once, captures the decision, and carries it into the plan.
 
-- Use the `## Structured Findings` section: per-file keep/rewrite/add instructions.
-- Use the `## Source Findings` section (all resolved/accepted at this point): copy into the plan's Source Decisions block as an audit record (see Step 5.5).
+For each source finding referenced by one or more selected test findings, ask:
+
+```
+### Source Finding S{N} — `{file}:{line}` (confidence {conf})
+
+**Issue:** {issue paragraph}
+**Evidence:** {evidence}
+**Suggested refactor:** {refactor snippet or description}
+**Blast radius:** {blast line}
+**Depended on by:** findings {list of indices}
+
+Action for this source finding? (fix / document / skip)
+- `fix` — include the refactor in the plan's Source Decisions block; dependent test findings assume the refactor has landed when /test-write executes.
+- `document` — leave the source as-is; dependent tests assert the CURRENT behaviour and get a `// SOURCE DECISION: Document` annotation.
+- `skip` — drop the dependent test findings from the plan entirely.
+```
+
+Record the user's decision (`fix` / `document` / `skip`) against each source finding. If the user picks `skip`, drop every dependent finding from the plan's work list before continuing to Step 2.
+
+If every selected test finding got dropped via `skip`, stop with: `Every selected finding depends on a source finding you skipped. Nothing to plan.`
 
 **If file/folder paths provided (without `review`/`coverage`):**
 
@@ -78,11 +93,10 @@ When `review` or `coverage` is specified, use the **most recent** matching comma
 
 **Merging findings:** If both `review` and `coverage` findings exist for the same file, combine them:
 
-- Coverage CREATE → include all behaviors from coverage
-- Coverage ADD gaps → merge with review's ADD items (deduplicate by scenario)
-- Review REWRITE items → include as-is (coverage doesn't produce these)
-- Review KEEP items → include as-is
-- Review **Source Findings** → lift into a Source Decisions block (see Step 5.5)
+- Coverage CREATE → include all behaviors from coverage.
+- Coverage ADD gaps → merge with review findings classified as `Add` (deduplicate by scenario).
+- Review findings → classify by category (see Step 2a for the rules), then include verbatim.
+- Review **Source Findings** with a `fix` decision → lift into a Source Decisions block (see Step 5.5). `document` / `skip` decisions flow into per-test rewrite strategy and don't appear in the audit block.
 
 Report the list of target files to the user.
 
@@ -94,14 +108,17 @@ The analysis strategy depends on where the file list came from:
 
 #### Step 2a: From a prior review/coverage file (`review` / `coverage` modes)
 
-**Do NOT re-read source files.** The prior command already analyzed them and wrote structured findings into `.claude/tmp/test-review.md` or `.claude/tmp/test-coverage.md`. Use those findings directly:
+**Do NOT re-read source files** to "verify" the prior command's findings. The reviewer / coverage analyzer already read them. Use those findings directly:
 
-- **Keep / Rewrite / Add / Delete** classifications come from the review's Structured Findings — carry them forward verbatim.
-- **Source Findings** → Source Decisions (Step 5.5).
+- **Review findings** — each confidence-scored finding at `{testFile}:{line}` maps to one plan item. Classify by the finding's `Category`:
+  - `Coverage Completeness` → **Add** (a missing test case).
+  - `Assertion Quality` / `Mock Realism` / `Test-Code Alignment` / `Brittleness & Structure` → **Rewrite** (fix an existing test at the named line).
+  - If two findings target the same test at the same line, merge into one Rewrite item (record both concerns in the "why" field).
+- **Source Findings** — decision captured in Step 1's gate: `fix` → Source Decisions (Step 5.5); `document` → per-test Rewrite with a documenting comment; `skip` → test finding already dropped upstream.
 - **Coverage gaps** → Add items with the gap description as the "why".
 - **File type, complexity, dependencies**: infer from the file path and the prior command's observations. If the review/coverage file didn't capture a piece of metadata you need for batching (rare), spot-`Read` only that file — not the entire target list.
 
-This path is the common one after `/test-review` or `/test-coverage`; it should produce a plan with zero source-file Reads in the main context.
+This path should produce a plan with zero source-file Reads in the main context.
 
 #### Step 2b: Fresh analysis (branch-diff, folder, or file args)
 
@@ -281,33 +298,30 @@ Group the work into **sprints** (phases) that can be executed independently. Eac
 
 Files in the same batch should share similar mocking requirements.
 
-### Step 5.5: Copy the Source Decisions audit block
+### Step 5.5: Build the Source Decisions audit block
 
-By the time this step runs, Step 1's hard-stop has already guaranteed that every source finding in the review is either `resolved` or `accepted`. This step is a pure copy — do **not** re-derive classifications or re-prompt for overrides; the review conversation handled all of that upstream.
+Consume the decisions captured during Step 1's source-finding gate. The block exists for traceability: anyone reading the plan can see which source gaps were accepted as refactors versus documented or skipped.
 
-If the review contained a `## Source Findings` section, copy each finding into a **Source Decisions** audit block at the top of the plan. The block exists for traceability: anyone reading the plan can see which source gaps were fixed (and how) versus which were accepted as-is.
-
-For each finding, record:
+For each source finding with decision `fix` or `document`, record:
 
 ```markdown
 ### `{source path}:{line}` — {summary}
 
-**Linked test item(s)**: `{test file}:{line}` — `{test name}` (+ any siblings in the same Rewrite cluster)
-**Decision**: Fix | Document | Skip
-**Status**: resolved | accepted
-**Reasoning**: {carry from review verbatim}
-**If Fix** (now resolved): {the source change that was made — copy from review's If Fix line}
-**If Document** (now accepted): {what the test should assert instead}
-**If Skip** (now accepted): {which tests to delete}
+**Linked test items**: {list of finding indices, e.g. "1, 3, 4"} — `{test file}:{line}` — `{issue}`
+**Decision**: Fix | Document
+**Reasoning**: {short line — "refactor pre-approved for clean hook extraction" / "behaviour intentional; assert as-is"}
+**If Fix**: {refactor description from the review, including any code snippet and blast radius}
+**If Document**: {what the test should assert about the current behaviour + SOURCE DECISION comment text}
 ```
 
-**Per-file rewrite instructions** inherit the Decision state:
+`skip` decisions don't appear here — the dependent test findings were already dropped from the work list in Step 1.
 
-- `Fix` / `resolved` → rewrite the test against the fixed contract (the source change has already landed; test can assert the honest behavior).
-- `Document` / `accepted` → assert the current behavior and annotate with a `// SOURCE DECISION: Document — {reason}` comment.
-- `Skip` / `accepted` → delete the test; do not replace.
+**Per-test rewrite instructions inherit the decision:**
 
-If the review had 0 source findings, omit the Source Decisions block from the plan entirely. `/test-write`'s Step 1.5 hard-stop becomes a no-op defence-in-depth check — it should never trigger in normal flow because the review conversation resolves everything upstream.
+- `Fix` → test-engineer applies the source refactor first, then rewrites the test against the fixed contract.
+- `Document` → test asserts the CURRENT behaviour and includes a `// SOURCE DECISION: Document — {reason}` comment so the next reviewer sees why the apparent smell is intentional.
+
+If no source findings were referenced, or every decision was `skip`, omit the Source Decisions block from the plan entirely.
 
 ### Step 6: Write the full plan to file
 
@@ -344,7 +358,7 @@ generated: { ISO 8601 UTC timestamp }
 **Target files**: {count}
 **Estimated complexity**: {simple} simple, {medium} medium, {complex} complex
 **Sprints**: {count}
-**Source decisions**: {count} ({resolved}/{accepted}) — all resolved or accepted upstream by the review conversation
+**Source decisions**: {count} — {fix_count} Fix, {document_count} Document, skipped dependents dropped during planning
 **Sanity-check flags**: {count} — Rewrite prescriptions flagged against current source (from-review mode only; 0 in other modes)
 
 ---
@@ -367,19 +381,17 @@ Rewrite prescriptions whose `Should:` assertion looks suspicious given the curre
 
 ## Source Decisions (audit)
 
-{Only included if source findings were carried forward from the review. Omit section entirely if 0.}
+{Only included if source findings with decision `fix` or `document` were captured during Step 1. Omit entirely otherwise.}
 
-Each decision below was resolved (source change landed and verified) or accepted (Document/Skip) in the review conversation before this plan was built. Listed here for traceability — `/test-write` uses them to pick the right rewrite strategy per linked test.
+Captured during Step 1's source-finding gate. `/test-write` reads these to pick the right rewrite strategy per linked test: Fix → apply refactor first then test against fixed contract; Document → assert current behaviour with SOURCE DECISION comment.
 
 ### `{source path}:{line}` — {summary}
 
-**Linked test item(s)**: `{test file}:{line}` — `{test name}`
-**Decision**: Fix | Document | Skip
-**Status**: resolved | accepted
-**Reasoning**: {from review}
-**If Fix** (now resolved): {source change that landed}
-**If Document** (now accepted): {what the test should assert}
-**If Skip** (now accepted): {which tests to delete}
+**Linked test items**: {finding indices} — `{test file}:{line}` — `{issue}`
+**Decision**: Fix | Document
+**Reasoning**: {short rationale}
+**If Fix**: {refactor description including any code snippet and blast radius from the review}
+**If Document**: {what the test should assert + SOURCE DECISION comment text}
 
 ---
 
@@ -455,8 +467,8 @@ Full plan: `.claude/tmp/test-plan.md`
 {If >3: "(+{N} more in file — open `.claude/tmp/test-plan.md` to review)"}
 
 {If source decisions present, show a compact audit line BEFORE the sprint table:}
-### Source Decisions (audit — all resolved/accepted upstream)
-{Up to 3 highest-impact, one per line: `- source/path.ts:NN — Fix → resolved: {what changed}`}
+### Source Decisions (audit — captured during planning)
+{Up to 3 highest-impact, one per line: `- source/path.ts:NN — Fix: {refactor summary}` or `- source/path.ts:NN — Document: {reason}`}
 {If >3: "(+{N} more in file)"}
 
 | Sprint | Batch | Files | Priority | Focus |
@@ -484,7 +496,5 @@ After the summary, ask:
 > - `/test-write plan all` — execute all sprints sequentially
 >
 > Or raise any of the Notes items first if a test-strategy concern needs discussion.
-
-(There is no "if pending decisions" branch — Step 1's hard-stop guarantees the plan only exists when every source finding has already been resolved or accepted upstream.)
 
 Do NOT write any test files — this command only produces the plan. Use `/test-write` to execute it.

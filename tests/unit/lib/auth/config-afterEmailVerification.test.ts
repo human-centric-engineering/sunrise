@@ -1,7 +1,7 @@
 /**
  * Auth Config afterEmailVerification Callback Tests
  *
- * Tests the better-auth afterEmailVerification callback that handles:
+ * Tests the real afterEmailVerificationHook from lib/auth/config.ts that handles:
  * - Sending the welcome email after a user verifies their email address
  * - Skipping the welcome email when verification is not required (already sent at signup)
  * - Non-blocking error handling for email failures
@@ -9,19 +9,73 @@
  * Test Coverage:
  * - Verification required (production): sends welcome email after verification
  * - Verification not required (development/test): skips welcome email (already sent at signup)
- * - Null name falls back to "User"
+ * - Null name falls back to "User" (handled by WelcomeEmail template)
  * - Email failure is non-blocking (caught, logged as warning, does not throw)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 160-196)
+ * @see lib/auth/config.ts (afterEmailVerificationHook)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as React from 'react';
 import { createMockUser } from '@/tests/types/mocks';
 
-// Mock dependencies
+// ---------------------------------------------------------------------------
+// Mutable env object — individual tests mutate fields to exercise branches.
+// Reset in beforeEach.
+// ---------------------------------------------------------------------------
+
+const mockEnv = {
+  REQUIRE_EMAIL_VERIFICATION: undefined as boolean | undefined,
+  BETTER_AUTH_URL: 'http://localhost:3000',
+  NODE_ENV: 'test' as 'test' | 'development' | 'production',
+  BETTER_AUTH_SECRET: 'x'.repeat(32),
+  RESEND_API_KEY: 'test-resend-key',
+  EMAIL_FROM: 'test@example.com',
+  DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
+  NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
+};
+
+// ---------------------------------------------------------------------------
+// Mock dependencies — declared before any imports from @/lib/auth/config
+// ---------------------------------------------------------------------------
+
+vi.mock('@/lib/env', () => ({
+  env: mockEnv,
+}));
+
+vi.mock('better-auth', () => ({
+  betterAuth: vi.fn(() => ({
+    api: { getSession: vi.fn() },
+    handler: vi.fn(),
+  })),
+}));
+
+vi.mock('better-auth/adapters/prisma', () => ({
+  prismaAdapter: vi.fn(() => ({})),
+}));
+
+vi.mock('better-auth/api', () => ({
+  getOAuthState: vi.fn(),
+  APIError: class APIError extends Error {
+    status: string;
+    body: { code?: string; message?: string };
+    statusCode: number;
+    constructor(status: string, body: { code?: string; message?: string } = {}) {
+      super(body.message ?? status);
+      this.name = 'APIError';
+      this.status = status;
+      this.body = body;
+      this.statusCode = 400;
+    }
+  },
+}));
+
 vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
+}));
+
+vi.mock('@/lib/email/client', () => ({
+  validateEmailConfig: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -34,72 +88,42 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('@/emails/welcome', () => ({
-  WelcomeEmail: vi.fn(() => React.createElement('div', {}, 'Welcome Email')),
+  default: vi.fn(() => React.createElement('div', {}, 'Welcome Email')),
 }));
 
-vi.mock('@/lib/env', () => ({
-  env: {
-    REQUIRE_EMAIL_VERIFICATION: undefined,
-    BETTER_AUTH_URL: 'http://localhost:3000',
-    NODE_ENV: 'test',
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    user: { update: vi.fn() },
+    account: { findFirst: vi.fn() },
   },
 }));
 
+vi.mock('@/lib/utils/invitation-token', () => ({
+  validateInvitationToken: vi.fn(),
+  deleteInvitationToken: vi.fn(),
+  getValidInvitation: vi.fn(),
+}));
+
+vi.mock('@/lib/validations/user', () => ({
+  DEFAULT_USER_PREFERENCES: {
+    email: { marketing: false, productUpdates: true, securityAlerts: true },
+  },
+}));
+
+vi.mock('@/emails/verify-email', () => ({
+  default: vi.fn(() => React.createElement('div', {}, 'Verify Email')),
+}));
+
+vi.mock('@/emails/reset-password', () => ({
+  default: vi.fn(() => React.createElement('div', {}, 'Reset Password Email')),
+}));
+
 /**
- * Helper: simulate the afterEmailVerification callback.
+ * Test Suite: Auth Config afterEmailVerification Callback
  *
- * Mirrors the logic from lib/auth/config.ts lines 160-196.
- * The `requiresVerification` value is read from the mocked env, so tests
- * can control it by mutating the mocked env before calling this function.
+ * Tests the real hook by importing it directly from config. All module-level
+ * dependencies (sendEmail, logger, env) are replaced by vi.mock above.
  */
-const simulateAfterEmailVerification = async (
-  params: { user: { id: string; email: string; name: string | null } },
-  deps: {
-    sendEmail: ReturnType<typeof vi.fn>;
-    logger: {
-      info: ReturnType<typeof vi.fn>;
-      warn: ReturnType<typeof vi.fn>;
-    };
-    env: {
-      REQUIRE_EMAIL_VERIFICATION: boolean | undefined;
-      BETTER_AUTH_URL: string;
-      NODE_ENV: string;
-    };
-  }
-) => {
-  const { user } = params;
-  const { sendEmail, logger, env } = deps;
-
-  // @ts-expect-error - vi.mocked types don't infer callability properly
-  logger.info('Email verification completed', {
-    userId: user.id,
-    email: user.email,
-  });
-
-  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-
-  if (!requiresVerification) {
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    logger.info('Skipping welcome email after verification (already sent at signup)', {
-      userId: user.id,
-    });
-    return;
-  }
-
-  // @ts-expect-error - vi.mocked types don't infer callability properly
-  await sendEmail({
-    to: user.email,
-    subject: 'Welcome to Sunrise',
-    react: React.createElement('div', {}, 'Welcome Email'),
-  }).catch((error: unknown) => {
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    logger.warn('Failed to send welcome email after verification', {
-      userId: user.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
-};
-
 describe('lib/auth/config - afterEmailVerification callback', () => {
   let sendEmail: ReturnType<typeof vi.fn>;
   let logger: {
@@ -108,18 +132,24 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
     debug: ReturnType<typeof vi.fn>;
     error: ReturnType<typeof vi.fn>;
   };
-  let env: {
-    REQUIRE_EMAIL_VERIFICATION: boolean | undefined;
-    BETTER_AUTH_URL: string;
-    NODE_ENV: string;
-  };
+  let afterEmailVerificationHook: (user: {
+    id: string;
+    email: string;
+    name: string | null;
+  }) => Promise<void>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
 
+    // Reset env to safe defaults
+    mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+    mockEnv.NODE_ENV = 'test';
+    mockEnv.BETTER_AUTH_URL = 'http://localhost:3000';
+
+    // Import mocked modules and real hook
     const emailSend = await import('@/lib/email/send');
     const logging = await import('@/lib/logging');
-    const envModule = await import('@/lib/env');
+    const authConfig = await import('@/lib/auth/config');
 
     sendEmail = vi.mocked(emailSend.sendEmail);
     logger = {
@@ -128,12 +158,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       debug: vi.mocked(logging.logger.debug),
       error: vi.mocked(logging.logger.error),
     };
-    env = envModule.env as typeof env;
-
-    // Default: verification not required (test/development)
-    env.REQUIRE_EMAIL_VERIFICATION = undefined;
-    env.NODE_ENV = 'test';
-    env.BETTER_AUTH_URL = 'http://localhost:3000';
+    afterEmailVerificationHook = authConfig.afterEmailVerificationHook;
 
     // Default: email sending succeeds
     sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
@@ -146,13 +171,13 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
   describe('when email verification is not required', () => {
     it('should skip welcome email when REQUIRE_EMAIL_VERIFICATION is undefined and NODE_ENV is test', async () => {
       // Arrange: verification not required (default test setup)
-      env.REQUIRE_EMAIL_VERIFICATION = undefined;
-      env.NODE_ENV = 'test';
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+      mockEnv.NODE_ENV = 'test';
 
       const user = createMockUser({ id: 'user-1', email: 'user@example.com', name: 'Test User' });
 
-      // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      // Act: call the real hook
+      await afterEmailVerificationHook(user);
 
       // Assert: welcome email not sent (already sent at signup)
       expect(sendEmail).not.toHaveBeenCalled();
@@ -160,13 +185,13 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should skip welcome email when REQUIRE_EMAIL_VERIFICATION is explicitly false', async () => {
       // Arrange: explicitly disabled
-      env.REQUIRE_EMAIL_VERIFICATION = false;
-      env.NODE_ENV = 'test';
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
+      mockEnv.NODE_ENV = 'test';
 
       const user = createMockUser({ id: 'user-2', email: 'user@example.com', name: 'Test User' });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: no welcome email
       expect(sendEmail).not.toHaveBeenCalled();
@@ -174,13 +199,13 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should log a skip message when bypassing welcome email', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = undefined;
-      env.NODE_ENV = 'test';
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+      mockEnv.NODE_ENV = 'test';
 
       const user = createMockUser({ id: 'user-3', email: 'user@example.com', name: 'Test User' });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: skip is logged with user ID
       expect(logger.info).toHaveBeenCalledWith(
@@ -191,15 +216,15 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should still log that verification completed before skipping', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = undefined;
-      env.NODE_ENV = 'test';
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+      mockEnv.NODE_ENV = 'test';
 
       const user = createMockUser({ id: 'user-4', email: 'user@example.com', name: 'Test User' });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
-      // Assert: verification completion is always logged
+      // Assert: verification completion is always logged first
       expect(logger.info).toHaveBeenCalledWith(
         'Email verification completed',
         expect.objectContaining({ userId: user.id, email: user.email })
@@ -210,7 +235,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
   describe('when email verification is required', () => {
     it('should send welcome email when REQUIRE_EMAIL_VERIFICATION is true', async () => {
       // Arrange: verification required (explicit flag)
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
       const user = createMockUser({
         id: 'user-5',
@@ -219,9 +244,9 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
-      // Assert: welcome email is sent
+      // Assert: welcome email is sent with correct address and subject
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: user.email,
@@ -233,13 +258,13 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should send welcome email when REQUIRE_EMAIL_VERIFICATION is undefined and NODE_ENV is production', async () => {
       // Arrange: production defaults to requiring verification
-      env.REQUIRE_EMAIL_VERIFICATION = undefined;
-      env.NODE_ENV = 'production';
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = undefined;
+      mockEnv.NODE_ENV = 'production';
 
       const user = createMockUser({ id: 'user-6', email: 'prod@example.com', name: 'Prod User' });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: welcome email is sent after verification in production
       expect(sendEmail).toHaveBeenCalledWith(
@@ -252,25 +277,25 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should use "User" fallback when user name is null', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
       const user = createMockUser({ id: 'user-7', email: 'noname@example.com', name: null });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
-      // Assert: email is still sent (name fallback handled by WelcomeEmail template)
+      // Assert: email is still sent to the correct address
       expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: user.email }));
     });
 
     it('should not skip email and should send it exactly once', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
       const user = createMockUser({ id: 'user-8', email: 'once@example.com', name: 'Once User' });
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: sent exactly once
       expect(sendEmail).toHaveBeenCalledTimes(1);
@@ -286,27 +311,29 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
   describe('error handling', () => {
     it('should not throw when email sending fails', async () => {
       // Arrange: email fails
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
       const user = createMockUser({ id: 'user-9', email: 'fail@example.com', name: 'Fail User' });
       sendEmail.mockRejectedValue(new Error('SMTP connection refused'));
 
       // Act & Assert: does not throw (non-blocking)
-      await expect(
-        simulateAfterEmailVerification({ user }, { sendEmail, logger, env })
-      ).resolves.toBeUndefined();
+      await expect(afterEmailVerificationHook(user)).resolves.toBeUndefined();
     });
 
     it('should log a warning when email sending fails', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
-      const user = createMockUser({ id: 'user-10', email: 'warn@example.com', name: 'Warn User' });
+      const user = createMockUser({
+        id: 'user-10',
+        email: 'warn@example.com',
+        name: 'Warn User',
+      });
       const emailError = new Error('Email API rate limit exceeded');
       sendEmail.mockRejectedValue(emailError);
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: warning logged with user ID and error message
       expect(logger.warn).toHaveBeenCalledWith(
@@ -320,7 +347,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
 
     it('should log warning with stringified error when non-Error is thrown', async () => {
       // Arrange
-      env.REQUIRE_EMAIL_VERIFICATION = true;
+      mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
 
       const user = createMockUser({
         id: 'user-11',
@@ -330,7 +357,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       sendEmail.mockRejectedValue('plain string error');
 
       // Act
-      await simulateAfterEmailVerification({ user }, { sendEmail, logger, env });
+      await afterEmailVerificationHook(user);
 
       // Assert: non-Error is stringified
       expect(logger.warn).toHaveBeenCalledWith(

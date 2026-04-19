@@ -71,20 +71,29 @@ After your final functional commit, ensure test coverage is adequate **before** 
 ```bash
 /test-plan              # Analyze branch diff, produce phased test plan
 /test-write plan        # Execute Sprint 1 (spawns test-engineer agents)
-/test-review            # Audit quality of tests just written
-/test-plan review       # Plan fixes if review found issues
-/test-write plan        # Execute fixes
+/test-review            # Audit quality — writes .reviews/tests-branch-{name}.md
+/test-fix --all         # Apply every finding ≥80 from the latest report
 /test-coverage branch   # Verify coverage meets thresholds for changed files
 ```
 
-**Quick quality fix after review** (1–5 files, skips plan step):
+`/test-review` is diagnostic — it produces a confidence-scored report; `/test-fix` consumes it. There is no auto-loop: do not re-run `/test-review` after fixes unless the source changed.
+
+**PR gate** (after pushing the branch and opening a PR):
 
 ```bash
-/test-review components/x   # Finds quality issues
-/test-fix components/x      # Applies review findings directly
+/test-review pr             # Post a comment on the current PR; silent if no findings ≥80
+# Or: /test-review pr 1234  # Target a specific PR number
 ```
 
-Use `/test-fix` after `/test-review` when the scope is small (1–5 files) and the work is quality fixes, not coverage expansion. For 6+ files or coverage-driven work, use the `/test-plan review` → `/test-write plan` path.
+Mirrors the `/code-review` plugin — eligibility-checked, skips draft/closed/already-reviewed PRs.
+
+**Quick quality fix** (1–5 files, specific findings):
+
+```bash
+/test-review components/x            # Confidence-scored report
+/test-fix --findings=1,3,5           # Apply specific findings from the latest report
+# Or: /test-fix components/x --all   # Apply every finding for that scope
+```
 
 **Quick test for 1-2 files** (skips planning step):
 
@@ -146,13 +155,15 @@ Once CI passes and review is complete:
 □ Final commit made
 □ /test-plan — test plan created for branch changes
 □ /test-write plan — tests written and passing
-□ /test-review — test quality audited
+□ /test-review — test quality audited (.reviews/tests-branch-{name}.md)
+□ /test-fix --all — findings ≥80 applied
 □ /test-coverage branch — coverage meets thresholds
 □ npm run validate — no errors
 □ npm run build — builds successfully
 □ /pre-pr — no issues
 □ /security-review — no vulnerabilities
 □ PR created
+□ /test-review pr — PR test-review comment posted (silent if no findings)
 □ /code-review — feedback addressed
 □ CI passes
 □ Merged
@@ -191,7 +202,8 @@ git commit -m "feat: description"   # Conventional commit
 # Test coverage (after final functional commit)
 /test-plan                          # Plan tests for branch changes
 /test-write plan                    # Write tests
-/test-review                        # Audit test quality
+/test-review                        # Audit test quality (report to .reviews/)
+/test-fix --all                     # Apply findings ≥80
 /test-coverage branch               # Verify coverage
 
 # Before PR

@@ -465,8 +465,9 @@ it('skips welcome when verification is enabled', async () => {
 1. Run `npm test` - All tests must pass
 2. Run `npm run lint` - Zero errors, zero warnings in test files
 3. Run `npm run type-check` - Zero type errors
-4. Check coverage with `npm run test:coverage`
-5. Run `npm run validate` - All checks in one command
+4. Run `npm run format:check` - Clean (if it fails, `npx prettier --write` the edited paths and re-verify)
+5. Check coverage with `npm run test:coverage`
+6. Run `npm run validate` - Runs type-check + lint + format:check in one command
 
 ---
 

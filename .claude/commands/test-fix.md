@@ -1,128 +1,203 @@
 ---
 allowed-tools: Bash, Glob, Grep, Read, Agent
-description: Fast-path fix executor — two modes, review (applies /test-review findings) or from-rescan (applies /test-triage ledger NOTES). No intermediate plan file.
+description: Apply findings from a /test-review report (or /test-triage ledger NOTES). Two modes: review (default) or from-rescan.
 ---
 
-Fast-path executor for quality-fix passes. Spawns a single test-engineer subagent to apply test fixes without the `/test-plan review` + `/test-write plan` overhead.
+Fast-path executor for quality-fix passes. Reads a confidence-scored `/test-review` report (or a `/test-triage` ledger row) and spawns a single test-engineer subagent to apply the findings.
 
 Two input modes:
 
-- **Review mode (default)** — reads `.claude/tmp/test-review.md` and applies the Rewrite/Add/Delete prescriptions. Use after `/test-review`. Best for branch BAU work where you already have a full audit.
+- **Review mode (default)** — reads the latest (or named) report at `.reviews/tests-{slug}.md` produced by `/test-review`. User picks which findings to action (`--all` or `--findings=1,3,5`). Source findings surface first with explicit per-finding confirmation before any refactor lands.
 - **Rescan mode (`from-rescan`)** — reads the file's row from `.claude/testing/remediation-ledger.md` and applies the Sonnet NOTES directly. Use after `/test-triage rescan` when you want to patch specific findings without running a full review. Best for ledger-driven remediation on files graded Minor or Bad with specific, actionable NOTES.
-
-For scopes larger than 5 files, or coverage-driven work, use `/test-plan review` + `/test-write plan` regardless of mode.
 
 ## Input
 
 $ARGUMENTS — mode auto-detects from the first token:
 
 - **`from-rescan <test-file>`** → rescan mode (see "Mode: from-rescan" below).
-- **No arguments, or scope path** (e.g. `components/analytics`, `lib/auth/foo.ts`) → review mode (see "Mode: review (default)" below).
+- **Anything else** → review mode. Accepts:
+  - `/test-fix` — use the most recently written `.reviews/tests-*.md`
+  - `/test-fix <scope-path>` — resolve the scope path to `.reviews/tests-{slug}.md` (e.g. `lib/auth` → `tests-lib-auth.md`)
+  - `/test-fix <slug>` — use `.reviews/tests-{slug}.md` directly
+  - Any of the above may be combined with `--all` or `--findings=1,3,5` to skip the picker.
 
 ## Mode: review (default)
 
-### Step 1: Read the review file
+### Step 1: Locate the review file
 
-- Read `.claude/tmp/test-review.md` and follow the reader protocol in `.claude/docs/test-command-file-protocol.md`:
-  1. Parse the frontmatter metadata.
-  2. Hard-stop if the invocation scope argument disagrees with the review's scope (e.g. reviewing `lib/auth` but user typed `/test-fix components/analytics`). If the user's arg is a strict subset of the review's scope, that's fine — filter the review entries (Step 2).
-  3. Soft-warn on age >1h. Hard-pause on age >24h OR branch/HEAD change — these risk applying stale prescriptions to shifted source.
-  4. Print the provenance line.
-- If the file does not exist, report: "No review found at `.claude/tmp/test-review.md`. Run `/test-review` first." and stop.
+Resolve in this order:
 
-### Step 2: Filter and count files
+1. **Explicit slug or scope arg** — if the first non-flag arg is a path, compute slug: replace `/` with `-`, drop leading `tests-` if present. Look for `.reviews/tests-{slug}.md`.
+2. **No arg** — list `.reviews/tests-*.md` by mtime descending; pick the most recent.
 
-Parse the review's `## Structured Findings` section. Each `### {source} → {test}` block is one file.
+If nothing is found, report: "No review found. Run `/test-review [scope]` first — it writes to `.reviews/tests-{slug}.md`." and stop.
 
-- If a scope arg was passed, keep only blocks whose `source file path` matches (folder match → any file under the folder; file match → exact match).
-- If 0 files remain, report: "Review contains no entries matching `{arg}`. Run `/test-review {arg}` first." and stop.
-- **If 6+ files remain**, refuse with:
+If the user passed a scope arg that maps to a non-existent report, report which file was expected (`.reviews/tests-{computed-slug}.md`) so they can either run `/test-review {arg}` or name a different slug.
 
-  > This fast path is sized for 1–5 files. For {N} files, use the structured flow:
-  >
-  > ```
-  > /test-plan review → produces phased plan with batching
-  > /test-write plan  → executes with parallel agents
-  > ```
-  >
-  > `/test-fix` is designed around a single subagent spawn; 6+ files exceeds what one agent should own in one session.
+### Step 2: Parse the report
 
-  Stop.
+Read the full report. Extract:
 
-### Step 3: Enforce Source Findings (hard stop on pending)
+- **Frontmatter** (if present — the v2 review template writes it as an HTML comment header, plain text, or embedded in the first few lines):
+  - `Reviewed` timestamp
+  - `Branch` and `HEAD`
+  - `File pairs reviewed`
+  - `Findings ≥80` count
+- **Critical Findings (90–100)** — numbered list; each entry has File, Source, Category, Confidence, Issue, Evidence, Suggested fix.
+- **Important Findings (80–89)** — same structure.
+- **Source Findings** — numbered list with File, Line, Confidence, Issue, Evidence, Suggested refactor, Blast radius.
+- **Orphan Tests** (if any) — skip; not fixable without source context.
 
-Inspect the review's `## Source Findings` section.
+Assign a global 1-based index to findings in the order they appear: Critical first, then Important. Source findings get their own `S1, S2, …` numbering.
 
-- If absent or empty, continue.
-- For every finding, check `**Status**`. Valid terminal values: `resolved` or `accepted`. Any `pending` → STOP with the same message `/test-plan review` uses:
+Build a dependency map: if a finding's `Suggested fix` line mentions "Source Finding N" or "Depends on Source Finding N", record that the finding depends on `S{N}`.
 
-  > `{count}` source finding{s} in `.claude/tmp/test-review.md` {is/are} still `pending`. `/test-fix` refuses to run until every finding is `resolved` or `accepted`. Return to the review conversation to resolve them (say "fix them", "document {finding}", or "skip {finding}").
+### Step 3: Staleness check
 
-  Do not offer to patch statuses — that's the user's explicit authorization, handled in the review conversation.
+Compute `age = now - reviewed_at`.
 
-- If every finding is terminal, print one-line confirmation: `Source findings: {R} resolved, {A} accepted — OK to proceed.`
+- **Age ≤ 1h** — silent, print provenance line.
+- **Age > 1h, ≤ 24h, same branch and HEAD** — print a soft warning: `Review is {age} old but branch/HEAD unchanged. Continuing.`
+- **Age > 24h OR branch/HEAD differs from current** — hard pause:
+  > Review at `{path}` was generated on branch `{branch}` at HEAD `{head-short}` ({age} ago). Current branch is `{current-branch}` at HEAD `{current-head-short}`. Prescriptions may be stale. Re-run `/test-review {scope}` first? (Y/n to continue anyway)
 
-### Step 4: Plan-time source sanity check
+If the user says anything other than explicit continue, stop.
 
-This is the step that catches planning errors before they become agent thrash. Runs in the main agent, inline.
-
-For each **Rewrite** item in the filtered scope whose `Should:` line prescribes a specific call count (`toHaveBeenCalledTimes(N)`) OR a specific call signature (`toHaveBeenCalledWith({...})`):
-
-1. Identify the source file and the approximate function/effect being exercised by the linked test.
-2. Read the relevant source range (narrow — just the function body or effect closure, not the whole file).
-3. Check for structural elements that could invalidate the prescribed assertion:
-   - **One-shot `useRef` guards** (e.g. `if (someRef.current) return`) that block re-runs on the same instance.
-   - **Early returns** that skip the call path being asserted.
-   - **Conditional effects** (e.g. `useEffect(() => {...}, [dep])` where `dep` determines whether the call happens at all).
-   - **Async ordering** — the prescribed count may assume a synchronous path that's actually gated on a promise.
-4. If anything looks suspicious, add the item to a `Sanity-check flags` list with a one-line note. If everything checks out, silently pass.
-
-Rules:
-
-- Read only the source files you need. Do NOT pre-read everything "just in case" — the sanity check is per-item, not per-file.
-- A flag is not a block. The user sees the flag in Step 5 and decides whether to adjust the prescription or confirm.
-- False positives are fine (user reads the note and says "that's actually correct"); false negatives are the cost we're trying to avoid.
-
-### Step 5: Present execution summary and confirm
-
-Show the user:
+Print a one-line provenance block:
 
 ```
-## /test-fix — {N} files from {review scope}
+Review: `.reviews/tests-{slug}.md` — {age} old · branch {branch} · HEAD {head-short}
+```
 
-**Review**: `.claude/tmp/test-review.md` ({age}, branch {branch}, HEAD {head-short})
-**Source findings**: {R} resolved, {A} accepted (0 pending — verified in Step 3)
+### Step 4: Pick findings
 
-| File | Test File | Keep | Rewrite | Add | Delete |
-|------|-----------|------|---------|-----|--------|
-| `components/x.tsx` | `tests/unit/components/x.test.tsx` | 6 | 2 | 1 | 2 |
+Apply filters in this order:
+
+1. **`--findings=N,N,N`** — keep only the listed 1-based indices. Validate each index exists; hard-stop with `Finding {N} not found — report has {max} findings numbered 1..{max}`.
+2. **`--all`** — keep every finding (Critical + Important).
+3. **No flag** — print the picker:
+
+   ```
+   ## /test-fix — pick findings from `.reviews/tests-{slug}.md`
+
+   **Critical (90–100)**
+   1. ({conf}) `{file}:{line}` — {one-line issue}
+   2. ({conf}) `{file}:{line}` — {one-line issue}
+   ...
+
+   **Important (80–89)**
+   3. ({conf}) `{file}:{line}` — {one-line issue}
+   ...
+
+   **Source Findings** (referenced by one or more test findings)
+   S1. ({conf}) `{file}:{line}` — {one-line issue} · {blast radius}
+   ...
+
+   Which findings should I apply? Reply with:
+   - `all` — every Critical + Important finding above
+   - `critical` — only Critical (90–100)
+   - `1,3,5` — specific indices
+   - `none` — stop here
+
+   Source findings are handled separately in the next step (one confirm each).
+   ```
+
+   Wait for the user's reply. `none` stops. Otherwise resolve to an index list.
+
+### Step 5: Source finding gate
+
+Compute the set of source findings referenced (directly or transitively) by the picked test findings.
+
+If the set is empty, print `No source findings required — proceeding to test fixes.` and skip to Step 6.
+
+For each referenced source finding, present:
+
+```
+### Source Finding S{N} — `{file}:{line}` (confidence {conf})
+
+**Issue:** {issue paragraph from the report}
+
+**Evidence:** {evidence paragraph}
+
+**Suggested refactor:**
+{refactor snippet or description}
+
+**Blast radius:** {blast radius line}
+
+**Depended on by:** findings {list of test finding indices}
+
+Apply this refactor before the test fixes? (y/n/defer)
+- `y` — the test-engineer will apply the source refactor first, then fix the dependent tests.
+- `n` — decline the source refactor. Dependent test findings ({list}) will be dropped from this run.
+- `defer` — leave the source untouched AND leave the dependent test findings for a later pass. Same net effect as `n` but records "deferred" in the run summary so you know to come back.
+```
+
+Wait for reply per finding. Collect decisions:
+
+- **`y`** — source refactor is queued. Its dependent test findings remain in the selection.
+- **`n`** or **`defer`** — drop the source refactor AND every dependent test finding from the selection. Print one line: `Dropped findings {list} — depended on source S{N} which was {declined/deferred}.`
+
+If every picked finding got dropped (user declined all source findings they depended on), stop with:
+
+> Every picked finding depends on a source finding you declined or deferred. Nothing to do — come back when you're ready to accept the source changes, or run `/test-review` again after a manual source fix.
+
+### Step 6: Plan-time source sanity check
+
+For each remaining test finding whose `Suggested fix` prescribes a specific call count or call signature:
+
+1. Read the relevant source range (narrow — function body or effect closure).
+2. Check for structural elements that could invalidate the prescribed assertion:
+   - One-shot `useRef` guards
+   - Early returns that skip the call path
+   - Conditional effects where a dep gates the call
+   - Async ordering assumptions that conflict with a synchronous prescription
+3. If anything looks suspicious, record it as a `Sanity-check flag` with a one-line note. Otherwise silently pass.
+
+A flag is guidance, not a block. User sees it in Step 7 and decides whether to adjust or proceed.
+
+Skip this step for findings whose `Suggested fix` is "needs judgement" or a general refactor description — the sanity check targets mechanical prescriptions.
+
+### Step 7: Present execution summary and confirm
+
+```
+## /test-fix — {N} findings from `.reviews/tests-{slug}.md`
+
+**Scope**: {scope description}
+**Source refactors queued**: {count}
+  - S{N}: `{file}:{line}` — {one-line refactor}
+**Test findings queued**: {count}
+  - {index}. `{file}:{line}` — {one-line}
+{repeat, grouped by test file for readability}
+
+**Dropped** (source dependency declined/deferred): {count}
+  - {index}. `{file}:{line}` — depended on S{N} ({declined|deferred})
 
 ### Sanity-check flags ({count})
-{Only shown if Step 4 flagged anything. Else "None — all prescriptions look valid against current source."}
+{Only shown if Step 6 flagged anything. Else omit this section.}
 
-- `{file}:{line}` — `{test name}`
-  - Prescription: {Should: line from review}
-  - Concern: {one-line note about the guard / early return / conditional you spotted}
+- Finding {index} — `{file}:{line}`
+  - Prescription: {suggested fix}
+  - Concern: {one-line note}
 
-Proceed? (Y/n — reply "adjust" to modify a prescription before spawning)
+Proceed? (Y/n — reply `adjust {index} <new instruction>` to override a single prescription)
 ```
 
-If the user replies "adjust", list the flagged items as options and ask which prescription they want to change and to what. Apply the change to the in-memory view (do NOT rewrite the review file — the review is the permanent record; the change is a one-off override for this execution). Then re-show the summary and ask again.
+If the user says `adjust {index} <text>`, record the override (in-memory only — do NOT rewrite the report) and re-show the summary. The agent prompt will use the override in place of the original `Suggested fix` for that finding.
 
-### Step 6: Spawn a single test-engineer subagent
+### Step 8: Spawn a single test-engineer subagent
 
-Spawn ONE foreground test-engineer agent. The prompt is self-contained — the agent does not need to read the review file or the plan file.
+Spawn ONE foreground test-engineer. The prompt is self-contained — the agent does not need to open the report.
 
 The prompt must include:
 
-1. **Identity and trimmed required reading:**
+1. **Identity and trimmed reading list:**
 
-   > You are executing a `/test-fix` quality pass — small scope, no plan file intermediate. Read these two docs before writing any tests:
+   > You are executing a `/test-fix` quality pass — applying specific findings from a confidence-scored review. Read these two docs before writing any tests:
    >
    > 1. `.context/testing/patterns.md` — AAA structure, shared mocks, type-safe assertions
    > 2. `.context/testing/mocking.md` — dependency mocking strategies
    >
-   > Skip the full onboarding reading list (overview/gotchas/SKILL/brittle-patterns) — the brittle patterns are embedded below, and the other docs are only needed for fresh-test bootstrapping which this is not.
+   > Skip the full onboarding reading list — the brittle patterns are embedded below.
 
 2. **Brittle patterns inline** (copy the 6-bullet list from `.claude/docs/test-brittle-patterns.md`):
 
@@ -133,100 +208,138 @@ The prompt must include:
    > - Mid-test `vi.clearAllMocks()` before `not.toHaveBeenCalled()` → use explicit `toHaveBeenCalledTimes(N)` before and after.
    > - Dead `vi.mock(...)` blocks → delete them.
    > - `.toBeDefined()` after `.find()` → assert specific elements.
-   > - Add/Rewrite overlap → merge if an Add duplicates what a Rewrite already asserts.
+   > - If a finding's fix overlaps with another, merge the edit — don't add duplicate tests.
 
-3. **Per-file work instructions** — for each file in scope, include the review's Keep/Rewrite/Add/Delete entries verbatim (with line numbers). If the user adjusted a prescription in Step 5, use the adjusted version.
+3. **Source refactors to apply first** (if any from Step 5):
 
-4. **Any sanity-check flags** — include as guidance: "Note: the sanity check flagged `{file}:{line}`'s prescription for {concern}. If you hit this, re-read the source, follow brittle pattern #N or the gotchas doc, and revise the assertion to match the honest contract (that's a plan error, not a source bug)."
+   > Apply these source refactors BEFORE touching any tests. Each is a pre-approved named extraction / simple restructure. After all refactors land, run `npm run type-check` once to verify the source compiles; then move on to the test findings.
+   >
+   > - **S{N}**: `{source file}:{line}` — {issue}
+   >   - Refactor: {suggested refactor, verbatim from the report including any code snippet}
+   >   - Blast radius: {line}
 
-5. **Test quality requirements** — AAA, test intent not output, use shared mocks/assertions, one behaviour per test.
+4. **Test findings to apply** (deduplicated by file when useful — keep the per-finding structure visible to the agent):
 
-6. **Mid-sprint source-bug protocol** — identical to `/test-write` (stop, report under `## New Source Findings`, park with `it.todo`, continue to next file).
+   > For each finding below, edit the named test file at the named line range. The `Suggested fix` is the target state; translate it to concrete code using the project's testing patterns.
+   >
+   > - **Finding {index}** ({category}, confidence {conf}) — `{test file}:{line}`
+   >   - Source: `{source file}`
+   >   - Issue: {issue}
+   >   - Evidence: {evidence}
+   >   - Suggested fix: {suggested fix, or user's override from Step 7}
+   >     {If this finding depended on a source refactor:} Depends on S{N} (already applied above).
 
-7. **Validation** — `npm test -- {test paths}`, `npm run lint`, `npm run type-check` must all pass.
+5. **Sanity-check flags as guidance** (if any from Step 6):
 
-8. **Output format**:
+   > The planner flagged these prescriptions as potentially incompatible with current source — if you hit a wall on one, re-read the narrow source range, follow the brittle-pattern list above, and revise the assertion to match the honest contract. That's a plan error, not a source bug. Flags:
+   >
+   > - Finding {index}: {concern}
+
+6. **Test quality requirements** — AAA, test intent not output, use shared mocks/assertions, one behaviour per test.
+
+7. **Mid-run source-bug protocol** (same as `/test-write`):
+
+   > If you discover a source bug that isn't one of the queued source refactors, STOP editing that file. Report it under `## New Source Findings` in your output with file:line and a one-paragraph description. Park any affected test with `it.todo('<short description>')` and continue with the next finding. Do NOT fix source bugs mid-run.
+
+8. **Validation**:
+
+   > After all edits, run:
+   >
+   > - `npm test -- {affected test paths}`
+   > - `npm run lint`
+   > - `npm run type-check`
+   > - `npm run format:check` (if it fails, run `npx prettier --write {edited paths}` and re-verify — matches what lint-staged does on commit, so running it here prevents pre-pr format failures)
+   >
+   > All four must pass. If a validation step fails, fix the test or parked `it.todo` that triggered it; do not paper over the failure.
+
+9. **Output format**:
 
    ```
-   ### File: {test path}
-   - Kept: {N}
-   - Rewritten: {N} — list names
-   - Added: {N} — list names
-   - Deleted: {N} — list
-   - Pass: {N}/{N}
-   - Lint/type-check: clean
+   ### Source refactors applied
+   - S{N}: {one-line summary}
+   {or "None."}
 
-   ### Deviations from the prescriptions
-   {Anything done differently and why. If none, say "None".}
+   ### Findings applied
+   - Finding {index} ({category}) — `{test file}:{line}` — {one-line result: "rewritten", "new test added", "assertion tightened", etc.}
+   ...
+
+   ### Tests: {pass}/{total} · Lint: clean|{errors} · Type-check: clean|{errors} · Format: clean|{errors}
+
+   ### Deviations from the suggested fixes
+   {Anything done differently and why. If none, "None".}
 
    ### New Source Findings
-   {If any; else "None".}
+   {Any source bugs discovered mid-run; else "None".}
    ```
 
-### Step 7: Report results
-
-After the agent returns, print a compact summary:
+### Step 9: Report results
 
 ```
-## /test-fix Complete: {review scope}
+## /test-fix Complete — {slug}
 
-**Files processed**: {count}
-**Totals**: {rewritten} rewritten, {added} added, {deleted} deleted, {kept} kept
-**Pass**: {total passing}/{total tests} (parked `it.todo` count as known gaps)
-**Lint/type-check**: clean | {N} errors (list)
+**Report**: `.reviews/tests-{slug}.md`
+**Findings applied**: {count} ({critical} critical, {important} important)
+**Source refactors applied**: {count} ({list of S-ids})
+**Findings dropped**: {count} (source dependency declined/deferred)
+**Tests**: {pass}/{total} · Lint: {status} · Type-check: {status} · Format: {status}
 
-### Deviations from prescriptions
-{Agent's deviations block. If none, "None".}
+### Applied
+{agent output: findings list, verbatim}
+
+### Deviations
+{agent output, verbatim — or "None"}
 
 ### New Source Findings
-{Agent's findings block. If none, "None — fix honored the plan."}
+{agent output, verbatim — or "None"}
 ```
 
-### Step 8: Capture-gotcha hook
+### Step 10: Capture-gotcha hook
 
-If the agent's output contained a non-empty `Deviations from the prescriptions` section OR a non-empty `New Source Findings` section, emit:
+If the agent's output contained a non-empty `Deviations` OR `New Source Findings` section, emit:
 
-> Any of these worth adding to `.claude/skills/testing/gotchas.md`? Reply "capture {short phrase}" to log one as a gotcha entry. Reply "skip" to continue.
+> Any of these worth adding to `.claude/skills/testing/gotchas.md`? Reply `capture {short phrase}` to log one as a gotcha entry. Reply `skip` to continue.
 
 If the user replies with a capture request:
 
 1. Read `.claude/skills/testing/gotchas.md`.
 2. Append a new numbered entry at the end of the "Critical Gotchas" section, following the existing format (Problem / Solution / code example / Status line citing the discovery context).
-3. Confirm to the user: `Captured gotcha #{N} in .claude/skills/testing/gotchas.md — future agents will pick it up.`
+3. Confirm: `Captured gotcha #{N} in .claude/skills/testing/gotchas.md — future agents will pick it up.`
 
-If the user replies "skip" or with anything else, continue without capturing.
+If the user replies `skip` or anything else, continue without capturing.
 
-### Step 9: Offer next steps
+### Step 11: Offer next steps
 
-The `/test-fix` validation chain (lint + type-check + tests passing) IS the convergence signal. Do **not** propose `/test-review` as the default next step — that's the loop trap that costs the user tokens for diminishing returns. Reserve re-audit for explicit triggers (source changed since the original review, user asks, or `/pre-pr` flagged something net-new).
+The validation chain (lint + type-check + tests) IS the convergence signal. Do NOT auto-suggest `/test-review` for "another pass" — the report's below-threshold findings are intentionally filtered; re-running to surface them is the loop trap.
 
-Branch on what actually happened in this run:
+Branch on outcome:
 
-#### If validation passed and the agent had no Deviations and no New Source Findings
-
-```
-Production-ready for `{scope}`. Next: `/pre-pr` for final validation, then ship.
-```
-
-#### If validation passed but the agent had Deviations or New Source Findings
+#### Validation passed, no deviations, no new source findings
 
 ```
-Fixes applied. The agent flagged {N} deviation(s) / {M} new source finding(s) — review the report above before shipping.
+Applied {N} findings cleanly. Next: `/pre-pr` for final validation, then ship.
+
+Deferred or declined source findings remain in `.reviews/tests-{slug}.md` — re-run `/test-fix {slug} --findings={indices}` if you change your mind.
+```
+
+#### Validation passed, with deviations or new source findings
+
+```
+Applied {N} findings. The agent flagged {D} deviation(s) / {F} new source finding(s) — review the report above.
 
 Next options:
-- Address the deviations or new findings (inline, or open a fresh `/test-review {scope}` only if they suggest the prescriptions need rethinking).
+- Address new source findings inline, or open a fresh `/test-review {scope}` if they warrant a full re-audit.
 - `/pre-pr` — proceeds with current state if you accept the deviations.
 ```
 
-#### If validation failed (lint, type-check, or tests broke)
+#### Validation failed
 
 ```
 {N} validation failure(s) — see the report above. The fixes are NOT production-ready.
 
-Next: address the failures (the agent's report names the specific tests/files), then re-run `/test-fix {scope}` or move to `/pre-pr` once clean.
+Next: fix the named test(s), then re-run `/test-fix {slug} --findings={failing indices}`, OR move to `/pre-pr` once clean.
 ```
 
-In all cases: do not auto-suggest `/test-review` for "another pass". Catalog items recorded in the original review remain catalog — they don't become Improve items just because tests changed.
+In all cases: do not auto-suggest `/test-review` as "another pass". The report is authoritative until source changes or the user explicitly requests a re-audit.
 
 ---
 
@@ -301,7 +414,7 @@ Spawn ONE foreground test-engineer. The prompt includes:
 
 6. **Mid-sprint source-bug protocol** (same as review mode: stop, report under "New Source Findings", park with `it.todo`, continue).
 
-7. **Validation**: `npm test -- {test path}`, `npm run lint`, `npm run type-check` must all pass.
+7. **Validation**: `npm test -- {test path}`, `npm run lint`, `npm run type-check`, `npm run format:check` must all pass. If `format:check` fails, run `npx prettier --write {edited paths}` and re-verify.
 
 8. **Output format**:
 
@@ -375,7 +488,7 @@ Next: address the failures, then re-run `/test-fix from-rescan {file}` or escala
 
 ## What this command does NOT do
 
-- **No plan file written** — in review mode the review file remains the authoritative record; in rescan mode the ledger row is the authoritative record. If you need a persistent plan artefact (for review, handoff, or re-run), use `/test-plan review`.
-- **No multi-sprint batching** — single agent spawn, single file (rescan mode) or all review-file entries (review mode). For 6+ files or mixed-complexity scopes, the plan + write path is better.
-- **No source-file edits beyond what the test-engineer agent itself does** — in review mode, source fixes for Source Findings happen upstream in the review conversation. In rescan mode, there's no Source Findings surface at all; source bugs surfaced mid-fix are reported under "New Source Findings" and parked with `it.todo`.
-- **No re-audit** — neither mode re-scans the file after patching. Update the ledger with `/test-triage rescan {file}` to see the new grade. Neither mode guarantees convergence in one pass; both exhibit narrow-audit variance.
+- **No plan file written** — in review mode the report in `.reviews/tests-{slug}.md` is the authoritative record. In rescan mode the ledger row is the authoritative record. If you need a persistent multi-sprint plan artefact (for review, handoff, or re-run), use `/test-plan review`.
+- **No multi-sprint batching** — single agent spawn, single report (review mode) or single file (rescan mode). For large coverage-driven work, use the plan + write path.
+- **No auto re-audit** — neither mode re-runs `/test-review` after fixes. Below-threshold findings from the original report remain below threshold. The validation chain (lint + type-check + tests) IS the convergence signal in review mode; `/test-triage rescan` is the convergence signal in rescan mode.
+- **No silent source edits** — source refactors in review mode only run for source findings the user explicitly accepts in Step 5. Source bugs surfaced mid-run are never patched by the agent; they're reported under "New Source Findings" and parked with `it.todo`.

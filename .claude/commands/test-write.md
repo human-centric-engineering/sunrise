@@ -159,7 +159,8 @@ For each batch in the sprint, spawn a **foreground** test-engineer agent. The pr
 > 1. Run `npm test -- {test file paths}` — all must pass (tests parked with `it.todo` due to mid-sprint findings count as a known gap, not a failure)
 > 2. Run `npm run lint` — no new errors
 > 3. Run `npm run type-check` — no new errors
->    Do NOT mark complete until all three pass.
+> 4. Run `npm run format:check` — must be clean. If it fails, run `npx prettier --write {edited paths}` and re-verify.
+>    Do NOT mark complete until all four pass.
 
 ### Step 4: Report batch results
 

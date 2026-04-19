@@ -279,6 +279,52 @@ export async function sendResetPasswordHook(params: {
 }
 
 /**
+ * Called after a user verifies their email. Send the welcome email here if
+ * it was deferred during signup (see databaseHooks.user.create.after).
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function afterEmailVerificationHook(user: {
+  id: string;
+  email: string;
+  name: string | null;
+}): Promise<void> {
+  logger.info('Email verification completed', {
+    userId: user.id,
+    email: user.email,
+  });
+
+  // Only send welcome email here if verification was required at signup.
+  // When verification is not required, the welcome email is sent immediately
+  // on account creation (databaseHooks.user.create.after). If the user later
+  // verifies voluntarily from their profile/settings, we must not send it again.
+  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+
+  if (!requiresVerification) {
+    logger.info('Skipping welcome email after verification (already sent at signup)', {
+      userId: user.id,
+    });
+    return;
+  }
+
+  // Send welcome email AFTER verification completes
+  await sendEmail({
+    to: user.email,
+    subject: 'Welcome to Sunrise',
+    react: WelcomeEmail({
+      userName: user.name || 'User',
+      userEmail: user.email,
+      baseUrl: env.BETTER_AUTH_URL,
+    }),
+  }).catch((error) => {
+    logger.warn('Failed to send welcome email after verification', {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+/**
  * Better Auth Configuration
  *
  * Provides authentication using email/password and social providers (Google).
@@ -372,41 +418,7 @@ export const auth = betterAuth({
     },
 
     // Callback after successful email verification
-    afterEmailVerification: async (user: { id: string; email: string; name: string | null }) => {
-      logger.info('Email verification completed', {
-        userId: user.id,
-        email: user.email,
-      });
-
-      // Only send welcome email here if verification was required at signup.
-      // When verification is not required, the welcome email is sent immediately
-      // on account creation (databaseHooks.user.create.after). If the user later
-      // verifies voluntarily from their profile/settings, we must not send it again.
-      const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-
-      if (!requiresVerification) {
-        logger.info('Skipping welcome email after verification (already sent at signup)', {
-          userId: user.id,
-        });
-        return;
-      }
-
-      // Send welcome email AFTER verification completes
-      await sendEmail({
-        to: user.email,
-        subject: 'Welcome to Sunrise',
-        react: WelcomeEmail({
-          userName: user.name || 'User',
-          userEmail: user.email,
-          baseUrl: env.BETTER_AUTH_URL,
-        }),
-      }).catch((error) => {
-        logger.warn('Failed to send welcome email after verification', {
-          userId: user.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    },
+    afterEmailVerification: afterEmailVerificationHook,
   },
 
   // Social authentication providers
