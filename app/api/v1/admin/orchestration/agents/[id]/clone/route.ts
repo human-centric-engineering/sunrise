@@ -90,6 +90,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             outputGuardMode: source.outputGuardMode,
             maxHistoryTokens: source.maxHistoryTokens,
             retentionDays: source.retentionDays,
+            visibility: source.visibility,
+            rateLimitRpm: source.rateLimitRpm,
+            knowledgeCategories: source.knowledgeCategories,
+            topicBoundaries: source.topicBoundaries,
+            brandVoiceInstructions: source.brandVoiceInstructions,
             createdBy: session.user.id,
           },
         });

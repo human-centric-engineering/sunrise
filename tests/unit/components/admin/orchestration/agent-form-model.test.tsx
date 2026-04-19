@@ -197,7 +197,18 @@ describe('AgentForm — Model tab', () => {
     });
   });
 
-  // ── New agent fields ───────────────────────────────────────────────────────
+  // ── Rate limit RPM ─────────────────────────────────────────────────────────
+
+  describe('rate limit RPM', () => {
+    it('renders rate limit RPM input with placeholder', async () => {
+      await renderAndOpenModelTab();
+      const input = screen.getByRole('spinbutton', { name: /rate limit/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Use global default');
+    });
+  });
+
+  // ── Guard mode and history token fields ───────────────────────────────────
 
   describe('guard mode and history token fields', () => {
     it('renders max history tokens input with placeholder', async () => {

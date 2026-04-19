@@ -129,6 +129,19 @@ export const createAgentSchema = z.object({
 
   visibility: agentVisibilitySchema.default('internal'),
 
+  knowledgeCategories: z
+    .array(z.string().max(100, 'Category must be less than 100 characters'))
+    .max(50, 'At most 50 knowledge categories')
+    .default([]),
+
+  topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').default([]),
+
+  brandVoiceInstructions: z
+    .string()
+    .max(10000, 'Brand voice instructions must be less than 10,000 characters')
+    .nullable()
+    .optional(),
+
   isActive: z.boolean().default(true),
 });
 

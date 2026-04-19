@@ -141,6 +141,12 @@ export const POST = withAdminAuth(async (request, session) => {
         outputGuardMode: body.outputGuardMode ?? null,
         maxHistoryTokens: body.maxHistoryTokens ?? null,
         retentionDays: body.retentionDays ?? null,
+        visibility: body.visibility ?? 'internal',
+        rateLimitRpm: body.rateLimitRpm ?? null,
+        fallbackProviders: body.fallbackProviders ?? [],
+        knowledgeCategories: body.knowledgeCategories ?? [],
+        topicBoundaries: body.topicBoundaries ?? [],
+        brandVoiceInstructions: body.brandVoiceInstructions ?? null,
         createdBy: session.user.id,
       },
     });

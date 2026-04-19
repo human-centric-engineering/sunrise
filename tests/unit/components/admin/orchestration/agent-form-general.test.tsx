@@ -189,6 +189,26 @@ describe('AgentForm — General tab', () => {
     });
   });
 
+  // ── Visibility field ────────────────────────────────────────────────────────
+
+  describe('visibility', () => {
+    it('renders visibility select with 3 options', async () => {
+      const user = userEvent.setup();
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+
+      const select = screen.getByRole('combobox', { name: /visibility/i });
+      expect(select).toBeInTheDocument();
+
+      // Open the select and verify options
+      await user.click(select);
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /internal/i })).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /public/i })).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /invite only/i })).toBeInTheDocument();
+      });
+    });
+  });
+
   // ── Retention days field ────────────────────────────────────────────────────
 
   describe('retention days', () => {

@@ -241,6 +241,37 @@ describe('AgentForm — Instructions tab', () => {
     });
   });
 
+  // ── Brand voice, knowledge categories, topic boundaries ─────────────────
+
+  describe('new instructions fields', () => {
+    it('renders brand voice instructions textarea', async () => {
+      const user = userEvent.setup();
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      const textarea = screen.getByRole('textbox', { name: /brand voice/i });
+      expect(textarea).toBeInTheDocument();
+    });
+
+    it('renders knowledge categories input', async () => {
+      const user = userEvent.setup();
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      const input = screen.getByRole('textbox', { name: /knowledge categories/i });
+      expect(input).toBeInTheDocument();
+    });
+
+    it('renders topic boundaries input', async () => {
+      const user = userEvent.setup();
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      const input = screen.getByRole('textbox', { name: /topic boundaries/i });
+      expect(input).toBeInTheDocument();
+    });
+  });
+
   // ── Revert-to-version ─────────────────────────────────────────────────────
 
   describe('revert-to-version', () => {

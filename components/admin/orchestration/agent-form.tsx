@@ -73,6 +73,12 @@ const agentFormSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  visibility: z.enum(['internal', 'public', 'invite_only']),
+  rateLimitRpm: z.number().int().min(1).max(100000).nullable().optional(),
+  fallbackProviders: z.array(z.string()),
+  knowledgeCategories: z.string().optional(),
+  topicBoundaries: z.string().optional(),
+  brandVoiceInstructions: z.string().max(10000).nullable().optional(),
 });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
@@ -138,6 +144,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
       retentionDays: agent?.retentionDays ?? null,
+      visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
+      rateLimitRpm: agent?.rateLimitRpm ?? null,
+      fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
+      knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
+      topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
+      brandVoiceInstructions: agent?.brandVoiceInstructions ?? null,
     },
   });
 
@@ -149,6 +161,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const currentIsActive = watch('isActive');
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
+  const currentVisibility = watch('visibility');
 
   // Auto-generate slug from name in create mode until the user edits the slug.
   useEffect(() => {
@@ -161,16 +174,34 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
     setError(null);
+
+    // Transform comma-separated strings into arrays for the API
+    const payload = {
+      ...data,
+      knowledgeCategories: data.knowledgeCategories
+        ? data.knowledgeCategories
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+      topicBoundaries: data.topicBoundaries
+        ? data.topicBoundaries
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+    };
+
     try {
       if (isEdit && agent) {
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
-          body: data,
+          body: payload,
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
       } else {
         const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.AGENTS, {
-          body: data,
+          body: payload,
         });
         router.push(`/admin/orchestration/agents/${created.id}`);
       }
@@ -353,6 +384,32 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           </div>
 
           <div className="grid gap-2">
+            <Label htmlFor="visibility">
+              Visibility{' '}
+              <FieldHelp title="Who can access this agent">
+                Controls who can start conversations with this agent. <strong>Internal</strong> —
+                only admins via the dashboard. <strong>Public</strong> — anyone with the chat
+                endpoint URL. <strong>Invite only</strong> — requires a valid invite token.
+              </FieldHelp>
+            </Label>
+            <Select
+              value={currentVisibility}
+              onValueChange={(v) =>
+                setValue('visibility', v as AgentFormData['visibility'], { shouldValidate: true })
+              }
+            >
+              <SelectTrigger id="visibility">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="internal">Internal</SelectItem>
+                <SelectItem value="public">Public</SelectItem>
+                <SelectItem value="invite_only">Invite only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid gap-2">
             <Label htmlFor="retentionDays">
               Conversation retention (days){' '}
               <FieldHelp title="Auto-delete old conversations">
@@ -425,6 +482,46 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               </Select>
             )}
           </div>
+
+          {!providerFallback && providers.length > 1 && (
+            <div className="grid gap-2">
+              <Label>
+                Fallback providers{' '}
+                <FieldHelp title="Automatic provider failover">
+                  If the primary provider is unavailable (rate limited, down, or erroring), the
+                  agent will try these providers in order. Only providers other than the primary are
+                  shown. Leave unchecked to disable failover.
+                </FieldHelp>
+              </Label>
+              <div className="space-y-2 rounded-md border p-3">
+                {providers
+                  .filter((p) => p.slug !== currentProvider)
+                  .map((p) => {
+                    const checked = watch('fallbackProviders').includes(p.slug);
+                    return (
+                      <label key={p.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300"
+                          checked={checked}
+                          onChange={(e) => {
+                            const current = watch('fallbackProviders');
+                            setValue(
+                              'fallbackProviders',
+                              e.target.checked
+                                ? [...current, p.slug]
+                                : current.filter((s: string) => s !== p.slug)
+                            );
+                          }}
+                        />
+                        {p.name}
+                        <span className="text-muted-foreground font-mono text-xs">{p.slug}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-2">
             <Label htmlFor="model">
@@ -515,6 +612,28 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                   v === '' || v === null || v === undefined ? undefined : Number(v),
               })}
             />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="rateLimitRpm">
+              Rate limit (RPM){' '}
+              <FieldHelp title="Per-agent request throttle">
+                Maximum requests per minute for this agent. Applies across all users. Leave blank to
+                use the global default rate limit.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="rateLimitRpm"
+              type="number"
+              placeholder="Use global default"
+              {...register('rateLimitRpm', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.rateLimitRpm && (
+              <p className="text-destructive text-xs">{errors.rateLimitRpm.message}</p>
+            )}
           </div>
 
           <div className="grid gap-2">
@@ -654,6 +773,59 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               </span>
               <span>{currentInstructions.length.toLocaleString()} characters</span>
             </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="brandVoiceInstructions">
+              Brand voice instructions{' '}
+              <FieldHelp title="Tone and style rules">
+                Additional instructions appended to the system prompt that define the agent&apos;s
+                tone, vocabulary, and style. For example: &ldquo;Use a friendly, professional tone.
+                Avoid jargon. Address the user by first name.&rdquo; Leave blank if no specific
+                brand voice is needed.
+              </FieldHelp>
+            </Label>
+            <Textarea
+              id="brandVoiceInstructions"
+              rows={4}
+              placeholder="e.g. Use a friendly, professional tone. Avoid jargon."
+              {...register('brandVoiceInstructions', {
+                setValueAs: (v: string) => (v === '' ? null : v),
+              })}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="knowledgeCategories">
+              Knowledge categories{' '}
+              <FieldHelp title="Filter knowledge base">
+                Comma-separated list of knowledge base categories this agent can access. When set,
+                the agent only retrieves documents tagged with these categories during RAG. Leave
+                blank to allow access to all categories.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="knowledgeCategories"
+              placeholder="e.g. billing, support, faq"
+              {...register('knowledgeCategories')}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="topicBoundaries">
+              Topic boundaries{' '}
+              <FieldHelp title="Forbidden topics for output guard">
+                Comma-separated list of topics the agent should not discuss. The output guard checks
+                responses against these boundaries and takes action based on the guard mode (log,
+                warn, or block). For example: &ldquo;competitor pricing, legal advice,
+                medical&rdquo;.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="topicBoundaries"
+              placeholder="e.g. competitor pricing, legal advice, medical"
+              {...register('topicBoundaries')}
+            />
           </div>
 
           {isEdit && agent && (
