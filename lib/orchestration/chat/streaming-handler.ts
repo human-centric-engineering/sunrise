@@ -51,6 +51,29 @@ import {
   type ChatStream,
 } from '@/lib/orchestration/chat/types';
 
+/** Maximum time (ms) a single tool dispatch can run before being timed out. */
+const TOOL_DISPATCH_TIMEOUT_MS = 30_000;
+
+/** Race a promise against a timeout. Returns the timeout error shape on expiry. */
+async function withToolTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = TOOL_DISPATCH_TIMEOUT_MS,
+  toolName: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Tool '${toolName}' timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 /** Narrow error class caught by the outer try and surfaced as an error event. */
 export class ChatError extends Error {
   constructor(
@@ -167,7 +190,9 @@ export class StreamingChatHandler {
             const settings = await getOrchestrationSettings();
             guardMode = settings.inputGuardMode;
           } catch {
-            // Settings unavailable — fall back to log_only
+            logger.warn(
+              'Failed to load orchestration settings for input guard mode, falling back to log_only'
+            );
           }
         }
 
@@ -407,20 +432,10 @@ export class StreamingChatHandler {
           });
         }
 
-        if (usage) {
-          void logCost({
-            agentId: agent.id,
-            conversationId: conversation.id,
-            model: agent.model,
-            provider: agent.provider,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            operation: CostOperation.CHAT,
-          });
-        }
-
         if (toolCalls.size === 0) {
-          // Output guard — scan assistant response for topic violations
+          // Output guard — scan assistant response BEFORE logging cost.
+          // If the guard blocks, we skip cost logging since the user
+          // never sees the response.
           if (assistantText.length > 0) {
             const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
             if (outputScan.flagged) {
@@ -438,7 +453,9 @@ export class StreamingChatHandler {
                   const settings = await getOrchestrationSettings();
                   outputMode = settings.outputGuardMode;
                 } catch {
-                  // Settings unavailable — fall back to log_only
+                  logger.warn(
+                    'Failed to load orchestration settings for output guard mode, falling back to log_only'
+                  );
                 }
               }
 
@@ -459,8 +476,46 @@ export class StreamingChatHandler {
             }
           }
 
+          if (usage) {
+            void logCost({
+              agentId: agent.id,
+              conversationId: conversation.id,
+              model: agent.model,
+              provider: agent.provider,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              operation: CostOperation.CHAT,
+            });
+          }
+
           getBreaker(usedSlug).recordSuccess();
           yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+          return;
+        }
+
+        // Tool call path — log cost for this LLM turn, then re-check
+        // budget before dispatching tools (which will trigger another
+        // LLM turn that costs more).
+        if (usage) {
+          void logCost({
+            agentId: agent.id,
+            conversationId: conversation.id,
+            model: agent.model,
+            provider: agent.provider,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            operation: CostOperation.CHAT,
+          });
+        }
+
+        // Re-check budget before the next tool-loop iteration
+        const midBudget = await checkBudget(agent.id);
+        if (!midBudget.withinBudget) {
+          const limitStr = midBudget.limit !== null ? `$${midBudget.limit.toFixed(2)}` : 'its';
+          yield errorEvent(
+            'budget_exceeded',
+            `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
+          );
           return;
         }
 
@@ -479,10 +534,10 @@ export class StreamingChatHandler {
           const tc = toolCallArray[0];
           yield { type: 'status', message: `Executing ${tc.name}` };
 
-          const result = await capabilityDispatcher.dispatch(
-            tc.name,
-            tc.arguments,
-            dispatchContext
+          const result = await withToolTimeout(
+            capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
+            TOOL_DISPATCH_TIMEOUT_MS,
+            tc.name
           );
 
           yield { type: 'capability_result', capabilitySlug: tc.name, result };
@@ -521,7 +576,11 @@ export class StreamingChatHandler {
 
           const settled = await Promise.allSettled(
             toolCallArray.map((tc) =>
-              capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext)
+              withToolTimeout(
+                capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
+                TOOL_DISPATCH_TIMEOUT_MS,
+                tc.name
+              )
             )
           );
 

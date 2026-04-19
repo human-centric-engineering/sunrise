@@ -71,6 +71,32 @@ vi.mock('@/lib/orchestration/chat/context-builder', () => ({
   clearContextCache: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/chat/output-guard', () => ({
+  scanOutput: vi.fn(() => ({ flagged: false, topicMatches: [], builtInMatches: [] })),
+}));
+
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({ inputGuardMode: 'log_only', outputGuardMode: 'log_only' })
+  ),
+}));
+
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
+  queueMessageEmbedding: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/chat/summarizer', () => ({
+  summarizeMessages: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Dynamic imports (after mocks)
 // ---------------------------------------------------------------------------
@@ -89,6 +115,8 @@ const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler'
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
+const { scanOutput } = await import('@/lib/orchestration/chat/output-guard');
+const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1522,5 +1550,114 @@ describe('StreamingChatHandler', () => {
 
       expect(last).toMatchObject({ type: 'error', code: 'internal_error' });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch A — Runtime robustness
+// ---------------------------------------------------------------------------
+
+describe('mid-loop budget re-check', () => {
+  it('yields budget_exceeded when budget is exceeded after a tool call iteration', async () => {
+    // Arrange: budget is OK initially, then fails on re-check (after tool iteration)
+    let budgetCallCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    (checkBudget as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      budgetCallCount++;
+      if (budgetCallCount === 1) {
+        return Promise.resolve({ withinBudget: true, spent: 5, limit: 10, remaining: 5 });
+      }
+      return Promise.resolve({ withinBudget: false, spent: 11, limit: 10, remaining: -1 });
+    });
+
+    // Tool call script: LLM calls a tool, then the budget check should fire before next iteration
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc1', name: 'search', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 100, outputTokens: 50 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: 'result',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvt = events.find((e: unknown) => (e as Record<string, unknown>).type === 'error');
+
+    expect(errorEvt).toMatchObject({
+      type: 'error',
+      code: 'budget_exceeded',
+    });
+    expect(budgetCallCount).toBe(2);
+  });
+});
+
+describe('output guard ordering', () => {
+  it('does not log cost when output guard blocks the response', async () => {
+    // Arrange: output guard flags the response and agent has block mode
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ outputGuardMode: 'block', topicBoundaries: ['forbidden-topic'] })
+    );
+    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      topicMatches: ['forbidden-topic'],
+      builtInMatches: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'This mentions forbidden-topic.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 20 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvt = events.find((e: unknown) => (e as Record<string, unknown>).type === 'error');
+
+    expect(errorEvt).toMatchObject({ type: 'error', code: 'output_blocked' });
+    // logCost should NOT have been called because guard blocked before cost logging
+    expect(logCost).not.toHaveBeenCalled();
+  });
+});
+
+describe('guard mode fallback logging', () => {
+  it('logs warning when settings fetch fails and falls back to log_only', async () => {
+    // Arrange: input guard flags, agent has no override, settings fetch fails
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: null })
+    );
+    (getOrchestrationSettings as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Settings unavailable')
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to load orchestration settings for input guard mode')
+    );
   });
 });
