@@ -192,6 +192,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   if (session.user.id === id) {
     return errorResponse('Cannot delete your own account', {
       status: 400,
+      code: 'CANNOT_DELETE_SELF',
     });
   }
 
