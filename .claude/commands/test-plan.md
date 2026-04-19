@@ -139,7 +139,7 @@ Work through each target file and extract:
 2. **Complexity** — score using function count (×2), Prisma/db (+10), better-auth (+8), external APIs (+8), file system (+5), side effects (×3), branching (×2). <10 simple, 10–24 medium, 25+ complex.
 3. **Dependencies to mock** — Prisma, auth, logger, Next.js headers/cookies, fetch, etc.
 4. **Key behaviors** — happy path, validation/error cases, edge cases, security paths.
-5. **Existing test state** — check for the corresponding test file (`tests/unit/...`, `tests/integration/...`). If present, classify existing tests as keep/rewrite and note what's missing.
+5. **Existing test state** — check for the corresponding test file (`tests/unit/...`, `tests/integration/...`). If present, classify existing tests as **keep**, **rewrite**, or **delete** (tests that reference functions/exports no longer present in the source, or describe behaviour the source no longer has) and note what's **missing** (uncovered scenarios). Delete items represent stale tests for removed code — they go into the plan's per-file Delete count and get removed by `/test-write`.
 
 **Parallelization for fresh analysis:**
 
@@ -155,7 +155,7 @@ Work through each target file and extract:
 >
 > Read both files (or just the source if no test exists). Extract the fields below and return them in the exact format specified. No preamble, no summary.
 >
-> Fields to extract: file type, complexity (simple/medium/complex), dependencies to mock, key behaviors (happy path + error/edge cases), existing-test classifications (keep/rewrite/missing).
+> Fields to extract: file type, complexity (simple/medium/complex), dependencies to mock, key behaviors (happy path + error/edge cases), existing-test classifications (keep/rewrite/delete/missing).
 >
 > ```
 > PLAN: {source_path}
@@ -172,6 +172,9 @@ Work through each target file and extract:
 >
 > REWRITE:
 > - {test name} L{N} — {reason} | SHOULD: {what to assert}
+>
+> DELETE:
+> - {test name} L{N} — {reason: references removed function/export, asserts behaviour the source no longer has}
 >
 > MISSING:
 > - {scenario} — {why}
