@@ -1660,4 +1660,70 @@ describe('guard mode fallback logging', () => {
       expect.stringContaining('Failed to load orchestration settings for input guard mode')
     );
   });
+
+  it('skips tool after 2 consecutive failures (backoff)', async () => {
+    const { getCapabilityDefinitions } = await import('@/lib/orchestration/capabilities/registry');
+    (getCapabilityDefinitions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'flaky_tool', description: 'Flaky', parameters: {} },
+    ]);
+
+    // 3 LLM turns: each requests the same tool. The tool fails on turn 1 and 2,
+    // so by turn 3 it should be skipped (threshold = 2).
+    const provider = mockProvider([
+      // Turn 1: tool call
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'flaky_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+      // Turn 2: tool call again
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc2', name: 'flaky_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+      // Turn 3: tool call again — should be skipped
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc3', name: 'flaky_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+      // Turn 4: final text answer after tool unavailable
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Tool fails every time
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: false,
+      error: { code: 'execution_error', message: 'boom' },
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // The tool should have been dispatched only twice (turns 1 and 2).
+    // Turn 3 should skip dispatch and inject tool_unavailable.
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledTimes(2);
+
+    // Should log warning about skipping
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Skipping tool after repeated failures',
+      expect.objectContaining({ tool: 'flaky_tool', failures: 2 })
+    );
+
+    // Should end with a done event
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+  });
 });

@@ -12,9 +12,12 @@
  * - Handles individual function failures gracefully
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
+import {
+  POST,
+  __test_setTickRunning,
+} from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -101,6 +104,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
+  afterEach(() => {
+    __test_setTickRunning(false);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(processDueSchedules).mockResolvedValue({
@@ -163,5 +170,25 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // Other functions should succeed
     expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
     expect(body.data.zombieReaper).toEqual({ reaped: 1 });
+  });
+
+  it('returns skipped when tick is already running', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    __test_setTickRunning(true);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ success: boolean; data: { skipped: boolean; reason: string } }>(
+      response
+    );
+    expect(body.success).toBe(true);
+    expect(body.data.skipped).toBe(true);
+    expect(body.data.reason).toBe('previous tick still running');
+
+    // None of the maintenance functions should have been called
+    expect(processDueSchedules).not.toHaveBeenCalled();
+    expect(processPendingRetries).not.toHaveBeenCalled();
+    expect(reapZombieExecutions).not.toHaveBeenCalled();
   });
 });

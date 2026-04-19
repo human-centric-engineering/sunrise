@@ -191,6 +191,26 @@ describe('getProvider', () => {
     expect(find).toHaveBeenCalledTimes(1);
   });
 
+  it('re-fetches provider after cache TTL expires', async () => {
+    const find = prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>;
+    find.mockResolvedValue(makeRow());
+
+    const a = await getProvider('anthropic');
+    expect(find).toHaveBeenCalledTimes(1);
+
+    // Advance time past the 5-minute TTL
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+    find.mockResolvedValue(makeRow());
+    const b = await getProvider('anthropic');
+    expect(find).toHaveBeenCalledTimes(2);
+    // New instance since cache was stale
+    expect(b).not.toBe(a);
+
+    vi.useRealTimers();
+  });
+
   it('throws ProviderError when not found', async () => {
     (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     await expect(getProvider('missing')).rejects.toMatchObject({ code: 'provider_not_found' });

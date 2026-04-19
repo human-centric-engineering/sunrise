@@ -25,35 +25,53 @@ import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reape
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
 
+/** Module-level guard against overlapping tick executions. */
+let tickRunning = false;
+
+/** Exposed for testing only — simulate an in-progress tick. */
+export function __test_setTickRunning(value: boolean): void {
+  tickRunning = value;
+}
+
 export const POST = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-  const startMs = Date.now();
-
-  const [schedules, retries, reaper, embeddings, retention] = await Promise.allSettled([
-    processDueSchedules(),
-    processPendingRetries(),
-    reapZombieExecutions(),
-    backfillMissingEmbeddings(),
-    enforceRetentionPolicies(),
-  ]);
-
-  function unwrap<T>(r: PromiseSettledResult<T>): T | { error: string } {
-    return r.status === 'fulfilled' ? r.value : { error: String(r.reason) };
+  if (tickRunning) {
+    logger.info('Maintenance tick skipped — previous tick still running');
+    return successResponse({ skipped: true, reason: 'previous tick still running' });
   }
 
-  const results = {
-    schedules: unwrap(schedules),
-    webhookRetries: unwrap(retries),
-    zombieReaper: unwrap(reaper),
-    embeddingBackfill: unwrap(embeddings),
-    retention: unwrap(retention),
-    durationMs: Date.now() - startMs,
-  };
+  tickRunning = true;
+  const startMs = Date.now();
 
-  logger.info('Maintenance tick completed', results);
+  try {
+    const [schedules, retries, reaper, embeddings, retention] = await Promise.allSettled([
+      processDueSchedules(),
+      processPendingRetries(),
+      reapZombieExecutions(),
+      backfillMissingEmbeddings(),
+      enforceRetentionPolicies(),
+    ]);
 
-  return successResponse(results);
+    function unwrap<T>(r: PromiseSettledResult<T>): T | { error: string } {
+      return r.status === 'fulfilled' ? r.value : { error: String(r.reason) };
+    }
+
+    const results = {
+      schedules: unwrap(schedules),
+      webhookRetries: unwrap(retries),
+      zombieReaper: unwrap(reaper),
+      embeddingBackfill: unwrap(embeddings),
+      retention: unwrap(retention),
+      durationMs: Date.now() - startMs,
+    };
+
+    logger.info('Maintenance tick completed', results);
+
+    return successResponse(results);
+  } finally {
+    tickRunning = false;
+  }
 });

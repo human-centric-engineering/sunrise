@@ -299,6 +299,12 @@ export class StreamingChatHandler {
       let currentProvider = provider;
       let currentProviderSlug = usedSlug;
 
+      // Track consecutive per-tool failures to avoid burning iterations
+      // on a tool that keeps crashing. After 2 failures the tool is
+      // skipped and the LLM receives a "temporarily unavailable" message.
+      const toolFailureCounts = new Map<string, number>();
+      const TOOL_FAILURE_THRESHOLD = 2;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
@@ -532,13 +538,65 @@ export class StreamingChatHandler {
           // Single tool call — preserve original event format for
           // backward compatibility with existing SSE consumers.
           const tc = toolCallArray[0];
+
+          // Skip tool if it has failed too many times consecutively
+          const failCount = toolFailureCounts.get(tc.name) ?? 0;
+          if (failCount >= TOOL_FAILURE_THRESHOLD) {
+            log.warn('Skipping tool after repeated failures', {
+              tool: tc.name,
+              failures: failCount,
+            });
+            const unavailableResult = {
+              success: false,
+              error: {
+                code: 'tool_unavailable',
+                message: `Tool '${tc.name}' is temporarily unavailable after ${failCount} consecutive failures`,
+              },
+            };
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(unavailableResult),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: {
+                toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+                result: unavailableResult,
+              },
+            });
+            messages = [
+              ...messages,
+              { role: 'assistant', content: assistantText, toolCalls: [tc] },
+              { role: 'tool', content: JSON.stringify(unavailableResult), toolCallId: tc.id },
+            ];
+            continue;
+          }
+
           yield { type: 'status', message: `Executing ${tc.name}` };
 
-          const result = await withToolTimeout(
-            capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
-            TOOL_DISPATCH_TIMEOUT_MS,
-            tc.name
-          );
+          let result: Awaited<ReturnType<typeof capabilityDispatcher.dispatch>>;
+          try {
+            result = await withToolTimeout(
+              capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
+              TOOL_DISPATCH_TIMEOUT_MS,
+              tc.name
+            );
+            // Reset failure count on success
+            if (result.success) {
+              toolFailureCounts.delete(tc.name);
+            } else {
+              toolFailureCounts.set(tc.name, failCount + 1);
+            }
+          } catch (toolErr) {
+            toolFailureCounts.set(tc.name, failCount + 1);
+            result = {
+              success: false,
+              error: {
+                code: 'execution_error',
+                message: toolErr instanceof Error ? toolErr.message : 'Capability execution failed',
+              },
+            };
+          }
 
           yield { type: 'capability_result', capabilitySlug: tc.name, result };
 
@@ -571,11 +629,40 @@ export class StreamingChatHandler {
           ];
         } else {
           // Multiple tool calls — dispatch in parallel for performance.
+          // Pre-filter tools that have exceeded the failure threshold.
+          const dispatchable: typeof toolCallArray = [];
+          const skippedResults: Array<{
+            tc: (typeof toolCallArray)[0];
+            result: { success: false; error: { code: string; message: string } };
+          }> = [];
+
+          for (const tc of toolCallArray) {
+            const failCount = toolFailureCounts.get(tc.name) ?? 0;
+            if (failCount >= TOOL_FAILURE_THRESHOLD) {
+              log.warn('Skipping tool after repeated failures (parallel)', {
+                tool: tc.name,
+                failures: failCount,
+              });
+              skippedResults.push({
+                tc,
+                result: {
+                  success: false,
+                  error: {
+                    code: 'tool_unavailable',
+                    message: `Tool '${tc.name}' is temporarily unavailable after ${failCount} consecutive failures`,
+                  },
+                },
+              });
+            } else {
+              dispatchable.push(tc);
+            }
+          }
+
           const names = toolCallArray.map((tc) => tc.name).join(', ');
           yield { type: 'status', message: `Executing ${toolCallArray.length} tools: ${names}` };
 
           const settled = await Promise.allSettled(
-            toolCallArray.map((tc) =>
+            dispatchable.map((tc) =>
               withToolTimeout(
                 capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
                 TOOL_DISPATCH_TIMEOUT_MS,
@@ -588,8 +675,26 @@ export class StreamingChatHandler {
           const toolResultMessages: LlmMessage[] = [];
           let anySkipFollowup = false;
 
-          for (let i = 0; i < toolCallArray.length; i++) {
-            const tc = toolCallArray[i];
+          // Process skipped tools first
+          for (const { tc, result } of skippedResults) {
+            results.push({ capabilitySlug: tc.name, result });
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(result),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: { toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments }, result },
+            });
+            toolResultMessages.push({
+              role: 'tool',
+              content: JSON.stringify(result),
+              toolCallId: tc.id,
+            });
+          }
+
+          for (let i = 0; i < dispatchable.length; i++) {
+            const tc = dispatchable[i];
             const outcome = settled[i];
             const result =
               outcome.status === 'fulfilled'
@@ -604,6 +709,19 @@ export class StreamingChatHandler {
                           : 'Capability execution failed',
                     },
                   };
+
+            // Track failures for backoff
+            const prevFails = toolFailureCounts.get(tc.name) ?? 0;
+            if (
+              typeof result === 'object' &&
+              result !== null &&
+              'success' in result &&
+              result.success
+            ) {
+              toolFailureCounts.delete(tc.name);
+            } else {
+              toolFailureCounts.set(tc.name, prevFails + 1);
+            }
 
             results.push({ capabilitySlug: tc.name, result });
 
