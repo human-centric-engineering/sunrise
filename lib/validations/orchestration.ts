@@ -1762,8 +1762,14 @@ export const consumerConversationsQuerySchema = paginationQuerySchema.extend({
   agentSlug: slugSchema.optional(),
 });
 
+/** Consumer conversation search query (GET /api/v1/chat/conversations/search). */
+export const consumerConversationSearchSchema = paginationQuerySchema.extend({
+  q: z.string().min(1).max(200),
+});
+
 export type ConsumerChatRequestInput = z.infer<typeof consumerChatRequestSchema>;
 export type ConsumerConversationsQuery = z.infer<typeof consumerConversationsQuerySchema>;
+export type ConsumerConversationSearchQuery = z.infer<typeof consumerConversationSearchSchema>;
 export type AgentVisibility = z.infer<typeof agentVisibilitySchema>;
 
 // ---------------------------------------------------------------------------

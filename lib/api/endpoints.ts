@@ -74,6 +74,9 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
       agentInstructionsRevert: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
+      agentVersions: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/versions`,
+      agentVersionRestore: (id: string, versionId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}/restore`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       capabilityAgents: (id: string): string =>
@@ -169,6 +172,17 @@ export const API = {
       MCP_SESSIONS: '/api/v1/admin/orchestration/mcp/sessions',
       mcpSessionById: (id: string): string => `/api/v1/admin/orchestration/mcp/sessions/${id}`,
     },
+  },
+
+  /** Consumer chat endpoints */
+  CHAT: {
+    AGENTS: '/api/v1/chat/agents',
+    STREAM: '/api/v1/chat/stream',
+    CONVERSATIONS: '/api/v1/chat/conversations',
+    CONVERSATIONS_SEARCH: '/api/v1/chat/conversations/search',
+    conversationById: (id: string): string => `/api/v1/chat/conversations/${id}`,
+    conversationMessages: (id: string): string => `/api/v1/chat/conversations/${id}/messages`,
+    validateToken: (slug: string): string => `/api/v1/chat/agents/${slug}/validate-token`,
   },
 
   /** Public endpoints */
