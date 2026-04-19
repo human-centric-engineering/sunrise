@@ -287,5 +287,155 @@ describe('Analytics API', () => {
       expect(json.data.feedback.overall.satisfactionRate).toBe(0.8);
       expect(json.data.feedback.byAgent).toHaveLength(1);
     });
+
+    it('rejects unauthenticated requests (401)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+      const res = await getFeedback(makeGetRequest());
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 429 when rate limited', async () => {
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await getFeedback(makeGetRequest());
+
+      expect(res.status).toBe(429);
+    });
+
+    it('passes date range query params to feedback service', async () => {
+      vi.mocked(getFeedbackSummary).mockResolvedValue({
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        byAgent: [],
+        recentNegative: [],
+      });
+
+      await getFeedback(makeGetRequest('?from=2026-04-01T00:00:00Z&to=2026-04-19T00:00:00Z'));
+
+      expect(getFeedbackSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: '2026-04-01T00:00:00Z',
+          to: '2026-04-19T00:00:00Z',
+        })
+      );
+    });
+
+    it('passes agentId filter to feedback service', async () => {
+      vi.mocked(getFeedbackSummary).mockResolvedValue({
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        byAgent: [],
+        recentNegative: [],
+      });
+
+      await getFeedback(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
+
+      expect(getFeedbackSummary).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+      );
+    });
+
+    it('returns empty feedback when no ratings exist', async () => {
+      vi.mocked(getFeedbackSummary).mockResolvedValue({
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        byAgent: [],
+        recentNegative: [],
+      });
+
+      const res = await getFeedback(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.feedback.overall.total).toBe(0);
+      expect(json.data.feedback.byAgent).toHaveLength(0);
+    });
+  });
+
+  // ── Engagement Endpoint additional coverage ─────────────────────────────
+
+  describe('GET /analytics/engagement (additional coverage)', () => {
+    it('rejects unauthenticated requests (401)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+      const res = await getEngagement(makeGetRequest());
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 429 when rate limited', async () => {
+      vi.mocked(adminLimiter.check).mockReturnValue({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+      } as never);
+
+      const res = await getEngagement(makeGetRequest());
+
+      expect(res.status).toBe(429);
+    });
+
+    it('passes date range query params to engagement service', async () => {
+      vi.mocked(getEngagementMetrics).mockResolvedValue({
+        totalConversations: 0,
+        totalMessages: 0,
+        uniqueUsers: 0,
+        avgMessagesPerConversation: 0,
+        returningUsers: 0,
+        returningUserRate: 0,
+        conversationsByDay: [],
+      });
+
+      await getEngagement(makeGetRequest('?from=2026-03-01T00:00:00Z&to=2026-04-01T00:00:00Z'));
+
+      expect(getEngagementMetrics).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: '2026-03-01T00:00:00Z',
+          to: '2026-04-01T00:00:00Z',
+        })
+      );
+    });
+
+    it('passes agentId filter to engagement service', async () => {
+      vi.mocked(getEngagementMetrics).mockResolvedValue({
+        totalConversations: 0,
+        totalMessages: 0,
+        uniqueUsers: 0,
+        avgMessagesPerConversation: 0,
+        returningUsers: 0,
+        returningUserRate: 0,
+        conversationsByDay: [],
+      });
+
+      await getEngagement(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
+
+      expect(getEngagementMetrics).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+      );
+    });
+
+    it('returns zero metrics when there are no conversations', async () => {
+      vi.mocked(getEngagementMetrics).mockResolvedValue({
+        totalConversations: 0,
+        totalMessages: 0,
+        uniqueUsers: 0,
+        avgMessagesPerConversation: 0,
+        returningUsers: 0,
+        returningUserRate: 0,
+        conversationsByDay: [],
+      });
+
+      const res = await getEngagement(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.metrics.totalConversations).toBe(0);
+      expect(json.data.metrics.conversationsByDay).toHaveLength(0);
+    });
   });
 });

@@ -189,6 +189,17 @@ describe('AgentForm — General tab', () => {
     });
   });
 
+  // ── Retention days field ────────────────────────────────────────────────────
+
+  describe('retention days', () => {
+    it('renders retention days input with placeholder', () => {
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      const input = screen.getByRole('spinbutton', { name: /conversation retention/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Keep forever');
+    });
+  });
+
   // ── Validation ─────────────────────────────────────────────────────────────
 
   describe('required field validation', () => {

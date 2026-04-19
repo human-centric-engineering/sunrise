@@ -69,6 +69,10 @@ const agentFormSchema = z.object({
   maxTokens: z.number().int().min(1).max(200000),
   monthlyBudgetUsd: z.number().positive().max(10000).optional(),
   isActive: z.boolean(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
 });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
@@ -130,6 +134,10 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       maxTokens: agent?.maxTokens ?? 4096,
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
       isActive: agent?.isActive ?? true,
+      inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
+      outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+      maxHistoryTokens: agent?.maxHistoryTokens ?? null,
+      retentionDays: agent?.retentionDays ?? null,
     },
   });
 
@@ -139,6 +147,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const currentName = watch('name');
   const currentInstructions = watch('systemInstructions');
   const currentIsActive = watch('isActive');
+  const currentInputGuard = watch('inputGuardMode');
+  const currentOutputGuard = watch('outputGuardMode');
 
   // Auto-generate slug from name in create mode until the user edits the slug.
   useEffect(() => {
@@ -341,6 +351,28 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               disabled={isEdit && agent?.isSystem}
             />
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="retentionDays">
+              Conversation retention (days){' '}
+              <FieldHelp title="Auto-delete old conversations">
+                Automatically delete conversations older than this many days. Runs during the daily
+                maintenance tick. Leave blank to keep conversations forever.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="retentionDays"
+              type="number"
+              placeholder="Keep forever"
+              {...register('retentionDays', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.retentionDays && (
+              <p className="text-destructive text-xs">{errors.retentionDays.message}</p>
+            )}
+          </div>
         </TabsContent>
 
         {/* ================= TAB 2 — MODEL ================= */}
@@ -483,6 +515,98 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                   v === '' || v === null || v === undefined ? undefined : Number(v),
               })}
             />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="maxHistoryTokens">
+              Max history tokens{' '}
+              <FieldHelp title="Context window override">
+                Override how many tokens of conversation history are sent to the model. Lower values
+                reduce cost; higher values let the agent remember more of the conversation. Leave
+                blank to use the model&apos;s full context window.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="maxHistoryTokens"
+              type="number"
+              placeholder="Use model default"
+              {...register('maxHistoryTokens', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.maxHistoryTokens && (
+              <p className="text-destructive text-xs">{errors.maxHistoryTokens.message}</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="inputGuardMode">
+                Input guard{' '}
+                <FieldHelp title="Prompt injection protection">
+                  Controls how the agent handles suspected prompt injection in user messages.
+                  &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a yellow banner,
+                  &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global default&rdquo;
+                  to inherit the platform-wide setting.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentInputGuard ?? '__global__'}
+                onValueChange={(v) =>
+                  setValue(
+                    'inputGuardMode',
+                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                    {
+                      shouldValidate: true,
+                    }
+                  )
+                }
+              >
+                <SelectTrigger id="inputGuardMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use global default</SelectItem>
+                  <SelectItem value="log_only">Log only</SelectItem>
+                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                  <SelectItem value="block">Block</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="outputGuardMode">
+                Output guard{' '}
+                <FieldHelp title="Response content filtering">
+                  Controls how the agent handles flagged content in its own responses (off-topic,
+                  PII, brand-voice violations). Same modes as the input guard. Leave on &ldquo;Use
+                  global default&rdquo; to inherit the platform-wide setting.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentOutputGuard ?? '__global__'}
+                onValueChange={(v) =>
+                  setValue(
+                    'outputGuardMode',
+                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                    {
+                      shouldValidate: true,
+                    }
+                  )
+                }
+              >
+                <SelectTrigger id="outputGuardMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use global default</SelectItem>
+                  <SelectItem value="log_only">Log only</SelectItem>
+                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                  <SelectItem value="block">Block</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="space-y-2 pt-2">

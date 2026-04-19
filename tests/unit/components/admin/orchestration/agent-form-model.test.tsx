@@ -197,6 +197,27 @@ describe('AgentForm — Model tab', () => {
     });
   });
 
+  // ── New agent fields ───────────────────────────────────────────────────────
+
+  describe('guard mode and history token fields', () => {
+    it('renders max history tokens input with placeholder', async () => {
+      await renderAndOpenModelTab();
+      const input = screen.getByRole('spinbutton', { name: /max history tokens/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Use model default');
+    });
+
+    it('renders input guard mode select', async () => {
+      await renderAndOpenModelTab();
+      expect(screen.getByRole('combobox', { name: /input guard/i })).toBeInTheDocument();
+    });
+
+    it('renders output guard mode select defaulting to global default', async () => {
+      await renderAndOpenModelTab();
+      expect(screen.getByRole('combobox', { name: /output guard/i })).toBeInTheDocument();
+    });
+  });
+
   // ── Null hydration fallback ────────────────────────────────────────────────
 
   describe('null provider/model fallback', () => {
