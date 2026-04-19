@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpDown, Check, ChevronDown, ChevronUp, HelpCircle, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, HelpCircle, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import type { EmbeddingModelInfo } from '@/lib/orchestration/llm/embedding-models';
 
@@ -20,19 +21,12 @@ interface CompareProvidersModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
-type SortField = 'provider' | 'cost' | 'quality' | 'dimensions';
-type SortDir = 'asc' | 'desc';
-
-const QUALITY_ORDER: Record<string, number> = { high: 3, medium: 2, budget: 1 };
-
 export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersModalProps) {
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [schemaOnly, setSchemaOnly] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
   const [localOnly, setLocalOnly] = useState(false);
-  const [sortField, setSortField] = useState<SortField>('provider');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [showGuide, setShowGuide] = useState(false);
 
   const fetchModels = useCallback(async () => {
@@ -58,34 +52,9 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
     if (open) void fetchModels();
   }, [open, fetchModels]);
 
-  const toggleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortField(field);
-      setSortDir('asc');
-    }
-  };
-
-  const sorted = [...models].sort((a, b) => {
-    const dir = sortDir === 'asc' ? 1 : -1;
-    switch (sortField) {
-      case 'provider':
-        return a.provider.localeCompare(b.provider) * dir;
-      case 'cost':
-        return (a.costPerMillionTokens - b.costPerMillionTokens) * dir;
-      case 'quality':
-        return ((QUALITY_ORDER[a.quality] ?? 0) - (QUALITY_ORDER[b.quality] ?? 0)) * dir;
-      case 'dimensions':
-        return (a.dimensions - b.dimensions) * dir;
-      default:
-        return 0;
-    }
-  });
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
+      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Compare Embedding Providers</DialogTitle>
           <DialogDescription asChild>
@@ -140,7 +109,7 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
         <div className="flex-1 overflow-auto">
           {loading ? (
             <p className="text-muted-foreground py-8 text-center text-sm">Loading models…</p>
-          ) : sorted.length === 0 ? (
+          ) : models.length === 0 ? (
             <p className="text-muted-foreground py-8 text-center text-sm">
               No models match the current filters.
             </p>
@@ -148,69 +117,72 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
             <table className="w-full text-sm">
               <thead className="bg-muted/50 sticky top-0">
                 <tr>
-                  <SortHeader
-                    field="provider"
-                    current={sortField}
-                    dir={sortDir}
-                    onSort={toggleSort}
-                  >
+                  <TipHeader tip="The company or platform that hosts this embedding model.">
                     Provider
-                  </SortHeader>
-                  <th className="px-3 py-2 text-left font-medium">Model</th>
-                  <SortHeader field="cost" current={sortField} dir={sortDir} onSort={toggleSort}>
+                  </TipHeader>
+                  <TipHeader tip="The model identifier sent to the provider's API. You'll need this when configuring the embedding provider.">
+                    Model
+                  </TipHeader>
+                  <TipHeader tip="Price per 1 million tokens of input text. A typical document page is ~500 tokens, so 1M tokens covers roughly 2,000 pages. Models showing 'Free' have no per-token charge (local models or free tiers).">
                     Cost/1M
-                  </SortHeader>
-                  <th className="px-3 py-2 text-center font-medium">Free Tier</th>
-                  <SortHeader
-                    field="dimensions"
-                    current={sortField}
-                    dir={sortDir}
-                    onSort={toggleSort}
+                  </TipHeader>
+                  <TipHeader
+                    align="center"
+                    tip="Whether the provider offers free credits or a free usage tier. Great for testing before committing — you can evaluate search quality without spending anything."
                   >
+                    Free
+                  </TipHeader>
+                  <TipHeader tip="The number of values in each vector the model produces. Think of it as the resolution of the model's understanding — more dimensions capture finer distinctions between concepts, but use more storage. The database column is currently set to 1,536 dimensions.">
                     Dims
-                  </SortHeader>
-                  <th className="px-3 py-2 text-center font-medium">Compatible</th>
-                  <SortHeader field="quality" current={sortField} dir={sortDir} onSort={toggleSort}>
+                  </TipHeader>
+                  <TipHeader
+                    align="center"
+                    tip="Whether this model can produce vectors that fit the database's vector(1536) column. 'Compatible' means it either outputs 1,536 dimensions natively, or its API has a parameter to resize. 'Incompatible' means the output size is fixed at a different number — the model works fine, but you'd need a database migration to use it. Hover each badge for details."
+                  >
+                    Fits DB
+                  </TipHeader>
+                  <TipHeader
+                    align="center"
+                    tip="Relative retrieval quality based on industry benchmarks (MTEB). 'High' models find the most relevant results, 'Medium' is good for most use cases, 'Budget' trades some accuracy for lower cost or local operation."
+                  >
                     Quality
-                  </SortHeader>
-                  <th className="px-3 py-2 text-left font-medium">Strengths</th>
-                  <th className="px-3 py-2 text-left font-medium">Setup</th>
+                  </TipHeader>
+                  <TipHeader tip="What this model is particularly good at and how to set it up.">
+                    Notes
+                  </TipHeader>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {sorted.map((m) => (
+                {models.map((m) => (
                   <tr key={m.id} className="hover:bg-muted/30">
-                    <td className="px-3 py-2 font-medium whitespace-nowrap">{m.provider}</td>
-                    <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{m.model}</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="px-2 py-2 text-xs font-medium whitespace-nowrap">
+                      {m.provider}
+                    </td>
+                    <td className="px-2 py-2 font-mono text-[11px] whitespace-nowrap">{m.model}</td>
+                    <td className="px-2 py-2 text-right text-xs whitespace-nowrap">
                       {m.costPerMillionTokens === 0
                         ? 'Free'
                         : `$${m.costPerMillionTokens.toFixed(m.costPerMillionTokens < 0.1 ? 3 : 2)}`}
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-2 py-2 text-center">
                       {m.hasFreeTier ? (
-                        <Check className="mx-auto h-4 w-4 text-green-600" />
+                        <Check className="mx-auto h-3.5 w-3.5 text-green-600" />
                       ) : (
-                        <X className="text-muted-foreground/40 mx-auto h-4 w-4" />
+                        <X className="text-muted-foreground/40 mx-auto h-3.5 w-3.5" />
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right">{m.dimensions.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-center">
-                      {m.schemaCompatible ? (
-                        <Badge variant="default" className="text-[10px]">
-                          Compatible
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px]">
-                          Incompatible
-                        </Badge>
-                      )}
+                    <td className="px-2 py-2 text-right text-xs">
+                      {m.dimensions.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-2 py-2 text-center">
+                      <CompatibilityBadge model={m} />
+                    </td>
+                    <td className="px-2 py-2 text-center">
                       <QualityBadge quality={m.quality} />
                     </td>
-                    <td className="max-w-[200px] px-3 py-2 text-xs">{m.strengths}</td>
-                    <td className="max-w-[180px] px-3 py-2 text-xs">{m.setup}</td>
+                    <td className="px-2 py-2 text-xs">
+                      <span className="line-clamp-2">{m.strengths}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -242,6 +214,33 @@ function EmbeddingGuide() {
           piece of text into a list of 1 024 numbers; a 1 536-dimension model produces 1 536
           numbers. More dimensions can capture finer-grained meaning, but they use more storage and
           are slightly slower to search.
+        </p>
+      </div>
+
+      {/* Why vector(1536)? */}
+      <div>
+        <p className="mb-1 font-semibold">Why is 1 536 the standard here?</p>
+        <p>
+          The database uses PostgreSQL with the{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">pgvector</code> extension,
+          which stores embeddings in a fixed-width column. The column is defined as{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(1536)</code> in the
+          Prisma schema &mdash; every vector stored must have exactly that many dimensions. This
+          number was chosen because 1 536 is the native output size of OpenAI&apos;s{' '}
+          <code className="font-mono">text-embedding-3-small</code>, which was the most widely
+          adopted embedding model when the schema was created. It hits a practical sweet spot: large
+          enough for good retrieval quality, small enough to keep storage and index costs
+          reasonable.
+        </p>
+        <p className="mt-1">
+          Common alternatives are{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(768)</code> (used by
+          Google, Ollama/nomic &mdash; smaller, faster indexes, slightly less precision) and{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(3072)</code>{' '}
+          (OpenAI&apos;s large model &mdash; highest fidelity, but doubles storage and slows
+          nearest-neighbor search). You can change this value with a database migration, but every
+          existing document must be re-embedded afterward because the old vectors will no longer fit
+          the new column width.
         </p>
       </div>
 
@@ -316,6 +315,28 @@ function EmbeddingGuide() {
         </ul>
       </div>
 
+      {/* What if I want to use an incompatible model? */}
+      <div>
+        <p className="mb-1 font-semibold">What if I want to use an incompatible model?</p>
+        <p>
+          You can. The dimension is not a hard limit of the system &mdash; it is a single value in a
+          database migration. To switch to, say, 768 dimensions for a Google or Ollama model, you
+          would: (1) create a Prisma migration that changes the column from{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(1536)</code> to{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(768)</code>, (2)
+          update the embedding provider config to use the new model, and (3) re-embed all existing
+          documents. Steps 1 and 2 take minutes. Step 3 depends on the size of your knowledge base
+          &mdash; a few hundred documents finishes quickly, tens of thousands takes longer.
+        </p>
+        <p className="mt-1">
+          A migration generator that automates this is planned but not yet built. For now, see the{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">prisma/schema.prisma</code>{' '}
+          file &mdash; search for{' '}
+          <code className="bg-background rounded px-1 py-0.5 font-mono">vector(1536)</code> to find
+          the column definition.
+        </p>
+      </div>
+
       {/* What if I pick the wrong one? */}
       <div>
         <p className="mb-1 font-semibold">What if I pick the wrong one?</p>
@@ -327,6 +348,69 @@ function EmbeddingGuide() {
         </p>
       </div>
     </div>
+  );
+}
+
+/** Column header with tooltip on hover — no icon, just cursor hint. */
+function TipHeader({
+  tip,
+  align = 'left',
+  children,
+}: {
+  tip: string;
+  align?: 'left' | 'center' | 'right';
+  children: React.ReactNode;
+}) {
+  return (
+    <th className={`px-2 py-2 text-${align} font-medium`}>
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help border-b border-dotted border-current/30">{children}</span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-xs font-normal">
+            {tip}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </th>
+  );
+}
+
+const SCHEMA_DIMS = 1536;
+
+/** Badge with a tooltip explaining why this specific model is compatible or not. */
+function CompatibilityBadge({ model }: { model: EmbeddingModelInfo }) {
+  const nativeDims = model.dimensions;
+
+  let reason: string;
+  if (model.schemaCompatible && nativeDims === SCHEMA_DIMS) {
+    reason = `This model natively outputs ${SCHEMA_DIMS.toLocaleString()}-dimension vectors, which exactly matches the database column. No extra configuration needed.`;
+  } else if (model.schemaCompatible && nativeDims !== SCHEMA_DIMS) {
+    reason = `This model natively outputs ${nativeDims.toLocaleString()} dimensions, but its API accepts a parameter to resize the output to ${SCHEMA_DIMS.toLocaleString()}. The system sets this automatically — you get full compatibility with a minor quality trade-off from dimension reduction.`;
+  } else {
+    reason = `This model outputs ${nativeDims.toLocaleString()} dimensions and has no API option to resize. The database column expects exactly ${SCHEMA_DIMS.toLocaleString()} dimensions, so the vectors won't fit. To use this model, you'd need a database migration to change the column to vector(${nativeDims}), then re-embed all existing documents.`;
+  }
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {model.schemaCompatible ? (
+            <Badge variant="default" className="cursor-help text-[10px]">
+              Yes
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="cursor-help text-[10px]">
+              No
+            </Badge>
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs text-xs font-normal">
+          {reason}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -351,37 +435,6 @@ function FilterToggle({
     >
       {label}
     </button>
-  );
-}
-
-function SortHeader({
-  field,
-  current,
-  dir,
-  onSort,
-  children,
-}: {
-  field: SortField;
-  current: SortField;
-  dir: SortDir;
-  onSort: (f: SortField) => void;
-  children: React.ReactNode;
-}) {
-  const active = field === current;
-  return (
-    <th className="px-3 py-2 text-left font-medium">
-      <button
-        type="button"
-        onClick={() => onSort(field)}
-        className="hover:text-foreground inline-flex items-center gap-1"
-      >
-        {children}
-        <ArrowUpDown
-          className={`h-3 w-3 ${active ? 'text-foreground' : 'text-muted-foreground/40'}`}
-        />
-        {active && <span className="text-[10px]">{dir === 'asc' ? '↑' : '↓'}</span>}
-      </button>
-    </th>
   );
 }
 

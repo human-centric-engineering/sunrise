@@ -235,6 +235,20 @@ function stripLeadingHeadings(content: string | null | undefined): string | null
 }
 
 /**
+ * Extract the first paragraph from markdown content.
+ * A paragraph is a block of non-empty lines separated by blank lines.
+ * Returns the full first paragraph (no character truncation).
+ */
+function firstParagraph(content: string | null | undefined): string | null {
+  if (!content) return null;
+  const stripped = stripLeadingHeadings(content);
+  if (!stripped) return null;
+  // Split on blank lines, take the first non-empty block
+  const paragraph = stripped.split(/\n\s*\n/)[0]?.trim() ?? null;
+  return paragraph || null;
+}
+
+/**
  * List all distinct patterns in the knowledge base.
  *
  * Groups chunks by patternNumber and returns a summary for each pattern,
@@ -287,9 +301,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     const complexity = typeof metadata?.complexity === 'string' ? metadata.complexity : null;
 
     const description =
-      stripLeadingHeadings(tldrChunk?.content)?.slice(0, 300) ??
-      stripLeadingHeadings(overviewChunk?.content)?.slice(0, 200) ??
-      null;
+      firstParagraph(tldrChunk?.content) ?? firstParagraph(overviewChunk?.content) ?? null;
 
     summaries.push({
       patternNumber: group.patternNumber,
