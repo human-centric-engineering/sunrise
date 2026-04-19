@@ -8,7 +8,7 @@ Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand
 
 - `app/admin/orchestration/workflows/page.tsx` — list (server shell)
 - `app/admin/orchestration/workflows/new/page.tsx` — create (server shell)
-- `app/admin/orchestration/workflows/[id]/page.tsx` — edit (server shell, `notFound()` on 404)
+- `app/admin/orchestration/workflows/[id]/page.tsx` — edit (server shell, `notFound()` on 404) + `<WorkflowSchedulesTab>` below the builder
 - `components/admin/orchestration/workflow-builder/` — all builder client islands
 - `components/admin/orchestration/workflows-table.tsx` — list page client island
 - `lib/orchestration/engine/step-registry.ts` — single source of truth for pattern step metadata
@@ -384,6 +384,24 @@ In **edit mode**, a collapsible `WorkflowDefinitionHistoryPanel` appears below t
 **UI:** lazy-fetch on first expand, newest-first rows with step count preview, "Diff" dialog (JSON pretty-print LCS diff), "Revert" with AlertDialog confirmation. After a successful revert, the builder re-fetches the workflow and re-initializes the canvas nodes/edges.
 
 **Validation schemas:** `workflowDefinitionHistoryEntrySchema`, `workflowDefinitionHistorySchema`, `workflowDefinitionRevertSchema` in `lib/validations/orchestration.ts`.
+
+## Schedules Tab
+
+The workflow edit page (`/admin/orchestration/workflows/[id]`) includes a `<WorkflowSchedulesTab>` below the builder canvas (separated by an `<hr>`).
+
+**Component:** `components/admin/orchestration/workflow-schedules-tab.tsx`
+
+Features:
+
+- List of schedules with name, cron expression badge, next run time, enabled toggle, delete button
+- Empty state with CalendarClock icon
+- Create dialog: name, cron expression (with helper text), input template (JSON textarea), enabled toggle
+- Toggle enabled/disabled via PATCH
+- Delete with AlertDialog confirmation
+
+**API:** Uses `GET/POST /workflows/:id/schedules` and `PATCH/DELETE /workflows/:id/schedules/:scheduleId`.
+
+See [Scheduling & Webhooks](../orchestration/scheduling.md) for the cron format and scheduler service.
 
 ## Related
 

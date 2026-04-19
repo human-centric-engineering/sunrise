@@ -8,19 +8,23 @@ Shared create/edit form for `AiAgent`. Five shadcn tabs, one underlying `<form>`
 
 ## Tab structure
 
-| #   | Tab          | Create | Edit | Notes                                                       |
-| --- | ------------ | ------ | ---- | ----------------------------------------------------------- |
-| 1   | General      | ✅     | ✅   | Name, slug, description, active                             |
-| 2   | Model        | ✅     | ✅   | Provider, model, temperature, max tokens, budget, test conn |
-| 3   | Instructions | ✅     | ✅   | Textarea, character count, history panel (edit only)        |
-| 4   | Capabilities | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                      |
-| 5   | Test         | 🚫     | ✅   | Embeds `<AgentTestChat>`                                    |
+| #   | Tab          | Create | Edit | Notes                                                                                                                 |
+| --- | ------------ | ------ | ---- | --------------------------------------------------------------------------------------------------------------------- |
+| 1   | General      | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                       |
+| 2   | Model        | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
+| 3   | Instructions | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
+| 4   | Capabilities | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
+| 5   | Test         | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
 
 Tabs 4 and 5 are `disabled` in create mode — attaching capabilities and streaming a test chat both require a persisted `agent.id` / `agent.slug`.
 
 ## Tab 1 — General
 
-Fields: `name`, `slug`, `description`, `isActive`.
+Fields: `name`, `slug`, `description`, `isActive`, `visibility`.
+
+### Visibility select
+
+Select with three options: `internal` (default), `public`, `invite_only`. Controls who can access the agent via the consumer chat API. Placed after the Active toggle.
 
 **Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode the slug input is disabled — changing slugs breaks existing deep links.
 
@@ -53,6 +57,14 @@ Number input. Default 4096. Validation min 1, max 200_000.
 
 Optional number input. When set, the chat handler rejects new turns once MTD spend exceeds the cap. Leave blank to disable.
 
+### Fallback providers
+
+Multi-checkbox list populated from the provider list. When the primary provider's circuit breaker is open, the chat handler falls back through these in order. Maximum 5 entries.
+
+### Rate limit RPM
+
+Optional number input. Per-agent rate limit in requests per minute. When set, overrides the global `chatLimiter` default for this agent. Leave blank for the global default.
+
 ### Test connection
 
 Button that POSTs `/providers/:id/test` (where `:id` is the selected provider's row id, resolved via the hydrated provider list). On success: green check + `{modelCount} models available`. On failure: red × + **"Couldn't reach this provider. Check the server logs for details."** — the server route already sanitizes the upstream error, and the client layers on a friendly fallback regardless. Raw SDK error text never reaches the DOM.
@@ -75,7 +87,21 @@ Button below "Test connection" that sends a trivial prompt (`"Say hello."`, maxT
 
 ## Tab 3 — Instructions
 
-Single `<Textarea rows={16}>` bound to `systemInstructions`, with a character count in the footer. Below the textarea, in edit mode only, `<InstructionsHistoryPanel>` renders a collapsible audit log.
+Single `<Textarea rows={16}>` bound to `systemInstructions`, with a character count in the footer.
+
+### Brand voice instructions
+
+Textarea (4 rows) for brand-voice guidance. Injected into the system prompt as a separate section so the LLM follows tone/style rules consistently. Example: "Always respond in a professional, concise tone. Avoid slang."
+
+### Knowledge categories
+
+Comma-separated text input. Tags that scope the agent to specific knowledge base categories. Transformed to `string[]` on submit.
+
+### Topic boundaries
+
+Comma-separated text input. Topics the output guard checks against. If the LLM response touches these topics, the output guard fires. Transformed to `string[]` on submit.
+
+Below the textarea, in edit mode only, `<InstructionsHistoryPanel>` renders a collapsible audit log.
 
 ### History panel
 

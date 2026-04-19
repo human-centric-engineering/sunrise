@@ -20,6 +20,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/:id/instructions-history`  | GET                | Read the full `systemInstructions` audit trail            |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions` version         |
 | `/api/v1/admin/orchestration/agents/:id/clone`                 | POST               | Deep-clone agent with capability bindings                 |
+| `/api/v1/admin/orchestration/agents/:id/versions`              | GET                | List agent version snapshots                              |
+| `/api/v1/admin/orchestration/agents/:id/versions/:vId/restore` | POST               | Restore agent from a version snapshot                     |
 | `/api/v1/admin/orchestration/agents/bulk`                      | POST               | Bulk activate/deactivate/delete agents                    |
 | `/api/v1/admin/orchestration/agents/compare`                   | GET                | Compare two agents side-by-side                           |
 | `/api/v1/admin/orchestration/agents/export`                    | POST               | Export selected agents as a versioned bundle              |
@@ -254,6 +256,33 @@ Deep-clones an agent including capability bindings in a single transaction. The 
 Slug collision: if the slug is taken, retries with `-copy-2`, `-copy-3`, up to 5 attempts. Returns **201** with the new agent on success, **409** if all slug variants are taken.
 
 Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
+
+### Agent version restore
+
+```
+POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restore
+```
+
+Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields (systemInstructions, model, provider, fallbackProviders, temperature, maxTokens, topicBoundaries, brandVoiceInstructions, knowledgeCategories, rateLimitRpm, visibility, metadata) to the agent, and creates a new version entry recording the restore action.
+
+**Response (200):**
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "agent": {
+      /* updated agent */
+    },
+    "restoredFromVersion": 3,
+    "newVersion": 6,
+  },
+}
+```
+
+Returns **404** if the agent or version doesn't exist.
+
+**Key file:** `app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route.ts`
 
 ## Export / import
 

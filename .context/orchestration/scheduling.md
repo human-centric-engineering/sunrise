@@ -77,6 +77,8 @@ Returns `{ processed, succeeded, failed, errors }`.
 
 Each function runs via `Promise.allSettled` — individual failures don't block others. Results are returned per-function.
 
+**Overlap protection:** A module-level `tickRunning` flag prevents concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true }` immediately. See [Resilience](./resilience.md#maintenance-tick-overlap-protection).
+
 **Deployment:** Configure one external cron to call this endpoint every 60 seconds:
 
 ```bash
@@ -110,3 +112,11 @@ Examples:
 - `0 0 1 * *` — first of each month at midnight
 
 Parsed by `cron-parser` v5 (`CronExpressionParser`).
+
+## Webhook SSRF Protection
+
+Webhook subscription URLs are validated via Zod schema refinements that call `checkSafeProviderUrl()` from `lib/security/safe-url.ts`. This prevents admins from pointing webhooks at internal services (RFC1918 ranges, cloud metadata endpoints like `169.254.169.254`, etc.). Validation runs on both `POST /webhooks` (create) and `PATCH /webhooks/:id` (update, if URL is present).
+
+## Webhook Management UI
+
+Full CRUD for webhooks is available at `/admin/orchestration/webhooks`. See [Webhook Management UI](../admin/orchestration-webhooks.md).

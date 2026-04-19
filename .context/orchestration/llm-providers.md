@@ -124,12 +124,12 @@ Local servers get a `'not-needed'` sentinel API key (the OpenAI SDK rejects empt
 
 `providerManager.getProvider(slug)` is the single entry point. It:
 
-1. Checks the in-memory `Map` cache.
+1. Checks the in-memory cache. Each entry stores `{ provider, cachedAt }` and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
 2. Loads the matching `AiProviderConfig` row (`findFirst` against slug or name).
 3. Throws `ProviderError` with `code: 'provider_not_found'` / `'provider_disabled'` if missing or inactive.
 4. Resolves the API key from `process.env[config.apiKeyEnvVar]` (or skips for local providers).
 5. Instantiates `AnthropicProvider` or `OpenAiCompatibleProvider` based on `providerType`.
-6. Caches and returns.
+6. Caches with timestamp and returns.
 
 **Do:**
 
@@ -147,7 +147,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 For tests or scripts that bypass the database, use `providerManager.registerProvider(config)` which accepts a plain `ProviderConfig` object.
 
-`clearCache()` evicts one or all cached instances — call it after updating `AiProviderConfig` rows in the admin API.
+`clearCache()` evicts one or all cached instances — call it for immediate invalidation (e.g. after an admin updates a provider config). Without manual invalidation, stale entries expire naturally after 5 minutes.
 
 ## Model Registry
 

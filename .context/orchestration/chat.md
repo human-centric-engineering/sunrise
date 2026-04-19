@@ -106,15 +106,26 @@ Concretely:
 The tool loop is a bounded while-loop (`MAX_TOOL_ITERATIONS = 5`). Each iteration:
 
 1. Calls `provider.chatStream(messages, options)` with `tools` populated from `getCapabilityDefinitions(agentId)`.
-2. Drains the entire stream, capturing `assistantText`, the first `tool_call` (if any), and the trailing `usage` from the `done` chunk.
+2. Drains the entire stream, capturing `assistantText`, all `tool_call` chunks, and the trailing `usage` from the `done` chunk.
 3. Persists the assistant row (skipped when the turn was pure tool-use with no text).
-4. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
-5. If no tool call: yields `done` and returns.
-6. If a tool call: yields `status`, dispatches via `capabilityDispatcher.dispatch`, yields `capability_result`, persists a `role: 'tool'` row with `capabilitySlug` and `toolCallId`, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
+4. **Output guard** — if no tool calls, scans the assistant text via `scanOutput()` before logging cost. If the guard blocks (mode = `block`), the cost is never logged and the stream terminates. See [Output Guard](./output-guard.md).
+5. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
+6. If no tool call: yields `done` and returns.
+7. If tool calls: **re-checks budget** via `checkBudget(agentId)` before dispatching — prevents multi-tool conversations from exceeding budget mid-stream. Then dispatches via `capabilityDispatcher.dispatch` (wrapped in a 30-second timeout — see below), yields `capability_result`, persists `role: 'tool'` rows, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
 
 Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
 
-Multiple tool calls in a single turn are not yet supported — the handler captures the first `tool_call` and suppresses any further text/tool chunks for that turn. Multi-tool fan-out is a later slice.
+### Tool dispatch timeout
+
+Every `capabilityDispatcher.dispatch()` call is wrapped in `withToolTimeout()` (default `TOOL_DISPATCH_TIMEOUT_MS = 30_000`). If a tool hangs beyond 30 seconds, the promise rejects with a timeout error, and the LLM receives a `{ success: false, error: 'Tool execution timed out' }` result.
+
+### Tool error backoff
+
+The handler tracks per-tool consecutive failure counts in a `Map<string, number>`. After a tool fails **2 consecutive times** (`TOOL_FAILURE_THRESHOLD`), subsequent requests for that tool are **skipped** — the LLM receives a `{ success: false, error: { code: 'tool_unavailable', message: '...' } }` result without dispatching. This prevents a broken tool from burning through all iterations. Success resets the counter.
+
+### Multiple tool calls
+
+Multiple tool calls in a single LLM turn are dispatched in parallel via `Promise.allSettled`. Each result is persisted individually. The backoff threshold applies per-tool — a failing tool in a multi-call turn doesn't block other tools.
 
 ## Context Builder
 
@@ -193,14 +204,15 @@ In all modes, unflagged input proceeds normally. The mode is read from the cache
 
 Every terminal `error` event carries one of these stable `code` values:
 
-| Code                     | Source                                                          | Meaning                                                                                                                  |
-| ------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                | Resolve the slug or activate the agent                                                                                   |
-| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                                                                        |
-| `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
-| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                                                                        |
-| `input_blocked`          | Input guard in `block` mode flagged the message                 | Admin has configured strict input filtering — message rejected by security policy                                        |
-| `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
+| Code                     | Source                                                            | Meaning                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                  | Resolve the slug or activate the agent                                                                                   |
+| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive   | Caller sent a stale or cross-user conversation id                                                                        |
+| `budget_exceeded`        | `checkBudget` returns `withinBudget: false` (initial or mid-loop) | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
+| `output_blocked`         | Output guard in `block` mode flagged the response                 | Admin has configured strict output filtering — response rejected by content policy                                       |
+| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                         | A confused model or broken capability is spinning                                                                        |
+| `input_blocked`          | Input guard in `block` mode flagged the message                   | Admin has configured strict input filtering — message rejected by security policy                                        |
+| `internal_error`         | Any other thrown exception                                        | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
 

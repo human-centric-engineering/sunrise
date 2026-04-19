@@ -146,6 +146,22 @@ If the LLM stream fails after starting (network error, provider crash), the stre
 
 Maximum retries: 2 (`MAX_STREAM_RETRIES`). `AbortError` (client disconnect) bypasses retry — no point retrying if nobody's listening. See [Streaming Chat Handler](./chat.md#mid-stream-retry--recovery) for details.
 
+## Guard Mode Fallback Logging
+
+When the streaming handler fails to load `OrchestrationSettings` (e.g. DB outage) for either input or output guard mode resolution, it falls back to `log_only` and logs a `logger.warn` with a message like `'Failed to load orchestration settings for input guard mode, falling back to log_only'`. This ensures admins are alerted that their configured `block` or `warn_and_continue` mode isn't being enforced, rather than silently degrading.
+
+## Tool Error Backoff
+
+The streaming handler tracks per-tool consecutive failure counts. After a tool fails **2 consecutive times** (`TOOL_FAILURE_THRESHOLD`), the handler skips subsequent dispatch calls for that tool and returns a `{ success: false, error: { code: 'tool_unavailable' } }` result to the LLM. This prevents a broken tool from burning through all `MAX_TOOL_ITERATIONS` iterations. A successful dispatch resets the counter.
+
+Applies to both single and parallel tool dispatch paths.
+
+## Maintenance Tick Overlap Protection
+
+The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions. The flag is cleared in a `finally` block to guarantee reset even on errors.
+
+This is sufficient for single-server deployments. Multi-instance deployments would need a distributed lock (e.g. Postgres advisory lock or Redis).
+
 ## SSE Resilience
 
 ### Server-side

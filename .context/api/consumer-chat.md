@@ -9,14 +9,16 @@ End-user-facing chat endpoints for interacting with publicly visible AI agents. 
 
 ## Quick reference
 
-| Endpoint                           | Method | Purpose                        |
-| ---------------------------------- | ------ | ------------------------------ |
-| `/chat/stream`                     | POST   | Streaming chat turn (SSE)      |
-| `/chat/agents`                     | GET    | List publicly available agents |
-| `/chat/conversations`              | GET    | List user's own conversations  |
-| `/chat/conversations/:id`          | GET    | Single conversation detail     |
-| `/chat/conversations/:id`          | DELETE | Delete own conversation        |
-| `/chat/conversations/:id/messages` | GET    | Messages for a conversation    |
+| Endpoint                            | Method | Purpose                         |
+| ----------------------------------- | ------ | ------------------------------- |
+| `/chat/stream`                      | POST   | Streaming chat turn (SSE)       |
+| `/chat/agents`                      | GET    | List publicly available agents  |
+| `/chat/agents/:slug/validate-token` | POST   | Validate an invite token        |
+| `/chat/conversations`               | GET    | List user's own conversations   |
+| `/chat/conversations/search`        | GET    | Search conversations by content |
+| `/chat/conversations/:id`           | GET    | Single conversation detail      |
+| `/chat/conversations/:id`           | DELETE | Delete own conversation         |
+| `/chat/conversations/:id/messages`  | GET    | Messages for a conversation     |
 
 ## Endpoints
 
@@ -157,12 +159,63 @@ The `AiAgent` model has a `visibility` field with three values:
 
 Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
 
+### GET `/chat/conversations/search`
+
+Search the authenticated user's conversations by message content.
+
+**Query parameters** (`consumerConversationSearchSchema`):
+
+| Param   | Type   | Default | Description                         |
+| ------- | ------ | ------- | ----------------------------------- |
+| `q`     | string | —       | Search term (1–200 chars, required) |
+| `page`  | number | 1       | Page number                         |
+| `limit` | number | 20      | Items per page                      |
+
+Searches `AiMessage.content` via case-insensitive `contains` for the user's conversations. Returns paginated conversations with agent info, same shape as `/chat/conversations`.
+
+**Rate limiting:** `chatLimiter` (per IP).
+
+**Key file:** `app/api/v1/chat/conversations/search/route.ts`
+
+---
+
+### POST `/chat/agents/:slug/validate-token`
+
+Check whether an invite token is valid for the given agent before attempting to chat.
+
+**Request body:**
+
+```jsonc
+{
+  "inviteToken": "string (required)",
+}
+```
+
+**Response:**
+
+```jsonc
+// Valid
+{ "success": true, "data": { "valid": true } }
+
+// Invalid
+{ "success": true, "data": { "valid": false, "reason": "Token has expired" } }
+```
+
+Checks: agent exists and is `invite_only`, token exists, not revoked, not expired, not past `maxUses`.
+
+**Rate limiting:** `chatLimiter` (per IP).
+
+**Key file:** `app/api/v1/chat/agents/[slug]/validate-token/route.ts`
+
+---
+
 ## Validation Schemas
 
 All consumer schemas live in `lib/validations/orchestration.ts`:
 
 - `consumerChatRequestSchema` — POST body for `/chat/stream`
 - `consumerConversationsQuerySchema` — query params for `/chat/conversations`
+- `consumerConversationSearchSchema` — query params for `/chat/conversations/search`
 - `agentVisibilitySchema` — `z.enum(['internal', 'public', 'invite_only'])`
 
 ## Rate Limiting
