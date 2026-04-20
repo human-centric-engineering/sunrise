@@ -8,12 +8,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Wrench, Database, Key, FileText, Settings, Activity } from 'lucide-react';
+import { Wrench, Database, Key, FileText, Settings, Activity, Monitor } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
 interface McpSettings {
@@ -48,27 +49,10 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
     setSettings((s) => ({ ...s, isEnabled: enabled }));
     setToggling(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: enabled }),
+      const data = await apiClient.patch<McpSettings>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
+        body: { isEnabled: enabled },
       });
-      if (res.ok) {
-        const raw: unknown = await res.json();
-        if (
-          typeof raw === 'object' &&
-          raw !== null &&
-          'success' in raw &&
-          (raw as Record<string, unknown>).success === true &&
-          'data' in raw
-        ) {
-          setSettings((raw as Record<string, unknown>).data as McpSettings);
-        } else {
-          setSettings(prev);
-        }
-      } else {
-        setSettings(prev);
-      }
+      setSettings(data);
     } catch {
       setSettings(prev);
     } finally {
@@ -100,6 +84,13 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       count: stats.keys,
       description:
         'Create bearer tokens that clients use to authenticate. Each key has scoped permissions',
+    },
+    {
+      href: '/admin/orchestration/mcp/sessions',
+      label: 'Sessions',
+      icon: Monitor,
+      count: null,
+      description: 'View active MCP client connections — which keys are connected and since when',
     },
     {
       href: '/admin/orchestration/mcp/audit',

@@ -40,6 +40,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
 interface ResourceRow {
@@ -101,13 +102,13 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
   });
 
   async function handleToggle(resourceId: string, isEnabled: boolean) {
-    const res = await fetch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isEnabled }),
-    });
-    if (res.ok) {
+    try {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
+        body: { isEnabled },
+      });
       setResources((prev) => prev.map((r) => (r.id === resourceId ? { ...r, isEnabled } : r)));
+    } catch {
+      // silent
     }
   }
 
@@ -115,46 +116,32 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     if (!form.name.trim() || !form.uri.trim() || !form.resourceType) return;
     setCreating(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      const data = await apiClient.post<ResourceRow>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
+        body: form,
       });
-      if (res.ok) {
-        const body: unknown = await res.json();
-        if (
-          typeof body === 'object' &&
-          body !== null &&
-          'success' in body &&
-          (body as Record<string, unknown>).success === true &&
-          'data' in body
-        ) {
-          const data = (body as Record<string, unknown>).data;
-          if (typeof data === 'object' && data !== null) {
-            setResources((prev) => [...prev, data as ResourceRow]);
-          }
-          setForm({
-            name: '',
-            uri: '',
-            description: '',
-            mimeType: 'application/json',
-            resourceType: '',
-            isEnabled: false,
-          });
-          setCreateOpen(false);
-        }
-      }
+      setResources((prev) => [...prev, data]);
+      setForm({
+        name: '',
+        uri: '',
+        description: '',
+        mimeType: 'application/json',
+        resourceType: '',
+        isEnabled: false,
+      });
+      setCreateOpen(false);
+    } catch {
+      // silent
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRemove(resourceId: string) {
-    const res = await fetch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
-      method: 'DELETE',
-    });
-    if (res.ok) {
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId));
       setResources((prev) => prev.filter((r) => r.id !== resourceId));
+    } catch {
+      // silent
     }
   }
 

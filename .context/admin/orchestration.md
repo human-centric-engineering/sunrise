@@ -82,7 +82,7 @@ An agent is a configured AI persona: system instructions, model selection, tempe
 
 ### Capabilities
 
-Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Three built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`) and are marked `isSystem: true` — they cannot be deleted or deactivated via the admin API.
+Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Five built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`, `read_user_memory`, `write_user_memory`) and are marked `isSystem: true` — they cannot be deleted or deactivated via the admin API.
 
 - [Capabilities list page](./orchestration-capabilities.md)
 - [How to create capabilities](./orchestration-capabilities-guide.md)
@@ -104,7 +104,7 @@ Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, 
 
 ### Knowledge Base
 
-Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with pgvector → semantic search available to agents via the `search_knowledge_base` capability.
+Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with pgvector → semantic search available to agents via the `search_knowledge_base` capability. Agent scoping uses `AiAgent.knowledgeCategories` (a string array) to filter which categories an agent can search — when non-empty, the agent's `search_knowledge_base` calls are restricted to matching chunks only.
 
 - [Knowledge Base UI](./orchestration-knowledge-ui.md)
 - [Knowledge service docs](../orchestration/knowledge.md)

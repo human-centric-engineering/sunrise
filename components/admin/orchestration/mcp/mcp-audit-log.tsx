@@ -3,10 +3,10 @@
 /**
  * MCP Audit Log Component
  *
- * Read-only paginated audit log with method/status filters.
+ * Paginated audit log with method, status, and date range filters.
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -15,10 +15,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
 interface AuditEntry {
@@ -34,8 +45,16 @@ interface AuditEntry {
   apiKey: { name: string; keyPrefix: string } | null;
 }
 
+interface AuditMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
 interface McpAuditLogProps {
   initialEntries: AuditEntry[];
+  initialMeta: AuditMeta | null;
 }
 
 function getStatusVariant(code: string): 'default' | 'destructive' | 'secondary' {
@@ -44,28 +63,101 @@ function getStatusVariant(code: string): 'default' | 'destructive' | 'secondary'
   return 'secondary';
 }
 
-export function McpAuditLog({ initialEntries }: McpAuditLogProps) {
+const MCP_METHODS = [
+  'initialize',
+  'tools/list',
+  'tools/call',
+  'resources/list',
+  'resources/read',
+  'prompts/list',
+  'prompts/get',
+  'ping',
+] as const;
+
+const STATUS_OPTIONS = ['success', 'error', 'rate_limited'] as const;
+
+export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
+  const [entries, setEntries] = useState(initialEntries);
+  const [meta, setMeta] = useState<AuditMeta | null>(initialMeta);
+  const [loading, setLoading] = useState(false);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+
+  // Filters
+  const [method, setMethod] = useState('');
+  const [responseCode, setResponseCode] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const fetchEntries = useCallback(
+    async (
+      page: number,
+      filters?: {
+        method?: string;
+        responseCode?: string;
+        dateFrom?: string;
+        dateTo?: string;
+      }
+    ) => {
+      setLoading(true);
+      try {
+        const params: Record<string, string | number> = { page, limit: 50 };
+        const f = filters ?? { method, responseCode, dateFrom, dateTo };
+        if (f.method) params.method = f.method;
+        if (f.responseCode) params.responseCode = f.responseCode;
+        if (f.dateFrom) params.dateFrom = f.dateFrom;
+        if (f.dateTo) params.dateTo = f.dateTo;
+
+        const data = await apiClient.get<{ data: AuditEntry[]; meta: AuditMeta }>(
+          API.ADMIN.ORCHESTRATION.MCP_AUDIT,
+          { params }
+        );
+        // The API wraps in { data, meta } — apiClient extracts the top-level data field
+        // which contains both data array and meta
+        if (Array.isArray(data)) {
+          // Flat array response
+          setEntries(data as unknown as AuditEntry[]);
+          setMeta(null);
+        } else if (data && typeof data === 'object' && 'data' in data) {
+          setEntries(data.data);
+          setMeta(data.meta);
+        }
+      } catch {
+        // silent
+      } finally {
+        setLoading(false);
+      }
+    },
+    [method, responseCode, dateFrom, dateTo]
+  );
+
+  function handleApplyFilters() {
+    void fetchEntries(1, { method, responseCode, dateFrom, dateTo });
+  }
+
+  function handleClearFilters() {
+    setMethod('');
+    setResponseCode('');
+    setDateFrom('');
+    setDateTo('');
+    void fetchEntries(1, { method: '', responseCode: '', dateFrom: '', dateTo: '' });
+  }
 
   async function handlePurge() {
     setPurging(true);
     setPurgeResult(null);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.MCP_AUDIT, { method: 'DELETE' });
-      const raw: unknown = await res.json();
-      const body = raw as Record<string, unknown>;
-      if (body?.success === true && typeof body.data === 'object' && body.data !== null) {
-        const data = body.data as Record<string, unknown>;
-        const deleted = typeof data.deleted === 'number' ? data.deleted : 0;
-        setPurgeResult(
-          deleted > 0
-            ? `Purged ${String(deleted)} log entries`
-            : typeof data.message === 'string'
-              ? data.message
-              : 'No old entries to purge'
-        );
-      }
+      const data = await apiClient.delete<{ deleted: number; message?: string }>(
+        API.ADMIN.ORCHESTRATION.MCP_AUDIT
+      );
+      const deleted = typeof data.deleted === 'number' ? data.deleted : 0;
+      setPurgeResult(
+        deleted > 0
+          ? `Purged ${String(deleted)} log entries`
+          : (data.message ?? 'No old entries to purge')
+      );
+      // Refresh current page
+      void fetchEntries(meta?.page ?? 1);
     } catch {
       setPurgeResult('Purge failed');
     } finally {
@@ -73,8 +165,90 @@ export function McpAuditLog({ initialEntries }: McpAuditLogProps) {
     }
   }
 
+  const hasFilters = method || responseCode || dateFrom || dateTo;
+
   return (
     <div className="space-y-4">
+      {/* Filters */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Filters</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <Label htmlFor="filter-method">
+                Method
+                <FieldHelp title="MCP Method Filter">
+                  Filter by the JSON-RPC method name (e.g. tools/call, resources/read).
+                </FieldHelp>
+              </Label>
+              <Select value={method} onValueChange={setMethod}>
+                <SelectTrigger id="filter-method">
+                  <SelectValue placeholder="All methods" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MCP_METHODS.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="filter-status">
+                Status
+                <FieldHelp title="Response Status Filter">
+                  Filter by operation outcome: success, error, or rate_limited.
+                </FieldHelp>
+              </Label>
+              <Select value={responseCode} onValueChange={setResponseCode}>
+                <SelectTrigger id="filter-status">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="filter-date-from">From</Label>
+              <Input
+                id="filter-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="filter-date-to">To</Label>
+              <Input
+                id="filter-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Button size="sm" onClick={handleApplyFilters} disabled={loading}>
+              {loading ? 'Loading...' : 'Apply Filters'}
+            </Button>
+            {hasFilters && (
+              <Button size="sm" variant="outline" onClick={handleClearFilters} disabled={loading}>
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Purge + info */}
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={() => void handlePurge()} disabled={purging}>
           {purging ? 'Purging...' : 'Purge Old Logs'}
@@ -84,7 +258,12 @@ export function McpAuditLog({ initialEntries }: McpAuditLogProps) {
           action is irreversible.
         </FieldHelp>
         {purgeResult && <span className="text-muted-foreground text-xs">{purgeResult}</span>}
+        {meta && (
+          <span className="text-muted-foreground ml-auto text-xs">{meta.total} total entries</span>
+        )}
       </div>
+
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -127,14 +306,16 @@ export function McpAuditLog({ initialEntries }: McpAuditLogProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {initialEntries.length === 0 ? (
+            {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
-                  No audit entries yet. Operations will appear here once MCP clients connect.
+                  {hasFilters
+                    ? 'No entries match the current filters.'
+                    : 'No audit entries yet. Operations will appear here once MCP clients connect.'}
                 </TableCell>
               </TableRow>
             ) : (
-              initialEntries.map((entry) => (
+              entries.map((entry) => (
                 <TableRow key={entry.id}>
                   <TableCell className="text-muted-foreground text-xs">
                     {new Date(entry.createdAt).toLocaleString()}
@@ -175,6 +356,31 @@ export function McpAuditLog({ initialEntries }: McpAuditLogProps) {
           </TableBody>
         </Table>
       </div>
+
+      {/* Pagination */}
+      {meta && meta.totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={meta.page <= 1 || loading}
+            onClick={() => void fetchEntries(meta.page - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-muted-foreground text-sm">
+            Page {meta.page} of {meta.totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={meta.page >= meta.totalPages || loading}
+            onClick={() => void fetchEntries(meta.page + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

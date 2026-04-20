@@ -19,6 +19,7 @@ interface ExposedToolRow {
   customName: string | null;
   customDescription: string | null;
   rateLimitPerKey: number | null;
+  requiresScope: string | null;
   capability: {
     id: string;
     name: string;

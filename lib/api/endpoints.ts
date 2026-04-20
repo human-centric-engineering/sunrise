@@ -172,6 +172,7 @@ export const API = {
       mcpResourceById: (id: string): string => `/api/v1/admin/orchestration/mcp/resources/${id}`,
       MCP_KEYS: '/api/v1/admin/orchestration/mcp/keys',
       mcpKeyById: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}`,
+      mcpKeyRotate: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}/rotate`,
       MCP_AUDIT: '/api/v1/admin/orchestration/mcp/audit',
       MCP_SESSIONS: '/api/v1/admin/orchestration/mcp/sessions',
       mcpSessionById: (id: string): string => `/api/v1/admin/orchestration/mcp/sessions/${id}`,
