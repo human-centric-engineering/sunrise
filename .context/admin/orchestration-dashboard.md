@@ -1,6 +1,6 @@
 # Admin Orchestration Dashboard
 
-Landing page for the AI Orchestration admin area. Thin async server component that fans out to a handful of summary endpoints and lays them out as stats cards, a budget-alerts strip, quick actions, and a recent-activity feed.
+Landing page for the AI Orchestration admin area. Thin async server component that fetches summary endpoints in parallel and renders a streamlined three-section layout: operational stat cards, trends/activity, and conditional budget alerts.
 
 **Route:** `/admin/orchestration`
 **Page:** `app/admin/orchestration/page.tsx`
@@ -10,56 +10,79 @@ Landing page for the AI Orchestration admin area. Thin async server component th
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ AI Orchestration                   [ Setup Guide ]    │
-├────────────────────────────────────────────────────────┤
-│ [Agents] [Workflows] [Today $] [Conversations]         │
+│ AI Orchestration                     [Setup Guide]     │
+│ Operational overview — agents, spend, and activity.    │
 ├────────────────────────────────────────────────────────┤
 │ Budget alerts (only when alerts exist)                 │
 ├────────────────────────────────────────────────────────┤
-│ Quick actions                                          │
-│ [Create Agent] [Create Workflow] [Upload Docs] [Chat]  │
-├────────────────────────────────────────────────────────┤
-│ Recent activity (last 10, merged + sorted)             │
-└────────────────────────────────────────────────────────┘
+│ [Agents↗] [Today's Spend↗] [Requests↗] [Error Rate↗]  │
+│  (each card is a clickable link to its detail page)    │
+├──────────────────────┬─────────────────────────────────┤
+│  7-day spend trend   │  Recent activity                │
+│  (chart)             │  (unified feed: conversations,  │
+│                      │   executions, errors inline)    │
+├──────────────────────┤                                 │
+│  Top capabilities    │                                 │
+│  (bar chart)         │                                 │
+└──────────────────────┴─────────────────────────────────┘
 ```
+
+### Design principles
+
+- **Operational focus**: stat cards show live signals (spend, requests, error rate) rather than static inventory counts (workflows, total conversations) that rarely change.
+- **No duplicate navigation**: Quick Actions section was removed — the sidebar already provides all navigation links.
+- **Unified timeline**: Recent Activity and Recent Errors merged into a single feed. Error items are visually distinguished with a red icon and "error" badge.
+- **Clickable cards**: Each stat card links to its detail page (agents → agents list, spend → costs, requests → conversations, error rate → analytics).
 
 ## Data sources
 
 Every fetch is **null-safe**. A failing API renders an empty state, never throws.
 
-| Component                       | Endpoint                                                | Helper                                                   |
-| ------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| Agents stat card                | `GET /admin/orchestration/agents?page=1&limit=1`        | `getPaginatedTotal()`                                    |
-| Workflows stat card             | `GET /admin/orchestration/workflows?page=1&limit=1`     | `getPaginatedTotal()`                                    |
-| Today's spend stat card         | `GET /admin/orchestration/costs/summary`                | `getCostSummary()`                                       |
-| Conversations stat card         | `GET /admin/orchestration/conversations?page=1&limit=1` | `getPaginatedTotal()`                                    |
-| Budget alerts banner            | `GET /admin/orchestration/costs/alerts`                 | `getBudgetAlerts()`                                      |
-| Recent activity (conversations) | `GET /admin/orchestration/conversations?limit=10`       | `getRecentActivity()`                                    |
-| Recent activity (executions)    | `GET /admin/orchestration/executions?limit=10`          | `getRecentActivity()` (501 stub — treated as empty list) |
+| Component              | Endpoint                                                 | Notes                                       |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------- |
+| Agents stat card       | `GET /admin/orchestration/agents?page=1&limit=1`         | `getPaginatedTotal()` extracts `meta.total` |
+| Today's spend card     | `GET /admin/orchestration/costs/summary`                 | `getCostSummary()` → `totals.today`         |
+| Today's requests card  | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `todayRequests`     |
+| Error rate card        | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `errorRate`         |
+| Budget alerts banner   | `GET /admin/orchestration/costs/alerts`                  | `getBudgetAlerts()`                         |
+| 7-day spend trend      | `GET /admin/orchestration/costs/summary`                 | `getCostSummary()` → `trend.slice(-7)`      |
+| Top capabilities       | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `topCapabilities`   |
+| Activity feed (convos) | `GET /admin/orchestration/conversations?limit=10`        | `getActivityFeed()`                         |
+| Activity feed (execs)  | `GET /admin/orchestration/executions?limit=10`           | `getActivityFeed()` (501 stub → empty list) |
+| Activity feed (errors) | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `recentErrors`      |
 
 All calls go through `serverFetch()` + `parseApiResponse()` — never raw `fetch`. Cookie forwarding is automatic.
 
 ## Error handling
 
-Each helper wraps its fetch in `try/catch` and returns `null` on any failure. Failures are logged with `logger.error(message, err, { ...meta })`. The page then renders each component with `null`-safe props (em-dashes for stats, empty-state cards for the activity feed, nothing at all for the budget alerts banner).
+Each helper wraps its fetch in `try/catch` and returns `null` on any failure. Failures are logged with `logger.error(message, err, { ...meta })`. The page renders each component with `null`-safe props (em-dashes for stats, empty-state cards for the activity feed, nothing for budget alerts).
 
-Do **not** throw from a helper — the entire page would error-boundary and the user would see nothing. The `overview/page.tsx` pattern is the reference.
+Do **not** throw from a helper — the entire page would error-boundary and the user would see nothing.
 
 ## Sub-components
 
 All live under `components/admin/orchestration/`. Server components unless flagged.
 
-- `orchestration-stats-cards.tsx` — four stat cards; `null` values render as `—`.
+- `dashboard-stats-cards.tsx` — four clickable stat cards (Agents, Spend, Requests, Error Rate); `null` values render as `—`; cards link to their detail pages; error rate > 5% renders in red.
+- `dashboard-activity-feed.tsx` — unified timeline merging conversations, executions, and errors; error items show red icon + "error" badge; sorted newest-first.
 - `budget-alerts-banner.tsx` — returns `null` when no alerts so layout stays stable.
-- `recent-activity-list.tsx` — merges conversations + executions, sorts newest-first.
-- `quick-actions.tsx` — four `<Link>`s styled as buttons, no client state.
-- `setup-wizard-launcher.tsx` — client island; renders the `Setup Guide` button and lazy-mounts `setup-wizard.tsx` in a Dialog on click. See [`setup-wizard.md`](./setup-wizard.md).
+- `top-capabilities-panel.tsx` — ranked bar chart of most-used capabilities.
+- `cost-trend-chart.tsx` — 7-day stacked area chart by tier (client component).
+- `setup-wizard-launcher.tsx` — client island; renders `Setup Guide` button and lazy-mounts the wizard.
+
+### Removed from dashboard (still exist as components)
+
+- `orchestration-stats-cards.tsx` — replaced by `dashboard-stats-cards.tsx`.
+- `observability-stats-cards.tsx` — merged into `dashboard-stats-cards.tsx`.
+- `recent-activity-list.tsx` — replaced by `dashboard-activity-feed.tsx`.
+- `recent-errors-panel.tsx` — merged into `dashboard-activity-feed.tsx`.
+- `quick-actions.tsx` — removed from dashboard (sidebar covers this).
 
 ## Adding a new stat card
 
 1. Add a new `getX()` helper in `page.tsx` that returns `Promise<T | null>`.
 2. Append it to the `Promise.all([...])` destructure.
-3. Extend `OrchestrationStatsCardsProps` with the new prop and render a new `<StatCard>` inside `orchestration-stats-cards.tsx`.
+3. Extend `DashboardStatsCardsProps` with the new prop and render a new `<StatCard>` inside `dashboard-stats-cards.tsx`.
 
 Keep stat cards cheap — they run on every page render and are not cached.
 

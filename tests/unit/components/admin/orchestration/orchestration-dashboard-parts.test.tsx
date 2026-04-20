@@ -1,52 +1,62 @@
 /**
  * Orchestration Dashboard Component Tests
  *
- * Covers the dashboard's sub-components in lieu of a full server-component
- * integration test:
- *   - OrchestrationStatsCards: null → em-dash, number formatting
+ * Covers the dashboard's sub-components:
+ *   - DashboardStatsCards: null → em-dash, number formatting, clickable links
  *   - BudgetAlertsBanner: renders null on empty, rows link correctly
- *   - RecentActivityList: empty state + row rendering
- *   - QuickActions: 4 expected hrefs
+ *   - DashboardActivityFeed: empty state + row rendering + error items
  */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { OrchestrationStatsCards } from '@/components/admin/orchestration/orchestration-stats-cards';
+import { DashboardStatsCards } from '@/components/admin/orchestration/dashboard-stats-cards';
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
 import {
-  RecentActivityList,
-  type RecentActivityItem,
-} from '@/components/admin/orchestration/recent-activity-list';
-import { QuickActions } from '@/components/admin/orchestration/quick-actions';
+  DashboardActivityFeed,
+  type ActivityFeedItem,
+} from '@/components/admin/orchestration/dashboard-activity-feed';
 
-describe('OrchestrationStatsCards', () => {
+describe('DashboardStatsCards', () => {
   it('renders em-dashes when values are null', () => {
     render(
-      <OrchestrationStatsCards
+      <DashboardStatsCards
         agentsCount={null}
-        workflowsCount={null}
         todayCostUsd={null}
-        conversationsCount={null}
+        todayRequests={null}
+        errorRate={null}
       />
     );
-    // Four cards, each showing "—"
     expect(screen.getAllByText('—')).toHaveLength(4);
   });
 
-  it('formats numbers with locale separators and cost as USD', () => {
+  it('formats numbers and cost correctly', () => {
     render(
-      <OrchestrationStatsCards
+      <DashboardStatsCards
         agentsCount={12}
-        workflowsCount={3}
         todayCostUsd={4.2}
-        conversationsCount={1234}
+        todayRequests={847}
+        errorRate={0.032}
       />
     );
     expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('$4.20')).toBeInTheDocument();
-    expect(screen.getByText('1,234')).toBeInTheDocument();
+    expect(screen.getByText('847')).toBeInTheDocument();
+    expect(screen.getByText('3.2%')).toBeInTheDocument();
+  });
+
+  it('renders four clickable links to detail pages', () => {
+    render(
+      <DashboardStatsCards agentsCount={1} todayCostUsd={1} todayRequests={1} errorRate={0.01} />
+    );
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(4);
+
+    const hrefs = links.map((el) => el.getAttribute('href'));
+    expect(hrefs).toContain('/admin/orchestration/agents');
+    expect(hrefs).toContain('/admin/orchestration/costs');
+    expect(hrefs).toContain('/admin/orchestration/conversations');
+    expect(hrefs).toContain('/admin/orchestration/analytics');
   });
 });
 
@@ -97,19 +107,19 @@ describe('BudgetAlertsBanner', () => {
   });
 });
 
-describe('RecentActivityList', () => {
+describe('DashboardActivityFeed', () => {
   it('shows an empty state when items is null', () => {
-    render(<RecentActivityList items={null} />);
-    expect(screen.getByText(/no recent conversations or executions/i)).toBeInTheDocument();
+    render(<DashboardActivityFeed items={null} />);
+    expect(screen.getByText(/no recent activity/i)).toBeInTheDocument();
   });
 
   it('shows an empty state when items is empty', () => {
-    render(<RecentActivityList items={[]} />);
-    expect(screen.getByText(/no recent conversations or executions/i)).toBeInTheDocument();
+    render(<DashboardActivityFeed items={[]} />);
+    expect(screen.getByText(/no recent activity/i)).toBeInTheDocument();
   });
 
-  it('renders conversation and execution rows up to the limit', () => {
-    const items: RecentActivityItem[] = [
+  it('renders conversation, execution, and error rows', () => {
+    const items: ActivityFeedItem[] = [
       {
         kind: 'conversation',
         id: 'c1',
@@ -125,9 +135,17 @@ describe('RecentActivityList', () => {
         timestamp: new Date('2026-04-02T12:00:00Z').toISOString(),
         href: '/admin/orchestration/executions/e1',
       },
+      {
+        kind: 'error',
+        id: 'err1',
+        title: 'Error err1xxxx',
+        subtitle: 'Timeout',
+        timestamp: new Date('2026-04-03T12:00:00Z').toISOString(),
+        href: '/admin/orchestration/executions/err1',
+      },
     ];
 
-    render(<RecentActivityList items={items} />);
+    render(<DashboardActivityFeed items={items} />);
 
     expect(screen.getByRole('link', { name: 'My chat' })).toHaveAttribute(
       'href',
@@ -138,25 +156,7 @@ describe('RecentActivityList', () => {
       '/admin/orchestration/executions/e1'
     );
     expect(screen.getByText('running')).toBeInTheDocument();
-  });
-});
-
-describe('QuickActions', () => {
-  it('renders the four expected action links', () => {
-    render(<QuickActions />);
-
-    // Assert at least the four standard orchestration deep links exist.
-    const expectedHrefs = [
-      '/admin/orchestration/agents/new',
-      '/admin/orchestration/workflows/new',
-      '/admin/orchestration/knowledge',
-      '/admin/orchestration/conversations',
-    ];
-
-    for (const href of expectedHrefs) {
-      const links = screen.getAllByRole('link');
-      const match = links.find((el) => el.getAttribute('href') === href);
-      expect(match, `missing link ${href}`).toBeDefined();
-    }
+    expect(screen.getByText('error')).toBeInTheDocument();
+    expect(screen.getByText('Timeout')).toBeInTheDocument();
   });
 });
