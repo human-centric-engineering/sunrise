@@ -62,11 +62,16 @@ export default async function WebhooksListPage() {
             </p>
             <p className="text-foreground mt-2 font-medium">How it works</p>
             <p>
-              When an event fires, Sunrise sends an HMAC-signed POST request to your endpoint with
-              the event type and payload. Failed deliveries are retried with exponential backoff.
+              When an event fires, Sunrise sends a signed POST request to your endpoint with the
+              event type and payload. The signature (HMAC-SHA256 — a tamper-proof hash using your
+              secret key) lets you verify the request genuinely came from Sunrise. Failed deliveries
+              are retried with exponential backoff.
             </p>
             <p className="text-foreground mt-2 font-medium">This page</p>
-            <p>Create, edit, and monitor webhook subscriptions and their delivery history.</p>
+            <p>
+              Create and monitor webhook subscriptions — each subscription tells Sunrise which
+              events to notify you about and where to send them (your endpoint URL).
+            </p>
           </FieldHelp>
         </h1>
         <p className="text-muted-foreground text-sm">

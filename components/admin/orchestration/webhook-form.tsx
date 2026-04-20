@@ -183,8 +183,11 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         <Label htmlFor="url">
           Endpoint URL{' '}
           <FieldHelp title="Where to send events">
-            The HTTPS URL that will receive webhook POST requests. Must be a publicly reachable
-            address — private IPs, localhost, and cloud metadata endpoints are blocked for security.
+            The URL of your external system that should receive event notifications (e.g. a Slack
+            integration, your backend API, or a service like Zapier). Sunrise will send a POST
+            request to this address each time a selected event fires. Must be publicly reachable
+            over HTTPS — private IPs, localhost, and cloud metadata endpoints are blocked for
+            security.
           </FieldHelp>
         </Label>
         <Input
@@ -201,10 +204,12 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
       <div className="grid gap-2">
         <Label htmlFor="secret">
           Signing secret{' '}
-          <FieldHelp title="HMAC verification">
-            Used to sign each delivery with an HMAC-SHA256 signature in the{' '}
-            <code>X-Webhook-Signature</code> header. Your endpoint should verify this to confirm the
-            request came from Sunrise. Must be at least 16 characters.
+          <FieldHelp title="How signing works">
+            A shared secret between Sunrise and your endpoint, used to prove each delivery is
+            genuine. Sunrise hashes every request body with this secret and includes the result in
+            the <code>X-Webhook-Signature</code> header. Your endpoint re-computes the same hash —
+            if it matches, the request definitely came from Sunrise and hasn&apos;t been tampered
+            with. Must be at least 16 characters. Click the key icon to generate one automatically.
           </FieldHelp>
         </Label>
         <div className="flex gap-2">
@@ -245,9 +250,31 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
       <div className="grid gap-2">
         <Label>
           Events{' '}
-          <FieldHelp title="Which events trigger this webhook">
-            Select the event types that should fire a POST to your endpoint. Each delivery includes
-            the event type, timestamp, and relevant payload.
+          <FieldHelp title="Which events trigger this webhook" contentClassName="w-96">
+            <p>
+              Pick the events you care about. Each time one fires, Sunrise sends a POST with the
+              event type, timestamp, and relevant data to your endpoint.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Example use cases</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4">
+              <li>
+                <span className="font-medium">Budget Exceeded</span> → post to a Slack channel so
+                your team knows an agent hit its spending limit
+              </li>
+              <li>
+                <span className="font-medium">Conversation Escalated</span> → create a support
+                ticket in Zendesk or JIRA when an agent can&apos;t resolve a query
+              </li>
+              <li>
+                <span className="font-medium">Workflow Failed</span> → trigger a PagerDuty alert so
+                on-call engineers investigate
+              </li>
+            </ul>
+            <p className="text-muted-foreground mt-2 text-xs">
+              Tip: to send email, SMS, or WhatsApp notifications, point the webhook at an automation
+              platform (Zapier, Make, n8n) or a service like SendGrid/Twilio that accepts incoming
+              webhooks and routes to those channels.
+            </p>
           </FieldHelp>
         </Label>
         <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
