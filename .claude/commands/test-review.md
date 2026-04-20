@@ -138,6 +138,48 @@ Resolve pairs by path only — **do NOT read the files into the main context**.
 - Read `.claude/docs/test-brittle-patterns.md` for the known anti-pattern list. The doc has two sections: `## Patterns` (general — apply to every test) and `## Integration Patterns` (#7–#13 — apply additionally to any pair tagged `type: integration`).
 - Summarise as a short brief for the agents — do NOT forward full file contents; agents will read what they need themselves. If ANY pair is integration-typed, the brief MUST include the integration section headers so agents know to consult them.
 
+### Step 4.5: Collect V8 coverage data
+
+Run scoped Vitest coverage to give the Coverage Completeness agent (Agent 2) actual line/branch/function coverage data. This eliminates false positives from the agent failing to notice existing tests in large files.
+
+**Group test files by source file.** Multiple test files may map to the same source (e.g. `config-sendResetPassword.test.ts` and `config-database-hook.test.ts` both cover `lib/auth/config.ts`). Build a map: `{ sourceFile → [testFile1, testFile2, ...] }`.
+
+**Run one coverage command per source file:**
+
+```bash
+npx vitest run <testFile1> <testFile2> ... \
+  --coverage \
+  --coverage.reporter=json \
+  --coverage.include='<sourceFile>' \
+  2>/dev/null || true
+```
+
+The `|| true` is required because Vitest exits non-zero when coverage thresholds aren't met (expected — we're running a subset of tests). Redirect stderr to suppress threshold warnings.
+
+**Parse `coverage/coverage-final.json`** after each run to extract per-source-file:
+
+- **Uncovered functions** — name and line range (from `fnMap` + `f` where count is 0)
+- **Uncovered statement line ranges** — group contiguous uncovered lines into ranges (from `statementMap` + `s` where count is 0)
+- **Uncovered branch locations** — type and line number (from `branchMap` + `b` where any arm count is 0)
+- **Summary stats** — covered/total for statements, functions, branches
+
+**Build a coverage brief per source file.** Example:
+
+```
+COVERAGE for lib/auth/config.ts (via config-sendResetPassword.test.ts + config-database-hook.test.ts):
+  Statements: 53/67 (79%) · Functions: 4/8 (50%) · Branches: 56/72 (78%)
+  Covered functions: sendResetPasswordHook (L252, 18 hits), userCreateAfterHook (L154, 12 hits), ...
+  Uncovered functions: afterEmailVerificationHook (L291-325), sendVerificationEmailHook (L344-370)
+  Uncovered statement ranges: L292, L301, L303-304, L347, L349-350, L354, L359
+  Uncovered branches: if L69, binary-expr L83, cond-expr L226
+```
+
+This brief is forwarded to Agent 2 (Coverage Completeness) only. The other 4 agents do not need it — their axes (assertion quality, mock realism, brittleness, alignment) are about the quality of existing tests, not whether lines are covered.
+
+**Timing:** ~1–2 seconds per source file. For 14 pairs mapping to 10 unique source files, this adds ~15–20 seconds — negligible compared to agent runtime.
+
+**If coverage collection fails** (missing `@vitest/coverage-v8`, config issue, etc.), log a warning and proceed without coverage data. Agent 2 falls back to the manual source-walking approach (the pre-4.5 behaviour). The coverage brief is an enhancement, not a gate.
+
 ### Step 5: Launch 5 parallel Sonnet review agents
 
 Send a **single message with 5 Agent tool calls** (one per axis) using `model: "sonnet"`. Each agent receives:
@@ -147,6 +189,7 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 - The known-anti-patterns list from `test-brittle-patterns.md` — both sections (`## Patterns` and `## Integration Patterns`) when any pair is integration-typed.
 - Their specific review axis (below) — each includes type-specific criteria. Apply general criteria to every pair; apply integration criteria ONLY to pairs tagged `type: integration`.
 - The accept-annotation grammar (so they filter annotated findings before emitting).
+- **Agent 2 only:** the per-source coverage briefs from Step 4.5 (if available).
 
 **Agent 1: Assertion Quality**
 
@@ -170,9 +213,24 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 
 **Agent 2: Coverage Completeness**
 
-> Read each (test, source) pair in the list. For each pair, walk the source file and enumerate contract points; then check whether each has a corresponding test.
+> You receive two inputs per source file: (1) the file pair list with test and source paths, and (2) **V8 coverage data** from Step 4.5 showing which functions, statements, and branches are covered vs uncovered. If no coverage data is provided, fall back to manual source-walking (read the full source and test files).
 >
-> **General (all pairs):**
+> **When coverage data IS available (the normal path):**
+>
+> Start from the uncovered functions, statements, and branches listed in the coverage brief. For each uncovered area:
+>
+> 1. Read only the uncovered lines in the source file (use the line ranges from the brief).
+> 2. Determine whether the uncovered code represents a meaningful contract gap — a `throw`, error branch, validation failure, auth check, or conditional with non-trivial behaviour difference.
+> 3. If it does, check the test file for any test that might cover it indirectly (search for the function name, error code, or branch condition in `it()` / `describe()` blocks). The coverage data already accounts for indirect coverage — if V8 says a line is uncovered, no test executes it — so this step is a sanity check, not a full scan.
+> 4. If the uncovered code is a defensive branch with no documented contract (e.g. pure paranoia `if` with no observable behaviour difference), skip it.
+>
+> **Do NOT flag covered code as missing tests.** If the coverage brief shows a function/statement/branch as covered (hit count > 0), it has at least one test exercising it. You may still flag covered code under other axes (assertion quality, mock realism), but that is NOT this agent's job — leave it to Agents 1, 3, 4, 5.
+>
+> **When coverage data is NOT available (fallback):**
+>
+> Read each (test, source) pair in the list. For each pair, walk the source file and enumerate contract points; then check whether each has a corresponding test. For test files over 500 lines, enumerate all existing `it()` / `test()` titles before identifying gaps — this prevents false positives from missing existing tests in large files.
+>
+> **General contract points to check (all pairs):**
 >
 > - `throw` statements and error-returning branches
 > - `catch` blocks and error handlers
@@ -308,6 +366,7 @@ Use this format:
 **Reviewed:** {ISO date}
 **Branch:** {branch} · **HEAD:** {head-short}
 **File pairs reviewed:** {count} ({unit_count} unit · {integration_count} integration)
+**Coverage data:** {yes — N source files | no — fallback mode}
 **Findings:** {above-threshold count} (filtered from {total count})
 
 {One-paragraph summary: overall quality, themes that emerged, whether the test suite appears to give real confidence. If both unit and integration pairs were reviewed, note any type-specific patterns in the findings.}

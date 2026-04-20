@@ -293,7 +293,7 @@ For Rotten files or vague NOTES, escalate to `/test-review <file>` → `/test-fi
 
 ### How Commands Chain
 
-`/test-review` writes a **confidence-scored report** to `.reviews/tests-{slug}.md`: 5 parallel Sonnet agents score findings 0–100, filter ≥80, and the user picks what to action with `/test-fix`. There is no auto-loop.
+`/test-review` writes a **confidence-scored report** to `.reviews/tests-{slug}.md`: 5 parallel Sonnet agents score findings 0–100, filter ≥80, and the user picks what to action with `/test-fix`. The Coverage Completeness agent receives V8 coverage data (collected via `vitest --coverage` before agent dispatch) so it focuses on genuinely uncovered code rather than manually scanning large test files. There is no auto-loop.
 
 ```
 # Gate (PR / branch review)
