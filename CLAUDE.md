@@ -142,7 +142,13 @@ Use these for implementation tasks:
 | `/form-builder`      | Forms with Zod + react-hook-form                    |
 | `/component-builder` | Reusable React components                           |
 | `/page-builder`      | New pages with layouts/metadata                     |
-| `/testing`           | Unit and integration tests                          |
+| `/testing`           | Quick test patterns reference                       |
+| `/test-plan`         | Analyze code and produce a test plan                |
+| `/test-write`        | Execute test plan with test-engineer agents         |
+| `/test-review`       | Confidence-scored test quality report (≥80 filter)  |
+| `/test-fix`          | Apply findings from a `/test-review` report         |
+| `/test-coverage`     | Find coverage gaps and untested files               |
+| `/test-triage`       | Ledger-driven triage for codebase-wide remediation  |
 | `/security-hardener` | Rate limiting, CORS, CSP                            |
 | `/email-designer`    | React Email templates                               |
 | `/docs-writer`       | Create/update .context/ docs                        |
@@ -151,41 +157,95 @@ Use these for implementation tasks:
 
 ## Test Engineering
 
-Use the **test-engineer agent** for comprehensive test coverage. Defined in `.claude/agents/test-engineer.md`.
+Testing has a dedicated command workflow. The commands break down into three jobs — pick the one that matches the situation, don't loop them together reflexively.
 
-### When to Use
+### Three Jobs
 
-**Proactively launch after:**
+| Job         | When                                         | Commands                                                                                     |
+| ----------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Floor**   | Ongoing — raise quality on legacy test files | `/test-triage scan` → `worklist` → `rescan` · optionally `/test-fix from-rescan`             |
+| **Ceiling** | One-shot — build out a critical module       | `/test-coverage` → `/test-plan coverage` → `/test-write plan` → `/test-review` → `/test-fix` |
+| **Gate**    | Every PR — catch regressions before merge    | `/test-review` (branch diff) or `/test-review pr [number]` (PR comment)                      |
 
-- Implementing a new feature, API endpoint, or component
-- Refactoring code (ensure behavior preserved)
-- Fixing bugs (prevent regression)
+### Testing Commands
 
-**On request:**
+| Command          | Purpose                                                                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `/test-plan`     | Analyze code and produce a phased, prioritized test plan                                                                               |
+| `/test-write`    | Execute a plan by spawning test-engineer subagents                                                                                     |
+| `/test-review`   | Confidence-scored quality report (filter ≥80). Writes `.reviews/tests-{slug}.md`. `pr` mode posts a GitHub PR comment.                 |
+| `/test-fix`      | Apply findings from a `.reviews/tests-{slug}.md` report (`--all` or `--findings=N,N,N`). Second mode: `from-rescan <file>` for ledger. |
+| `/test-coverage` | Find coverage gaps and untested files                                                                                                  |
+| `/test-triage`   | Grade test files (Clean/Minor/Bad/Rotten) for codebase remediation                                                                     |
 
-- "Add tests for X"
-- "Review test coverage"
-- "Set up testing framework"
+### Common Flows
 
-### How to Use
-
-Launch via Task tool as a **foreground subagent** (never background):
+**PR gate** (most common — every branch before merge):
 
 ```
-Task tool with subagent_type: "test-engineer"
-prompt: "Write tests for [specific code]. Cover happy path, validation errors, and edge cases."
+/test-review pr            → review + post PR comment (silent if no findings ≥80)
+/test-fix --all            → applies every finding ≥80 from the latest report
+# OR: /test-fix --findings=1,3,5   → pick specific findings
+# OR: /test-review                 → local-only branch diff → .reviews/tests-branch-{name}.md
 ```
 
-**Critical constraint:** Never use `run_in_background: true` — test engineers need Write/Edit access.
+`/test-review` is diagnostic, not a gate — it produces a confidence-scored report; the human (or PR reviewer) judges what to action. `/test-fix` does not re-audit after applying.
 
-### Agent vs Skill
+**Ceiling pass** (one-shot on a critical module):
 
-| Use                     | When                                                              |
-| ----------------------- | ----------------------------------------------------------------- |
-| **test-engineer agent** | Writing new tests, comprehensive coverage, multi-file test suites |
-| **`/testing` skill**    | Quick test patterns reference, single test file guidance          |
+```
+/test-coverage lib/auth        → finds coverage gaps
+/test-plan coverage lib/auth   → produces phased plan
+/test-write plan               → executes (spawns test-engineer agents)
+/test-review lib/auth          → audits quality
+/test-fix --all                → applies findings
+```
 
-The agent reads `.context/testing/` automatically and validates tests pass lint and type-check before completing.
+**Add tests for branch changes** (no existing tests yet):
+
+```
+/test-plan           → produces phased plan from branch diff
+/test-write plan     → executes Sprint 1
+/test-review         → audits what was written (writes .reviews/tests-branch-{name}.md)
+/test-fix --all      → fixes findings
+```
+
+The chain stops at `/test-fix`. Re-run `/test-review` only if the source changed after fixes, or on the next PR — do not loop reflexively.
+
+**Codebase-wide test remediation (Floor)** — legacy green-bar cleanup:
+
+```
+/test-triage scan <folder>       → grade files, write to ledger
+/test-triage worklist            → see prioritised queue (Rotten first)
+/test-triage fix <file>          → print both fix paths (A: rescan-driven fast path · B: full review)
+/test-fix from-rescan <file>     → path A: apply ledger NOTES directly (Minor/Bad with specific findings)
+/test-review <file> → /test-fix  → path B: full audit then apply (Rotten, or vague findings)
+/test-triage rescan <file>       → re-grade after fix, update ledger
+```
+
+Use `/test-triage` for quality remediation across 360+ files — it grades cheaply via regex + narrow Sonnet pass and tracks progress across sessions. Use `/test-review` for branch-scoped audit (1–20 file pairs).
+
+**Quick test for 1-2 files** (skips planning):
+
+```
+/test-write lib/auth/guards.ts    → inline plan + execute
+```
+
+### How It Works
+
+`/test-review` writes a **confidence-scored report** to `.reviews/tests-{slug}.md`: 5 parallel Sonnet agents (assertion quality, coverage, mock realism, brittleness, alignment) score findings 0–100, and the report shows findings ≥80. There is no auto-loop — the user (or PR reviewer) reads the report and picks what to action. `/test-fix` consumes a report by slug or by most-recent mtime.
+
+`/test-coverage` and `/test-plan` chain via structured output: `/test-plan` consumes coverage findings to build sprint-based plans; `/test-write` executes plans by spawning **test-engineer** subagents (defined in `.claude/agents/test-engineer.md`).
+
+All commands default to branch diff mode but accept file/folder paths. The test-engineer agent reads `.context/testing/` for patterns and validates tests pass lint and type-check before completing.
+
+### Agent vs Skill vs Commands
+
+| Use                     | When                                                                |
+| ----------------------- | ------------------------------------------------------------------- |
+| **`/test-*` commands**  | Standard workflow — planning, writing, reviewing, coverage analysis |
+| **test-engineer agent** | Spawned automatically by `/test-write` — don't invoke directly      |
+| **`/testing` skill**    | Quick patterns reference, single test file guidance                 |
 
 ## Documentation
 

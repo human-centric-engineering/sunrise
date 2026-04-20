@@ -77,6 +77,7 @@ vi.mock('@/lib/storage/upload', () => ({
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { isStorageEnabled } from '@/lib/storage/upload';
 
 /**
  * Response type interfaces
@@ -92,7 +93,7 @@ interface DeleteSuccessResponse {
 interface ErrorResponse {
   success: false;
   error: {
-    code: string;
+    code?: string;
     message: string;
     details?: unknown;
   };
@@ -124,6 +125,13 @@ describe('DELETE /api/v1/users/[id]', () => {
 
     // Default mock headers
     vi.mocked(headers).mockResolvedValue(new Headers());
+
+    // SOURCE DECISION: Document — S2
+    // Default isStorageEnabled to false so tests that don't reach the storage branch
+    // are not accidentally affected by a previous test's storage-on override.
+    // Tests that need storage ON set vi.mocked(isStorageEnabled).mockReturnValue(true)
+    // explicitly in their own arrange step.
+    vi.mocked(isStorageEnabled).mockReturnValue(false);
   });
 
   describe('Authentication and Authorization', () => {
@@ -158,7 +166,9 @@ describe('DELETE /api/v1/users/[id]', () => {
       const response = await DELETE(mockRequest, { params });
       const data = await parseResponse<ErrorResponse>(response);
 
-      // Assert
+      // SOURCE DECISION: Document — withAdminAuth guard (guards.ts line 172) throws
+      // ForbiddenError('Admin access required') for non-admin sessions. handleAPIError
+      // converts that to { success: false, error: { code: 'FORBIDDEN', message: '...' } }.
       expect(response.status).toBe(403);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('FORBIDDEN');
@@ -221,9 +231,9 @@ describe('DELETE /api/v1/users/[id]', () => {
       const response = await DELETE(mockRequest, { params });
       const data = await parseResponse<ErrorResponse>(response);
 
-      // Assert
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
+      expect(data.error.code).toBe('CANNOT_DELETE_SELF');
       expect(data.error.message).toBe('Cannot delete your own account');
 
       // Should not query database or delete when trying to self-delete
@@ -259,6 +269,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error.message).toBe('Cannot delete an admin account. Demote the user first.');
+      // Source L210 passes no `code:` to errorResponse — pin the no-code contract.
+      expect(data.error.code).toBeUndefined();
 
       // Should check if user exists but not attempt deletion
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -369,6 +381,42 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Assert
       expect(response.headers.get('Content-Type')).toContain('application/json');
     });
+
+    it('should emit a structured log.info with deletedUserId and adminId after successful delete', async () => {
+      // Arrange
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const targetUserId = 'cmjbv4i3x00031wsloputgwbd';
+      const mockUser = {
+        id: targetUserId,
+        name: 'Log Test User',
+        email: 'logtest@example.com',
+        role: 'USER',
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.user.delete).mockResolvedValue(mockUser as any);
+
+      const { isStorageEnabled } = await import('@/lib/storage/upload');
+      vi.mocked(isStorageEnabled).mockReturnValue(false);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams(targetUserId);
+
+      // Act
+      const response = await DELETE(mockRequest, { params });
+
+      // Assert — status first, then structured log contract
+      expect(response.status).toBe(200);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User deleted by admin',
+        expect.objectContaining({
+          deletedUserId: targetUserId,
+          adminId: adminUser.user.id,
+        })
+      );
+    });
   });
 
   describe('Avatar File Cleanup', () => {
@@ -391,6 +439,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Mock storage as enabled
       const { isStorageEnabled, deleteByPrefix } = await import('@/lib/storage/upload');
       vi.mocked(isStorageEnabled).mockReturnValue(true);
+      // test-review:accept mock-shape-drift — DeleteResult shape matches; prefix-as-key is valid
+      // per lib/storage/upload.ts:218. Shape is consistent throughout this file.
       vi.mocked(deleteByPrefix).mockResolvedValue({
         success: true,
         key: `avatars/${targetUserId}/`,
@@ -458,6 +508,44 @@ describe('DELETE /api/v1/users/[id]', () => {
       });
     });
 
+    it('should call deleteByPrefix BEFORE prisma.user.delete (storage-enabled ordering)', async () => {
+      // Arrange — call order matters: avatar cleanup must precede row deletion so a storage
+      // failure leaves orphan files rather than orphan DB rows
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const targetUserId = 'cmjbv4i3x00030wsloputgwbc';
+      const mockUser = {
+        id: targetUserId,
+        name: 'Order Test User',
+        email: 'order@example.com',
+        role: 'USER',
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
+      vi.mocked(prisma.user.delete).mockResolvedValue(mockUser as any);
+
+      const { isStorageEnabled, deleteByPrefix } = await import('@/lib/storage/upload');
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(deleteByPrefix).mockResolvedValue({
+        success: true,
+        key: `avatars/${targetUserId}/`,
+      });
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams(targetUserId);
+
+      // Act
+      const response = await DELETE(mockRequest, { params });
+
+      // Assert — status first, then call-order proof
+      expect(response.status).toBe(200);
+      const deleteByPrefixOrder = vi.mocked(deleteByPrefix).mock.invocationCallOrder[0];
+      const prismaDeleteOrder = vi.mocked(prisma.user.delete).mock.invocationCallOrder[0];
+      expect(deleteByPrefixOrder).toBeLessThan(prismaDeleteOrder);
+      expect(deleteByPrefix).toHaveBeenCalledWith(`avatars/${targetUserId}/`);
+    });
+
     it('should handle avatar cleanup errors gracefully', async () => {
       // Arrange
       const adminUser = mockAdminUser();
@@ -500,13 +588,17 @@ describe('DELETE /api/v1/users/[id]', () => {
   });
 
   describe('Error Handling', () => {
-    it('should return 400 for invalid user ID format', async () => {
-      // Arrange
+    it.each([
+      ['', 'empty string'],
+      ['invalid-id-format', 'malformed (non-CUID)'],
+    ])('should return 400 VALIDATION_ERROR for invalid user ID (%s — %s)', async (invalidId) => {
+      // Arrange — both inputs fail z.cuid() in userIdSchema; merged into one parameterised test
+      // since the schema has a single CUID rule (no distinct emptiness vs format rule).
       const adminUser = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
 
       const mockRequest = {} as NextRequest;
-      const params = createMockParams(''); // Empty ID
+      const params = createMockParams(invalidId);
 
       // Act
       const response = await DELETE(mockRequest, { params });
@@ -520,24 +612,6 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Should not attempt database operations
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
-    });
-
-    it('should return 400 for malformed user ID', async () => {
-      // Arrange
-      const adminUser = mockAdminUser();
-      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
-
-      const mockRequest = {} as NextRequest;
-      const params = createMockParams('invalid-id-format'); // Not a valid CUID
-
-      // Act
-      const response = await DELETE(mockRequest, { params });
-      const data = await parseResponse<ErrorResponse>(response);
-
-      // Assert
-      expect(response.status).toBe(400);
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('VALIDATION_ERROR');
     });
 
     it('should handle database errors gracefully', async () => {

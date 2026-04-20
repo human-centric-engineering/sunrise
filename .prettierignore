@@ -37,3 +37,8 @@ CHANGELOG.md
 # Coverage
 coverage
 .nyc_output
+
+# Agent tooling artefacts — specific format preserved for AI agents
+# The remediation ledger uses column-aligned pipe tables that Prettier collapses,
+# which breaks the deterministic read-parse-write round-trip used by /test-triage.
+.claude/testing/remediation-ledger.md

@@ -7,28 +7,52 @@
  * Features tested:
  * - Component renders null (invisible component)
  * - Passes properties and skipInitial to usePageTracking hook
- * - Initial page tracking (with and without skipInitial)
- * - Subsequent pathname changes trigger tracking
- * - No double tracking on re-renders with same pathname
- * - Custom properties are included in page events
+ * - Hook is called exactly once per mount (merged into no-options test)
+ * - Re-renders propagate updated props to the hook
+ * - Hook return value is discarded (wrapper is intentional no-op)
+ * - No post-unmount hook calls
  *
  * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/analytics/page-tracker.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import { Suspense, Component, type ErrorInfo, type ReactNode } from 'react';
 import { PageTracker } from '@/components/analytics/page-tracker';
 import { usePageTracking } from '@/lib/analytics';
 
-// Mock the analytics hooks
+/**
+ * Minimal class-based error boundary for testing purposes.
+ * Catches errors from children and renders a fallback element.
+ */
+class TestErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo): void {
+    // Intentionally suppressed — boundary absorbs the error in tests
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// Mock the analytics hooks (overrides global setup.ts mock for this file)
 vi.mock('@/lib/analytics', () => ({
   usePageTracking: vi.fn(),
-}));
-
-// Mock next/navigation
-vi.mock('next/navigation', () => ({
-  usePathname: vi.fn(() => '/'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
 }));
 
 /**
@@ -51,30 +75,6 @@ describe('components/analytics/page-tracker', () => {
       // Assert
       expect(container.firstChild).toBeNull();
     });
-
-    it('should render null with properties', () => {
-      // Arrange & Act
-      const { container } = render(<PageTracker properties={{ source: 'landing' }} />);
-
-      // Assert
-      expect(container.firstChild).toBeNull();
-    });
-
-    it('should render null with skipInitial', () => {
-      // Arrange & Act
-      const { container } = render(<PageTracker skipInitial />);
-
-      // Assert
-      expect(container.firstChild).toBeNull();
-    });
-
-    it('should render null with both properties and skipInitial', () => {
-      // Arrange & Act
-      const { container } = render(<PageTracker properties={{ source: 'landing' }} skipInitial />);
-
-      // Assert
-      expect(container.firstChild).toBeNull();
-    });
   });
 
   describe('usePageTracking hook integration', () => {
@@ -82,9 +82,15 @@ describe('components/analytics/page-tracker', () => {
       // Arrange & Act
       render(<PageTracker />);
 
-      // Assert
+      // Assert — component destructures { properties, skipInitial } from props;
+      // when no props are passed both values are undefined, not an empty object.
+      // The count assertion also proves the hook is not silently skipped or called
+      // multiple times — single-fire on mount is the contract.
       expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenCalledWith({});
+      expect(usePageTracking).toHaveBeenCalledWith({
+        properties: undefined,
+        skipInitial: undefined,
+      });
     });
 
     it('should call usePageTracking with properties only', () => {
@@ -94,18 +100,21 @@ describe('components/analytics/page-tracker', () => {
       // Act
       render(<PageTracker properties={properties} />);
 
-      // Assert
+      // Assert — source always passes both keys so skipInitial: undefined will be present
       expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenCalledWith({ properties });
+      expect(usePageTracking).toHaveBeenCalledWith({
+        properties: { source: 'landing', campaign: 'summer' },
+        skipInitial: undefined,
+      });
     });
 
     it('should call usePageTracking with skipInitial only', () => {
       // Arrange & Act
       render(<PageTracker skipInitial />);
 
-      // Assert
+      // Assert — source always passes both keys so properties: undefined will be present
       expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenCalledWith({ skipInitial: true });
+      expect(usePageTracking).toHaveBeenCalledWith({ properties: undefined, skipInitial: true });
     });
 
     it('should call usePageTracking with both properties and skipInitial', () => {
@@ -124,9 +133,10 @@ describe('components/analytics/page-tracker', () => {
       // Arrange & Act
       render(<PageTracker skipInitial={false} />);
 
-      // Assert
+      // Assert — both keys must be present to be consistent with sibling tests at L61/L82/L94
+      // which always assert the full call shape including properties: undefined
       expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenCalledWith({ skipInitial: false });
+      expect(usePageTracking).toHaveBeenCalledWith({ properties: undefined, skipInitial: false });
     });
   });
 
@@ -137,39 +147,6 @@ describe('components/analytics/page-tracker', () => {
 
       // Assert
       expect(usePageTracking).toHaveBeenCalledWith({ properties: {} });
-    });
-
-    it('should pass string properties', () => {
-      // Arrange
-      const properties = { source: 'google', medium: 'cpc' };
-
-      // Act
-      render(<PageTracker properties={properties} />);
-
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ properties });
-    });
-
-    it('should pass number properties', () => {
-      // Arrange
-      const properties = { pageNumber: 1, resultsPerPage: 20 };
-
-      // Act
-      render(<PageTracker properties={properties} />);
-
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ properties });
-    });
-
-    it('should pass boolean properties', () => {
-      // Arrange
-      const properties = { isDarkMode: true, isAuthenticated: false };
-
-      // Act
-      render(<PageTracker properties={properties} />);
-
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ properties });
     });
 
     it('should pass mixed property types', () => {
@@ -189,136 +166,229 @@ describe('components/analytics/page-tracker', () => {
   });
 
   describe('re-render behavior', () => {
-    it('should call usePageTracking on each re-render', () => {
+    it('should call usePageTracking on first render with initial props', () => {
       // Arrange
-      const { rerender } = render(<PageTracker />);
+      const initialProps = { source: 'home' };
+      render(<PageTracker properties={initialProps} />);
 
-      // Act - first render already happened
+      // Assert — hook receives initial props on first render
       expect(usePageTracking).toHaveBeenCalledTimes(1);
-
-      // Re-render with same props
-      rerender(<PageTracker />);
-
-      // Assert - hook is called again (React behavior)
-      expect(usePageTracking).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(usePageTracking).mock.calls[0][0]).toEqual({
+        properties: initialProps,
+        skipInitial: undefined,
+      });
     });
 
-    it('should call usePageTracking with updated properties on re-render', () => {
+    it('should call usePageTracking on re-render with updated props', () => {
+      // Arrange
+      const initialProps = { source: 'home' };
+      const updatedProps = { source: 'search' };
+      const { rerender } = render(<PageTracker properties={initialProps} />);
+
+      // Act — re-render with different props
+      rerender(<PageTracker properties={updatedProps} />);
+
+      // Assert — hook receives updated props on second render
+      expect(usePageTracking).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(usePageTracking).mock.calls[1][0]).toEqual({
+        properties: updatedProps,
+        skipInitial: undefined,
+      });
+    });
+
+    it('should call usePageTracking with initial properties on first render', () => {
+      // Arrange & Act
+      render(<PageTracker properties={{ source: 'initial' }} />);
+
+      // Assert — first render receives the initial properties
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(usePageTracking).mock.calls[0][0]).toEqual({
+        properties: { source: 'initial' },
+        skipInitial: undefined,
+      });
+    });
+
+    it('should call usePageTracking with updated properties after re-render', () => {
       // Arrange
       const { rerender } = render(<PageTracker properties={{ source: 'initial' }} />);
 
-      // Act
-      expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenLastCalledWith({ properties: { source: 'initial' } });
-
-      // Re-render with different props
+      // Act — re-render with different properties
       rerender(<PageTracker properties={{ source: 'updated' }} />);
 
-      // Assert
+      // Assert — second render receives the updated properties
       expect(usePageTracking).toHaveBeenCalledTimes(2);
-      expect(usePageTracking).toHaveBeenLastCalledWith({ properties: { source: 'updated' } });
+      expect(vi.mocked(usePageTracking).mock.calls[1][0]).toEqual({
+        properties: { source: 'updated' },
+        skipInitial: undefined,
+      });
     });
 
-    it('should call usePageTracking with updated skipInitial on re-render', () => {
+    it('should call usePageTracking with initial skipInitial on first render', () => {
+      // Arrange & Act
+      render(<PageTracker skipInitial={false} />);
+
+      // Assert — first render receives the initial skipInitial value
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(usePageTracking).mock.calls[0][0]).toEqual({
+        properties: undefined,
+        skipInitial: false,
+      });
+    });
+
+    it('should call usePageTracking with updated skipInitial after re-render', () => {
       // Arrange
       const { rerender } = render(<PageTracker skipInitial={false} />);
 
-      // Act
-      expect(usePageTracking).toHaveBeenCalledTimes(1);
-      expect(usePageTracking).toHaveBeenLastCalledWith({ skipInitial: false });
-
-      // Re-render with different skipInitial
+      // Act — re-render with different skipInitial
       rerender(<PageTracker skipInitial={true} />);
 
-      // Assert
+      // Assert — second render receives the updated skipInitial value
       expect(usePageTracking).toHaveBeenCalledTimes(2);
-      expect(usePageTracking).toHaveBeenLastCalledWith({ skipInitial: true });
+      expect(vi.mocked(usePageTracking).mock.calls[1][0]).toEqual({
+        properties: undefined,
+        skipInitial: true,
+      });
+    });
+
+    it('should forward skipInitial transitioning from true to false on re-render', () => {
+      // Arrange — start with skipInitial=true
+      const { rerender } = render(<PageTracker skipInitial={true} />);
+
+      // Assert — first render
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(usePageTracking).mock.calls[0][0]).toEqual({
+        properties: undefined,
+        skipInitial: true,
+      });
+
+      // Act — transition to skipInitial=false
+      rerender(<PageTracker skipInitial={false} />);
+
+      // Assert — second render receives false; both keys present to match full call shape
+      expect(usePageTracking).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(usePageTracking).mock.calls[1][0]).toEqual({
+        properties: undefined,
+        skipInitial: false,
+      });
+    });
+
+    it('should forward new properties object reference when only identity changes on re-render', () => {
+      // Arrange — render with initial object
+      const propsV1 = { source: 'a' };
+      const { rerender } = render(<PageTracker properties={propsV1} />);
+
+      // Assert — first render used propsV1
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(usePageTracking).mock.calls[0][0]).toEqual({
+        properties: propsV1,
+        skipInitial: undefined,
+      });
+
+      // Act — rerender with a new object reference but same value
+      const propsV2 = { source: 'a' };
+      rerender(<PageTracker properties={propsV2} />);
+
+      // Assert — hook was called again with the new reference
+      expect(usePageTracking).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(usePageTracking).mock.calls[1][0]).toEqual({
+        properties: propsV2,
+        skipInitial: undefined,
+      });
     });
   });
 
   describe('integration scenarios', () => {
-    it('should work in root layout with UserIdentifier pattern', () => {
-      // This tests the documented usage pattern:
-      // <AnalyticsProvider>
-      //   <Suspense fallback={null}>
-      //     <UserIdentifier />
-      //     <PageTracker skipInitial />
-      //   </Suspense>
-      // </AnalyticsProvider>
+    it('should render invisibly when wrapped in a Suspense boundary (imitates root layout usage)', () => {
+      // React propagates errors and renders from children inside Suspense boundaries.
+      // Wrapping PageTracker in Suspense (as in the actual root layout) must not
+      // affect the component's null output.
 
       // Arrange & Act
-      render(<PageTracker skipInitial />);
+      const { container } = render(
+        <Suspense fallback={null}>
+          <PageTracker skipInitial />
+        </Suspense>
+      );
 
-      // Assert - skipInitial is passed to prevent duplicate initial page track
-      expect(usePageTracking).toHaveBeenCalledWith({ skipInitial: true });
+      // Assert — the component is invisible (null) even inside Suspense
+      expect(container.firstChild).toBeNull();
+    });
+  });
+
+  describe('lifecycle', () => {
+    it('should not call usePageTracking again after unmount', () => {
+      // Arrange — render and confirm exactly one hook call on mount
+      const { unmount } = render(<PageTracker />);
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
+
+      // Act — unmount the component
+      unmount();
+
+      // Assert — call count must not have increased; proves no post-unmount re-fire
+      // (guards against leaked route-change subscribers if the hook ever adds them).
+      // Explicit count comparison avoids mid-test vi.clearAllMocks() (brittle pattern #4).
+      expect(usePageTracking).toHaveBeenCalledTimes(1);
     });
 
-    it('should support custom properties for app-wide metadata', () => {
-      // Arrange - app-wide properties that should be on every page view
-      const appProperties = {
-        appVersion: '1.0.0',
-        environment: 'production',
-      };
+    it("should discard the hook's return value", () => {
+      // Arrange — give the mock a non-void return value to confirm the wrapper ignores it
+      vi.mocked(usePageTracking).mockReturnValue({ anything: 'value' } as unknown as ReturnType<
+        typeof usePageTracking
+      >);
 
       // Act
-      render(<PageTracker properties={appProperties} />);
+      const { container } = render(<PageTracker />);
 
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ properties: appProperties });
+      // Assert — the wrapper returns null regardless of what the hook returns;
+      // documents the intentional no-op behaviour of the wrapper component.
+      expect(container.firstChild).toBeNull();
     });
   });
 
   describe('edge cases', () => {
-    it('should handle undefined properties', () => {
-      // Arrange & Act
-      render(<PageTracker properties={undefined} />);
-
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ properties: undefined });
-    });
-
-    it('should handle undefined skipInitial', () => {
-      // Arrange & Act
-      render(<PageTracker skipInitial={undefined} />);
-
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledWith({ skipInitial: undefined });
-    });
-
-    it('should not break when hook throws error', () => {
+    // React propagates errors from children by design — an error in usePageTracking
+    // will propagate up to the nearest error boundary rather than being swallowed.
+    it('should propagate hook errors to the nearest error boundary', () => {
       // Arrange
       const mockError = new Error('Analytics not initialized');
       const mockImpl = vi.mocked(usePageTracking).mockImplementation(() => {
         throw mockError;
       });
 
-      // Act & Assert - should not throw (error boundary would catch it)
+      // Act & Assert — error propagates up as expected (React does not suppress it)
       expect(() => render(<PageTracker />)).toThrow('Analytics not initialized');
 
       // Cleanup - restore mock for subsequent tests
       mockImpl.mockRestore();
     });
-  });
 
-  describe('TypeScript type safety', () => {
-    it('should accept valid property types', () => {
-      // Arrange & Act - all these should be type-safe
-      render(<PageTracker properties={{ str: 'value' }} />);
-      render(<PageTracker properties={{ num: 123 }} />);
-      render(<PageTracker properties={{ bool: true }} />);
-      render(<PageTracker properties={{ str: 'a', num: 1, bool: false }} />);
+    it('should be caught by a React error boundary when usePageTracking throws', () => {
+      // Validates the production <Suspense> + error boundary path described in the JSDoc.
+      // A bare throw from usePageTracking propagates up the React tree; a real error
+      // boundary intercepts it and renders the fallback — confirming PageTracker does
+      // not suppress errors and that the boundary contract works end-to-end.
 
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledTimes(4);
-    });
+      // Arrange — silence the expected React error output from the boundary
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    it('should accept boolean skipInitial values', () => {
-      // Arrange & Act
-      render(<PageTracker skipInitial={true} />);
-      render(<PageTracker skipInitial={false} />);
+      vi.mocked(usePageTracking).mockImplementation(() => {
+        throw new Error('Analytics not initialized');
+      });
 
-      // Assert
-      expect(usePageTracking).toHaveBeenCalledTimes(2);
+      // Act
+      render(
+        <TestErrorBoundary fallback={<div>Analytics unavailable</div>}>
+          <Suspense fallback={null}>
+            <PageTracker />
+          </Suspense>
+        </TestErrorBoundary>
+      );
+
+      // Assert — boundary caught the error and rendered the fallback UI
+      expect(screen.getByText('Analytics unavailable')).toBeInTheDocument();
+
+      // Cleanup
+      consoleError.mockRestore();
     });
   });
 });

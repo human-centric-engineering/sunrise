@@ -9,8 +9,9 @@
  * validation errors.
  */
 
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
+import type { Logger } from '@/lib/logging';
 
 /**
  * Mock Headers object for testing Next.js server functions
@@ -190,27 +191,39 @@ export async function delayed<T>(value: T, ms: number): Promise<T> {
 }
 
 /**
- * Mock Logger type for testing code that uses logger
+ * Mock Logger type for testing code that uses the Logger class.
+ *
+ * Intersects with `Logger` so the mock is assignable wherever a real `Logger`
+ * is expected (e.g. `mockResolvedValue(mockLog)` for a `getRouteLogger` mock).
+ * Methods are typed as `Mock` so `.toHaveBeenCalledWith(...)` etc. work
+ * directly without a `vi.mocked(...)` wrapper at the call site.
  */
-export type MockLogger = {
-  debug: ReturnType<typeof vi.fn>;
-  info: ReturnType<typeof vi.fn>;
-  warn: ReturnType<typeof vi.fn>;
-  error: ReturnType<typeof vi.fn>;
-  withContext: ReturnType<typeof vi.fn>;
+export type MockLogger = Logger & {
+  debug: Mock;
+  info: Mock;
+  warn: Mock;
+  error: Mock;
+  child: Mock;
+  withContext: Mock;
 };
 
 /**
- * Create a mock logger instance
- * @returns MockLogger with all methods mocked
+ * Create a mock logger instance.
+ *
+ * The `Logger` class has private fields, so a plain object cannot satisfy it
+ * structurally. The cast is localised inside the factory so callers never
+ * need `as unknown as Logger` at the call site.
  */
 export function createMockLogger(): MockLogger {
-  const mockLogger: MockLogger = {
+  const mockLogger = {
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-    withContext: vi.fn(() => mockLogger),
+    child: vi.fn(),
+    withContext: vi.fn(),
   };
-  return mockLogger;
+  mockLogger.child.mockReturnValue(mockLogger);
+  mockLogger.withContext.mockReturnValue(mockLogger);
+  return mockLogger as unknown as MockLogger;
 }

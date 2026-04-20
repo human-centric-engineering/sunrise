@@ -12,8 +12,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, act } from '@testing-library/react';
 import { UserIdentifier } from '@/components/analytics/user-identifier';
+import { logger } from '@/lib/logging';
 
 // Hoist mock functions to avoid reference errors
 const mockIdentify = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -36,6 +37,16 @@ vi.mock('@/lib/analytics', () => ({
     USER_LOGGED_IN: 'user_logged_in',
     USER_SIGNED_UP: 'user_signed_up',
     USER_LOGGED_OUT: 'user_logged_out',
+  },
+}));
+
+// Mock @/lib/logging
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
   },
 }));
 
@@ -86,10 +97,13 @@ describe('components/analytics/user-identifier', () => {
       writable: false,
       configurable: true,
     });
+    // Belt-and-suspenders: clear sessionStorage in afterEach too, so a failing test
+    // that sets oauth_login_pending can't pollute siblings even if beforeEach errors.
+    sessionStorage.clear();
   });
 
   describe('Waiting for Analytics and Session', () => {
-    it('should not track when analytics is not ready', () => {
+    it('should not track when analytics is not ready', async () => {
       // Arrange: Analytics not ready
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
@@ -103,8 +117,12 @@ describe('components/analytics/user-identifier', () => {
         isPending: false,
       });
 
-      // Act
-      render(<UserIdentifier />);
+      // Act — wrap in async act so the effect has a chance to run before asserting.
+      // The guard (!isReady) short-circuits early, so the assertion is meaningful
+      // rather than a race-pass (effect fires but immediately returns).
+      await act(async () => {
+        render(<UserIdentifier />);
+      });
 
       // Assert: Should NOT call identify or page
       expect(mockIdentify).not.toHaveBeenCalled();
@@ -118,28 +136,6 @@ describe('components/analytics/user-identifier', () => {
         page: mockPage,
         track: mockTrack,
         isReady: true,
-      });
-
-      mockUseSession.mockReturnValue({
-        data: null,
-        isPending: true, // Session still loading
-      });
-
-      // Act
-      render(<UserIdentifier />);
-
-      // Assert: Should NOT call identify or page
-      expect(mockIdentify).not.toHaveBeenCalled();
-      expect(mockPage).not.toHaveBeenCalled();
-    });
-
-    it('should not track when both analytics and session are not ready', () => {
-      // Arrange: Both not ready
-      mockUseAnalytics.mockReturnValue({
-        identify: mockIdentify,
-        page: mockPage,
-        track: mockTrack,
-        isReady: false, // Analytics NOT ready
       });
 
       mockUseSession.mockReturnValue({
@@ -270,23 +266,6 @@ describe('components/analytics/user-identifier', () => {
       });
     });
 
-    it('should identify user then track page when user is logged in', async () => {
-      // Arrange: User logged in
-      mockUseSession.mockReturnValue({
-        data: { user: { id: 'user-123' } },
-        isPending: false,
-      });
-
-      // Act
-      render(<UserIdentifier />);
-
-      // Assert: Both identify and page should be called
-      await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalledTimes(1);
-        expect(mockPage).toHaveBeenCalledTimes(1);
-      });
-    });
-
     it('should call identify before page', async () => {
       // Arrange: User logged in
       mockUseSession.mockReturnValue({
@@ -327,6 +306,55 @@ describe('components/analytics/user-identifier', () => {
       await waitFor(() => {
         expect(mockIdentify).toHaveBeenCalledWith('user-456');
       });
+    });
+
+    it('should track USER_LOGGED_IN for pending OAuth login and remove sessionStorage key', async () => {
+      // Arrange: Seed sessionStorage with oauth_login_pending BEFORE render.
+      // Source L64-70: if session.user.id exists AND sessionStorage has
+      // 'oauth_login_pending', the component fires track(EVENTS.USER_LOGGED_IN)
+      // with { method: 'oauth', provider } and removes the key.
+      sessionStorage.setItem('oauth_login_pending', 'google');
+
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'oauth-user-1' } },
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: track called with correct event and provider
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
+          method: 'oauth',
+          provider: 'google',
+        });
+      });
+
+      // Assert: sessionStorage key was removed
+      expect(sessionStorage.getItem('oauth_login_pending')).toBeNull();
+
+      // Assert: identify and page still fired (OAuth login path doesn't skip them)
+      expect(mockIdentify).toHaveBeenCalledWith('oauth-user-1');
+      expect(mockPage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT track USER_LOGGED_IN when no oauth_login_pending in sessionStorage', async () => {
+      // Arrange: No oauth_login_pending key — normal logged-in render
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'regular-user-1' } },
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      await waitFor(() => {
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+      });
+
+      // Assert: track was NOT called (no pending OAuth login)
+      expect(mockTrack).not.toHaveBeenCalled();
     });
 
     it('should track page with correct parameters after identify', async () => {
@@ -406,6 +434,37 @@ describe('components/analytics/user-identifier', () => {
       expect(mockPage).toHaveBeenCalledTimes(1);
     });
 
+    it('should NOT re-fire page or identify when pathname changes after initial track', async () => {
+      // Arrange: User logged in, initial render with pathname '/a'
+      mockUsePathname.mockReturnValue('/a');
+
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      });
+
+      const { rerender } = render(<UserIdentifier />);
+
+      // Wait for initial track to complete
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledTimes(1);
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+      });
+
+      // Capture counts BEFORE the pathname change (no vi.clearAllMocks — see brittle pattern #4)
+      const pageCallsBefore = mockPage.mock.calls.length;
+      const identifyCallsBefore = mockIdentify.mock.calls.length;
+
+      // Act: Simulate pathname change by rerendering with a new pathname
+      mockUsePathname.mockReturnValue('/b');
+      rerender(<UserIdentifier />);
+
+      // Assert: hasTrackedInitialRef is true — the effect short-circuits and does NOT re-fire.
+      // Counts must match the pre-change values exactly (same N before and after).
+      expect(mockPage).toHaveBeenCalledTimes(pageCallsBefore);
+      expect(mockIdentify).toHaveBeenCalledTimes(identifyCallsBefore);
+    });
+
     it('should not re-identify the same user on re-render', async () => {
       // Arrange: User logged in
       mockUseSession.mockReturnValue({
@@ -443,8 +502,12 @@ describe('components/analytics/user-identifier', () => {
       });
     });
 
-    it('should reset identification ref when user logs out', async () => {
-      // Arrange: Initial render with logged-in user
+    it('should re-identify user after logout and new login on same instance', async () => {
+      // Persistent-instance logout→re-login test. The logout effect resets both
+      // identifiedUserRef and hasTrackedInitialRef, so a new session on the same instance
+      // re-runs initialization and identifies the new user.
+
+      // Arrange: User A logs in on the initial render
       mockUseSession.mockReturnValue({
         data: { user: { id: 'user-123' } },
         isPending: false,
@@ -452,14 +515,16 @@ describe('components/analytics/user-identifier', () => {
 
       const { rerender } = render(<UserIdentifier />);
 
+      // Step 1: identify fires for user A (count = 1), page fires once
       await waitFor(() => {
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
         expect(mockIdentify).toHaveBeenCalledWith('user-123');
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      vi.clearAllMocks();
-
-      // Act: User logs out (session becomes null)
+      // Step 2: Logout — rerender with session = null. No additional identify or page
+      // should fire, but the logout effect resets hasTrackedInitialRef so initialization
+      // can re-run when a new session arrives.
       mockUseSession.mockReturnValue({
         data: null,
         isPending: false,
@@ -467,72 +532,64 @@ describe('components/analytics/user-identifier', () => {
 
       rerender(<UserIdentifier />);
 
-      // Assert: No additional calls should happen on re-render
-      // But the ref should be reset (tested implicitly by next login)
-      expect(mockIdentify).not.toHaveBeenCalled();
-      expect(mockPage).not.toHaveBeenCalled();
-    });
+      expect(mockIdentify).toHaveBeenCalledTimes(1);
 
-    it('should re-identify user after logout and new login', async () => {
-      // Arrange: User 1 logs in
-      mockUseSession.mockReturnValue({
-        data: { user: { id: 'user-123' } },
-        isPending: false,
-      });
-
-      const { rerender } = render(<UserIdentifier />);
-
-      await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalledWith('user-123');
-      });
-
-      vi.clearAllMocks();
-
-      // Act: User logs out
-      mockUseSession.mockReturnValue({
-        data: null,
-        isPending: false,
-      });
-
-      rerender(<UserIdentifier />);
-
-      // Now "simulate" a new page load by resetting hasTrackedInitialRef
-      // In reality, this would be a fresh component mount after navigation
-      // For this test, we'll unmount and remount
-      const { unmount } = render(<UserIdentifier />);
-      unmount();
-
-      vi.clearAllMocks();
-
-      // Act: Different user logs in (new page load)
+      // Step 3: User B logs in on the SAME persistent instance. Initialization re-runs
+      // because the logout effect reset hasTrackedInitialRef. identify fires for user-456
+      // and page fires a second time with the current URL/path.
       mockUseSession.mockReturnValue({
         data: { user: { id: 'user-456' } },
         isPending: false,
       });
 
-      render(<UserIdentifier />);
+      rerender(<UserIdentifier />);
 
-      // Assert: Should identify the new user
       await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalledWith('user-456');
-        expect(mockPage).toHaveBeenCalledTimes(1);
+        expect(mockIdentify).toHaveBeenCalledTimes(2);
+        expect(mockIdentify).toHaveBeenLastCalledWith('user-456');
+        // Guard against a broken hasTrackedInitialRef reset silently dropping
+        // the second page event — the reset in the second useEffect (user-identifier.tsx:88-93)
+        // must clear the ref so initialization re-runs for the new session.
+        expect(mockPage).toHaveBeenCalledTimes(2);
+        expect(mockPage).toHaveBeenLastCalledWith(undefined, {
+          path: '/dashboard',
+          url: 'http://localhost:3000/dashboard?utm_source=email',
+          search: 'utm_source=email',
+          referrer: 'https://google.com',
+        });
       });
     });
 
-    it('should handle user logging out with null user object', async () => {
-      // Arrange: User logged in
+    it('should re-fire page() after logout then re-login with new pathname (hasTrackedInitialRef reset isolation)', async () => {
+      // This test isolates the second useEffect's hasTrackedInitialRef reset
+      // (user-identifier.tsx:88-93) independently of the cross-user test above.
+      //
+      // Mechanism: when session?.user?.id becomes falsy, the logout effect clears
+      // hasTrackedInitialRef. When the SAME user returns but on a DIFFERENT pathname,
+      // the first useEffect re-fires (session?.user?.id dep is the same but the ref
+      // was reset, allowing the hasTrackedInitialRef guard to pass). This verifies
+      // the reset path without depending on a user-B scenario.
+      //
+      // Note: re-rendering with the same user AND same pathname would NOT re-fire the
+      // first useEffect even after the reset, because React's dep comparison for
+      // session?.user?.id, pathname, and searchParams would all be unchanged.
+      // A pathname change provides the dep-array movement needed to trigger re-execution.
+
+      // Arrange: User A logs in, initial pathname '/dashboard'
       mockUseSession.mockReturnValue({
         data: { user: { id: 'user-123' } },
         isPending: false,
       });
+      mockUsePathname.mockReturnValue('/dashboard');
 
       const { rerender } = render(<UserIdentifier />);
 
+      // Step 1: initial page() fires once for user A
       await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalledWith('user-123');
+        expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      // Act: Logout - session data becomes null
+      // Step 2: Logout — the second useEffect resets hasTrackedInitialRef
       mockUseSession.mockReturnValue({
         data: null,
         isPending: false,
@@ -540,12 +597,34 @@ describe('components/analytics/user-identifier', () => {
 
       rerender(<UserIdentifier />);
 
-      // Assert: Should not throw error
-      expect(() => rerender(<UserIdentifier />)).not.toThrow();
+      // Still only one page call after logout (logout does not trigger page)
+      expect(mockPage).toHaveBeenCalledTimes(1);
+
+      // Step 3: User A returns on a NEW pathname — ref is cleared so the
+      // first useEffect re-runs initialization and fires page() a second time.
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      });
+      mockUsePathname.mockReturnValue('/settings');
+      (window as unknown as { location: { href: string } }).location.href =
+        'http://localhost:3000/settings';
+
+      rerender(<UserIdentifier />);
+
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledTimes(2);
+        expect(mockPage).toHaveBeenLastCalledWith(undefined, {
+          path: '/settings',
+          url: 'http://localhost:3000/settings',
+          search: 'utm_source=email',
+          referrer: 'https://google.com',
+        });
+      });
     });
 
-    it('should handle user logging out with undefined user', async () => {
-      // Arrange: User logged in
+    it('should handle user logging out with null user object', async () => {
+      // Arrange: User logged in — prime identify and page
       mockUseSession.mockReturnValue({
         data: { user: { id: 'user-123' } },
         isPending: false,
@@ -554,10 +633,46 @@ describe('components/analytics/user-identifier', () => {
       const { rerender } = render(<UserIdentifier />);
 
       await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalledWith('user-123');
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+        expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      // Act: Logout - session.user becomes undefined
+      // Capture counts BEFORE the logout rerender
+      const identifyCountBefore = mockIdentify.mock.calls.length;
+      const pageCountBefore = mockPage.mock.calls.length;
+
+      // Act: Logout — session data becomes null
+      mockUseSession.mockReturnValue({
+        data: null,
+        isPending: false,
+      });
+
+      rerender(<UserIdentifier />);
+
+      // Assert: counts have NOT changed — logout does not trigger additional analytics calls
+      expect(mockIdentify).toHaveBeenCalledTimes(identifyCountBefore);
+      expect(mockPage).toHaveBeenCalledTimes(pageCountBefore);
+    });
+
+    it('should handle user logging out with undefined user', async () => {
+      // Arrange: User logged in — prime identify and page
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      });
+
+      const { rerender } = render(<UserIdentifier />);
+
+      await waitFor(() => {
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+        expect(mockPage).toHaveBeenCalledTimes(1);
+      });
+
+      // Capture counts BEFORE the logout rerender
+      const identifyCountBefore = mockIdentify.mock.calls.length;
+      const pageCountBefore = mockPage.mock.calls.length;
+
+      // Act: Logout — session.user becomes undefined
       mockUseSession.mockReturnValue({
         data: { user: undefined },
         isPending: false,
@@ -565,8 +680,9 @@ describe('components/analytics/user-identifier', () => {
 
       rerender(<UserIdentifier />);
 
-      // Assert: Should not throw error
-      expect(() => rerender(<UserIdentifier />)).not.toThrow();
+      // Assert: counts have NOT changed — undefined user does not trigger additional analytics calls
+      expect(mockIdentify).toHaveBeenCalledTimes(identifyCountBefore);
+      expect(mockPage).toHaveBeenCalledTimes(pageCountBefore);
     });
   });
 
@@ -617,19 +733,13 @@ describe('components/analytics/user-identifier', () => {
     });
 
     it('should handle identify promise rejection gracefully', async () => {
-      // Arrange: identify rejects but we catch it
-      const mockIdentifyReject = vi.fn().mockImplementation(async () => {
-        try {
-          throw new Error('Analytics error');
-        } catch {
-          // Caught - component silently handles errors via void initialize()
-          return undefined;
-        }
-      });
+      // Arrange: identify rejects — the rejection propagates to initialize().catch(logger.error)
+      mockIdentify.mockRejectedValueOnce(new Error('identify failed'));
 
       mockUseAnalytics.mockReturnValue({
-        identify: mockIdentifyReject,
+        identify: mockIdentify,
         page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
@@ -638,43 +748,52 @@ describe('components/analytics/user-identifier', () => {
         isPending: false,
       });
 
-      // Act & Assert: Should not throw
+      // Act: render should not throw (component uses .catch, not try/catch that would bubble)
       expect(() => render(<UserIdentifier />)).not.toThrow();
 
-      // Wait for async operations to complete
+      // Assert: logger.error is called with the rejection — this is the real behaviour
       await waitFor(() => {
-        expect(mockIdentifyReject).toHaveBeenCalledWith('user-123');
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+          error: expect.any(Error),
+        });
       });
+
+      // Assert: identify was attempted with correct user ID
+      expect(mockIdentify).toHaveBeenCalledWith('user-123');
+
+      // Assert: page was NOT called — identify rejected before await page() could run
+      expect(mockPage).not.toHaveBeenCalled();
     });
 
     it('should handle page promise rejection gracefully', async () => {
-      // Arrange: page rejects but we catch it
-      const mockPageReject = vi.fn().mockImplementation(async () => {
-        try {
-          throw new Error('Analytics error');
-        } catch {
-          // Caught - component silently handles errors via void initialize()
-          return undefined;
-        }
-      });
+      // Arrange: page rejects — the rejection propagates to initialize().catch(logger.error)
+      mockPage.mockRejectedValueOnce(new Error('page failed'));
 
       mockUseAnalytics.mockReturnValue({
         identify: mockIdentify,
-        page: mockPageReject,
+        page: mockPage,
+        track: mockTrack,
         isReady: true,
       });
 
       mockUseSession.mockReturnValue({
-        data: null,
+        data: { user: { id: 'user-123' } },
         isPending: false,
       });
 
-      // Act & Assert: Should not throw
+      // Act: render should not throw
       expect(() => render(<UserIdentifier />)).not.toThrow();
 
-      // Wait for async operations to complete
+      // Assert: identify WAS called (it succeeded before page rejected)
       await waitFor(() => {
-        expect(mockPageReject).toHaveBeenCalled();
+        expect(mockIdentify).toHaveBeenCalledWith('user-123');
+      });
+
+      // Assert: logger.error is called with the page rejection
+      await waitFor(() => {
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+          error: expect.any(Error),
+        });
       });
     });
 
@@ -697,6 +816,70 @@ describe('components/analytics/user-identifier', () => {
 
       // Assert: Should render nothing
       expect(container.firstChild).toBeNull();
+    });
+
+    it('should NOT call identify when user.id is an empty string', async () => {
+      // Arrange: The source guard is `session?.user?.id && ...` — an empty string is falsy,
+      // so identify should NOT be called. All other user fields are valid so only the
+      // empty id triggers the guard.
+      mockUseSession.mockReturnValue({
+        data: { user: { id: '', email: 'user@example.com', name: 'Test User' } },
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: page fires (always runs after the identify guard), identify does NOT
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledTimes(1);
+      });
+
+      expect(mockIdentify).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call page() when sessionStorage.getItem throws', async () => {
+      // Arrange: sessionStorage.getItem is called inside the `if (session?.user?.id ...)` block
+      // within initialize(). When it throws, the error propagates up through initialize() before
+      // reaching the `await page(...)` call — so page() is NOT called. This makes the contract
+      // explicit: page() is skipped whenever initialize() throws early (including storage errors).
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      });
+
+      // Use Object.defineProperty (not vi.spyOn) to override sessionStorage.getItem.
+      // vi.spyOn(Storage.prototype, 'getItem') becomes ineffective after vi.clearAllMocks()
+      // in happy-dom because the sessionStorage instance caches the method reference.
+      const origGetItem = sessionStorage.getItem.bind(sessionStorage);
+      Object.defineProperty(sessionStorage, 'getItem', {
+        value: () => {
+          throw new Error('sessionStorage unavailable');
+        },
+        configurable: true,
+        writable: true,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Wait for the async to settle: logger.error is the terminal observable signal —
+      // it fires after initialize().catch() handles the thrown error.
+      await waitFor(() => {
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+          error: expect.any(Error),
+        });
+      });
+
+      // Assert: page did NOT fire — the throw aborted initialize() before reaching page()
+      expect(mockPage).not.toHaveBeenCalled();
+
+      // Restore the original getItem
+      Object.defineProperty(sessionStorage, 'getItem', {
+        value: origGetItem,
+        configurable: true,
+        writable: true,
+      });
     });
   });
 
@@ -737,12 +920,125 @@ describe('components/analytics/user-identifier', () => {
       });
     });
 
-    it('should render without crashing', () => {
-      // Act
-      const { container } = render(<UserIdentifier />);
+    it('should use window.location.href for url field when window is defined (SSR guard line 75)', async () => {
+      // Arrange: Analytics ready, no user session
+      // This test verifies the affirmative branch of the SSR guard:
+      // `typeof window !== 'undefined' ? window.location.href : undefined`
+      // In jsdom, window is always defined so url resolves to window.location.href.
+      mockUseAnalytics.mockReturnValue({
+        identify: mockIdentify,
+        page: mockPage,
+        track: mockTrack,
+        isReady: true,
+      });
 
-      // Assert: Should render nothing (null)
-      expect(container.firstChild).toBeNull();
+      mockUseSession.mockReturnValue({
+        data: null,
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: url is populated from window.location.href (guard branch taken)
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({
+            url: 'http://localhost:3000/dashboard?utm_source=email',
+          })
+        );
+      });
+    });
+
+    it('should use document.referrer for referrer field when document is defined (SSR guard line 77)', async () => {
+      // Arrange: Analytics ready, no user session
+      // This test verifies the affirmative branch of the SSR guard:
+      // `typeof document !== 'undefined' ? document.referrer : undefined`
+      // In jsdom, document is always defined so referrer resolves to document.referrer.
+      mockUseAnalytics.mockReturnValue({
+        identify: mockIdentify,
+        page: mockPage,
+        track: mockTrack,
+        isReady: true,
+      });
+
+      mockUseSession.mockReturnValue({
+        data: null,
+        isPending: false,
+      });
+
+      Object.defineProperty(document, 'referrer', {
+        value: 'https://example.com/source',
+        writable: true,
+        configurable: true,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: referrer is populated from document.referrer (guard branch taken)
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({
+            referrer: 'https://example.com/source',
+          })
+        );
+      });
+    });
+
+    // SSR guard branches (url: undefined, referrer: undefined) cannot be exercised in jsdom:
+    // vi.stubGlobal('window', undefined) prevents React from rendering at all, because
+    // jsdom requires a real window object to mount components. The affirmative branches
+    // (window defined → url = window.location.href, document defined → referrer = document.referrer)
+    // are already covered by the two tests above this block.
+    // test-review:accept untested-path — SSR guard negative branches at user-identifier.tsx:76-78 need non-jsdom env; stubbing window breaks React render
+    it.todo(
+      'should pass url as undefined when window is not defined (SSR guard) — requires non-jsdom SSR harness'
+    );
+
+    // test-review:accept untested-path — SSR guard negative branch at user-identifier.tsx:78 same jsdom limitation as above
+    it.todo(
+      'should pass referrer as undefined when document is not defined (SSR guard) — requires non-jsdom SSR harness'
+    );
+
+    // test-review:accept untested-path — authenticated-user SSR guard at user-identifier.tsx:64 same jsdom limitation; window cannot be stubbed without breaking render
+    it.todo(
+      'should skip OAuth sessionStorage read when window is undefined on authenticated path — requires non-jsdom SSR harness'
+    );
+
+    it('should skip OAuth sessionStorage block when user is not authenticated (mirrors SSR window guard at line 63)', async () => {
+      // Arrange: No user, OAuth marker present in sessionStorage.
+      // When window IS defined but there is no authenticated user, the entire
+      // OAuth block (lines 63-69) is skipped because it is nested inside the
+      // `if (session?.user?.id ...)` guard. This verifies that the sessionStorage
+      // access at line 64 is only reached for authenticated users.
+      mockUseAnalytics.mockReturnValue({
+        identify: mockIdentify,
+        page: mockPage,
+        track: mockTrack,
+        isReady: true,
+      });
+
+      mockUseSession.mockReturnValue({
+        data: null,
+        isPending: false,
+      });
+
+      sessionStorage.setItem('oauth_login_pending', 'google');
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: page fires but OAuth track is NOT called (block skipped)
+      await waitFor(() => {
+        expect(mockPage).toHaveBeenCalledTimes(1);
+      });
+
+      expect(mockTrack).not.toHaveBeenCalled();
+      // Marker is left in storage (block was never entered)
+      expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');
     });
   });
 
@@ -757,27 +1053,6 @@ describe('components/analytics/user-identifier', () => {
     });
 
     describe('When OAuth marker exists and user is logged in', () => {
-      it('should check sessionStorage for oauth_login_pending', async () => {
-        // Arrange: User logged in with OAuth marker
-        mockUseSession.mockReturnValue({
-          data: { user: { id: 'user-123' } },
-          isPending: false,
-        });
-
-        sessionStorage.setItem('oauth_login_pending', 'google');
-
-        // Act
-        render(<UserIdentifier />);
-
-        // Assert: track should be called (which means sessionStorage was checked)
-        await waitFor(() => {
-          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
-            method: 'oauth',
-            provider: 'google',
-          });
-        });
-      });
-
       it('should remove oauth_login_pending from sessionStorage', async () => {
         // Arrange: User logged in with OAuth marker
         mockUseSession.mockReturnValue({
@@ -978,27 +1253,6 @@ describe('components/analytics/user-identifier', () => {
     });
 
     describe('When user is not logged in', () => {
-      it('should NOT check OAuth marker when no session exists', async () => {
-        // Arrange: No user logged in (even with OAuth marker present)
-        mockUseSession.mockReturnValue({
-          data: null,
-          isPending: false,
-        });
-
-        sessionStorage.setItem('oauth_login_pending', 'google');
-
-        // Act
-        render(<UserIdentifier />);
-
-        // Assert: Should NOT check sessionStorage (only happens after identify)
-        await waitFor(() => {
-          expect(mockPage).toHaveBeenCalledTimes(1);
-        });
-
-        expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrack).not.toHaveBeenCalled();
-      });
-
       it('should only track page view without identify or track', async () => {
         // Arrange: No user logged in
         mockUseSession.mockReturnValue({
@@ -1043,29 +1297,131 @@ describe('components/analytics/user-identifier', () => {
 
     describe('Edge cases', () => {
       it('should handle sessionStorage errors gracefully', async () => {
-        // Arrange: User logged in, mock sessionStorage.getItem to throw
+        // Arrange: User logged in, mock sessionStorage.getItem to throw.
+        // When getItem throws, the error propagates up through initialize() and is caught
+        // by initialize().catch(logger.error). identify() runs BEFORE getItem, so it still
+        // fires. page() runs AFTER the if-block and is therefore NOT called (the throw
+        // unwinds before reaching the await page() call).
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
           isPending: false,
         });
 
-        const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-          throw new Error('sessionStorage unavailable');
+        // Use Object.defineProperty (not vi.spyOn) to override sessionStorage.getItem.
+        // vi.spyOn(Storage.prototype, 'getItem') becomes ineffective after vi.clearAllMocks()
+        // in happy-dom because the sessionStorage instance caches the method reference.
+        const origGetItem = sessionStorage.getItem.bind(sessionStorage);
+        Object.defineProperty(sessionStorage, 'getItem', {
+          value: () => {
+            throw new Error('sessionStorage unavailable');
+          },
+          configurable: true,
+          writable: true,
         });
 
-        // Act & Assert: Should not throw
-        expect(() => render(<UserIdentifier />)).not.toThrow();
+        // Act
+        render(<UserIdentifier />);
 
-        // Wait for async operations
+        // Assert: identify WAS called — it runs before the sessionStorage.getItem call
         await waitFor(() => {
           expect(mockIdentify).toHaveBeenCalledWith('user-123');
         });
 
-        getItemSpy.mockRestore();
+        // Assert: logger.error was called with the sessionStorage error
+        await waitFor(() => {
+          expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+            error: expect.any(Error),
+          });
+        });
+
+        // Assert: page did NOT fire — the throw aborted initialize() before reaching page()
+        // (aligns with the same assertion in Edge Cases > should NOT call page() when sessionStorage.getItem throws)
+        expect(mockPage).not.toHaveBeenCalled();
+
+        // Restore the original getItem
+        Object.defineProperty(sessionStorage, 'getItem', {
+          value: origGetItem,
+          configurable: true,
+          writable: true,
+        });
       });
 
       it('should handle track promise rejection gracefully', async () => {
-        // Arrange: track rejects but we catch the error
+        // Arrange: track rejects — the rejection propagates to initialize().catch(logger.error)
+        // OAuth marker triggers the track path: identify → track → page
+        sessionStorage.setItem('oauth_login_pending', 'google');
+
+        mockTrack.mockRejectedValueOnce(new Error('track failed'));
+
+        mockUseAnalytics.mockReturnValue({
+          identify: mockIdentify,
+          page: mockPage,
+          track: mockTrack,
+          isReady: true,
+        });
+
+        mockUseSession.mockReturnValue({
+          data: { user: { id: 'user-123' } },
+          isPending: false,
+        });
+
+        // Act: render should not throw
+        expect(() => render(<UserIdentifier />)).not.toThrow();
+
+        // Assert: identify WAS called (succeeded before track rejected)
+        await waitFor(() => {
+          expect(mockIdentify).toHaveBeenCalledWith('user-123');
+        });
+
+        // Assert: track WAS called (it just rejected)
+        expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
+          method: 'oauth',
+          provider: 'google',
+        });
+
+        // Assert: logger.error is called with the track rejection
+        await waitFor(() => {
+          expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+            error: expect.any(Error),
+          });
+        });
+
+        // Assert: page was NOT called — track rejected before await page() could run
+        expect(mockPage).not.toHaveBeenCalled();
+      });
+
+      it('should handle page() rejection when no user is logged in (anonymous path)', async () => {
+        // Arrange: No logged-in user; page() rejects on the anonymous path
+        mockPage.mockRejectedValueOnce(new Error('page call failed'));
+
+        mockUseAnalytics.mockReturnValue({
+          identify: mockIdentify,
+          page: mockPage,
+          track: mockTrack,
+          isReady: true,
+        });
+
+        mockUseSession.mockReturnValue({
+          data: null,
+          isPending: false,
+        });
+
+        // Act: render should not throw — rejection is caught by initialize().catch
+        expect(() => render(<UserIdentifier />)).not.toThrow();
+
+        // Assert: logger.error receives the page rejection (swallowed, not unhandled)
+        await waitFor(() => {
+          expect(vi.mocked(logger.error)).toHaveBeenCalledWith('UserIdentifier initialize failed', {
+            error: expect.any(Error),
+          });
+        });
+
+        // Assert: identify was never called (anonymous path skips identify)
+        expect(mockIdentify).not.toHaveBeenCalled();
+      });
+
+      it('should call sessionStorage.removeItem before track() on OAuth login', async () => {
+        // Arrange: User logged in with OAuth marker
         mockUseSession.mockReturnValue({
           data: { user: { id: 'user-123' } },
           isPending: false,
@@ -1073,31 +1429,49 @@ describe('components/analytics/user-identifier', () => {
 
         sessionStorage.setItem('oauth_login_pending', 'google');
 
-        const mockTrackReject = vi.fn().mockImplementation(async () => {
-          try {
-            throw new Error('Analytics error');
-          } catch {
-            // Caught - component silently handles errors via void initialize()
-            return undefined;
-          }
+        // Track call order via a shared array.
+        // vi.spyOn(Storage.prototype, 'removeItem') is ineffective in happy-dom after
+        // vi.clearAllMocks() because the sessionStorage instance caches the method reference.
+        // Use Object.defineProperty to intercept the actual instance method instead.
+        const callOrder: string[] = [];
+        const origRemoveItem = sessionStorage.removeItem.bind(sessionStorage);
+        Object.defineProperty(sessionStorage, 'removeItem', {
+          value: (key: string) => {
+            callOrder.push('removeItem');
+            origRemoveItem(key);
+          },
+          configurable: true,
+          writable: true,
         });
 
-        mockUseAnalytics.mockReturnValue({
-          identify: mockIdentify,
-          page: mockPage,
-          track: mockTrackReject,
-          isReady: true,
+        mockTrack.mockImplementation(async (..._args: unknown[]) => {
+          callOrder.push('track');
+          return Promise.resolve();
         });
 
-        // Act & Assert: Should not throw
-        expect(() => render(<UserIdentifier />)).not.toThrow();
+        // Act
+        render(<UserIdentifier />);
 
-        // Wait for async operations to complete
+        // Assert: wait for both calls to complete
         await waitFor(() => {
-          expect(mockTrackReject).toHaveBeenCalledWith('user_logged_in', {
+          expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
             method: 'oauth',
             provider: 'google',
           });
+        });
+
+        // Assert: removeItem was called before track
+        const removeItemIndex = callOrder.indexOf('removeItem');
+        const trackIndex = callOrder.indexOf('track');
+        expect(removeItemIndex).toBeGreaterThanOrEqual(0);
+        expect(trackIndex).toBeGreaterThanOrEqual(0);
+        expect(removeItemIndex).toBeLessThan(trackIndex);
+
+        // Restore original removeItem
+        Object.defineProperty(sessionStorage, 'removeItem', {
+          value: origRemoveItem,
+          configurable: true,
+          writable: true,
         });
       });
 

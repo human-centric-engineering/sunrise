@@ -134,7 +134,7 @@ function PlausibleScripts({ nonce }: { nonce?: string }) {
 
   // Determine script URL based on features
   // Using the standard script - for hash mode or outbound links, use different scripts
-  const scriptUrl = `${host}/js/script.js`;
+  const scriptUrl = `${host.replace(/\/$/, '')}/js/script.js`;
 
   return (
     <>

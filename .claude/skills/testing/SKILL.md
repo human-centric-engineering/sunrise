@@ -235,17 +235,19 @@ describe('[Module Name]', () => {
 1. **Run tests**: `npm test -- [test-file]`
 2. **Run linter**: `npm run lint` - MUST pass with zero errors
 3. **Run type-check**: `npm run type-check` - MUST pass with zero errors
-4. **Check coverage**: `npm run test:coverage`
-5. **Verify all checks pass**: Tests + lint + types all green
-6. **Update documentation**: If new patterns emerge, document in `.context/testing/`
+4. **Run format check**: `npm run format:check` - MUST pass (if it fails, run `npx prettier --write` on edited paths and re-verify)
+5. **Check coverage**: `npm run test:coverage`
+6. **Verify all checks pass**: Tests + lint + types + format all green
+7. **Update documentation**: If new patterns emerge, document in `.context/testing/`
 
-**Shortcut**: Run `npm run validate && npm test` to check everything at once.
+**Shortcut**: Run `npm run validate && npm test` to check everything at once (`validate` covers lint + type-check + format:check).
 
 **DO NOT mark tests as complete unless**:
 
 - ✅ All tests pass
 - ✅ Linting clean (0 errors, 0 warnings in test files)
 - ✅ Type-check clean (0 errors)
+- ✅ Format check clean
 - ✅ Coverage meets targets
 
 ## Autonomy Decision Examples

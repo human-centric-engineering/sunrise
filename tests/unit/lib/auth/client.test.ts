@@ -52,6 +52,9 @@ const createMockSessionData = (role?: string | number | null) => ({
 });
 
 describe('lib/auth/client', () => {
+  // IMPORTANT: vi.resetModules() means every test MUST use `await import('@/lib/auth/client')`
+  // inside its body to get a fresh module instance. Using a stale top-level import will
+  // silently test the previous module snapshot and give false passes.
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
@@ -108,31 +111,73 @@ describe('lib/auth/client', () => {
   });
 
   describe('authClient methods', () => {
-    it('should have signIn method', async () => {
-      // Act
+    it('should forward signIn.email credentials to better-auth', async () => {
+      // Arrange
+      const mockSignInEmail = vi
+        .fn()
+        .mockResolvedValue({ data: { user: { id: '1' } }, error: null });
+      mockCreateAuthClient.mockReturnValue({
+        signIn: { email: mockSignInEmail },
+        signUp: { email: vi.fn() },
+        signOut: vi.fn(),
+        useSession: mockUseSession,
+      });
       const { authClient } = await import('@/lib/auth/client');
 
+      // Act
+      await authClient.signIn.email({ email: 'user@example.com', password: 'secret123' });
+
       // Assert
-      expect(authClient).toHaveProperty('signIn');
-      expect(authClient.signIn).toBeDefined();
+      expect(mockSignInEmail).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        password: 'secret123',
+      });
     });
 
-    it('should have signUp method', async () => {
-      // Act
+    it('should forward signUp.email credentials to better-auth', async () => {
+      // Arrange
+      const mockSignUpEmail = vi
+        .fn()
+        .mockResolvedValue({ data: { user: { id: '2' } }, error: null });
+      mockCreateAuthClient.mockReturnValue({
+        signIn: { email: vi.fn() },
+        signUp: { email: mockSignUpEmail },
+        signOut: vi.fn(),
+        useSession: mockUseSession,
+      });
       const { authClient } = await import('@/lib/auth/client');
 
+      // Act
+      await authClient.signUp.email({
+        email: 'new@example.com',
+        password: 'pass456',
+        name: 'New User',
+      });
+
       // Assert
-      expect(authClient).toHaveProperty('signUp');
-      expect(authClient.signUp).toBeDefined();
+      expect(mockSignUpEmail).toHaveBeenCalledWith({
+        email: 'new@example.com',
+        password: 'pass456',
+        name: 'New User',
+      });
     });
 
-    it('should have signOut method', async () => {
-      // Act
+    it('should forward signOut call to better-auth', async () => {
+      // Arrange
+      const mockSignOut = vi.fn().mockResolvedValue({ data: {}, error: null });
+      mockCreateAuthClient.mockReturnValue({
+        signIn: { email: vi.fn() },
+        signUp: { email: vi.fn() },
+        signOut: mockSignOut,
+        useSession: mockUseSession,
+      });
       const { authClient } = await import('@/lib/auth/client');
 
+      // Act
+      await authClient.signOut();
+
       // Assert
-      expect(authClient).toHaveProperty('signOut');
-      expect(authClient.signOut).toBeDefined();
+      expect(mockSignOut).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -202,6 +247,7 @@ describe('lib/auth/client', () => {
       // Assert
       expect(result.data).toBeNull();
       expect(result.error).toBeNull();
+      // test-review:accept tobe_true — isPending is a boolean field on the hook's return; asserting the wrapper passes through better-auth's pending state is the test's whole point, not a degenerate "operation succeeded" check
       expect(result.isPending).toBe(true);
     });
   });
@@ -490,6 +536,7 @@ describe('lib/auth/client', () => {
       expect(result.data?.user.id).toBe('user-123');
       expect(result.data?.user.name).toBe('John Doe');
       expect(result.data?.user.email).toBe('john@example.com');
+      // test-review:accept tobe_true — emailVerified is a boolean field on the user object; asserting its preserved value alongside name/email/image/role is structural field-preservation coverage, not a degenerate boolean check
       expect(result.data?.user.emailVerified).toBe(true);
       expect(result.data?.user.image).toBe('https://example.com/avatar.jpg');
       expect(result.data?.user.role).toBe('USER');
@@ -564,6 +611,7 @@ describe('lib/auth/client', () => {
       expect(result.data).not.toBeNull();
       expect(result.data?.user.role).toBe('ADMIN');
       expect(result.error).toBeNull();
+      // test-review:accept tobe_true — isPending is a boolean field on the hook's return; the test intentionally exercises the "data-present AND pending" combination to verify the wrapper passes both through, not a degenerate assertion
       expect(result.isPending).toBe(true);
     });
   });

@@ -284,6 +284,36 @@ describe('GET /api/v1/users/[id]', () => {
         },
       });
     });
+
+    it('should return 404 when admin fetches a non-existent user', async () => {
+      // Arrange — admin session fetching a different user's ID, but that user doesn't exist.
+      // This covers the admin-then-404 path (source L50: role=ADMIN bypasses ForbiddenError,
+      // source L74: findUnique returns null → NotFoundError).
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const nonExistentId = 'cmjbv4i3x00005wsloputgwuy'; // Valid CUID, different from admin
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams(nonExistentId);
+
+      // Act
+      const response = await GET(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('NOT_FOUND');
+      expect(data.error.message).toBe('User not found');
+
+      // Admin bypassed the 403 gate — DB WAS queried
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: nonExistentId },
+        select: expect.objectContaining({ id: true, email: true }),
+      });
+    });
   });
 
   describe('Successful User Retrieval', () => {
@@ -497,6 +527,27 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
     });
 
+    it('should return 400 for non-empty but malformed user ID format', async () => {
+      // Arrange — 'not-a-cuid' is non-empty so it hits the CUID format rule,
+      // exercising a different Zod rejection path than the empty-string test above.
+      const currentUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(currentUser);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams('not-a-cuid');
+
+      // Act
+      const response = await GET(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      // ID validation fires before DB access
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
     it('should handle database errors gracefully', async () => {
       // Arrange
       const currentUser = mockAuthenticatedUser('USER');
@@ -568,7 +619,7 @@ describe('GET /api/v1/users/[id]', () => {
         id: userId,
         name: 'Complete User',
         email: 'complete@example.com',
-        role: 'ADMIN',
+        role: 'USER', // Matches the USER session context — session.user.id === userId (self-access)
         emailVerified: true,
         image: 'https://example.com/image.jpg',
         bio: 'Complete profile',
@@ -982,6 +1033,72 @@ describe('PATCH /api/v1/users/[id]', () => {
       });
     });
 
+    it('should successfully set emailVerified to false and write only that field', async () => {
+      // Arrange — mirror of the emailVerified:true test; verifies the false branch is symmetric
+      // Source writes `...(body.emailVerified !== undefined && { emailVerified: body.emailVerified })`
+      // so false is a valid truthy spread (the condition is !== undefined, not !!body.emailVerified).
+      // No companion field (emailVerifiedAt) is cleared — confirmed by reading route.ts:133-150.
+      const targetUserId = 'cmjbv4i3x00009wsloputgwu9';
+
+      const existingUser = {
+        id: targetUserId,
+        name: 'Test User',
+        email: 'user@example.com',
+        role: 'USER',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      const updatedUser = {
+        id: targetUserId,
+        name: 'Test User',
+        email: 'user@example.com',
+        role: 'USER',
+        emailVerified: false,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-31'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockResolvedValue(updatedUser as any);
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { emailVerified: false },
+      });
+      const params = createMockParams(targetUserId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert — handler must return 200 envelope with emailVerified:false
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data.emailVerified).toBe(false);
+
+      // Assert — prisma.user.update was called with ONLY emailVerified:false in data
+      // (no companion field like emailVerifiedAt should appear — source has no such field)
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: targetUserId },
+        data: { emailVerified: false },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          emailVerified: true,
+          image: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    });
+
     it('should successfully update multiple fields at once', async () => {
       // Arrange
       const targetUserId = 'cmjbv4i3x00008wsloputgwu1';
@@ -1053,7 +1170,160 @@ describe('PATCH /api/v1/users/[id]', () => {
     });
   });
 
+  describe('Conditional field spread', () => {
+    it('should NOT forward role or emailVerified to prisma.user.update when only name is provided', async () => {
+      // Arrange — body contains ONLY name; proves the conditional spread doesn't forward absent fields
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+      const targetUserId = 'cmjbv4i3x00030wsloputgwab';
+
+      const existingUser = {
+        id: targetUserId,
+        name: 'Old Name',
+        email: 'user@example.com',
+        role: 'USER',
+        emailVerified: false,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      const updatedUser = {
+        id: targetUserId,
+        name: 'Name Only',
+        email: 'user@example.com',
+        role: 'USER',
+        emailVerified: false,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-31'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockResolvedValue(updatedUser as any);
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { name: 'Name Only' },
+      });
+      const params = createMockParams(targetUserId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+
+      // Assert — status first, then the contract: absent fields must NOT appear in data
+      expect(response.status).toBe(200);
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ role: expect.anything() }),
+        })
+      );
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ emailVerified: expect.anything() }),
+        })
+      );
+    });
+
+    it('should permit ADMIN to update own name without triggering the self-role-change guard', async () => {
+      // Arrange — admin editing SELF with body that has only name (no role key)
+      // The guard at source L125 only trips when body.role is present and !== 'ADMIN'
+      const adminUser = mockAdminUser();
+      const adminId = adminUser.user.id;
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const existingUser = {
+        id: adminId,
+        name: 'Admin Old',
+        email: 'admin@example.com',
+        role: 'ADMIN',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      const updatedUser = {
+        id: adminId,
+        name: 'Admin New',
+        email: 'admin@example.com',
+        role: 'ADMIN',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-31'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockResolvedValue(updatedUser as any);
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { name: 'Admin New' },
+      });
+      const params = createMockParams(adminId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert — 200: self-role-change guard did NOT fire; update proceeded
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Self-Role Change Prevention', () => {
+    it('should return 200 when admin sets own role to ADMIN (guard only fires for non-ADMIN role)', async () => {
+      // Arrange — source L125: guard fires only when `body.role && body.role !== 'ADMIN'`.
+      // Sending body={role:'ADMIN'} on self does NOT trigger the guard, so the update proceeds.
+      const adminUser = mockAdminUser();
+      const adminId = adminUser.user.id;
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const existingUser = {
+        id: adminId,
+        name: 'Admin User',
+        email: 'admin@example.com',
+        role: 'ADMIN',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      const updatedUser = {
+        ...existingUser,
+        updatedAt: new Date('2025-01-31'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockResolvedValue(updatedUser as any);
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { role: 'ADMIN' }, // Same role as current — guard condition NOT met
+      });
+      const params = createMockParams(adminId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+      const data = await parseResponse<SuccessResponse>(response);
+
+      // Assert — guard did NOT fire; update proceeded and returned 200
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ role: 'ADMIN' }),
+        })
+      );
+    });
+
     it('should return 400 with SELF_ROLE_CHANGE when admin tries to change own role', async () => {
       // Arrange
       const adminUser = mockAdminUser();
@@ -1148,7 +1418,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('At least one field must be provided');
 
-      // Should not query database
+      // Empty-body guard at route.ts:111 fires before the findUnique existence check —
+      // findUnique is never reached.
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -1224,6 +1495,50 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Should not update user
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('should return 500 when prisma.user.update rejects after a successful findUnique', async () => {
+      // Arrange — findUnique succeeds (user exists), then update throws a DB error.
+      // This exercises the catch path in withAdminAuth that wraps the update call,
+      // distinct from the findUnique rejection test above which never reaches update.
+      const targetUserId = 'cmjbv4i3x00013wsloputgwu6';
+      const existingUser = {
+        id: targetUserId,
+        name: 'Test User',
+        email: 'user@example.com',
+        role: 'USER',
+        emailVerified: true,
+        image: null,
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(existingUser as any);
+      vi.mocked(prisma.user.update).mockRejectedValue(new Error('DB fail'));
+
+      const mockRequest = createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/id',
+        body: { name: 'New Name' },
+      });
+      const params = createMockParams(targetUserId);
+
+      // Act
+      const response = await PATCH(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert — the handler returns the generic 500 error envelope
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('INTERNAL_ERROR');
+
+      // Assert — prisma.user.update WAS attempted (unlike the findUnique rejection path)
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+
+      // Note: handleAPIError logs via the global logger from @/lib/logging (not mocked in this
+      // test file) — asserting mockLogger.error would fail because the route's log.info
+      // ('User updated by admin') is never reached when update throws. The key behavioral
+      // contract is the 500 envelope and that update was attempted (verified above).
     });
   });
 });

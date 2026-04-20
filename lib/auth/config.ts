@@ -29,6 +29,347 @@ const oauthInvitationStateSchema = z
   .passthrough();
 
 /**
+ * User shape passed to `databaseHooks.user.create.{before,after}` by better-auth.
+ * Matches better-auth's inferred type (including the `role` additionalField).
+ */
+export type UserCreateData = {
+  id: string;
+  createdAt: Date;
+  updatedAt: Date;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  image?: string | null;
+} & Record<string, unknown>;
+
+/**
+ * Context passed to database hooks. `null` when better-auth invokes the hook
+ * outside a request context; optional `path` identifies OAuth callbacks.
+ */
+export type DatabaseHookContext = { path?: string } | null;
+
+/**
+ * Validate OAuth invitation email match BEFORE user creation.
+ *
+ * For OAuth invitation flow, the user's OAuth email MUST match the invitation
+ * email. This prevents users from accepting an invitation sent to one email
+ * address using a different OAuth account.
+ *
+ * Security: If invitation data is present but emails don't match, user creation
+ * is rejected with a clear error message.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function userCreateBeforeHook(
+  user: UserCreateData,
+  ctx: DatabaseHookContext
+): Promise<{ data: UserCreateData }> {
+  const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+
+  if (isOAuthSignup) {
+    try {
+      const oauthState = await getOAuthState();
+      const parsed = oauthInvitationStateSchema.safeParse(oauthState);
+      const invitationEmail = parsed.success ? parsed.data.invitationEmail : null;
+      const invitationToken = parsed.success ? (parsed.data.invitationToken ?? null) : null;
+
+      // If invitation data is present, email MUST match
+      if (invitationEmail && user.email !== invitationEmail) {
+        logger.warn('OAuth invitation email mismatch - rejecting signup', {
+          invitationEmail,
+          oauthEmail: user.email,
+        });
+
+        throw new APIError('BAD_REQUEST', {
+          message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
+        });
+      }
+
+      // Apply role BEFORE user is created so the session gets the correct role immediately.
+      // If we applied it in the after hook (via prisma.user.update), the session would
+      // already be cached with role="USER" and the user would need to re-login.
+      if (invitationToken && invitationEmail && user.email === invitationEmail) {
+        const isValidToken = await validateInvitationToken(invitationEmail, invitationToken);
+
+        if (isValidToken) {
+          const invitation = await getValidInvitation(invitationEmail);
+
+          // Delete token NOW to prevent race: token must be consumed before user
+          // creation, so a concurrent OAuth signup cannot reuse the same single-use token.
+          await deleteInvitationToken(invitationEmail);
+          logger.info('OAuth invitation token consumed', { email: invitationEmail });
+
+          if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
+            logger.info('Applying invitation role to OAuth user before creation', {
+              email: user.email,
+              role: invitation.metadata.role,
+            });
+
+            return { data: { ...user, role: invitation.metadata.role } };
+          }
+        }
+      }
+    } catch (error) {
+      // Re-throw APIError (our validation error)
+      if (error instanceof APIError) {
+        throw error;
+      }
+      // Log but don't block for other errors (e.g., getOAuthState fails)
+      logger.error('Error checking OAuth invitation in before hook', error);
+    }
+  }
+
+  return { data: user };
+}
+
+/**
+ * Handle OAuth invitation acceptance, set default preferences, and send welcome email.
+ *
+ * Triggered after a new user is created via:
+ * - Email/password signup (email + password)
+ * - OAuth/social login (Google, etc.) - ONLY for NEW users, not existing logins
+ *
+ * The hook fires whenever a user record is inserted into the database, regardless
+ * of authentication method. For OAuth, it only triggers on first signup, not on
+ * subsequent logins by existing users.
+ *
+ * Welcome-email logic:
+ * - OAuth signup (email auto-verified) → send welcome now
+ * - Email/password with verification DISABLED → send welcome now
+ * - Password invitation acceptance → send welcome now (email verified by accept-invite route)
+ * - Email/password with verification ENABLED → skip now; welcome sent after verification
+ *
+ * Role assignment for OAuth invitation happens in the BEFORE hook so the user
+ * is created with the correct role — the session is cached immediately without
+ * requiring a logout/login cycle.
+ *
+ * Error handling: Non-blocking. Preferences-update and welcome-email failures
+ * are logged but do not prevent signup.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function userCreateAfterHook(
+  user: UserCreateData,
+  ctx: DatabaseHookContext
+): Promise<void> {
+  // Detect signup method for logging purposes
+  const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+  const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+  // Set default preferences for all new users
+  try {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { preferences: DEFAULT_USER_PREFERENCES as object },
+    });
+    logger.info('Default preferences set for new user', {
+      userId: user.id,
+      signupMethod,
+    });
+  } catch (prefsError) {
+    // Log but don't fail user creation
+    logger.error('Failed to set default preferences', prefsError, {
+      userId: user.id,
+    });
+  }
+
+  // Check if this is an invitation acceptance (for password flow)
+  let isPasswordInvitation = false;
+
+  try {
+    if (!isOAuthSignup) {
+      // Check for password invitation acceptance (non-expired invitation)
+      const invitation = await getValidInvitation(user.email);
+
+      if (invitation) {
+        isPasswordInvitation = true;
+        logger.info('Detected password invitation acceptance', {
+          userId: user.id,
+          email: user.email,
+        });
+      }
+    }
+  } catch (error) {
+    // Log but don't fail user creation
+    logger.error('Error processing invitation in database hook', error, {
+      userId: user.id,
+      email: user.email,
+    });
+  }
+
+  // Determine if welcome email should be sent immediately
+  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+
+  const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || isPasswordInvitation;
+
+  if (shouldSendWelcomeNow) {
+    logger.info('Sending welcome email to new user', {
+      userId: user.id,
+      userEmail: user.email,
+      signupMethod,
+      isInvitation: isPasswordInvitation,
+    });
+
+    await sendEmail({
+      to: user.email,
+      subject: 'Welcome to Sunrise',
+      react: WelcomeEmail({
+        userName: user.name || 'User',
+        userEmail: user.email,
+        baseUrl: env.BETTER_AUTH_URL,
+      }),
+    }).catch((error) => {
+      logger.warn('Failed to send welcome email', {
+        userId: user.id,
+        userEmail: user.email,
+        signupMethod,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } else {
+    logger.info('Skipping welcome email (will send after email verification)', {
+      userId: user.id,
+      userEmail: user.email,
+      signupMethod,
+    });
+  }
+}
+
+/**
+ * Send password reset email for users with a password account.
+ *
+ * OAuth-only users (no password row on `account`) are silently skipped with
+ * an info log. The frontend always shows a generic "check your email" message,
+ * so the response timing and shape do not reveal whether a user exists or how
+ * they authenticate.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function sendResetPasswordHook(params: {
+  user: { id: string; email: string; name: string | null };
+  url: string;
+  token: string;
+}): Promise<void> {
+  const { user, url } = params;
+
+  const passwordAccount = await prisma.account.findFirst({
+    where: {
+      userId: user.id,
+      password: { not: null },
+    },
+  });
+
+  if (!passwordAccount) {
+    logger.info('Password reset requested for OAuth-only user', {
+      userId: user.id,
+      email: user.email,
+    });
+    return;
+  }
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Reset your password',
+    react: ResetPasswordEmail({
+      userName: user.name || 'User',
+      resetUrl: url,
+      expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000),
+    }),
+  });
+}
+
+/**
+ * Called after a user verifies their email. Send the welcome email here if
+ * it was deferred during signup (see databaseHooks.user.create.after).
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function afterEmailVerificationHook(user: {
+  id: string;
+  email: string;
+  name: string | null;
+}): Promise<void> {
+  logger.info('Email verification completed', {
+    userId: user.id,
+    email: user.email,
+  });
+
+  // Only send welcome email here if verification was required at signup.
+  // When verification is not required, the welcome email is sent immediately
+  // on account creation (databaseHooks.user.create.after). If the user later
+  // verifies voluntarily from their profile/settings, we must not send it again.
+  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+
+  if (!requiresVerification) {
+    logger.info('Skipping welcome email after verification (already sent at signup)', {
+      userId: user.id,
+    });
+    return;
+  }
+
+  // Send welcome email AFTER verification completes
+  await sendEmail({
+    to: user.email,
+    subject: 'Welcome to Sunrise',
+    react: WelcomeEmail({
+      userName: user.name || 'User',
+      userEmail: user.email,
+      baseUrl: env.BETTER_AUTH_URL,
+    }),
+  }).catch((error) => {
+    logger.warn('Failed to send welcome email after verification', {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+/**
+ * Send verification email to new users (unless they're accepting an invitation).
+ *
+ * Invitation acceptances skip the verification email because the accept-invite
+ * route marks the email as verified immediately. For regular signups, the default
+ * callbackURL is rewritten to point at the verification callback page that handles
+ * both success and error states.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function sendVerificationEmailHook({
+  user,
+  url,
+}: {
+  user: { id: string; email: string; name: string | null };
+  url: string;
+  token: string;
+}): Promise<void> {
+  // Check if this is an invitation acceptance - if so, skip verification email
+  // The invitation acceptance flow marks email as verified immediately
+  const invitation = await getValidInvitation(user.email);
+
+  if (invitation) {
+    logger.info('Skipping verification email for invitation acceptance', {
+      userId: user.id,
+      email: user.email,
+    });
+    return; // Don't send verification email for invitation acceptance
+  }
+
+  // Replace the default callbackURL (/) with our verification callback page
+  // This page handles both success (redirect to dashboard) and error states (show resend option)
+  const verificationUrl = url.replace('callbackURL=%2F', 'callbackURL=%2Fverify-email%2Fcallback');
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify your email address',
+    react: VerifyEmailEmail({
+      userName: user.name || 'User',
+      verificationUrl,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+    }),
+  });
+}
+
+/**
  * Better Auth Configuration
  *
  * Provides authentication using email/password and social providers (Google).
@@ -68,43 +409,7 @@ export const auth = betterAuth({
     // Override with REQUIRE_EMAIL_VERIFICATION environment variable
     // Note: Verification email sending is configured in emailVerification block below
     requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
-    sendResetPassword: async ({
-      user,
-      url,
-    }: {
-      user: { id: string; email: string; name: string | null };
-      url: string;
-      token: string;
-    }) => {
-      // Check if user has a password account (not OAuth-only)
-      const passwordAccount = await prisma.account.findFirst({
-        where: {
-          userId: user.id,
-          password: { not: null },
-        },
-      });
-
-      // If user only has OAuth accounts (no password), don't send reset email
-      // This is a security best practice - don't reveal user's auth method
-      if (!passwordAccount) {
-        logger.info('Password reset requested for OAuth-only user', {
-          userId: user.id,
-          email: user.email,
-        });
-        return; // Silently succeed - frontend shows generic success message
-      }
-
-      // User has password account - send reset email
-      await sendEmail({
-        to: user.email,
-        subject: 'Reset your password',
-        react: ResetPasswordEmail({
-          userName: user.name || 'User',
-          resetUrl: url,
-          expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
-        }),
-      });
-    },
+    sendResetPassword: sendResetPasswordHook,
   },
 
   // Email verification configuration
@@ -118,81 +423,13 @@ export const auth = betterAuth({
     // Token expiration time in seconds (24 hours to match email messaging)
     expiresIn: 86400, // 24 hours
 
-    // Send verification email callback (better-auth calls this)
-    sendVerificationEmail: async ({
-      user,
-      url,
-    }: {
-      user: { id: string; email: string; name: string | null };
-      url: string;
-      token: string;
-    }) => {
-      // Check if this is an invitation acceptance - if so, skip verification email
-      // The invitation acceptance flow marks email as verified immediately
-      const invitation = await getValidInvitation(user.email);
-
-      if (invitation) {
-        logger.info('Skipping verification email for invitation acceptance', {
-          userId: user.id,
-          email: user.email,
-        });
-        return; // Don't send verification email for invitation acceptance
-      }
-
-      // Replace the default callbackURL (/) with our verification callback page
-      // This page handles both success (redirect to dashboard) and error states (show resend option)
-      const verificationUrl = url.replace(
-        'callbackURL=%2F',
-        'callbackURL=%2Fverify-email%2Fcallback'
-      );
-
-      await sendEmail({
-        to: user.email,
-        subject: 'Verify your email address',
-        react: VerifyEmailEmail({
-          userName: user.name || 'User',
-          verificationUrl,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-        }),
-      });
-    },
+    // Send verification email callback (better-auth calls this).
+    // Hook body is defined above as `sendVerificationEmailHook` so unit tests
+    // can import and call it directly.
+    sendVerificationEmail: sendVerificationEmailHook,
 
     // Callback after successful email verification
-    afterEmailVerification: async (user: { id: string; email: string; name: string | null }) => {
-      logger.info('Email verification completed', {
-        userId: user.id,
-        email: user.email,
-      });
-
-      // Only send welcome email here if verification was required at signup.
-      // When verification is not required, the welcome email is sent immediately
-      // on account creation (databaseHooks.user.create.after). If the user later
-      // verifies voluntarily from their profile/settings, we must not send it again.
-      const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-
-      if (!requiresVerification) {
-        logger.info('Skipping welcome email after verification (already sent at signup)', {
-          userId: user.id,
-        });
-        return;
-      }
-
-      // Send welcome email AFTER verification completes
-      await sendEmail({
-        to: user.email,
-        subject: 'Welcome to Sunrise',
-        react: WelcomeEmail({
-          userName: user.name || 'User',
-          userEmail: user.email,
-          baseUrl: env.BETTER_AUTH_URL,
-        }),
-      }).catch((error) => {
-        logger.warn('Failed to send welcome email after verification', {
-          userId: user.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    },
+    afterEmailVerification: afterEmailVerificationHook,
   },
 
   // Social authentication providers
@@ -241,200 +478,14 @@ export const auth = betterAuth({
     },
   },
 
-  // Database hooks for lifecycle events
+  // Database hooks for lifecycle events.
+  // Hook bodies are defined above as `userCreateBeforeHook` / `userCreateAfterHook`
+  // so unit tests can import and call them directly.
   databaseHooks: {
     user: {
       create: {
-        /**
-         * Validate OAuth invitation email match BEFORE user creation
-         *
-         * For OAuth invitation flow, the user's OAuth email MUST match the
-         * invitation email. This prevents users from accepting an invitation
-         * sent to one email address using a different OAuth account.
-         *
-         * Security: If invitation data is present but emails don't match,
-         * user creation is rejected with a clear error message.
-         */
-        before: async (user, ctx) => {
-          const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
-
-          if (isOAuthSignup) {
-            try {
-              const oauthState = await getOAuthState();
-              const parsed = oauthInvitationStateSchema.safeParse(oauthState);
-              const invitationEmail = parsed.success ? parsed.data.invitationEmail : null;
-              const invitationToken = parsed.success ? (parsed.data.invitationToken ?? null) : null;
-
-              // If invitation data is present, email MUST match
-              if (invitationEmail && user.email !== invitationEmail) {
-                logger.warn('OAuth invitation email mismatch - rejecting signup', {
-                  invitationEmail,
-                  oauthEmail: user.email,
-                });
-
-                throw new APIError('BAD_REQUEST', {
-                  message: `This invitation was sent to ${invitationEmail}. Please use an account with that email address, or set a password instead.`,
-                });
-              }
-
-              // Apply role BEFORE user is created so the session gets the correct role immediately.
-              // If we applied it in the after hook (via prisma.user.update), the session would
-              // already be cached with role="USER" and the user would need to re-login.
-              if (invitationToken && invitationEmail && user.email === invitationEmail) {
-                const isValidToken = await validateInvitationToken(
-                  invitationEmail,
-                  invitationToken
-                );
-
-                if (isValidToken) {
-                  const invitation = await getValidInvitation(invitationEmail);
-
-                  // Delete token NOW to prevent race: token must be consumed before user
-                  // creation, so a concurrent OAuth signup cannot reuse the same single-use token.
-                  await deleteInvitationToken(invitationEmail);
-                  logger.info('OAuth invitation token consumed', { email: invitationEmail });
-
-                  if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
-                    logger.info('Applying invitation role to OAuth user before creation', {
-                      email: user.email,
-                      role: invitation.metadata.role,
-                    });
-
-                    return { data: { ...user, role: invitation.metadata.role } };
-                  }
-                }
-              }
-            } catch (error) {
-              // Re-throw APIError (our validation error)
-              if (error instanceof APIError) {
-                throw error;
-              }
-              // Log but don't block for other errors (e.g., getOAuthState fails)
-              logger.error('Error checking OAuth invitation in before hook', error);
-            }
-          }
-
-          return { data: user };
-        },
-
-        /**
-         * Handle OAuth invitation acceptance and send welcome email
-         *
-         * Triggered after a new user is created via:
-         * - Email/password signup (email + password)
-         * - OAuth/social login (Google, etc.) - ONLY for NEW users, not existing logins
-         *
-         * The hook fires whenever a user record is inserted into the database,
-         * regardless of authentication method. For OAuth, it only triggers on
-         * first signup, not on subsequent logins by existing users.
-         *
-         * For OAuth invitation flow:
-         * 1. Check if OAuth state contains invitation data (invitationToken, invitationEmail)
-         * 2. Validate invitation token and email match
-         * 3. Token was already deleted in before hook (single-use, prevents race conditions)
-         * 4. Send welcome email (email already verified by OAuth provider)
-         *
-         * Note: Role assignment happens in the before hook so the user is created
-         * with the correct role. This ensures the session has the correct role
-         * immediately without requiring a logout/login cycle.
-         *
-         * For normal signup:
-         * - Send welcome email (non-blocking)
-         * - Email/password users also receive verification email if enabled
-         *
-         * Error handling: Non-blocking - logs failures but doesn't prevent signup.
-         */
-        after: async (user, ctx) => {
-          // Detect signup method for logging purposes
-          const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
-          const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
-
-          // Set default preferences for all new users
-          try {
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { preferences: DEFAULT_USER_PREFERENCES as object },
-            });
-            logger.info('Default preferences set for new user', {
-              userId: user.id,
-              signupMethod,
-            });
-          } catch (prefsError) {
-            // Log but don't fail user creation
-            logger.error('Failed to set default preferences', prefsError, {
-              userId: user.id,
-            });
-          }
-
-          // Check if this is an invitation acceptance (for password flow)
-          let isPasswordInvitation = false;
-
-          try {
-            if (!isOAuthSignup) {
-              // Check for password invitation acceptance (non-expired invitation)
-              const invitation = await getValidInvitation(user.email);
-
-              if (invitation) {
-                isPasswordInvitation = true;
-                logger.info('Detected password invitation acceptance', {
-                  userId: user.id,
-                  email: user.email,
-                });
-              }
-            }
-          } catch (error) {
-            // Log but don't fail user creation
-            logger.error('Error processing invitation in database hook', error, {
-              userId: user.id,
-              email: user.email,
-            });
-          }
-
-          // Determine if welcome email should be sent immediately
-          const requiresVerification =
-            env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
-
-          // Send welcome email if:
-          // 1. OAuth signup (email auto-verified by provider), OR
-          // 2. Email/password signup with verification DISABLED, OR
-          // 3. Password invitation acceptance (email will be verified by accept-invite route)
-          // Note: Normal email/password with verification ENABLED will receive welcome email
-          // after verification completes (via emailVerification.afterEmailVerification)
-          const shouldSendWelcomeNow =
-            isOAuthSignup || !requiresVerification || isPasswordInvitation;
-
-          if (shouldSendWelcomeNow) {
-            logger.info('Sending welcome email to new user', {
-              userId: user.id,
-              userEmail: user.email,
-              signupMethod,
-              isInvitation: isPasswordInvitation,
-            });
-
-            await sendEmail({
-              to: user.email,
-              subject: 'Welcome to Sunrise',
-              react: WelcomeEmail({
-                userName: user.name || 'User',
-                userEmail: user.email,
-                baseUrl: env.BETTER_AUTH_URL,
-              }),
-            }).catch((error) => {
-              logger.warn('Failed to send welcome email', {
-                userId: user.id,
-                userEmail: user.email,
-                signupMethod,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            });
-          } else {
-            logger.info('Skipping welcome email (will send after email verification)', {
-              userId: user.id,
-              userEmail: user.email,
-              signupMethod,
-            });
-          }
-        },
+        before: userCreateBeforeHook,
+        after: userCreateAfterHook,
       },
     },
   },

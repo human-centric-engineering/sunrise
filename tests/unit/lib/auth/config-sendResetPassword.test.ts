@@ -5,16 +5,19 @@
  * - Password reset emails for users with password accounts
  * - Security-conscious handling of OAuth-only users (no password)
  * - Proper logging and error handling
+ * - Correct prop wiring to ResetPasswordEmail component
  *
  * Test Coverage:
  * - User with password account (should send email)
  * - OAuth-only user (should not send email, should log)
  * - User with both OAuth and password accounts (should send email)
  * - User with null name (should use "User" fallback)
+ * - User with empty string name (should use "User" fallback)
+ * - Correct userName, resetUrl, and expiresAt passed to ResetPasswordEmail
  * - Email sending failure (should propagate error)
  * - Database query failure (should propagate error)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts (lines 53-89)
+ * @see lib/auth/config.ts (sendResetPasswordHook)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -50,11 +53,10 @@ vi.mock('@/emails/reset-password', () => ({
 /**
  * Test Suite: Auth Config sendResetPassword Callback
  *
- * Tests the callback that determines whether to send password reset emails
+ * Tests the hook that determines whether to send password reset emails
  * based on the user's authentication method (password vs OAuth-only).
  */
 describe('lib/auth/config - sendResetPassword callback', () => {
-  // Import types and functions after mocks are set up
   let sendEmail: ReturnType<typeof vi.fn>;
   let prisma: {
     account: { findFirst: ReturnType<typeof vi.fn> };
@@ -65,6 +67,12 @@ describe('lib/auth/config - sendResetPassword callback', () => {
     debug: ReturnType<typeof vi.fn>;
     error: ReturnType<typeof vi.fn>;
   };
+  let ResetPasswordEmail: ReturnType<typeof vi.fn>;
+  let sendResetPasswordHook: (params: {
+    user: { id: string; email: string; name: string | null };
+    url: string;
+    token: string;
+  }) => Promise<void>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -73,6 +81,8 @@ describe('lib/auth/config - sendResetPassword callback', () => {
     const emailSend = await import('@/lib/email/send');
     const db = await import('@/lib/db/client');
     const logging = await import('@/lib/logging');
+    const resetPasswordEmail = await import('@/emails/reset-password');
+    const authConfig = await import('@/lib/auth/config');
 
     sendEmail = vi.mocked(emailSend.sendEmail);
     prisma = {
@@ -86,6 +96,8 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       debug: vi.mocked(logging.logger.debug),
       error: vi.mocked(logging.logger.error),
     };
+    ResetPasswordEmail = vi.mocked(resetPasswordEmail.default);
+    sendResetPasswordHook = authConfig.sendResetPasswordHook;
 
     // Default mock behavior: email sending succeeds
     sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
@@ -94,46 +106,6 @@ describe('lib/auth/config - sendResetPassword callback', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  /**
-   * Helper function to simulate the sendResetPassword callback
-   * This mimics the logic from lib/auth/config.ts lines 53-89
-   */
-  const simulateSendResetPassword = async (params: {
-    user: { id: string; email: string; name: string | null };
-    url: string;
-    token: string;
-  }) => {
-    const { user } = params;
-
-    // Check if user has a password account (not OAuth-only)
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    const passwordAccount = await prisma.account.findFirst({
-      where: {
-        userId: user.id,
-        password: { not: null },
-      },
-    });
-
-    // If user only has OAuth accounts (no password), don't send reset email
-    // This is a security best practice - don't reveal user's auth method
-    if (!passwordAccount) {
-      // @ts-expect-error - vi.mocked types don't infer callability properly
-      logger.info('Password reset requested for OAuth-only user', {
-        userId: user.id,
-        email: user.email,
-      });
-      return; // Silently succeed - frontend shows generic success message
-    }
-
-    // User has password account - send reset email
-    // @ts-expect-error - vi.mocked types don't infer callability properly
-    await sendEmail({
-      to: user.email,
-      subject: 'Reset your password',
-      react: React.createElement('div', {}, 'Reset Password Email'),
-    });
-  };
 
   describe('User with password account', () => {
     it('should send reset email when user has password account', async () => {
@@ -154,14 +126,13 @@ describe('lib/auth/config - sendResetPassword callback', () => {
         updatedAt: new Date(),
       };
 
-      // Mock password account exists
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
 
       const resetUrl = 'https://example.com/reset?token=abc123';
       const resetToken = 'abc123';
 
-      // Act: Simulate sendResetPassword callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
         url: resetUrl,
         token: resetToken,
@@ -194,7 +165,7 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       const mockUser = createMockUser({
         id: 'user-no-name',
         email: 'noname@example.com',
-        name: null, // Null name
+        name: null, // Null name triggers fallback
       });
 
       const mockPasswordAccount = {
@@ -209,22 +180,17 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
 
-      const resetUrl = 'https://example.com/reset?token=xyz789';
-      const resetToken = 'xyz789';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
-        user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+      // Act: Call the real hook with null name
+      await sendResetPasswordHook({
+        user: { ...mockUser, name: null },
+        url: 'https://example.com/reset?token=xyz789',
+        token: 'xyz789',
       });
 
-      // Assert: Verify email was sent (name fallback handled by email template)
-      expect(sendEmail).toHaveBeenCalledWith({
-        to: mockUser.email,
-        subject: 'Reset your password',
-        react: expect.any(Object),
-      });
+      // Assert: ResetPasswordEmail was called with "User" fallback, not null
+      expect(ResetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ userName: 'User' })
+      );
     });
 
     it('should send email for user with both OAuth and password accounts', async () => {
@@ -248,14 +214,11 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
 
-      const resetUrl = 'https://example.com/reset?token=def456';
-      const resetToken = 'def456';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=def456',
+        token: 'def456',
       });
 
       // Assert: Verify password account query
@@ -287,14 +250,11 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       // Mock no password account found
       prisma.account.findFirst.mockResolvedValue(null);
 
-      const resetUrl = 'https://example.com/reset?token=oauth123';
-      const resetToken = 'oauth123';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=oauth123',
+        token: 'oauth123',
       });
 
       // Assert: Verify account query was made
@@ -308,7 +268,7 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       // Assert: Verify NO email was sent (security best practice)
       expect(sendEmail).not.toHaveBeenCalled();
 
-      // Assert: Verify OAuth-only user event was logged
+      // Assert: Verify OAuth-only user event was logged with userId and email
       expect(logger.info).toHaveBeenCalledWith('Password reset requested for OAuth-only user', {
         userId: mockUser.id,
         email: mockUser.email,
@@ -325,14 +285,11 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(null);
 
-      const resetUrl = 'https://example.com/reset?token=google999';
-      const resetToken = 'google999';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=google999',
+        token: 'google999',
       });
 
       // Assert: Verify log includes user ID and email
@@ -358,15 +315,12 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(null);
 
-      const resetUrl = 'https://example.com/reset?token=silent123';
-      const resetToken = 'silent123';
-
       // Act & Assert: Should not throw error
       await expect(
-        simulateSendResetPassword({
+        sendResetPasswordHook({
           user: mockUser,
-          url: resetUrl,
-          token: resetToken,
+          url: 'https://example.com/reset?token=silent123',
+          token: 'silent123',
         })
       ).resolves.toBeUndefined();
 
@@ -400,15 +354,12 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       const emailError = new Error('SMTP server unavailable');
       sendEmail.mockRejectedValue(emailError);
 
-      const resetUrl = 'https://example.com/reset?token=fail123';
-      const resetToken = 'fail123';
-
-      // Act & Assert: Should throw error (not caught by callback)
+      // Act & Assert: Should throw error (not caught by hook)
       await expect(
-        simulateSendResetPassword({
+        sendResetPasswordHook({
           user: mockUser,
-          url: resetUrl,
-          token: resetToken,
+          url: 'https://example.com/reset?token=fail123',
+          token: 'fail123',
         })
       ).rejects.toThrow('SMTP server unavailable');
 
@@ -432,15 +383,12 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       const dbError = new Error('Database connection timeout');
       prisma.account.findFirst.mockRejectedValue(dbError);
 
-      const resetUrl = 'https://example.com/reset?token=dbfail123';
-      const resetToken = 'dbfail123';
-
       // Act & Assert: Should throw database error
       await expect(
-        simulateSendResetPassword({
+        sendResetPasswordHook({
           user: mockUser,
-          url: resetUrl,
-          token: resetToken,
+          url: 'https://example.com/reset?token=dbfail123',
+          token: 'dbfail123',
         })
       ).rejects.toThrow('Database connection timeout');
 
@@ -480,15 +428,12 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       const apiError = new Error('Email API rate limit exceeded');
       sendEmail.mockRejectedValue(apiError);
 
-      const resetUrl = 'https://example.com/reset?token=error123';
-      const resetToken = 'error123';
-
       // Act & Assert: Error should propagate (not swallowed)
       await expect(
-        simulateSendResetPassword({
+        sendResetPasswordHook({
           user: mockUser,
-          url: resetUrl,
-          token: resetToken,
+          url: 'https://example.com/reset?token=error123',
+          token: 'error123',
         })
       ).rejects.toThrow('Email API rate limit exceeded');
 
@@ -499,11 +444,11 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
   describe('Edge cases', () => {
     it('should handle user with empty string name', async () => {
-      // Arrange: User with empty string name (edge case, should be null)
+      // Arrange: User with empty string name — should fall back to "User"
       const mockUser = createMockUser({
         id: 'empty-name-user',
         email: 'emptyname@example.com',
-        name: '', // Empty string
+        name: '',
       });
 
       const mockPasswordAccount = {
@@ -518,22 +463,17 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
 
-      const resetUrl = 'https://example.com/reset?token=empty123';
-      const resetToken = 'empty123';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook with empty string name
+      await sendResetPasswordHook({
         user: { ...mockUser, name: '' },
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=empty123',
+        token: 'empty123',
       });
 
-      // Assert: Verify email was sent (empty string handled by template)
-      expect(sendEmail).toHaveBeenCalledWith({
-        to: mockUser.email,
-        subject: 'Reset your password',
-        react: expect.any(Object),
-      });
+      // Assert: Empty string is falsy, so ResetPasswordEmail receives "User" fallback
+      expect(ResetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ userName: 'User' })
+      );
     });
 
     it('should handle special characters in email address', async () => {
@@ -556,17 +496,14 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
 
-      const resetUrl = 'https://example.com/reset?token=special123';
-      const resetToken = 'special123';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=special123',
+        token: 'special123',
       });
 
-      // Assert: Verify email was sent with special character email
+      // Assert: Verify email was sent with special character email preserved verbatim
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'user+tag@example.co.uk',
@@ -597,16 +534,15 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       // Very long reset URL (e.g., with long token)
       const longToken = 'a'.repeat(500);
       const resetUrl = `https://example.com/reset?token=${longToken}&redirect=/dashboard/settings/security`;
-      const resetToken = longToken;
 
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
         url: resetUrl,
-        token: resetToken,
+        token: longToken,
       });
 
-      // Assert: Verify email was sent with long URL
+      // Assert: Verify email was sent (hook does not truncate URLs)
       expect(sendEmail).toHaveBeenCalledWith({
         to: mockUser.email,
         subject: 'Reset your password',
@@ -645,7 +581,7 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       // Act: Test password user
       prisma.account.findFirst.mockResolvedValue(mockPasswordAccount);
-      const passwordResult = await simulateSendResetPassword({
+      const passwordResult = await sendResetPasswordHook({
         user: passwordUser,
         url: resetUrl,
         token: resetToken,
@@ -653,13 +589,13 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       // Act: Test OAuth-only user
       prisma.account.findFirst.mockResolvedValue(null);
-      const oauthResult = await simulateSendResetPassword({
+      const oauthResult = await sendResetPasswordHook({
         user: oauthUser,
         url: resetUrl,
         token: resetToken,
       });
 
-      // Assert: Both should return undefined (same response to caller)
+      // Assert: Both should return undefined (same response shape to caller)
       expect(passwordResult).toBeUndefined();
       expect(oauthResult).toBeUndefined();
 
@@ -677,14 +613,11 @@ describe('lib/auth/config - sendResetPassword callback', () => {
 
       prisma.account.findFirst.mockResolvedValue(null);
 
-      const resetUrl = 'https://example.com/reset?token=sec123';
-      const resetToken = 'sec123';
-
-      // Act: Simulate callback
-      await simulateSendResetPassword({
+      // Act: Call the real hook
+      await sendResetPasswordHook({
         user: mockUser,
-        url: resetUrl,
-        token: resetToken,
+        url: 'https://example.com/reset?token=sec123',
+        token: 'sec123',
       });
 
       // Assert: Verify query specifically checks for password field
@@ -702,6 +635,110 @@ describe('lib/auth/config - sendResetPassword callback', () => {
           // Missing password check would be a security issue
         },
       });
+    });
+  });
+
+  describe('ResetPasswordEmail prop wiring', () => {
+    it('should pass user.name as userName when populated', async () => {
+      // Arrange: User with a populated name
+      const mockUser = createMockUser({
+        id: 'alice-user',
+        email: 'alice@example.com',
+        name: 'Alice Example',
+      });
+
+      prisma.account.findFirst.mockResolvedValue({
+        id: 'account-alice',
+        userId: mockUser.id,
+        accountId: 'credential-account',
+        providerId: 'credential',
+        password: 'hashed-password',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Act: Call the real hook with a populated name
+      await sendResetPasswordHook({
+        user: mockUser,
+        url: 'https://example.com/reset?token=alice123',
+        token: 'alice123',
+      });
+
+      // Assert: Hook passes the actual name through, not the fallback
+      expect(ResetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ userName: 'Alice Example' })
+      );
+    });
+
+    it('should pass url through as resetUrl', async () => {
+      // Arrange: User with password account and a known URL
+      const mockUser = createMockUser({
+        id: 'url-test-user',
+        email: 'urltest@example.com',
+        name: 'URL Test User',
+      });
+
+      prisma.account.findFirst.mockResolvedValue({
+        id: 'account-url',
+        userId: mockUser.id,
+        accountId: 'credential-account',
+        providerId: 'credential',
+        password: 'hashed-password',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const specificUrl = 'https://app.example.com/reset?token=abc123';
+
+      // Act: Call the real hook with the specific URL
+      await sendResetPasswordHook({
+        user: mockUser,
+        url: specificUrl,
+        token: 'abc123',
+      });
+
+      // Assert: The url param is forwarded verbatim as the resetUrl prop
+      expect(ResetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ resetUrl: specificUrl })
+      );
+    });
+
+    it('should set expiresAt approximately 1 hour from now', async () => {
+      // Arrange: Freeze time so we can assert the exact computed value
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-04-18T12:00:00Z'));
+
+      try {
+        const mockUser = createMockUser({
+          id: 'timer-test-user',
+          email: 'timer@example.com',
+          name: 'Timer Test User',
+        });
+
+        prisma.account.findFirst.mockResolvedValue({
+          id: 'account-timer',
+          userId: mockUser.id,
+          accountId: 'credential-account',
+          providerId: 'credential',
+          password: 'hashed-password',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        // Act: Call the real hook under frozen clock
+        await sendResetPasswordHook({
+          user: mockUser,
+          url: 'https://example.com/reset?token=timer123',
+          token: 'timer123',
+        });
+
+        // Assert: expiresAt should be exactly 1 hour after the frozen "now"
+        expect(ResetPasswordEmail).toHaveBeenCalledWith(
+          expect.objectContaining({ expiresAt: new Date('2026-04-18T13:00:00Z') })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

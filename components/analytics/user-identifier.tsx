@@ -29,6 +29,7 @@ import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useSession } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
+import { logger } from '@/lib/logging';
 
 export function UserIdentifier() {
   const { data: session, isPending: isSessionPending } = useSession();
@@ -78,13 +79,16 @@ export function UserIdentifier() {
       });
     };
 
-    void initialize();
+    initialize().catch((error: unknown) => {
+      logger.error('UserIdentifier initialize failed', { error });
+    });
   }, [isReady, isSessionPending, session?.user?.id, identify, page, track, pathname, searchParams]);
 
   // Reset identification tracking when user logs out
   useEffect(() => {
     if (!session?.user?.id && identifiedUserRef.current) {
       identifiedUserRef.current = null;
+      hasTrackedInitialRef.current = false;
     }
   }, [session?.user?.id]);
 
