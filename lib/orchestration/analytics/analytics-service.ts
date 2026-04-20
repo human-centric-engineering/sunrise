@@ -39,30 +39,47 @@ export interface TopicEntry {
 }
 
 /**
- * Returns the most frequently asked user messages, grouped by exact content.
+ * Returns the most frequently asked user messages, grouped case-insensitively.
  * This gives IP owners a view of what users are asking about most.
  */
 export async function getPopularTopics(query: AnalyticsQuery): Promise<TopicEntry[]> {
   const { from, to } = resolveDateRange(query);
   const limit = query.limit ?? 20;
 
-  const results = await prisma.aiMessage.groupBy({
-    by: ['content'],
+  const results = await prisma.aiMessage.findMany({
     where: {
       role: 'user',
       createdAt: { gte: from, lte: to },
       conversation: { ...agentFilter(query.agentId) },
     },
-    _count: { content: true },
-    _max: { createdAt: true },
-    orderBy: { _count: { content: 'desc' } },
-    take: limit,
+    select: { content: true, createdAt: true },
   });
 
-  return results.map((r) => ({
-    content: r.content,
-    count: r._count.content,
-    lastAsked: r._max.createdAt!,
+  // Group case-insensitively
+  const grouped = new Map<string, { display: string; count: number; lastAsked: Date }>();
+  for (const r of results) {
+    const key = r.content.toLowerCase().trim();
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.count++;
+      if (r.createdAt > existing.lastAsked) {
+        existing.lastAsked = r.createdAt;
+        existing.display = r.content; // keep most recent casing
+      }
+    } else {
+      grouped.set(key, { display: r.content, count: 1, lastAsked: r.createdAt });
+    }
+  }
+
+  // Sort by count descending and take limit
+  const sorted = Array.from(grouped.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+
+  return sorted.map((g) => ({
+    content: g.display,
+    count: g.count,
+    lastAsked: g.lastAsked,
   }));
 }
 
@@ -114,27 +131,37 @@ export async function getUnansweredQuestions(query: AnalyticsQuery): Promise<Una
     take: limit,
   });
 
-  // For each hedging message, find the preceding user message
-  const entries: UnansweredEntry[] = [];
-  for (const msg of hedgingMessages) {
-    const precedingUserMsg = await prisma.aiMessage.findFirst({
-      where: {
-        conversationId: msg.conversationId,
-        role: 'user',
-        createdAt: { lt: msg.createdAt },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { content: true },
-    });
+  // Batch-fetch preceding user messages for all hedging messages
+  const conversationIds = [...new Set(hedgingMessages.map((m) => m.conversationId))];
+  const userMessages = await prisma.aiMessage.findMany({
+    where: {
+      conversationId: { in: conversationIds },
+      role: 'user',
+    },
+    select: { conversationId: true, content: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
 
-    entries.push({
+  // Index user messages by conversation for quick lookup
+  const userMsgsByConv = new Map<string, Array<{ content: string; createdAt: Date }>>();
+  for (const um of userMessages) {
+    const list = userMsgsByConv.get(um.conversationId) ?? [];
+    list.push({ content: um.content, createdAt: um.createdAt });
+    userMsgsByConv.set(um.conversationId, list);
+  }
+
+  const entries: UnansweredEntry[] = hedgingMessages.map((msg) => {
+    const convUserMsgs = userMsgsByConv.get(msg.conversationId) ?? [];
+    // Find the latest user message before this hedging reply
+    const preceding = convUserMsgs.find((um) => um.createdAt < msg.createdAt);
+    return {
       conversationId: msg.conversationId,
       agentId: msg.conversation.agentId,
-      userMessage: precedingUserMsg?.content ?? '(no preceding user message)',
+      userMessage: preceding?.content ?? '(no preceding user message)',
       assistantReply: msg.content.slice(0, 500),
       createdAt: msg.createdAt,
-    });
-  }
+    };
+  });
 
   return entries;
 }

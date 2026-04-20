@@ -2,8 +2,8 @@
  * Tests for `lib/orchestration/analytics/analytics-service.ts`.
  *
  * Covers:
- *   - getPopularTopics: groupBy aggregation, date range, agent filter, limit
- *   - getUnansweredQuestions: hedging detection, user message lookup, empty results
+ *   - getPopularTopics: case-insensitive grouping, date range, agent filter, limit
+ *   - getUnansweredQuestions: hedging detection, batched user message lookup, empty results
  *   - getEngagementMetrics: counts, averages, returning users, daily trend
  *   - getContentGaps: gap ratio calculation, filtering, sorting
  *   - getFeedbackSummary: overall counts, per-agent breakdown, recent negative
@@ -52,41 +52,50 @@ const baseQuery = {
 describe('getPopularTopics', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns grouped topics sorted by count', async () => {
-    vi.mocked(prisma.aiMessage.groupBy).mockResolvedValue([
-      { content: 'How do I reset?', _count: { content: 5 }, _max: { createdAt: new Date() } },
-      { content: 'What is pricing?', _count: { content: 3 }, _max: { createdAt: new Date() } },
+  it('groups messages case-insensitively and sorts by count', async () => {
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
+      { content: 'How do I reset?', createdAt: new Date('2026-04-10') },
+      { content: 'how do i reset?', createdAt: new Date('2026-04-12') },
+      { content: 'HOW DO I RESET?', createdAt: new Date('2026-04-14') },
+      { content: 'What is pricing?', createdAt: new Date('2026-04-11') },
     ] as never);
 
     const result = await getPopularTopics(baseQuery);
 
     expect(result).toHaveLength(2);
-    expect(result[0].content).toBe('How do I reset?');
-    expect(result[0].count).toBe(5);
-    expect(result[1].count).toBe(3);
+    // "reset" group has 3 occurrences
+    expect(result[0].count).toBe(3);
+    // Uses the most recent casing (from 2026-04-14)
+    expect(result[0].content).toBe('HOW DO I RESET?');
+    expect(result[1].content).toBe('What is pricing?');
+    expect(result[1].count).toBe(1);
   });
 
   it('returns empty array when no messages exist', async () => {
-    vi.mocked(prisma.aiMessage.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     const result = await getPopularTopics(baseQuery);
     expect(result).toEqual([]);
   });
 
   it('respects limit parameter', async () => {
-    vi.mocked(prisma.aiMessage.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
+      { content: 'A', createdAt: new Date() },
+      { content: 'B', createdAt: new Date() },
+      { content: 'C', createdAt: new Date() },
+    ] as never);
 
-    await getPopularTopics({ ...baseQuery, limit: 5 });
+    const result = await getPopularTopics({ ...baseQuery, limit: 2 });
 
-    expect(prisma.aiMessage.groupBy).toHaveBeenCalledWith(expect.objectContaining({ take: 5 }));
+    expect(result).toHaveLength(2);
   });
 
   it('filters by agentId when provided', async () => {
-    vi.mocked(prisma.aiMessage.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await getPopularTopics({ ...baseQuery, agentId: 'cmjbv4i3x00003wsloputgwul' });
 
-    expect(prisma.aiMessage.groupBy).toHaveBeenCalledWith(
+    expect(prisma.aiMessage.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           conversation: expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwul' }),
@@ -96,11 +105,11 @@ describe('getPopularTopics', () => {
   });
 
   it('defaults to 30-day range when no dates provided', async () => {
-    vi.mocked(prisma.aiMessage.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await getPopularTopics({});
 
-    expect(prisma.aiMessage.groupBy).toHaveBeenCalledWith(
+    expect(prisma.aiMessage.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           createdAt: expect.objectContaining({
@@ -111,13 +120,26 @@ describe('getPopularTopics', () => {
       })
     );
   });
+
+  it('trims whitespace when grouping', async () => {
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
+      { content: '  hello  ', createdAt: new Date() },
+      { content: 'hello', createdAt: new Date() },
+    ] as never);
+
+    const result = await getPopularTopics(baseQuery);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].count).toBe(2);
+  });
 });
 
 describe('getUnansweredQuestions', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('finds hedging assistant messages and preceding user messages', async () => {
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
+  it('finds hedging messages and batches user message lookup', async () => {
+    // First call: hedging messages
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
       {
         id: 'msg_1',
         content: "I don't know the answer to that question.",
@@ -127,9 +149,14 @@ describe('getUnansweredQuestions', () => {
       },
     ] as never);
 
-    vi.mocked(prisma.aiMessage.findFirst).mockResolvedValue({
-      content: 'What is the meaning of life?',
-    } as never);
+    // Second call: batch user messages for conv_1
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
+      {
+        conversationId: 'conv_1',
+        content: 'What is the meaning of life?',
+        createdAt: new Date('2026-04-10T09:59:00Z'),
+      },
+    ] as never);
 
     const result = await getUnansweredQuestions(baseQuery);
 
@@ -137,31 +164,69 @@ describe('getUnansweredQuestions', () => {
     expect(result[0].userMessage).toBe('What is the meaning of life?');
     expect(result[0].assistantReply).toContain("I don't know");
     expect(result[0].conversationId).toBe('conv_1');
+
+    // Verify batch fetch was used (2 findMany calls total, no findFirst)
+    expect(prisma.aiMessage.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.aiMessage.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns empty array when no hedging messages found', async () => {
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([] as never);
 
     const result = await getUnansweredQuestions(baseQuery);
     expect(result).toEqual([]);
   });
 
-  it('handles missing preceding user message', async () => {
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
+  it('handles missing preceding user message gracefully', async () => {
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
       {
         id: 'msg_1',
         content: "I'm not sure about that.",
-        createdAt: new Date(),
+        createdAt: new Date('2026-04-10T10:00:00Z'),
         conversationId: 'conv_1',
         conversation: { agentId: 'agent_1' },
       },
     ] as never);
 
-    vi.mocked(prisma.aiMessage.findFirst).mockResolvedValue(null);
+    // Batch user messages: none found
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([] as never);
 
     const result = await getUnansweredQuestions(baseQuery);
 
     expect(result[0].userMessage).toBe('(no preceding user message)');
+  });
+
+  it('finds the correct preceding user message when multiple exist', async () => {
+    const hedgingTime = new Date('2026-04-10T10:00:00Z');
+
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
+      {
+        id: 'msg_hedge',
+        content: "I don't have information about that.",
+        createdAt: hedgingTime,
+        conversationId: 'conv_1',
+        conversation: { agentId: 'agent_1' },
+      },
+    ] as never);
+
+    // User messages ordered desc by createdAt
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
+      {
+        conversationId: 'conv_1',
+        content: 'Second question',
+        createdAt: new Date('2026-04-10T09:59:00Z'),
+      },
+      {
+        conversationId: 'conv_1',
+        content: 'First question',
+        createdAt: new Date('2026-04-10T09:50:00Z'),
+      },
+    ] as never);
+
+    const result = await getUnansweredQuestions(baseQuery);
+
+    // Should pick the latest user msg before the hedging reply
+    expect(result[0].userMessage).toBe('Second question');
   });
 });
 

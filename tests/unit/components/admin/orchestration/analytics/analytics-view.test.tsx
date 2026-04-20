@@ -2,12 +2,18 @@
  * Tests for the analytics dashboard view component.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import {
   AnalyticsView,
   type AnalyticsViewProps,
 } from '@/components/admin/orchestration/analytics/analytics-view';
+
+// Mock next/navigation
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 // Minimal mock data
 const baseProps: AnalyticsViewProps = {
@@ -16,18 +22,37 @@ const baseProps: AnalyticsViewProps = {
   unanswered: null,
   feedback: null,
   contentGaps: null,
+  agents: [],
+  filters: { from: '2026-03-21', to: '2026-04-20', agentId: '' },
 };
 
 describe('AnalyticsView', () => {
   it('renders without data (null-safe)', () => {
     render(<AnalyticsView {...baseProps} />);
     expect(screen.getByTestId('engagement-cards')).toBeInTheDocument();
+    expect(screen.getByTestId('analytics-filters')).toBeInTheDocument();
     expect(screen.getByText('No topic data yet.')).toBeInTheDocument();
     expect(screen.getByText('No unanswered questions found.')).toBeInTheDocument();
     expect(screen.getByText('No content gaps detected.')).toBeInTheDocument();
   });
 
-  it('renders engagement metrics', () => {
+  it('renders filter controls', () => {
+    render(
+      <AnalyticsView
+        {...baseProps}
+        agents={[
+          { id: 'a1', name: 'FAQ Bot' },
+          { id: 'a2', name: 'Sales Bot' },
+        ]}
+      />
+    );
+
+    expect(screen.getByLabelText('From')).toBeInTheDocument();
+    expect(screen.getByLabelText('To')).toBeInTheDocument();
+    expect(screen.getByText('All agents')).toBeInTheDocument();
+  });
+
+  it('renders engagement metrics including messages count', () => {
     render(
       <AnalyticsView
         {...baseProps}
@@ -44,12 +69,57 @@ describe('AnalyticsView', () => {
     );
 
     expect(screen.getByText('150')).toBeInTheDocument();
+    expect(screen.getByText('1,200')).toBeInTheDocument();
     expect(screen.getByText('45')).toBeInTheDocument();
     expect(screen.getByText('8.0')).toBeInTheDocument();
     expect(screen.getByText('44.4%')).toBeInTheDocument();
   });
 
-  it('renders feedback summary', () => {
+  it('renders conversations-over-time trend when 2+ days of data', () => {
+    render(
+      <AnalyticsView
+        {...baseProps}
+        engagement={{
+          totalConversations: 10,
+          totalMessages: 50,
+          uniqueUsers: 5,
+          avgMessagesPerConversation: 5.0,
+          returningUsers: 2,
+          returningUserRate: 0.4,
+          conversationsByDay: [
+            { date: '2026-04-15', count: 4 },
+            { date: '2026-04-16', count: 6 },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByTestId('conversations-trend')).toBeInTheDocument();
+    expect(screen.getByText('Conversations Over Time')).toBeInTheDocument();
+    expect(screen.getByText('2026-04-15')).toBeInTheDocument();
+    expect(screen.getByText('2026-04-16')).toBeInTheDocument();
+  });
+
+  it('does not render trend chart when only 1 day of data', () => {
+    render(
+      <AnalyticsView
+        {...baseProps}
+        engagement={{
+          totalConversations: 5,
+          totalMessages: 20,
+          uniqueUsers: 3,
+          avgMessagesPerConversation: 4.0,
+          returningUsers: 1,
+          returningUserRate: 0.333,
+          conversationsByDay: [{ date: '2026-04-15', count: 5 }],
+        }}
+      />
+    );
+
+    expect(screen.queryByTestId('conversations-trend')).not.toBeInTheDocument();
+  });
+
+  it('renders feedback summary with per-agent table', () => {
     render(
       <AnalyticsView
         {...baseProps}
@@ -75,6 +145,39 @@ describe('AnalyticsView', () => {
     expect(screen.getByText('100 up')).toBeInTheDocument();
     expect(screen.getByText('10 down')).toBeInTheDocument();
     expect(screen.getByText('FAQ Bot')).toBeInTheDocument();
+  });
+
+  it('renders recent negative feedback table', () => {
+    render(
+      <AnalyticsView
+        {...baseProps}
+        feedback={{
+          overall: { thumbsUp: 5, thumbsDown: 3, total: 8, satisfactionRate: 0.625 },
+          byAgent: [],
+          recentNegative: [
+            {
+              messageId: 'msg_1',
+              conversationId: 'conv_1',
+              agentId: 'a1',
+              content: 'This answer was wrong about pricing',
+              ratedAt: new Date('2026-04-18'),
+            },
+            {
+              messageId: 'msg_2',
+              conversationId: 'conv_2',
+              agentId: 'a1',
+              content: 'Completely unhelpful response',
+              ratedAt: new Date('2026-04-17'),
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByTestId('recent-negative')).toBeInTheDocument();
+    expect(screen.getByText('Recent Negative Feedback')).toBeInTheDocument();
+    expect(screen.getByText('This answer was wrong about pricing')).toBeInTheDocument();
+    expect(screen.getByText('Completely unhelpful response')).toBeInTheDocument();
   });
 
   it('renders popular topics table', () => {

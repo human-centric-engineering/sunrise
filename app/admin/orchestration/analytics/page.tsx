@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 
-import { AnalyticsView } from '@/components/admin/orchestration/analytics/analytics-view';
+import {
+  AnalyticsView,
+  type AgentOption,
+} from '@/components/admin/orchestration/analytics/analytics-view';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -17,9 +20,21 @@ export const metadata: Metadata = {
   description: 'Usage analytics, popular topics, feedback, and content gaps.',
 };
 
-async function getEngagement(): Promise<EngagementMetrics | null> {
+interface PageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+function buildQuery(params: Record<string, string | string[] | undefined>): string {
+  const qs = new URLSearchParams();
+  if (typeof params.from === 'string') qs.set('from', params.from);
+  if (typeof params.to === 'string') qs.set('to', params.to);
+  if (typeof params.agentId === 'string') qs.set('agentId', params.agentId);
+  return qs.toString() ? `?${qs.toString()}` : '';
+}
+
+async function getEngagement(query: string): Promise<EngagementMetrics | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT);
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT}${query}`);
     if (!res.ok) return null;
     const body = await parseApiResponse<{ metrics: EngagementMetrics }>(res);
     return body.success ? body.data.metrics : null;
@@ -29,9 +44,9 @@ async function getEngagement(): Promise<EngagementMetrics | null> {
   }
 }
 
-async function getTopics(): Promise<TopicEntry[] | null> {
+async function getTopics(query: string): Promise<TopicEntry[] | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS);
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${query}`);
     if (!res.ok) return null;
     const body = await parseApiResponse<{ topics: TopicEntry[] }>(res);
     return body.success ? body.data.topics : null;
@@ -41,9 +56,9 @@ async function getTopics(): Promise<TopicEntry[] | null> {
   }
 }
 
-async function getUnanswered(): Promise<UnansweredEntry[] | null> {
+async function getUnanswered(query: string): Promise<UnansweredEntry[] | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED);
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${query}`);
     if (!res.ok) return null;
     const body = await parseApiResponse<{ questions: UnansweredEntry[] }>(res);
     return body.success ? body.data.questions : null;
@@ -53,9 +68,9 @@ async function getUnanswered(): Promise<UnansweredEntry[] | null> {
   }
 }
 
-async function getFeedback(): Promise<FeedbackSummary | null> {
+async function getFeedback(query: string): Promise<FeedbackSummary | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK);
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK}${query}`);
     if (!res.ok) return null;
     const body = await parseApiResponse<{ feedback: FeedbackSummary }>(res);
     return body.success ? body.data.feedback : null;
@@ -65,9 +80,9 @@ async function getFeedback(): Promise<FeedbackSummary | null> {
   }
 }
 
-async function getContentGaps(): Promise<ContentGap[] | null> {
+async function getContentGaps(query: string): Promise<ContentGap[] | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS);
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${query}`);
     if (!res.ok) return null;
     const body = await parseApiResponse<{ gaps: ContentGap[] }>(res);
     return body.success ? body.data.gaps : null;
@@ -77,13 +92,40 @@ async function getContentGaps(): Promise<ContentGap[] | null> {
   }
 }
 
-export default async function AnalyticsPage() {
-  const [engagement, topics, unanswered, feedback, contentGaps] = await Promise.all([
-    getEngagement(),
-    getTopics(),
-    getUnanswered(),
-    getFeedback(),
-    getContentGaps(),
+async function getAgents(): Promise<AgentOption[]> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.AGENTS);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<{ agents: Array<{ id: string; name: string }> }>(res);
+    if (!body.success) return [];
+    return body.data.agents.map((a) => ({ id: a.id, name: a.name }));
+  } catch {
+    return [];
+  }
+}
+
+function getDefaultDates(): { today: string; thirtyDaysAgo: string } {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  return { today, thirtyDaysAgo };
+}
+
+export default async function AnalyticsPage({ searchParams }: PageProps) {
+  const params = await searchParams;
+  const query = buildQuery(params);
+
+  const { today, thirtyDaysAgo } = getDefaultDates();
+
+  const [engagement, topics, unanswered, feedback, contentGaps, agents] = await Promise.all([
+    getEngagement(query),
+    getTopics(query),
+    getUnanswered(query),
+    getFeedback(query),
+    getContentGaps(query),
+    getAgents(),
   ]);
 
   return (
@@ -101,6 +143,12 @@ export default async function AnalyticsPage() {
         unanswered={unanswered}
         feedback={feedback}
         contentGaps={contentGaps}
+        agents={agents}
+        filters={{
+          from: (typeof params.from === 'string' ? params.from : '') || thirtyDaysAgo,
+          to: (typeof params.to === 'string' ? params.to : '') || today,
+          agentId: typeof params.agentId === 'string' ? params.agentId : '',
+        }}
       />
     </div>
   );

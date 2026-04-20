@@ -1,6 +1,6 @@
 # Client Analytics
 
-API-only analytics for IP owners to understand how users interact with their content via AI agents. No UI — all data is exposed via admin API endpoints.
+Analytics dashboard and API for understanding how users interact with AI agents. Provides engagement metrics, popular topics, content gap detection, feedback aggregation, and unanswered question identification.
 
 ## Module Layout
 
@@ -8,7 +8,29 @@ API-only analytics for IP owners to understand how users interact with their con
 lib/orchestration/analytics/
 ├── analytics-service.ts   # Query functions for all analytics dimensions
 └── index.ts               # barrel exports
+
+components/admin/orchestration/analytics/
+└── analytics-view.tsx     # Client component — full dashboard with filters
+
+app/admin/orchestration/analytics/
+└── page.tsx               # Server component — fetches data, passes to view
 ```
+
+## Admin UI
+
+The analytics dashboard at `/admin/orchestration/analytics` provides:
+
+1. **Filter controls** — date range picker (from/to) and agent selector. Defaults to past 30 days, all agents. Changing filters updates URL search params and refetches server-side.
+
+2. **Engagement cards** — 5 summary cards: Conversations, Messages, Unique Users, Avg Depth, Returning Users.
+
+3. **Conversations Over Time** — bar chart showing daily conversation volume for the selected period. Only rendered when there are 2+ days of data.
+
+4. **Feedback Summary** — overall satisfaction rate with thumbs up/down badges, per-agent breakdown table, and recent negative feedback table (last 10 thumbs-down messages with content and date).
+
+5. **Popular Topics / Content Gaps** — side-by-side tables. Topics shows case-insensitive grouped user messages by frequency. Content Gaps shows topics with high unanswered ratios.
+
+6. **Unanswered Questions** — full-width table of user messages where the assistant hedged, showing the user question, assistant reply, and date.
 
 ## API Endpoints
 
@@ -23,7 +45,7 @@ All endpoints require admin auth and accept the same query parameters:
 
 ### `GET /api/v1/admin/orchestration/analytics/topics`
 
-Most frequently asked user messages, grouped by exact content.
+Most frequently asked user messages, grouped case-insensitively.
 
 Returns: `{ topics: [{ content, count, lastAsked }] }`
 
@@ -112,6 +134,10 @@ Schema: `AiMessage.rating` (`Int?`, null = unrated) and `AiMessage.ratedAt` (`Da
 
 ## How It Works
 
+### Topic Grouping
+
+User messages are grouped case-insensitively (lowercased and trimmed) to avoid duplicates like "Reset password" and "reset password" appearing as separate topics. The most recent casing is used as the display label.
+
 ### Unanswered Detection
 
 Uses hedging phrase matching on assistant messages:
@@ -123,6 +149,8 @@ Uses hedging phrase matching on assistant messages:
 - "beyond my knowledge"
 - "I'm unable to"
 - "I do not have"
+
+Preceding user messages are fetched in a single batch query to avoid N+1 performance issues.
 
 This heuristic is complemented by the `rating` field on `AiMessage` — when users submit thumbs-down feedback, the `/analytics/feedback` endpoint provides explicit satisfaction data alongside the heuristic-based detection.
 
