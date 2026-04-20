@@ -24,6 +24,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { generateApiKey } from '@/lib/orchestration/mcp/auth';
 import { mcpApiKeyRotateSchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
+import type { Prisma } from '@prisma/client';
 
 const SAFE_SELECT = {
   id: true,
@@ -54,7 +55,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const body = await validateRequestBody(request, mcpApiKeyRotateSchema);
   const { plaintext, hash, prefix } = generateApiKey();
 
-  const updateData: Record<string, unknown> = {
+  const updateData: Prisma.McpApiKeyUpdateInput = {
     keyHash: hash,
     keyPrefix: prefix,
   };

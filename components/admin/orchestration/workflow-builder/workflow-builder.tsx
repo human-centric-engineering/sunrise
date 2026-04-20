@@ -357,7 +357,7 @@ function WorkflowBuilderInner({
       setSaving(true);
       setSaveError(null);
       try {
-        const saved = await saveWorkflow({
+        const savedWorkflow = await saveWorkflow({
           mode,
           workflowId: workflow?.id,
           name: workflowName.trim() || 'Untitled workflow',
@@ -367,7 +367,7 @@ function WorkflowBuilderInner({
         });
         setDetails(resolvedDetails);
         if (mode === 'create') {
-          router.push(`/admin/orchestration/workflows/${saved.id}`);
+          router.push(`/admin/orchestration/workflows/${savedWorkflow.id}`);
         } else {
           setSaved(true);
           setTimeout(() => setSaved(false), 2500);

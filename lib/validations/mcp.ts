@@ -201,7 +201,11 @@ export type UpdateApiKey = z.infer<typeof updateApiKeySchema>;
  * Optionally update the key's expiry at rotation time.
  */
 export const mcpApiKeyRotateSchema = z.object({
-  expiresAt: z.coerce.date().nullable().optional(),
+  expiresAt: z.coerce
+    .date()
+    .refine((d) => d > new Date(), { message: 'expiresAt must be in the future' })
+    .nullable()
+    .optional(),
 });
 
 export type McpApiKeyRotate = z.infer<typeof mcpApiKeyRotateSchema>;

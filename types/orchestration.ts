@@ -347,6 +347,9 @@ export interface MessageMetadata {
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
+  // Present on error-marker messages (persisted when streaming fails completely)
+  error?: boolean;
+  errorCode?: string;
 }
 
 // ============================================================================

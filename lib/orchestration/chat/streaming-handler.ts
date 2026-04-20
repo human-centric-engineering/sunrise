@@ -837,7 +837,7 @@ export class StreamingChatHandler {
             metadata: {
               error: true,
               errorCode: 'internal_error',
-            } as unknown as MessageMetadata,
+            },
           });
         } catch (persistErr) {
           log.warn('Failed to persist error-marker assistant message', {
@@ -882,7 +882,9 @@ export class StreamingChatHandler {
       return existing;
     }
 
-    // Enforce per-user conversation cap before creating a new one
+    // Enforce per-user conversation cap before creating a new one.
+    // Note: this is a soft cap — concurrent requests may race past the count
+    // check, which is acceptable for a usage limit (not a security boundary).
     if (maxConversationsPerUser !== null) {
       const count = await prisma.aiConversation.count({
         where: { userId: request.userId, agentId: agent.id, isActive: true },
