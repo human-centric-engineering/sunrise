@@ -94,6 +94,13 @@ const capabilityFormSchema = z.object({
   executionType: z.enum(['internal', 'api', 'webhook']),
   executionHandler: z.string().min(1, 'Execution handler is required').max(500),
   requiresApproval: z.boolean(),
+  approvalTimeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
+    .nullable()
+    .optional(),
   rateLimit: z.number().int().min(1).max(10000).optional(),
   isActive: z.boolean(),
 });
@@ -316,6 +323,7 @@ export function CapabilityForm({
       executionType: (capability?.executionType as 'internal' | 'api' | 'webhook') ?? 'internal',
       executionHandler: capability?.executionHandler ?? '',
       requiresApproval: capability?.requiresApproval ?? false,
+      approvalTimeoutMs: capability?.approvalTimeoutMs ?? null,
       rateLimit: capability?.rateLimit ?? undefined,
       isActive: capability?.isActive ?? true,
     },
@@ -1047,6 +1055,32 @@ export function CapabilityForm({
               onCheckedChange={(v) => setValue('requiresApproval', v)}
             />
           </div>
+
+          {currentRequiresApproval && (
+            <div className="grid gap-2">
+              <Label htmlFor="approvalTimeoutMs">
+                Approval timeout (ms){' '}
+                <FieldHelp title="How long to wait for approval" contentClassName="w-80">
+                  How many milliseconds the system waits for a human to approve or reject this call
+                  before falling back to the global default action (deny or allow). Leave blank to
+                  use the global default timeout from orchestration settings. Maximum is 3,600,000
+                  ms (1 hour).
+                </FieldHelp>
+              </Label>
+              <Input
+                id="approvalTimeoutMs"
+                type="number"
+                {...register('approvalTimeoutMs', {
+                  setValueAs: (v: string | number) =>
+                    v === '' || v === null || v === undefined ? null : Number(v),
+                })}
+                placeholder="Use global default"
+              />
+              {errors.approvalTimeoutMs && (
+                <p className="text-destructive text-xs">{errors.approvalTimeoutMs.message}</p>
+              )}
+            </div>
+          )}
 
           <div className="grid gap-2">
             <Label htmlFor="rateLimit">

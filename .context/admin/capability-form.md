@@ -105,13 +105,19 @@ Single text input. The FieldHelp copy **changes with the selected type**:
 
 ## Tab 4 — Safety
 
-Fields: `requiresApproval`, `rateLimit`.
+Fields: `requiresApproval`, `approvalTimeoutMs`, `rateLimit`.
 
 ### Requires approval
 
 Shadcn `<Switch>`. When enabled, the dispatcher pauses on first invocation and writes an `AiCapabilityExecution` row with `status: 'pending_approval'` — a human has to approve before the handler runs.
 
 Help: **"When enabled, the agent will pause and ask a human to approve before running this capability. Use for irreversible actions like sending email, charging cards, or writing to production systems. Default: off."**
+
+### Approval timeout (ms)
+
+Number input, 1–3,600,000 (max 1 hour). **Only visible when "Requires approval" is toggled on.** Overrides the global default timeout from orchestration settings. Leave blank to use the global default.
+
+Help: **"How many milliseconds the system waits for a human to approve or reject this call before falling back to the global default action (deny or allow). Leave blank to use the global default timeout from orchestration settings. Maximum is 3,600,000 ms (1 hour)."**
 
 ### Rate limit
 

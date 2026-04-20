@@ -165,7 +165,7 @@ describe('CapabilitiesTable', () => {
 
       expect(screen.getByRole('button', { name: /^Name/ })).toBeInTheDocument();
       expect(screen.getByText('Category')).toBeInTheDocument();
-      expect(screen.getByText('Exec type')).toBeInTheDocument();
+      expect(screen.getByText('Type')).toBeInTheDocument();
       expect(screen.getByText('Status')).toBeInTheDocument();
     });
 

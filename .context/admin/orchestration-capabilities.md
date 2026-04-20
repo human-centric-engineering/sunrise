@@ -23,7 +23,7 @@ Columns:
 | Name         | `capability.name`                      | Sort header. Links to edit page                                       |
 | Slug         | `capability.slug`                      | Monospace, muted                                                      |
 | Category     | `capability.category`                  | Sort header. Free-text, shown as plain text                           |
-| Exec type    | `capability.executionType`             | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`          |
+| Type         | `capability.executionType`             | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`          |
 | Approval     | `capability.requiresApproval`          | Amber `Approval` badge when true, `—` otherwise                       |
 | Rate / min   | `capability.rateLimit`                 | Right-aligned; `—` when `null` (no limit)                             |
 | Agents using | `capability._agents` (inline from API) | Count + popover with agent names/links. `0` when none attached        |
