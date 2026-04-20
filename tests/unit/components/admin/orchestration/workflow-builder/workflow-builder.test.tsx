@@ -566,7 +566,7 @@ describe('WorkflowBuilder', () => {
       });
 
       // Click Run to confirm (default textarea has valid JSON)
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       // The dialog should close (title should disappear)
       await waitFor(() => {
@@ -588,7 +588,7 @@ describe('WorkflowBuilder', () => {
       await waitFor(() => {
         expect(screen.getByText(/execute workflow/i)).toBeInTheDocument();
       });
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
       await waitFor(() => {
         expect(screen.getByTestId('execution-panel')).toBeInTheDocument();
       });

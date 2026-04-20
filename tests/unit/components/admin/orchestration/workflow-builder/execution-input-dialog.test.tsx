@@ -27,6 +27,7 @@ function renderDialog(overrides: Partial<ExecutionInputDialogProps> = {}) {
     open: true,
     onOpenChange: vi.fn(),
     onConfirm: vi.fn(),
+    workflowId: 'wf-test-123',
     ...overrides,
   };
   render(<ExecutionInputDialog {...props} />);
@@ -53,7 +54,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setTextarea('{"key": "value"}');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(props.onConfirm).toHaveBeenCalledTimes(1);
     expect(props.onConfirm).toHaveBeenCalledWith(
@@ -69,7 +70,7 @@ describe('ExecutionInputDialog', () => {
 
     setTextarea('{"a":1}');
     setBudgetValue('0.50');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(props.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ budgetLimitUsd: 0.5 }));
   });
@@ -79,7 +80,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     // Default textarea has valid JSON, budget is empty by default
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     const call = (props.onConfirm as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(call.budgetLimitUsd).toBeUndefined();
@@ -90,7 +91,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setBudgetValue('0');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/positive number/i);
     expect(props.onConfirm).not.toHaveBeenCalled();
@@ -101,7 +102,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setBudgetValue('-5');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/positive number/i);
     expect(props.onConfirm).not.toHaveBeenCalled();
@@ -112,7 +113,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setTextarea('[1,2,3]');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/JSON object/i);
     expect(props.onConfirm).not.toHaveBeenCalled();
@@ -123,7 +124,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setTextarea('"just a string"');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/JSON object/i);
     expect(props.onConfirm).not.toHaveBeenCalled();
@@ -134,7 +135,7 @@ describe('ExecutionInputDialog', () => {
     const props = renderDialog();
 
     setTextarea('{not valid');
-    await user.click(screen.getByRole('button', { name: /run/i }));
+    await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/not valid JSON/i);
     expect(props.onConfirm).not.toHaveBeenCalled();

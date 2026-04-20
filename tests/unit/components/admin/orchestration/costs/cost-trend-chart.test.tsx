@@ -5,6 +5,8 @@
  * - Renders without throwing — SVG element present when data exists
  * - Empty state: no spend in last 30 days message when perModel is empty/null
  * - Empty state when trend is null
+ * - Empty state when all trend totals are zero (zero-fill makes this visible)
+ * - Zero-fill: chart renders 30 days even when only some days have spend
  *
  * Note: recharts renders to SVG under happy-dom. We assert the SVG element
  * is present and that the empty-state copy renders correctly. We do NOT
@@ -50,16 +52,23 @@ describe('CostTrendChart', () => {
       expect(screen.getByText('No spend recorded in the last 30 days.')).toBeInTheDocument();
     });
 
-    it('shows empty state copy when all trend totals are zero', () => {
+    it('shows empty state when all trend totals are zero', () => {
       const trend = [makeTrendPoint('2026-04-01', 0), makeTrendPoint('2026-04-02', 0)];
-      // buildPlotRows returns non-empty when trendList.length > 0 — the empty state
-      // is only shown when trend.length === 0. Zero-total trend still renders the chart.
-      // In happy-dom, recharts may not render SVG (no ResizeObserver) — just assert
-      // the empty-state copy is absent (chart container is present).
+      // After zero-fill, all days have $0 spend — empty state is shown
       render(<CostTrendChart trend={trend} perModel={null} models={MOCK_MODELS} />);
-      const emptyMsg = screen.queryByText('No spend recorded in the last 30 days.');
-      // When trend has data (even all zeros), empty state should NOT show
-      expect(emptyMsg).not.toBeInTheDocument();
+      expect(screen.getByText('No spend recorded in the last 30 days.')).toBeInTheDocument();
+    });
+  });
+
+  describe('zero-fill behavior', () => {
+    it('renders chart (not empty state) when at least one day has non-zero spend', () => {
+      // Only one day has spend — zero-fill adds 29 zero days but the chart renders
+      const today = new Date().toISOString().slice(0, 10);
+      const trend = [makeTrendPoint(today, 10.5)];
+
+      render(<CostTrendChart trend={trend} perModel={null} models={MOCK_MODELS} />);
+      expect(screen.queryByText('No spend recorded in the last 30 days.')).not.toBeInTheDocument();
+      expect(screen.getByText('30-day spend trend')).toBeInTheDocument();
     });
   });
 

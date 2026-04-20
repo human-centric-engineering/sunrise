@@ -162,6 +162,15 @@ export function getModelsByProvider(provider: string): ModelInfo[] {
 }
 
 /**
+ * Return the epoch timestamp (ms) when the registry was last populated
+ * from OpenRouter. `0` means the registry has never been refreshed and
+ * is running on the static fallback map only.
+ */
+export function getRegistryFetchedAt(): number {
+  return state.fetchedAt;
+}
+
+/**
  * Reset the registry. Intended for tests only — production code should
  * rely on the 24-hour TTL and `refreshFromOpenRouter({ force: true })`.
  */

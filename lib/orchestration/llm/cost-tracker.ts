@@ -21,7 +21,7 @@ import type { AiCostLog, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getAvailableModels, getModel } from './model-registry';
-import type { CostOperation, CostSummary, LocalSavingsResult } from '@/types/orchestration';
+import type { AgentCostSummary, CostOperation, LocalSavingsResult } from '@/types/orchestration';
 import type { ModelInfo } from './types';
 
 /** Computed cost breakdown for a single operation. */
@@ -142,13 +142,13 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
 }
 
 /**
- * Aggregate an agent's costs over a date range into a `CostSummary`
+ * Aggregate an agent's costs over a date range into an `AgentCostSummary`
  * matching the shape already defined in `types/orchestration.ts`.
  */
 export async function getAgentCosts(
   agentId: string,
   dateRange?: { from?: Date; to?: Date }
-): Promise<CostSummary> {
+): Promise<AgentCostSummary> {
   const where = {
     agentId,
     ...(dateRange?.from || dateRange?.to
@@ -163,7 +163,7 @@ export async function getAgentCosts(
 
   const entries = await prisma.aiCostLog.findMany({ where, orderBy: { createdAt: 'desc' } });
 
-  const summary: CostSummary = {
+  const summary: AgentCostSummary = {
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,

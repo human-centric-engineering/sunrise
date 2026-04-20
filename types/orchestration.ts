@@ -423,8 +423,8 @@ export type EvaluationSessionWithLogs = AiEvaluationSession & {
   agent: Pick<AiAgent, 'id' | 'name' | 'slug'> | null;
 };
 
-/** Cost summary for a time period */
-export interface CostSummary {
+/** Per-agent cost summary for a time period (distinct from the dashboard CostSummary in cost-reports.ts). */
+export interface AgentCostSummary {
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;

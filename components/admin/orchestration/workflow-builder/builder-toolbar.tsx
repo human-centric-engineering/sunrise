@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import {
+  BookmarkPlus,
   Check,
   ChevronLeft,
   CheckCircle2,
@@ -46,6 +47,12 @@ export interface BuilderToolbarProps {
   onSave: () => void;
   /** Called when the Execute button is clicked (edit mode only). */
   onExecute: () => void;
+  /** Called when "Save as template" is clicked (edit mode only). */
+  onSaveAsTemplate: () => void;
+  /** True while save-as-template is in flight. */
+  savingAsTemplate: boolean;
+  /** True briefly after save-as-template succeeds. */
+  savedAsTemplate: boolean;
   /** Called when a template is picked from the dropdown. */
   onTemplateSelect: (template: TemplateItem) => void;
   /** Server-prefetched templates for the dropdown. */
@@ -68,6 +75,9 @@ export function BuilderToolbar({
   onValidate,
   onSave,
   onExecute,
+  onSaveAsTemplate,
+  savingAsTemplate,
+  savedAsTemplate,
   onTemplateSelect,
   templates,
   templatesDisabled,
@@ -149,6 +159,25 @@ export function BuilderToolbar({
         <CheckCircle2 className="mr-2 h-4 w-4" />
         Validate
       </Button>
+
+      {mode === 'edit' && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onSaveAsTemplate}
+          disabled={savingAsTemplate || savedAsTemplate}
+          title="Clone this workflow into a reusable template"
+        >
+          {savingAsTemplate ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : savedAsTemplate ? (
+            <Check className="mr-2 h-4 w-4" />
+          ) : (
+            <BookmarkPlus className="mr-2 h-4 w-4" />
+          )}
+          {savedAsTemplate ? 'Template saved' : 'Save as template'}
+        </Button>
+      )}
 
       <Button
         variant="outline"

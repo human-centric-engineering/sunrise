@@ -103,8 +103,13 @@ export const API = {
         `/api/v1/admin/orchestration/workflows/${workflowId}/schedules/${scheduleId}`,
       workflowValidate: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/validate`,
+      workflowDryRun: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}/dry-run`,
       workflowExecute: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/execute`,
+      workflowExecuteStream: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/execute-stream`,
+      workflowSaveAsTemplate: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/save-as-template`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionApprove: (id: string): string =>

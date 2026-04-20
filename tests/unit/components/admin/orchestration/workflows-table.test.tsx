@@ -309,6 +309,60 @@ describe('WorkflowsTable', () => {
     });
   });
 
+  // ── Duplicate ──────────────────────────────────────────────────────────────
+
+  describe('duplicate action', () => {
+    it('clicking Duplicate fetches the workflow then POSTs a copy', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const { useRouter } = await import('next/navigation');
+      const push = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push,
+        replace: vi.fn(),
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
+
+      vi.mocked(apiClient.get).mockResolvedValue({
+        workflowDefinition: { steps: [], entryStepId: '', errorStrategy: 'fail' },
+        patternsUsed: [1, 2],
+        isTemplate: false,
+        metadata: null,
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'wf-new-id' });
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const duplicateItem = await screen.findByRole('menuitem', {
+        name: /duplicate/i,
+        hidden: true,
+      });
+      await user.click(duplicateItem);
+
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
+      });
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/workflows'),
+          expect.objectContaining({
+            body: expect.objectContaining({ name: 'Alpha Flow (copy)' }),
+          })
+        );
+      });
+
+      await waitFor(() => {
+        expect(push).toHaveBeenCalledWith('/admin/orchestration/workflows/wf-new-id');
+      });
+    });
+  });
+
   // ── Executions column ─────────────────────────────────────────────────────
 
   describe('Executions column', () => {

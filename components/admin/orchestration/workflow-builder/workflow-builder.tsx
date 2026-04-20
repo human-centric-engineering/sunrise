@@ -402,6 +402,29 @@ function WorkflowBuilderInner({
   // Execution flow
   // ------------------------------------------------------------------
 
+  // Save-as-template state.
+  const [savingAsTemplate, setSavingAsTemplate] = useState(false);
+  const [savedAsTemplate, setSavedAsTemplate] = useState(false);
+
+  const handleSaveAsTemplate = useCallback(async () => {
+    if (!workflow) return;
+    setSavingAsTemplate(true);
+    setSavedAsTemplate(false);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowSaveAsTemplate(workflow.id), {});
+      setSavedAsTemplate(true);
+      setTimeout(() => setSavedAsTemplate(false), 2500);
+    } catch (err) {
+      setSaveError(
+        err instanceof APIClientError
+          ? err.message
+          : 'Could not save as template. Try again in a moment.'
+      );
+    } finally {
+      setSavingAsTemplate(false);
+    }
+  }, [workflow]);
+
   const handleExecute = useCallback(() => {
     setExecutionDialogOpen(true);
   }, []);
@@ -459,6 +482,9 @@ function WorkflowBuilderInner({
         onValidate={handleValidate}
         onSave={handleSave}
         onExecute={handleExecute}
+        onSaveAsTemplate={() => void handleSaveAsTemplate()}
+        savingAsTemplate={savingAsTemplate}
+        savedAsTemplate={savedAsTemplate}
         onTemplateSelect={handleTemplateSelect}
         templates={templates}
         templatesDisabled={mode === 'edit'}
@@ -481,6 +507,11 @@ function WorkflowBuilderInner({
           metadata={
             (templateMetadataSchema.safeParse(workflow.metadata).data as
               | WorkflowTemplateMetadata
+              | undefined) ?? null
+          }
+          workflowDefinition={
+            (workflowDefinitionSchema.safeParse(workflow.workflowDefinition).data as
+              | WorkflowDefinition
               | undefined) ?? null
           }
         />
@@ -544,6 +575,7 @@ function WorkflowBuilderInner({
         open={executionDialogOpen}
         onOpenChange={setExecutionDialogOpen}
         onConfirm={handleExecutionConfirm}
+        workflowId={workflow?.id ?? ''}
       />
 
       <WorkflowDetailsDialog

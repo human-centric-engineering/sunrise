@@ -20,7 +20,11 @@ import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { getAvailableModels, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import {
+  getAvailableModels,
+  getRegistryFetchedAt,
+  refreshFromOpenRouter,
+} from '@/lib/orchestration/llm/model-registry';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -36,6 +40,12 @@ export const GET = withAdminAuth(async (request, _session) => {
   }
 
   const models = getAvailableModels();
+  const fetchedAt = getRegistryFetchedAt();
   log.info('Models listed', { modelCount: models.length, refreshed: refresh });
-  return successResponse({ models, refreshed: refresh });
+  return successResponse({
+    models,
+    refreshed: refresh,
+    /** Epoch ms when OpenRouter pricing was last fetched. 0 = static fallback only. */
+    fetchedAt,
+  });
 });

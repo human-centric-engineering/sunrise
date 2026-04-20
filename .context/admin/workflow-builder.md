@@ -10,18 +10,20 @@ Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand
 - `app/admin/orchestration/workflows/new/page.tsx` — create (server shell)
 - `app/admin/orchestration/workflows/[id]/page.tsx` — edit (server shell, `notFound()` on 404) + `<WorkflowSchedulesTab>` below the builder
 - `components/admin/orchestration/workflow-builder/` — all builder client islands
-- `components/admin/orchestration/workflows-table.tsx` — list page client island
+- `components/admin/orchestration/workflows-table.tsx` — list page client island (row actions: Edit, Duplicate, Delete)
+- `components/admin/orchestration/executions-table.tsx` — executions list client island
 - `lib/orchestration/engine/step-registry.ts` — single source of truth for pattern step metadata
 
 **Dependency:** `@xyflow/react` (React Flow 12). First React Flow usage in the repo; the canvas / node-type / handle patterns established here will be reused by any future diagram UI.
 
 ## Pages
 
-| Route                                 | File                                              | Purpose                                         |
-| ------------------------------------- | ------------------------------------------------- | ----------------------------------------------- |
-| `/admin/orchestration/workflows`      | `app/admin/orchestration/workflows/page.tsx`      | List, search, pagination, active toggle, delete |
-| `/admin/orchestration/workflows/new`  | `app/admin/orchestration/workflows/new/page.tsx`  | Empty builder — create mode                     |
-| `/admin/orchestration/workflows/[id]` | `app/admin/orchestration/workflows/[id]/page.tsx` | Hydrated builder — edit mode                    |
+| Route                                 | File                                              | Purpose                                              |
+| ------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| `/admin/orchestration/workflows`      | `app/admin/orchestration/workflows/page.tsx`      | List, search, pagination, active toggle, delete, dup |
+| `/admin/orchestration/workflows/new`  | `app/admin/orchestration/workflows/new/page.tsx`  | Empty builder — create mode                          |
+| `/admin/orchestration/workflows/[id]` | `app/admin/orchestration/workflows/[id]/page.tsx` | Hydrated builder — edit mode                         |
+| `/admin/orchestration/executions`     | `app/admin/orchestration/executions/page.tsx`     | Execution list, status filter, workflow filter       |
 
 All three are async server components. The list page calls `serverFetch(API.ADMIN.ORCHESTRATION.WORKFLOWS + '?page=1&limit=25')` with a null-safe fallback — failures surface as an empty state, never a thrown error. The edit page calls `serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id))` and hands off to `notFound()` on any non-OK response.
 
@@ -242,7 +244,9 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ### Toolbar wiring
 
-`builder-toolbar.tsx` accepts `{ onValidate, onSave, onExecute, onCopyJson, onTemplateSelect, templatesDisabled, saving, hasErrors, mode }`. **Copy JSON** (`ClipboardCopy` icon) copies the current canvas as a `WorkflowDefinition` JSON to the clipboard with `_layout` keys stripped via `stripLayout()`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute is **disabled** in create mode with `title="Save the workflow before executing"` and **enabled** in edit mode, where clicking it fires `onExecute` — see [Execution panel](#execution-panel) below.
+`builder-toolbar.tsx` accepts `{ onValidate, onSave, onExecute, onCopyJson, onSaveAsTemplate, savingAsTemplate, savedAsTemplate, onTemplateSelect, templatesDisabled, saving, hasErrors, mode }`. **Copy JSON** (`ClipboardCopy` icon) copies the current canvas as a `WorkflowDefinition` JSON to the clipboard with `_layout` keys stripped via `stripLayout()`. The Save button renders a `Loader2` spinner while `saving === true` and applies `ring-2 ring-red-500/60` when `hasErrors === true` to draw attention to the summary panel. Execute is **disabled** in create mode with `title="Save the workflow before executing"` and **enabled** in edit mode, where clicking it fires `onExecute` — see [Execution panel](#execution-panel) below.
+
+**Save as template** — visible only in edit mode (`BookmarkPlus` icon). Calls `POST /api/v1/admin/orchestration/workflows/:id/save-as-template`, which clones the current definition into a new `isTemplate: true` row with a generated slug. Shows a spinner while in flight and a checkmark for 2.5 s on success. Errors surface via the save-error alert.
 
 ## Templates
 
@@ -330,12 +334,12 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - **Per-capability argument schemas inside Tool Call** — 5.1b only picks the slug; a mini form driven by `capability.functionDefinition.parameters` is future work.
 - **Undo/redo, copy/paste, keyboard shortcuts** — not planned for 5.1 at all.
 - **Pattern Explorer** — the palette "Learn more" links forward to `/admin/orchestration/learning/patterns/:n`, which doesn't exist yet. 404 until the Pattern Explorer ships.
-- **Execution history page** — each run persists to `AiWorkflowExecution` but there is no list UI yet.
+- **Execution history page** — list UI at `/admin/orchestration/executions` with status filter, workflowId filter, pagination. Linked from the workflows table "Runs" column.
 - **Mid-run resume for non-approval failures** — only `human_approval` resumes cleanly; a dead LLM call leaves the row at its last checkpoint without an automatic replay path.
 
 ## Execution panel
 
-Clicking **Execute** in edit mode opens `ExecutionInputDialog` — a JSON textarea seeded with `{ "query": "" }` plus an optional budget input. On confirm the dialog calls `onExecutionConfirm({ inputData, budgetLimitUsd })` and the builder renders an `ExecutionPanel` in a new 420px column on the right of the canvas.
+Clicking **Execute** in edit mode opens `ExecutionInputDialog` — a JSON textarea seeded with `{ "query": "" }` plus an optional budget input. The dialog also includes a **Dry run** button that calls `POST /api/v1/admin/orchestration/workflows/:id/dry-run` with the same payload. Dry-run validates the input and workflow structure without executing, returning `{ valid, errors?, warnings? }`. Results render inline: a green "Dry run passed" or red "Dry run failed" banner with error/warning lists. On confirm the dialog calls `onExecutionConfirm({ inputData, budgetLimitUsd })` and the builder renders an `ExecutionPanel` in a new 420px column on the right of the canvas.
 
 **Files:**
 
