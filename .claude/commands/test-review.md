@@ -21,6 +21,17 @@ Review existing tests for quality issues with a **confidence-scored diagnostic r
 
 **Accept annotations:** `// test-review:accept <issue-type> — <rationale>` in a test file drops any matching finding before it reaches the report. Agents respect these as user overrides. See "Accept annotations" below.
 
+## Quick Start
+
+```bash
+/test-review                # Local — review branch changes, write .reviews/ report
+/test-review pr             # PR — same review + post comment to current branch's PR
+/test-review pr 79          # PR — target a specific PR number
+/test-review lib/auth       # Local — scope to a folder
+```
+
+Most common: `/test-review pr` on a branch with an open PR. This runs eligibility checks, triviality gating, the full 5-agent review, writes the local report, and posts a comment — all in one step.
+
 ## Input
 
 $ARGUMENTS — accepts three shapes:
@@ -253,7 +264,8 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > AGENT: {axis name}
 >
 > FINDINGS:
-> - FILE: {test file path}
+> - KEY: {file-stem}:{line}:{category-short}
+>   FILE: {test file path}
 >   LINE: {line number}
 >   TYPE: {unit | integration}
 >   CATEGORY: {axis}
@@ -264,7 +276,8 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > ...
 >
 > SOURCE FINDINGS:
-> - FILE: {source file path}
+> - KEY: {file-stem}:{line}:src-{category-short}
+>   FILE: {source file path}
 >   LINE: {line number}
 >   CONFIDENCE: {0-100}
 >   ISSUE: {one-line description of what makes the source untestable as-written}
@@ -272,6 +285,8 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 >   SUGGESTED REFACTOR: {one-line suggestion, typically "extract as named export"}
 > ...
 > ```
+>
+> **KEY format:** `{file-stem}:{line}:{category-short}` where `file-stem` is the test filename without extension (e.g. `route.test`), `line` is the line number, and `category-short` is one of `aq` (assertion-quality), `cov` (coverage), `mr` (mock-realism), `brit` (brittleness), `align` (alignment). Example: `route.test:149:aq`. For source findings, prefix the category with `src-`: `route:210:src-cov`. The key enables mechanical de-duplication in Step 6 — when two agents emit the same key, keep the higher-confidence finding and note both axes.
 >
 > Keep each line under 200 chars. If you have no findings, emit `FINDINGS:` followed by nothing (empty list). Same for `SOURCE FINDINGS:`.
 
@@ -281,7 +296,7 @@ After all 5 agents return:
 
 1. **Aggregate** findings across all agents into one list.
 2. **Filter** findings with confidence < 80.
-3. **De-duplicate** — if two agents flagged the same file:line with similar descriptions, keep the higher-confidence one and note the second axis in `EVIDENCE`.
+3. **De-duplicate** — group findings by `KEY`. When two or more agents emit the same key, keep the highest-confidence finding and append the other axes to its `EVIDENCE` (e.g. "also flagged by brittleness, alignment").
 4. **Sort** by confidence descending, then by file path.
 5. **Write** to `.reviews/tests-{slug}.md` where `{slug}` is derived from scope: folder name → that name; explicit paths → first path's folder; branch diff → `branch-{branch-name}`.
 
@@ -328,7 +343,7 @@ Use this format:
 
 ## Below Threshold
 
-{One line: "{N} findings below confidence 80 were filtered out. Re-run with --all to see them" — but do not include them by default.}
+{One line: "{N} findings below confidence 80 were filtered out." — do not include them.}
 ```
 
 If no findings clear threshold, write:

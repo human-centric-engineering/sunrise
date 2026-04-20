@@ -183,10 +183,10 @@ Testing has a dedicated command workflow. The commands break down into three job
 **PR gate** (most common — every branch before merge):
 
 ```
-/test-review               → branch diff, writes .reviews/tests-branch-{name}.md
+/test-review pr            → review + post PR comment (silent if no findings ≥80)
 /test-fix --all            → applies every finding ≥80 from the latest report
 # OR: /test-fix --findings=1,3,5   → pick specific findings
-# OR: /test-review pr              → post a comment on the current PR (silent if no findings ≥80)
+# OR: /test-review                 → local-only branch diff → .reviews/tests-branch-{name}.md
 ```
 
 `/test-review` is diagnostic, not a gate — it produces a confidence-scored report; the human (or PR reviewer) judges what to action. `/test-fix` does not re-audit after applying.

@@ -235,10 +235,10 @@ The commands break down into three jobs — pick the one that matches the situat
 **PR gate** (most common — every branch before merge):
 
 ```bash
-/test-review               # Branch diff → .reviews/tests-branch-{name}.md
+/test-review pr            # Review + post PR comment (silent if no findings ≥80)
 /test-fix --all            # Apply every finding ≥80 from the latest report
 # Or: /test-fix --findings=1,3,5  # Pick specific findings
-# Or: /test-review pr              # Post a PR comment (silent if no findings ≥80)
+# Or: /test-review                 # Local-only — branch diff → .reviews/tests-branch-{name}.md
 ```
 
 `/test-review` is diagnostic — the human (or PR reviewer) judges what to action. `/test-fix` does not re-audit after applying; rerun `/test-review` only if the source changed or on the next PR.
