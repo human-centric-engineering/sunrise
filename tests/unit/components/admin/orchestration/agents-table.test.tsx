@@ -9,6 +9,9 @@
  * - Bulk select + Export POSTs with correct ids, respects Content-Disposition filename
  * - Delete confirm flow
  * - Budget fetch failure renders em-dash, does not throw
+ * - Visibility badges render for public/invite_only agents
+ * - Description subtitle renders under agent name
+ * - Created column shows relative time
  *
  * @see components/admin/orchestration/agents-table.tsx
  */
@@ -142,10 +145,11 @@ describe('AgentsTable', () => {
 
       // Assert
       expect(screen.getByText('Name')).toBeInTheDocument();
-      expect(screen.getByText('Slug')).toBeInTheDocument();
-      expect(screen.getByText('Provider')).toBeInTheDocument();
+      expect(screen.getByText('Tools')).toBeInTheDocument();
+      expect(screen.getByText('Chats')).toBeInTheDocument();
       expect(screen.getByText('Model')).toBeInTheDocument();
       expect(screen.getByText('Status')).toBeInTheDocument();
+      expect(screen.getByText('Created')).toBeInTheDocument();
     });
 
     it('renders all 3 agent rows', () => {
@@ -156,16 +160,6 @@ describe('AgentsTable', () => {
       expect(screen.getByText('Alpha')).toBeInTheDocument();
       expect(screen.getByText('Beta')).toBeInTheDocument();
       expect(screen.getByText('Gamma')).toBeInTheDocument();
-    });
-
-    it('renders agent slugs', () => {
-      // Arrange & Act
-      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
-
-      // Assert
-      expect(screen.getByText('alpha')).toBeInTheDocument();
-      expect(screen.getByText('beta')).toBeInTheDocument();
-      expect(screen.getByText('gamma')).toBeInTheDocument();
     });
 
     it('renders search input and Create agent button', () => {
@@ -492,9 +486,9 @@ describe('AgentsTable', () => {
     });
   });
 
-  // ── Inline Caps & Convs columns ──────────────────────────────────────────
+  // ── Inline Tools & Chats columns ─────────────────────────────────────────
 
-  describe('inline _count columns (Caps & Convs)', () => {
+  describe('inline _count columns (Tools & Chats)', () => {
     it('renders capability count from _count.capabilities', () => {
       // Arrange: agents with known capability counts
       const agents: AiAgentListItem[] = [
@@ -654,6 +648,91 @@ describe('AgentsTable', () => {
           .map((call) => toUrlString(call[0] as RequestInfo | URL));
         expect(listFetches.some((u) => u.includes('page=2'))).toBe(true);
       });
+    });
+  });
+
+  // ── Visibility badges ───────────────────────────────────────────────────
+
+  describe('visibility badges', () => {
+    it('shows "Public" badge for public agents', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-1', name: 'Alpha', visibility: 'public' }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('Public')).toBeInTheDocument();
+    });
+
+    it('shows "Invite" badge for invite_only agents', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-1', name: 'Alpha', visibility: 'invite_only' }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('Invite')).toBeInTheDocument();
+    });
+
+    it('does not show visibility badge for internal agents', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-1', name: 'Alpha', visibility: 'internal' }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.queryByText('Public')).not.toBeInTheDocument();
+      expect(screen.queryByText('Invite')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Description subtitle ────────────────────────────────────────────────
+
+  describe('description subtitle', () => {
+    it('renders description under agent name', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          description: 'Handles customer billing questions',
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('Handles customer billing questions')).toBeInTheDocument();
+    });
+  });
+
+  // ── Created column ──────────────────────────────────────────────────────
+
+  describe('created column', () => {
+    it('shows relative time for agent creation date', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          createdAt: new Date(Date.now() - 3600_000), // 1 hour ago
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('1h ago')).toBeInTheDocument();
+    });
+  });
+
+  // ── Combined model column ───────────────────────────────────────────────
+
+  describe('combined model column', () => {
+    it('renders provider and model together', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          provider: 'openai',
+          model: 'gpt-4o',
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      expect(screen.getByText(/openai/)).toBeInTheDocument();
     });
   });
 });

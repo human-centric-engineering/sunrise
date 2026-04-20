@@ -45,8 +45,8 @@ import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
 import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
-import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
-import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
+import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 /**
@@ -284,13 +284,6 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             Capabilities
           </TabsTrigger>
           <TabsTrigger
-            value="test"
-            disabled={!isEdit}
-            title={!isEdit ? 'Save the agent first to test a chat' : undefined}
-          >
-            Test
-          </TabsTrigger>
-          <TabsTrigger
             value="invite-tokens"
             disabled={!isEdit || currentVisibility !== 'invite_only'}
             title={
@@ -302,6 +295,20 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             }
           >
             Invite tokens
+          </TabsTrigger>
+          <TabsTrigger
+            value="versions"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to view version history' : undefined}
+          >
+            Versions
+          </TabsTrigger>
+          <TabsTrigger
+            value="test"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to test a chat' : undefined}
+          >
+            Test
           </TabsTrigger>
         </TabsList>
 
@@ -755,13 +762,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             </div>
           </div>
 
-          <div className="space-y-2 pt-2">
-            <ProviderTestButton
-              providerId={currentProviderId}
-              disabledMessage="We don't have a stored config for this provider yet — save it first."
-            />
-            <ModelTestButton providerId={currentProviderId} model={currentModel || null} />
-          </div>
+          <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
         </TabsContent>
 
         {/* ================= TAB 3 — INSTRUCTIONS ================= */}
@@ -913,6 +914,55 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                   ? 'Save the agent first, then manage invite tokens.'
                   : 'Set visibility to "Invite only" to manage tokens.'}
               </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 7 — VERSIONS ================= */}
+        <TabsContent value="versions" className="pt-4">
+          {isEdit && agent ? (
+            <AgentVersionHistoryTab
+              agentId={agent.id}
+              onRestored={() => {
+                // Re-pull the fresh agent into the form after a version restore.
+                void (async () => {
+                  try {
+                    const fresh = await apiClient.get<AiAgent>(
+                      API.ADMIN.ORCHESTRATION.agentById(agent.id)
+                    );
+                    reset({
+                      name: fresh.name,
+                      slug: fresh.slug,
+                      description: fresh.description,
+                      systemInstructions: fresh.systemInstructions,
+                      provider: fresh.provider,
+                      model: fresh.model,
+                      temperature: fresh.temperature,
+                      maxTokens: fresh.maxTokens,
+                      monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
+                      isActive: fresh.isActive,
+                      inputGuardMode:
+                        (fresh.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
+                      outputGuardMode:
+                        (fresh.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+                      maxHistoryTokens: fresh.maxHistoryTokens ?? null,
+                      retentionDays: fresh.retentionDays ?? null,
+                      visibility: (fresh.visibility as AgentFormData['visibility']) ?? 'internal',
+                      rateLimitRpm: fresh.rateLimitRpm ?? null,
+                      fallbackProviders: fresh.fallbackProviders ?? [],
+                      knowledgeCategories: fresh.knowledgeCategories?.join(', ') ?? '',
+                      topicBoundaries: fresh.topicBoundaries?.join(', ') ?? '',
+                      brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
+                    });
+                  } catch {
+                    // Silent — the version tab already shows its own error state.
+                  }
+                })();
+              }}
+            />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">Save the agent first to view version history.</p>
             </div>
           )}
         </TabsContent>

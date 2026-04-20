@@ -18,24 +18,27 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column    | Source                              | Notes                                                      |
-| --------- | ----------------------------------- | ---------------------------------------------------------- |
-| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                            |
-| Name      | `agent.name`                        | Sort header. Links to edit page                            |
-| Slug      | `agent.slug`                        | Monospace, muted                                           |
-| Caps      | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0          |
-| Convs     | `agent._count.conversations`        | Inline from list API                                       |
-| Provider  | `agent.provider`                    |                                                            |
-| Model     | `agent.model`                       |                                                            |
-| Temp      | `agent.temperature.toFixed(2)`      | Right-aligned, tabular                                     |
-| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                            |
-| Spend MTD | `agent._budget.spent`               | Inline from list API (batch `groupBy`). `—` when no budget |
-| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure          |
-| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                            |
+| Column    | Source                              | Notes                                                                       |
+| --------- | ----------------------------------- | --------------------------------------------------------------------------- |
+| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                                             |
+| Name      | `agent.name`                        | Sort header. Links to edit page. Visibility badge inline. Description below |
+| Tools     | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0                           |
+| Chats     | `agent._count.conversations`        | Inline from list API                                                        |
+| Model     | `agent.provider` + `agent.model`    | Combined: `provider / model`                                                |
+| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                                             |
+| Spend MTD | `agent._budget.spent`               | Inline from list API (batch `groupBy`). `—` when no budget                  |
+| Created   | `agent.createdAt`                   | Relative time (`3d ago`). Creator name in tooltip via `agent.creator`       |
+| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure                           |
+| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                                             |
+
+### Name cell enrichments
+
+- **Visibility badge** — `public` and `invite_only` agents show an outline badge (`Public` with Eye icon, `Invite` with Link2 icon) next to the name. `internal` agents show no badge (default).
+- **Description subtitle** — when `agent.description` is set, a truncated muted line appears below the name.
 
 ### Bulk export
 
-Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent). There is intentionally **no bulk delete** — deletes are row-only to keep the blast radius of a mistaken selection tiny.
+Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent).
 
 ### Import
 
@@ -63,7 +66,7 @@ The edit page additionally fetches the agent itself via `GET /agents/:id`. A `nu
 
 ## Related
 
-- [Agent form](./agent-form.md) — 5-tab form walkthrough, every FieldHelp copy, test-connection, capabilities tab
+- [Agent form](./agent-form.md) — 7-tab form walkthrough, every FieldHelp copy, test-connection, capabilities tab, version history
 - [Orchestration dashboard](./orchestration-dashboard.md)
 - [Admin API reference](../orchestration/admin-api.md)
 - [Setup wizard](./setup-wizard.md) — shares `<AgentTestChat>` with the agent edit page

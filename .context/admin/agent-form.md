@@ -1,6 +1,6 @@
 # Agent form
 
-Shared create/edit form for `AiAgent`. Six shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
+Shared create/edit form for `AiAgent`. Seven shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
 
 **File:** `components/admin/orchestration/agent-form.tsx`
 **Pattern:** raw `react-hook-form` + `zodResolver(agentFormSchema)`, no shadcn Form wrapper (mirrors `components/admin/feature-flag-form.tsx`).
@@ -16,8 +16,9 @@ Shared create/edit form for `AiAgent`. Six shadcn tabs, one underlying `<form>`,
 | 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
 | 5   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
 | 6   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
+| 7   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
 
-Tabs 4 and 5 are `disabled` in create mode — attaching capabilities and streaming a test chat both require a persisted `agent.id` / `agent.slug`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
+Tabs 4, 5, and 7 are `disabled` in create mode — they require a persisted `agent.id`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
 
 ## Tab 1 — General
 
@@ -66,17 +67,18 @@ Multi-checkbox list populated from the provider list. When the primary provider'
 
 Optional number input. Per-agent rate limit in requests per minute. When set, overrides the global `chatLimiter` default for this agent. Leave blank for the global default.
 
-### Test connection
+### Connectivity check card
 
-Button that POSTs `/providers/:id/test` (where `:id` is the selected provider's row id, resolved via the hydrated provider list). On success: green check + `{modelCount} models available`. On failure: red × + **"Couldn't reach this provider. Check the server logs for details."** — the server route already sanitizes the upstream error, and the client layers on a friendly fallback regardless. Raw SDK error text never reaches the DOM.
+**Component:** `<AgentTestCard>` at `components/admin/orchestration/agent-test-card.tsx`.
 
-**Shared extract (Phase 4 Session 4.3):** This button is now the `<ProviderTestButton>` at `components/admin/orchestration/provider-test-button.tsx`, shared with `<ProviderForm>`. Behaviour is unchanged; when the selected provider slug doesn't yet correspond to a saved row, the button shows a "save it first" disabled message instead of firing the request. See [`orchestration-providers.md`](./orchestration-providers.md#providertestbutton--shared-extract).
+A card with a `<FieldHelp>` explainer and a single **Run check** button that runs two steps in sequence:
 
-### Test model
+1. **Provider connection** — POSTs `/providers/:id/test`. On success: green check + `{modelCount} models available`. On failure: red × + friendly message. If this step fails the model step is skipped.
+2. **Model response** — POSTs `/providers/:id/test-model` with `{ model }`. On success: green check + round-trip latency in ms. On failure: red × + generic message.
 
-Button below "Test connection" that sends a trivial prompt (`"Say hello."`, maxTokens: 10) to the selected provider + model combination and reports round-trip latency. POSTs `/providers/:id/test-model` with `{ model }`. On success: green check + latency in ms. On failure: red × + generic message. Disabled when no provider or model is selected.
+Each step shows an idle dot, spinner, green check, or red × to the left of its label. When no provider config is saved, step 1 fails immediately with a "save it first" message. When no model is selected, step 2 fails with "No model selected."
 
-**Component:** `<ModelTestButton>` at `components/admin/orchestration/model-test-button.tsx`.
+The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain available for use in `<ProviderForm>` and elsewhere.
 
 ### Help copy
 
@@ -189,6 +191,27 @@ Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedA
 ### Help copy
 
 - **Invite tokens** — "Invite tokens control access to invite-only agents. Common use cases: restricting access to specific clients, gating beta features, managing partner integrations, and creating paid tiers with separate tokens per customer."
+
+## Tab 6 — Versions
+
+**File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
+
+Displays the `AiAgentVersion` timeline — every save creates a full config snapshot. Each row shows version number (badge), change summary, and formatted date. Expanding a row shows the creator tooltip.
+
+### Restore
+
+All rows except the latest version show a **Restore** button. Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which creates a _new_ version entry so the action is auditable. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
+
+### API endpoints
+
+| Action  | Call                                      |
+| ------- | ----------------------------------------- |
+| List    | `GET agentVersions(id)?limit=50`          |
+| Restore | `POST agentVersionRestore(id, versionId)` |
+
+### Help copy
+
+- **Version history** — "Every time you save changes to this agent, a snapshot of the full configuration is stored. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
 
 ## Submit flow
 

@@ -48,7 +48,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { capabilities: true, conversations: true } } },
+      include: {
+        _count: { select: { capabilities: true, conversations: true } },
+        creator: { select: { name: true } },
+      },
     }),
     prisma.aiAgent.count({ where }),
   ]);
