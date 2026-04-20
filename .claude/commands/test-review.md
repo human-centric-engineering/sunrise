@@ -299,6 +299,10 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 >
 > - **Status code mismatch with test name** — test named "should return 400 for invalid input" that never asserts `response.status === 400` (it may only check the body, letting a 500 regression pass).
 > - **Error code drift** — test name references an error code (`USER_NOT_FOUND`, `RATE_LIMIT_EXCEEDED`) that no longer matches what the source throws.
+>
+> **Source-path tracing for high-confidence findings (90+):**
+>
+> Before scoring any alignment finding at 90 or above, you MUST trace the test's mock setup to identify which specific source code branch it actually exercises. Follow the chain: what does the mock return/reject → which `if`/`catch`/`switch` branch does that activate in the source → what does the source log/return/throw on that branch → does the test's assertion match that output? Cite the source line numbers in EVIDENCE. If you cannot complete this trace (e.g. the control flow is too indirect), cap the finding's confidence at 85 — do not score 90+ on reasoning about test titles or comments alone.
 
 **Shared instructions for all 5 agents:**
 
@@ -314,6 +318,12 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 > - 75–90: very likely real — you've read the source and confirmed the gap
 > - 90–100: definitely real — you can name the concrete regression that would land green
 >
+> **Effort estimate:** classify each finding as one of:
+>
+> - `mechanical` — clear, self-contained fix (add an assertion, wrap in try/finally, add a missing test for an obvious branch). Can be applied directly by `/test-fix`.
+> - `judgement` — the gap is real but the right fix requires an architectural decision (e.g. whether to mock or use a real DB, which layer to test at, whether the contract should change).
+> - `refactor` — fix touches shared test infrastructure, helpers, or multiple files. Not a single-test change.
+>
 > **Source Findings:** if you identify an issue where the test can't meaningfully be fixed without a source change (e.g. an inline anonymous callback that can't be imported and unit-tested), emit it under a separate `SOURCE FINDINGS:` section with confidence scoring. Do NOT try to resolve these — just flag them.
 >
 > **Output format** — emit EXACTLY this, no preamble, no commentary:
@@ -328,6 +338,7 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 >   TYPE: {unit | integration}
 >   CATEGORY: {axis}
 >   CONFIDENCE: {0-100}
+>   EFFORT: {mechanical | judgement | refactor}
 >   ISSUE: {one-line description}
 >   EVIDENCE: {specific code reference, sibling coverage if any}
 >   SUGGESTED FIX: {one-line mechanical suggestion if obvious; "needs judgement" otherwise}
@@ -338,6 +349,7 @@ Send a **single message with 5 Agent tool calls** (one per axis) using `model: "
 >   FILE: {source file path}
 >   LINE: {line number}
 >   CONFIDENCE: {0-100}
+>   EFFORT: {mechanical | judgement | refactor}
 >   ISSUE: {one-line description of what makes the source untestable as-written}
 >   EVIDENCE: {specific code reference}
 >   SUGGESTED REFACTOR: {one-line suggestion, typically "extract as named export"}
@@ -368,6 +380,7 @@ Use this format:
 **File pairs reviewed:** {count} ({unit_count} unit · {integration_count} integration)
 **Coverage data:** {yes — N source files | no — fallback mode}
 **Findings:** {above-threshold count} (filtered from {total count})
+**Effort breakdown:** {M} mechanical · {J} judgement · {R} refactor
 
 {One-paragraph summary: overall quality, themes that emerged, whether the test suite appears to give real confidence. If both unit and integration pairs were reviewed, note any type-specific patterns in the findings.}
 
@@ -378,7 +391,7 @@ Use this format:
 **File:** `{test path}:{line}` ({unit | integration})
 **Source:** `{source path}`
 **Category:** {axis}
-**Confidence:** {score}
+**Confidence:** {score} · **Effort:** {mechanical | judgement | refactor}
 
 **Issue:** {description}
 
@@ -426,12 +439,13 @@ No findings above confidence threshold (80). Checked for assertion quality, cove
 **Report:** `.reviews/tests-{slug}.md`
 **File pairs:** {count}
 **Findings ≥80:** {count} ({critical} critical, {important} important)
+**Effort:** {M} mechanical · {J} judgement · {R} refactor
 **Source findings:** {count}
 **Orphans:** {count}
 
 ### Top findings
 
-1. `{file}:{line}` ({score}) — {one-line issue}
+1. `{file}:{line}` ({score}, {effort}) — {one-line issue}
 2. ...
 (up to 5)
 
