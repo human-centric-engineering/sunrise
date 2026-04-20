@@ -514,9 +514,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               <Label>
                 Fallback providers{' '}
                 <FieldHelp title="Automatic provider failover">
-                  If the primary provider is unavailable (rate limited, down, or erroring), the
-                  agent will try these providers in order. Only providers other than the primary are
-                  shown. Leave unchecked to disable failover.
+                  If the primary provider is experiencing errors, the agent will try these providers
+                  in order. Failover kicks in after repeated failures within a short window. Only
+                  providers other than the primary are shown. Leave unchecked to disable failover.
                 </FieldHelp>
               </Label>
               <div className="space-y-2 rounded-md border p-3">
@@ -643,9 +643,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           <div className="grid gap-2">
             <Label htmlFor="rateLimitRpm">
               Rate limit (RPM){' '}
-              <FieldHelp title="Per-agent request throttle">
-                Maximum requests per minute for this agent. Applies across all users. Leave blank to
-                use the global default rate limit.
+              <FieldHelp title="Per-user request throttle">
+                Maximum requests per minute each user can send to this agent. Each user has their
+                own limit. Leave blank to use the global default.
               </FieldHelp>
             </Label>
             <Input
@@ -666,9 +666,10 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="maxHistoryTokens">
               Max history tokens{' '}
               <FieldHelp title="Context window override">
-                Override how many tokens of conversation history are sent to the model. Lower values
-                reduce cost; higher values let the agent remember more of the conversation. Leave
-                blank to use the model&apos;s full context window.
+                Override the context window budget used when building the prompt. The system fits as
+                much conversation history as possible after reserving space for instructions and the
+                current message. Lower values reduce cost; higher values let the agent remember
+                more. Leave blank to use the model&apos;s full context window.
               </FieldHelp>
             </Label>
             <Input
@@ -691,9 +692,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 Input guard{' '}
                 <FieldHelp title="Prompt injection protection">
                   Controls how the agent handles suspected prompt injection in user messages.
-                  &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a yellow banner,
-                  &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global default&rdquo;
-                  to inherit the platform-wide setting.
+                  &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a warning in the
+                  chat, &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global
+                  default&rdquo; to inherit the platform-wide setting.
                 </FieldHelp>
               </Label>
               <Select
@@ -824,10 +825,10 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           <div className="grid gap-2">
             <Label htmlFor="knowledgeCategories">
               Knowledge categories{' '}
-              <FieldHelp title="Filter knowledge base">
-                Comma-separated list of knowledge base categories this agent can access. When set,
-                the agent only retrieves documents tagged with these categories during RAG. Leave
-                blank to allow access to all categories.
+              <FieldHelp title="Knowledge base categories">
+                Comma-separated list of categories to associate with this agent. This value is saved
+                for future use but category-based filtering during retrieval is not yet active.
+                Leave blank for no restriction.
               </FieldHelp>
             </Label>
             <Input

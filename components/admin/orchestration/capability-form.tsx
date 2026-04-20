@@ -1052,9 +1052,9 @@ export function CapabilityForm({
             <Label htmlFor="rateLimit">
               Rate limit (calls per minute){' '}
               <FieldHelp title="Rate limit" contentClassName="w-80">
-                The maximum number of times this capability can be called per minute, across all
-                agents combined. This prevents runaway usage — for example, if an AI enters a loop
-                calling the same tool repeatedly. Leave empty for no limit.
+                The maximum number of times this capability can be called per minute per agent. This
+                prevents runaway usage — for example, if an AI enters a loop calling the same tool
+                repeatedly. Leave empty for no limit.
               </FieldHelp>
             </Label>
             <Input

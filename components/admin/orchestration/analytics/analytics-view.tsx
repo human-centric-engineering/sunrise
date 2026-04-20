@@ -80,7 +80,9 @@ export function AnalyticsView({
           <CardHeader className="pb-2">
             <CardTitle className="text-muted-foreground flex items-center gap-1 text-sm font-medium">
               Avg Depth
-              <FieldHelp>Average messages per conversation</FieldHelp>
+              <FieldHelp title="Average conversation depth">
+                Average messages per conversation
+              </FieldHelp>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -95,7 +97,9 @@ export function AnalyticsView({
           <CardHeader className="pb-2">
             <CardTitle className="text-muted-foreground flex items-center gap-1 text-sm font-medium">
               Returning Users
-              <FieldHelp>Percentage of users who started more than one conversation</FieldHelp>
+              <FieldHelp title="Returning users">
+                Percentage of users who started more than one conversation
+              </FieldHelp>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -191,7 +195,7 @@ export function AnalyticsView({
           <CardHeader>
             <CardTitle className="flex items-center gap-1 text-base font-medium">
               Content Gaps
-              <FieldHelp>
+              <FieldHelp title="Content gaps">
                 Topics where a high proportion of questions go unanswered, indicating missing
                 knowledge base content
               </FieldHelp>
@@ -229,7 +233,7 @@ export function AnalyticsView({
         <CardHeader>
           <CardTitle className="flex items-center gap-1 text-base font-medium">
             Unanswered Questions
-            <FieldHelp>
+            <FieldHelp title="Unanswered questions">
               Recent user messages where the assistant replied with an apology or uncertainty signal
             </FieldHelp>
           </CardTitle>
