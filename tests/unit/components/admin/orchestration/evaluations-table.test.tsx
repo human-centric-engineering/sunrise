@@ -10,12 +10,15 @@
  * - Agent filter triggers refetch
  * - Pagination: Previous disabled on page 1, Next fires fetch with page=2
  * - Status badges render with correct text
+ * - Row action menu with archive option
+ * - Archive confirmation dialog + PATCH call
+ * - No action menu for already-archived evaluations
  *
  * @see components/admin/orchestration/evaluations-table.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -360,6 +363,106 @@ describe('EvaluationsTable', () => {
       await waitFor(() => {
         const urls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
         expect(urls.some((u) => u.includes('page=2'))).toBe(true);
+      });
+    });
+  });
+
+  // ── Archive action ────────────────────────────────────────────────────────
+
+  describe('archive action', () => {
+    it('renders action menu button for non-archived evaluations', () => {
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={MOCK_META}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      // Both evaluations (draft, completed) should have action buttons
+      const actionButtons = screen.getAllByRole('button', { name: /actions/i });
+      expect(actionButtons.length).toBe(2);
+    });
+
+    it('does not render action menu for archived evaluations', () => {
+      const archivedEval = [{ ...MOCK_EVALUATIONS[0], status: 'archived' }];
+
+      render(
+        <EvaluationsTable
+          initialEvaluations={archivedEval}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /actions/i })).not.toBeInTheDocument();
+    });
+
+    it('shows confirmation dialog when Archive is clicked from menu', async () => {
+      const user = userEvent.setup();
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={MOCK_META}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      // Open first row's action menu
+      const actionButtons = screen.getAllByRole('button', { name: /actions/i });
+      await user.click(actionButtons[0]);
+
+      // Click Archive in menu
+      const archiveMenuItem = await screen.findByRole('menuitem', { name: /archive/i });
+      await user.click(archiveMenuItem);
+
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText(/archive evaluation\?/i)).toBeInTheDocument();
+      });
+    });
+
+    it('PATCHes status to archived and removes row on confirm', async () => {
+      const user = userEvent.setup();
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={MOCK_META}
+          agents={MOCK_AGENTS}
+        />
+      );
+
+      // Open menu and click Archive
+      const actionButtons = screen.getAllByRole('button', { name: /actions/i });
+      await user.click(actionButtons[0]);
+      const archiveMenuItem = await screen.findByRole('menuitem', { name: /archive/i });
+      await user.click(archiveMenuItem);
+
+      // Confirm in dialog
+      await waitFor(() => {
+        expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+      });
+      const dialog = screen.getByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: /^archive$/i }));
+
+      // Verify PATCH call with status: 'archived'
+      await waitFor(() => {
+        const patchCalls = mockFetch.mock.calls.filter((call) => {
+          const opts = call[1];
+          if (opts?.method !== 'PATCH') return false;
+          try {
+            const body = JSON.parse(opts.body as string) as { status?: string };
+            return body.status === 'archived';
+          } catch {
+            return false;
+          }
+        });
+        expect(patchCalls.length).toBe(1);
+      });
+
+      // Row should be removed from table
+      await waitFor(() => {
+        expect(screen.queryByText('Tone Check')).not.toBeInTheDocument();
       });
     });
   });
