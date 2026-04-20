@@ -31,7 +31,11 @@ const SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const { id: rawId } = await params;
   const parsed = cuidSchema.safeParse(rawId);
   if (!parsed.success)

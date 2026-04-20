@@ -53,12 +53,10 @@ export interface WebhookFormProps {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function generateSecret(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = 'whsec_';
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  const hex = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `whsec_${hex}`;
 }
 
 const EVENT_LABELS: Record<string, string> = {

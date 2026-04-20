@@ -18,6 +18,10 @@ import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
   const { page, limit, isActive } = validateQueryParams(searchParams, listWebhooksQuerySchema);

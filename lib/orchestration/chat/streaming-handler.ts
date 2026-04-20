@@ -658,8 +658,11 @@ export class StreamingChatHandler {
             }
           }
 
-          const names = toolCallArray.map((tc) => tc.name).join(', ');
-          yield { type: 'status', message: `Executing ${toolCallArray.length} tools: ${names}` };
+          const names = dispatchable.map((tc) => tc.name).join(', ');
+          const skippedCount = skippedResults.length;
+          const statusParts = [`Executing ${dispatchable.length} tools: ${names}`];
+          if (skippedCount > 0) statusParts.push(`(${skippedCount} skipped)`);
+          yield { type: 'status', message: statusParts.join(' ') };
 
           const settled = await Promise.allSettled(
             dispatchable.map((tc) =>

@@ -37,7 +37,6 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse } from '@/lib/api/parse-response';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -78,13 +77,10 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.workflowSchedules(workflowId));
-      const body = await parseApiResponse<{ schedules: Schedule[] }>(res);
-      if (body.success) {
-        setSchedules(body.data.schedules);
-      } else {
-        setError('Failed to load schedules');
-      }
+      const body = await apiClient.get<{ schedules: Schedule[] }>(
+        API.ADMIN.ORCHESTRATION.workflowSchedules(workflowId)
+      );
+      setSchedules(body.schedules);
     } catch {
       setError('Failed to load schedules');
     } finally {
@@ -103,7 +99,13 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
       let inputTemplate: Record<string, unknown> = {};
       if (createInput.trim()) {
         try {
-          inputTemplate = JSON.parse(createInput) as Record<string, unknown>;
+          const raw: unknown = JSON.parse(createInput);
+          if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+            setCreateError('Input template must be a JSON object');
+            setCreating(false);
+            return;
+          }
+          inputTemplate = raw as Record<string, unknown>;
         } catch {
           setCreateError('Input template must be valid JSON');
           setCreating(false);

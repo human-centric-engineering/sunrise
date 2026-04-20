@@ -31,12 +31,19 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiAgent: { findUnique: vi.fn(), update: vi.fn() },
-    aiAgentVersion: { findFirst: vi.fn(), create: vi.fn() },
-  },
-}));
+vi.mock('@/lib/db/client', () => {
+  const agentMocks = { findUnique: vi.fn(), update: vi.fn() };
+  const versionMocks = { findFirst: vi.fn(), create: vi.fn() };
+  return {
+    prisma: {
+      aiAgent: agentMocks,
+      aiAgentVersion: versionMocks,
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({ aiAgent: agentMocks, aiAgentVersion: versionMocks })
+      ),
+    },
+  };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },

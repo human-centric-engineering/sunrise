@@ -33,7 +33,9 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
       await apiClient.patch(API.ADMIN.ORCHESTRATION.conversationById(conversationId), {
         body: { tags: updatedTags },
       });
-      setTags(updatedTags);
+    } catch {
+      // Revert to the tags before the optimistic update
+      setTags(initialTags);
     } finally {
       setSaving(false);
     }
@@ -42,13 +44,17 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
   const handleAdd = () => {
     const tag = newTag.trim();
     if (!tag || tags.includes(tag)) return;
-    void saveTags([...tags, tag]);
+    const updated = [...tags, tag];
+    setTags(updated);
+    void saveTags(updated);
     setNewTag('');
     setAdding(false);
   };
 
   const handleRemove = (tag: string) => {
-    void saveTags(tags.filter((t) => t !== tag));
+    const updated = tags.filter((t) => t !== tag);
+    setTags(updated);
+    void saveTags(updated);
   };
 
   return (
