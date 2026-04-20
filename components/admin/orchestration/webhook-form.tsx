@@ -198,6 +198,9 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
           className="font-mono"
         />
         {errors.url && <p className="text-destructive text-xs">{errors.url.message}</p>}
+        <p className="text-muted-foreground text-xs">
+          Only HTTPS URLs are accepted. Private IPs and internal addresses are blocked.
+        </p>
       </div>
 
       {/* Secret */}

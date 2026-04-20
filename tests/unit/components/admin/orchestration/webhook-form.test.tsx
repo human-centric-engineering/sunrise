@@ -109,6 +109,12 @@ describe('WebhookForm', () => {
     });
   });
 
+  it('shows HTTPS-only hint below URL field', () => {
+    render(<WebhookForm mode="create" />);
+
+    expect(screen.getByText(/only https urls are accepted/i)).toBeInTheDocument();
+  });
+
   it('generate button populates secret field', async () => {
     const user = userEvent.setup();
     render(<WebhookForm mode="create" />);

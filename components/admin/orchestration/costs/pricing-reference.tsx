@@ -10,7 +10,7 @@
  */
 
 import * as React from 'react';
-import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, History, RefreshCw } from 'lucide-react';
 
 import {
   Table,
@@ -23,12 +23,20 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ModelPriceHistoryChart } from '@/components/admin/orchestration/costs/model-price-history-chart';
+import {
+  deserialisePricingHistory,
+  getModelTimeline,
+  type SerializedPricingHistory,
+} from '@/lib/orchestration/llm/pricing-history';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export interface PricingReferenceProps {
   models: ModelInfo[] | null;
   /** Epoch ms when the registry was last populated from OpenRouter. 0 = static fallback only. */
   fetchedAt: number | null;
+  /** Historical pricing data from llm-prices.com. null/undefined = not loaded / failed. */
+  pricingHistory?: SerializedPricingHistory | null;
 }
 
 function tierVariant(tier: string): 'default' | 'secondary' | 'outline' | 'destructive' {
@@ -56,8 +64,20 @@ function formatLastSynced(fetchedAt: number | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export function PricingReference({ models, fetchedAt }: PricingReferenceProps) {
+export function PricingReference({ models, fetchedAt, pricingHistory }: PricingReferenceProps) {
   const [expanded, setExpanded] = React.useState(false);
+  const [selectedModelId, setSelectedModelId] = React.useState<string | null>(null);
+
+  const historyData = React.useMemo(
+    () => (pricingHistory ? deserialisePricingHistory(pricingHistory) : null),
+    [pricingHistory]
+  );
+
+  const selectedTimeline = React.useMemo(() => {
+    if (!selectedModelId || !historyData) return null;
+    const model = (models ?? []).find((m) => m.id === selectedModelId);
+    return getModelTimeline(historyData, selectedModelId, model?.provider);
+  }, [selectedModelId, historyData, models]);
 
   const sorted = React.useMemo(() => {
     if (!models || models.length === 0) return [];
@@ -97,17 +117,38 @@ export function PricingReference({ models, fetchedAt }: PricingReferenceProps) {
       </CardHeader>
       {expanded && (
         <CardContent>
-          <p className="text-muted-foreground mb-4 text-sm">
-            Per-token rates used to calculate your spend figures. Rates marked{' '}
-            <Badge variant="secondary" className="text-[10px]">
+          <div className="text-muted-foreground mb-4 text-sm">
+            <span>Per-token rates used to calculate your spend figures. Rates marked </span>
+            <Badge variant="secondary" className="inline-flex text-[10px]">
               Live
-            </Badge>{' '}
-            are fetched from OpenRouter every 24 hours and reflect current market prices.{' '}
-            <Badge variant="outline" className="text-[10px]">
+            </Badge>
+            <span>
+              {' '}
+              are fetched from OpenRouter every 24 hours and reflect current market prices.{' '}
+            </span>
+            <Badge variant="outline" className="inline-flex text-[10px]">
               Fallback
-            </Badge>{' '}
-            rates are approximate static values used when the live feed is unavailable.
-          </p>
+            </Badge>
+            <span>
+              {' '}
+              rates are approximate static values used when the live feed is unavailable.
+            </span>
+            {!isLive && (
+              <span className="mt-1 block text-xs">
+                Showing static fallback rates. Live pricing will activate on next page load when
+                OpenRouter is reachable. Reload this page to retry.
+              </span>
+            )}
+          </div>
+
+          {historyData && historyData.source === 'live' && (
+            <div className="text-muted-foreground mb-3 text-xs">
+              <History className="mr-1 inline h-3 w-3" />
+              <span>Click a model row with a </span>
+              <History className="inline h-3 w-3" />
+              <span> icon to view its historical pricing chart.</span>
+            </div>
+          )}
 
           {sorted.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">No models in registry.</p>
@@ -124,33 +165,74 @@ export function PricingReference({ models, fetchedAt }: PricingReferenceProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((m) => (
-                  <TableRow key={m.id}>
-                    <TableCell className="font-mono text-xs">
-                      <span>{m.name}</span>
-                      <div className="text-muted-foreground text-[10px]">{m.id}</div>
-                    </TableCell>
-                    <TableCell className="text-sm capitalize">{m.provider}</TableCell>
-                    <TableCell>
-                      <Badge variant={tierVariant(m.tier)} className="capitalize">
-                        {m.tier}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {formatRate(m.inputCostPerMillion)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {formatRate(m.outputCostPerMillion)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant={isLive ? 'secondary' : 'outline'} className="text-[10px]">
-                        {isLive ? 'Live' : 'Fallback'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {sorted.map((m) => {
+                  const isSelected = selectedModelId === m.id;
+                  const hasHistory = historyData
+                    ? getModelTimeline(historyData, m.id, m.provider) !== null
+                    : false;
+
+                  return (
+                    <TableRow
+                      key={m.id}
+                      className={`hover:bg-muted/50 cursor-pointer ${isSelected ? 'bg-muted/70 border-l-primary border-l-2' : ''}`}
+                      onClick={() => setSelectedModelId(isSelected ? null : m.id)}
+                    >
+                      <TableCell className="font-mono text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span>{m.name}</span>
+                          {hasHistory && <History className="h-3 w-3 text-blue-500" />}
+                        </div>
+                        <div className="text-muted-foreground text-[10px]">{m.id}</div>
+                      </TableCell>
+                      <TableCell className="text-sm capitalize">{m.provider}</TableCell>
+                      <TableCell>
+                        <Badge variant={tierVariant(m.tier)} className="capitalize">
+                          {m.tier}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {formatRate(m.inputCostPerMillion)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {formatRate(m.outputCostPerMillion)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={isLive ? 'secondary' : 'outline'} className="text-[10px]">
+                          {isLive ? 'Live' : 'Fallback'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
+          )}
+
+          {/* Price history chart for selected model */}
+          {selectedModelId && (
+            <div className="mt-4 rounded-md border border-blue-200 bg-blue-50/30 p-4 dark:border-blue-900 dark:bg-blue-950/20">
+              {selectedTimeline ? (
+                <ModelPriceHistoryChart timeline={selectedTimeline} />
+              ) : (
+                <div className="py-4 text-center">
+                  <p className="text-muted-foreground text-sm">
+                    No historical pricing data available for this model.
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    History is sourced from{' '}
+                    <a
+                      href="https://www.llm-prices.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      llm-prices.com
+                    </a>{' '}
+                    and may not cover all models yet.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           <div className="text-muted-foreground mt-4 space-y-1 border-t pt-3 text-xs">

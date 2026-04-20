@@ -125,6 +125,32 @@ Two `CostSummary`-like types exist, deliberately named differently:
 
 **Pricing source pipeline:** Static fallback map (compiled in) → OpenRouter `/api/v1/models` (24h cache, Zod-validated) → per-provider discovery (marks `available: true`). The cost tracker multiplies actual token counts by these rates.
 
+### Per-model price history chart
+
+Model rows in the pricing table that have historical data show a clock icon and are clickable. Clicking expands a step chart (`ModelPriceHistoryChart`) showing input and output token rates over time.
+
+**Data source:** `https://www.llm-prices.com/historical-v1.json` (Simon Willison's [llm-prices](https://github.com/simonw/llm-prices) project). Free, no auth, Cloudflare Pages hosted.
+
+**Fetcher:** `lib/orchestration/llm/pricing-history.ts`
+
+- 24h in-memory cache (matches OpenRouter cadence)
+- Deduplicates concurrent fetches via inflight promise
+- On failure (network error, timeout, non-200, malformed JSON): returns empty data, never throws
+- Server shell calls `getPricingHistory()` in parallel with other fetches
+- Data is serialised (Map → array) for server→client transfer
+
+**Chart features:**
+
+- Step line chart (input = blue, output = pink) — `type="stepAfter"`
+- Price change summary badges (e.g. "Input: -50%", "Output: -33%") in green/red
+- Date range and period count in footer
+- Attribution link to llm-prices.com
+- "No pricing history available" fallback for models not in the dataset
+
+**Coverage:** ~14 vendors (Anthropic, OpenAI, Google, DeepSeek, Mistral, xAI, etc.), 129 entries, data from early 2025 onwards.
+
+**OpenRouter refresh on page load:** The costs page calls `refreshFromOpenRouter()` before rendering, ensuring current-rate data is never more than 24h stale (no-op when cache is warm).
+
 ## Cost methodology panel
 
 `CostMethodology` — always-visible educational section explaining how costs are calculated and what the numbers mean.

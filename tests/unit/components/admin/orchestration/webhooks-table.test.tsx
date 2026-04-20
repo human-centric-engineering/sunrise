@@ -35,18 +35,21 @@ vi.mock('@/lib/api/client', () => ({
     patch: vi.fn(),
     delete: vi.fn(),
   },
+  APIClientError: class APIClientError extends Error {
+    constructor(
+      message: string,
+      public code = 'INTERNAL_ERROR',
+      public status = 500
+    ) {
+      super(message);
+      this.name = 'APIClientError';
+    }
+  },
 }));
 
-// Mock global fetch to prevent real network calls from useEffect
-const mockFetch = vi.fn().mockResolvedValue({
-  ok: true,
-  json: () =>
-    Promise.resolve({
-      success: true,
-      data: [],
-      meta: { page: 1, limit: 25, total: 0, totalPages: 1 },
-    }),
-});
+// Mock global fetch — returns the MOCK_WEBHOOKS fixture by default so
+// the useEffect re-fetch on mount doesn't clear the initial data.
+const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -62,6 +65,7 @@ const MOCK_WEBHOOKS: WebhookListItem[] = [
     description: 'Slack alerts',
     createdAt: '2026-01-15T00:00:00Z',
     updatedAt: '2026-01-15T00:00:00Z',
+    _count: { deliveries: 12 },
   },
   {
     id: 'wh-2',
@@ -71,6 +75,7 @@ const MOCK_WEBHOOKS: WebhookListItem[] = [
     description: null,
     createdAt: '2026-02-01T00:00:00Z',
     updatedAt: '2026-02-01T00:00:00Z',
+    _count: { deliveries: 0 },
   },
 ];
 
@@ -79,13 +84,22 @@ const MOCK_WEBHOOKS: WebhookListItem[] = [
 describe('WebhooksTable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: MOCK_WEBHOOKS,
+          meta: { page: 1, limit: 25, total: 2, totalPages: 1 },
+        }),
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('renders webhook rows', () => {
+  it('renders webhook rows with URL, description, and delivery count', () => {
     render(
       <WebhooksTable
         initialWebhooks={MOCK_WEBHOOKS}
@@ -96,14 +110,25 @@ describe('WebhooksTable', () => {
     expect(screen.getByText(/example\.com/)).toBeInTheDocument();
     expect(screen.getByText(/other\.com/)).toBeInTheDocument();
     expect(screen.getByText('Slack alerts')).toBeInTheDocument();
-    expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+    // Active toggles rendered as switches
+    const switches = screen.getAllByRole('switch');
+    expect(switches).toHaveLength(2);
   });
 
   it('shows empty state when no webhooks', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [],
+          meta: { page: 1, limit: 25, total: 0, totalPages: 1 },
+        }),
+    });
     render(<WebhooksTable initialWebhooks={[]} initialMeta={META} />);
 
-    // The useEffect fetch runs on mount; wait for it to settle
     await waitFor(() => {
       expect(screen.getByText(/no webhook subscriptions yet/i)).toBeInTheDocument();
     });
@@ -127,5 +152,46 @@ describe('WebhooksTable', () => {
     expect(screen.getByText('budget_exceeded')).toBeInTheDocument();
     expect(screen.getByText('workflow_failed')).toBeInTheDocument();
     expect(screen.getByText('message_created')).toBeInTheDocument();
+  });
+
+  it('row actions dropdown contains Edit and Delete', async () => {
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+    await user.click(actionBtns[0]);
+
+    expect(await screen.findByRole('menuitem', { name: /edit/i })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /delete/i })).toBeInTheDocument();
+  });
+
+  it('toggling active switch calls apiClient.patch', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    const switches = screen.getAllByRole('switch');
+    await user.click(switches[0]);
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        expect.stringContaining('/webhooks/wh-1'),
+        expect.objectContaining({ body: { isActive: false } })
+      );
+    });
   });
 });

@@ -35,9 +35,10 @@ import { parseApiResponse } from '@/lib/api/parse-response';
 
 interface Delivery {
   id: string;
-  event: string;
+  eventType: string;
   status: 'pending' | 'delivered' | 'failed' | 'exhausted';
-  responseCode: number | null;
+  lastResponseCode: number | null;
+  lastError: string | null;
   attempts: number;
   createdAt: string;
 }
@@ -145,13 +146,14 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
               <TableHead>Status</TableHead>
               <TableHead>Response</TableHead>
               <TableHead>Attempts</TableHead>
+              <TableHead>Error</TableHead>
               <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {deliveries.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                   {loading ? 'Loading…' : 'No deliveries yet.'}
                 </TableCell>
               </TableRow>
@@ -163,7 +165,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
-                      {d.event}
+                      {d.eventType}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -171,8 +173,11 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
                       {d.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-sm">{d.responseCode ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-sm">{d.lastResponseCode ?? '—'}</TableCell>
                   <TableCell className="text-sm">{d.attempts}</TableCell>
+                  <TableCell className="max-w-[200px] truncate text-xs text-red-600 dark:text-red-400">
+                    {d.lastError ?? '—'}
+                  </TableCell>
                   <TableCell>
                     {(d.status === 'failed' || d.status === 'exhausted') && (
                       <Button

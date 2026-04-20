@@ -150,6 +150,7 @@ export const API = {
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
       webhookDeliveries: (id: string): string =>
         `/api/v1/admin/orchestration/webhooks/${id}/deliveries`,
+      webhookTest: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}/test`,
       retryDelivery: (id: string): string =>
         `/api/v1/admin/orchestration/webhooks/deliveries/${id}/retry`,
       COSTS: '/api/v1/admin/orchestration/costs',
@@ -194,6 +195,11 @@ export const API = {
     conversationById: (id: string): string => `/api/v1/chat/conversations/${id}`,
     conversationMessages: (id: string): string => `/api/v1/chat/conversations/${id}/messages`,
     validateToken: (slug: string): string => `/api/v1/chat/agents/${slug}/validate-token`,
+  },
+
+  /** Webhook trigger (API-key authenticated, not admin) */
+  WEBHOOKS: {
+    trigger: (slug: string): string => `/api/v1/webhooks/trigger/${slug}`,
   },
 
   /** Public endpoints */

@@ -11,7 +11,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ChevronLeft, ChevronRight, Edit, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -40,7 +41,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { apiClient } from '@/lib/api/client';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -56,6 +66,7 @@ export interface WebhookListItem {
   description: string | null;
   createdAt: string;
   updatedAt: string;
+  _count: { deliveries: number };
 }
 
 export interface WebhooksTableProps {
@@ -66,10 +77,12 @@ export interface WebhooksTableProps {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTableProps) {
+  const router = useRouter();
   const [webhooks, setWebhooks] = useState(initialWebhooks);
   const [meta, setMeta] = useState(initialMeta);
   const [activeFilter, setActiveFilter] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WebhookListItem | null>(null);
 
   const fetchPage = useCallback(
@@ -106,6 +119,24 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
     }
   };
 
+  const handleToggleActive = useCallback(async (wh: WebhookListItem, nextActive: boolean) => {
+    setWebhooks((prev) => prev.map((w) => (w.id === wh.id ? { ...w, isActive: nextActive } : w)));
+    try {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.webhookById(wh.id), {
+        body: { isActive: nextActive },
+      });
+    } catch (err) {
+      setWebhooks((prev) =>
+        prev.map((w) => (w.id === wh.id ? { ...w, isActive: wh.isActive } : w))
+      );
+      setListError(
+        err instanceof APIClientError
+          ? `Could not update webhook: ${err.message}`
+          : 'Could not update webhook. Try again.'
+      );
+    }
+  }, []);
+
   const truncateUrl = (url: string, max = 50) => (url.length > max ? url.slice(0, max) + '…' : url);
 
   return (
@@ -132,6 +163,12 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
         </Button>
       </div>
 
+      {listError && (
+        <div className="border-destructive/50 bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-sm">
+          {listError}
+        </div>
+      )}
+
       {/* Table */}
       <div className="rounded-md border">
         <Table>
@@ -139,15 +176,16 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
             <TableRow>
               <TableHead>URL</TableHead>
               <TableHead>Events</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead className="text-center">Deliveries</TableHead>
+              <TableHead className="text-center">Active</TableHead>
               <TableHead>Created</TableHead>
-              <TableHead className="w-12" />
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {webhooks.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
                   {loading ? 'Loading…' : 'No webhook subscriptions yet.'}
                 </TableCell>
               </TableRow>
@@ -179,31 +217,46 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    {wh.isActive ? (
-                      <span className="flex items-center gap-1 text-sm text-green-600">
-                        <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-                        Active
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-sm text-gray-400">
-                        <span className="inline-block h-2 w-2 rounded-full bg-gray-300" />
-                        Inactive
-                      </span>
-                    )}
+                  <TableCell className="text-center text-sm tabular-nums">
+                    {wh._count.deliveries}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Switch
+                      checked={wh.isActive}
+                      onCheckedChange={(v) => void handleToggleActive(wh, v)}
+                      aria-label={`Toggle ${truncateUrl(wh.url, 30)} active`}
+                    />
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {new Date(wh.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleteTarget(wh)}
-                      title="Delete webhook"
-                    >
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Row actions</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/admin/orchestration/webhooks/${wh.id}`)}
+                        >
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-red-600"
+                          onClick={() => setDeleteTarget(wh)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))

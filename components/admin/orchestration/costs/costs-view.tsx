@@ -28,6 +28,7 @@ import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-ag
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
 import { PricingReference } from '@/components/admin/orchestration/costs/pricing-reference';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import type { SerializedPricingHistory } from '@/lib/orchestration/llm/pricing-history';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
 
@@ -44,6 +45,8 @@ export interface CostsViewProps {
   settings: OrchestrationSettings | null;
   /** Epoch ms when OpenRouter pricing was last fetched. null/0 = static fallback. */
   registryFetchedAt?: number | null;
+  /** Historical pricing data from llm-prices.com for per-model trend charts. */
+  pricingHistory?: SerializedPricingHistory | null;
 }
 
 export function CostsView({
@@ -53,6 +56,7 @@ export function CostsView({
   models,
   settings,
   registryFetchedAt,
+  pricingHistory,
 }: CostsViewProps) {
   return (
     <div className="space-y-8">
@@ -69,7 +73,11 @@ export function CostsView({
 
       <LocalVsCloudPanel summary={summary} models={models} />
 
-      <PricingReference models={models} fetchedAt={registryFetchedAt ?? null} />
+      <PricingReference
+        models={models}
+        fetchedAt={registryFetchedAt ?? null}
+        pricingHistory={pricingHistory ?? null}
+      />
 
       <CostMethodology />
 

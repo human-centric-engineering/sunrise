@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { WebhookForm } from '@/components/admin/orchestration/webhook-form';
+import { WebhookTestButton } from '@/components/admin/orchestration/webhook-test-button';
 import { WebhookDeliveries } from '@/components/admin/orchestration/webhook-deliveries';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -55,6 +56,16 @@ export default async function WebhookDetailPage({ params }: { params: Promise<{ 
       </nav>
 
       <WebhookForm mode="edit" webhook={webhook} />
+
+      <div className="flex items-center gap-4 rounded-lg border p-4">
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-medium">Test connectivity</p>
+          <p className="text-muted-foreground text-xs">
+            Send a <code>ping</code> event to verify your endpoint is reachable and responding.
+          </p>
+        </div>
+        <WebhookTestButton webhookId={webhook.id} />
+      </div>
 
       <hr />
 

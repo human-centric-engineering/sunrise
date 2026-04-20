@@ -46,6 +46,7 @@ export const GET = withAdminAuth(async (request, session) => {
         description: true,
         createdAt: true,
         updatedAt: true,
+        _count: { select: { deliveries: true } },
       },
     }),
     prisma.aiWebhookSubscription.count({ where }),
