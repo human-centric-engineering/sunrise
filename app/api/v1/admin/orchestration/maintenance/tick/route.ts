@@ -9,6 +9,7 @@
  * 3. reapZombieExecutions() — mark stale running executions as failed
  * 4. backfillMissingEmbeddings() — re-embed messages that failed embedding
  * 5. enforceRetentionPolicies() — delete conversations past retention window
+ * 6. processPendingExecutions() — recover orphaned pending workflow executions
  *
  * Designed to be called every ~60s by an external cron job.
  * Auth: Admin role required (session or API key with admin scope).
@@ -19,7 +20,7 @@ import { successResponse } from '@/lib/api/responses';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { logger } from '@/lib/logging';
-import { processDueSchedules } from '@/lib/orchestration/scheduling';
+import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
@@ -47,13 +48,15 @@ export const POST = withAdminAuth(async (request) => {
   const startMs = Date.now();
 
   try {
-    const [schedules, retries, reaper, embeddings, retention] = await Promise.allSettled([
-      processDueSchedules(),
-      processPendingRetries(),
-      reapZombieExecutions(),
-      backfillMissingEmbeddings(),
-      enforceRetentionPolicies(),
-    ]);
+    const [schedules, retries, reaper, embeddings, retention, pendingRecovery] =
+      await Promise.allSettled([
+        processDueSchedules(),
+        processPendingRetries(),
+        reapZombieExecutions(),
+        backfillMissingEmbeddings(),
+        enforceRetentionPolicies(),
+        processPendingExecutions(),
+      ]);
 
     function unwrap<T>(r: PromiseSettledResult<T>): T | { error: string } {
       return r.status === 'fulfilled' ? r.value : { error: String(r.reason) };
@@ -65,6 +68,7 @@ export const POST = withAdminAuth(async (request) => {
       zombieReaper: unwrap(reaper),
       embeddingBackfill: unwrap(embeddings),
       retention: unwrap(retention),
+      pendingExecutionRecovery: unwrap(pendingRecovery),
       durationMs: Date.now() - startMs,
     };
 

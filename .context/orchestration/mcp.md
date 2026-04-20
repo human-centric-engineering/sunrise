@@ -60,6 +60,7 @@ Audit log (fire-and-forget → McpAuditLog)
 3. Client uses `Authorization: Bearer smcp_...` header
 4. Scopes control access: `tools:list`, `tools:execute`, `resources:read`, `prompts:read`
 5. Keys can be revoked immediately; `expiresAt` for automatic expiry
+6. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body.
 
 ## Tool Exposure Flow
 

@@ -20,7 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Save, Shield } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Save, Shield } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,6 +44,7 @@ import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat'
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
+import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
 import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
@@ -114,6 +115,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
@@ -174,6 +176,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
     setError(null);
+    setSaved(false);
 
     // Transform comma-separated strings into arrays for the API
     const payload = {
@@ -199,6 +202,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.AGENTS, {
           body: payload,
@@ -236,11 +241,16 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/agents">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>
@@ -280,6 +290,19 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           >
             Test
           </TabsTrigger>
+          <TabsTrigger
+            value="invite-tokens"
+            disabled={!isEdit || currentVisibility !== 'invite_only'}
+            title={
+              !isEdit
+                ? 'Save the agent first to manage invite tokens'
+                : currentVisibility !== 'invite_only'
+                  ? 'Set visibility to "Invite only" to manage tokens'
+                  : undefined
+            }
+          >
+            Invite tokens
+          </TabsTrigger>
         </TabsList>
 
         {/* ================= TAB 1 — GENERAL ================= */}
@@ -299,10 +322,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               Name{' '}
               <FieldHelp title="Agent name">
                 A human-readable label. This is what admins and end-users see in lists and in the
-                chat UI. Defaults to empty.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                chat UI. Defaults to empty.
               </FieldHelp>
             </Label>
             <Input id="name" {...register('name')} placeholder="Research Assistant" />
@@ -315,10 +335,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               <FieldHelp title="URL-safe identifier">
                 The stable identifier used in URLs and the chat stream endpoint. Auto-generated from
                 the name on first type, but you can edit it. Lowercase letters, numbers, and hyphens
-                only.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                only.
               </FieldHelp>
             </Label>
             <Input
@@ -387,9 +404,17 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="visibility">
               Visibility{' '}
               <FieldHelp title="Who can access this agent">
-                Controls who can start conversations with this agent. <strong>Internal</strong> —
-                only admins via the dashboard. <strong>Public</strong> — anyone with the chat
-                endpoint URL. <strong>Invite only</strong> — requires a valid invite token.
+                <strong>Internal</strong> — Admins only, via the dashboard. For internal tools,
+                testing, or sensitive data.
+                <br />
+                <br />
+                <strong>Public</strong> — Anyone with the chat URL. For support bots, Q&amp;A, or
+                open demos.
+                <br />
+                <br />
+                <strong>Invite only</strong> — Requires an invite token. For beta programs, partner
+                access, or gated agents. Use the Invite tokens tab above to create and manage
+                tokens.
               </FieldHelp>
             </Label>
             <Select
@@ -413,8 +438,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="retentionDays">
               Conversation retention (days){' '}
               <FieldHelp title="Auto-delete old conversations">
-                Automatically delete conversations older than this many days. Runs during the daily
-                maintenance tick. Leave blank to keep conversations forever.
+                Conversations with no activity for this many days are automatically deleted,
+                including their messages and embeddings. Cleanup runs as part of the scheduled
+                maintenance job. Leave blank to keep conversations forever.
               </FieldHelp>
             </Label>
             <Input
@@ -871,6 +897,21 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">
               <p className="text-muted-foreground">Save the agent first to test a chat.</p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 6 — INVITE TOKENS ================= */}
+        <TabsContent value="invite-tokens" className="pt-4">
+          {isEdit && agent && currentVisibility === 'invite_only' ? (
+            <AgentInviteTokensTab agentId={agent.id} />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">
+                {!isEdit
+                  ? 'Save the agent first, then manage invite tokens.'
+                  : 'Set visibility to "Invite only" to manage tokens.'}
+              </p>
             </div>
           )}
         </TabsContent>

@@ -10,6 +10,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { WorkflowStatus } from '@/types/orchestration';
 
 /** Executions running longer than this are considered zombies. */
 const ZOMBIE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
@@ -29,11 +30,11 @@ export async function reapZombieExecutions(
 
   const result = await prisma.aiWorkflowExecution.updateMany({
     where: {
-      status: 'running',
+      status: WorkflowStatus.RUNNING,
       startedAt: { lt: cutoff },
     },
     data: {
-      status: 'failed',
+      status: WorkflowStatus.FAILED,
       completedAt: new Date(),
     },
   });

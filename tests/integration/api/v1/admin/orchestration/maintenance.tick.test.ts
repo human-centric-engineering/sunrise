@@ -60,6 +60,7 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/scheduling', () => ({
   processDueSchedules: vi.fn(),
+  processPendingExecutions: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
@@ -81,7 +82,7 @@ vi.mock('@/lib/orchestration/retention', () => ({
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
-import { processDueSchedules } from '@/lib/orchestration/scheduling';
+import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
@@ -119,7 +120,17 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(processPendingRetries).mockResolvedValue(3);
     vi.mocked(reapZombieExecutions).mockResolvedValue({ reaped: 1 });
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 5, failed: 0 });
-    vi.mocked(enforceRetentionPolicies).mockResolvedValue({ deleted: 10, agentsProcessed: 2 });
+    vi.mocked(enforceRetentionPolicies).mockResolvedValue({
+      deleted: 10,
+      agentsProcessed: 2,
+      webhookDeliveriesDeleted: 0,
+      costLogsDeleted: 0,
+    });
+    vi.mocked(processPendingExecutions).mockResolvedValue({
+      recovered: 0,
+      failed: 0,
+      errors: [],
+    });
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -150,7 +161,12 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.webhookRetries).toBe(3);
     expect(body.data.zombieReaper).toEqual({ reaped: 1 });
     expect(body.data.embeddingBackfill).toEqual({ processed: 5, failed: 0 });
-    expect(body.data.retention).toEqual({ deleted: 10, agentsProcessed: 2 });
+    expect(body.data.retention).toEqual({
+      deleted: 10,
+      agentsProcessed: 2,
+      webhookDeliveriesDeleted: 0,
+      costLogsDeleted: 0,
+    });
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });
 

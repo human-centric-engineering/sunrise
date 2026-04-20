@@ -44,10 +44,22 @@ Called every ~60 seconds by an external cron job hitting `POST /api/v1/admin/orc
 
 1. Queries enabled schedules where `nextRunAt <= now` (max 50 per tick)
 2. Skips schedules whose workflow is inactive
-3. Atomically updates `lastRunAt` and `nextRunAt` before creating execution (prevents double-fire)
+3. Claims the schedule via **optimistic lock**: `updateMany WHERE id = :id AND nextRunAt = :originalNextRunAt` — if `count === 0`, another tick already claimed it (prevents double-fire in multi-instance deployments)
 4. Creates `AiWorkflowExecution` with status `pending` and `inputTemplate` as `inputData`
+5. Validates the workflow definition via `workflowDefinitionSchema.safeParse()` — marks execution as `failed` if invalid
+6. **Invokes the orchestration engine** via `drainEngine()` (fire-and-forget) with `resumeFromExecutionId` so the engine picks up the `pending` row and transitions it through `running` to `completed`/`failed`
 
 Returns `{ processed, succeeded, failed, errors }`.
+
+### `processPendingExecutions(staleThresholdMs?)`
+
+Recovery sweep that picks up `AiWorkflowExecution` rows stuck in `pending` status — e.g. due to a crash between row creation and engine invocation.
+
+1. Queries executions where `status = 'pending' AND createdAt < (now - staleThresholdMs)` (default: 2 minutes, max 20 per sweep)
+2. Marks `failed` if the linked workflow is inactive or has an invalid definition
+3. Otherwise invokes `drainEngine()` fire-and-forget
+
+Called automatically by the unified maintenance tick.
 
 ## API Endpoints
 
@@ -73,7 +85,8 @@ Returns `{ processed, succeeded, failed, errors }`.
 2. `processPendingRetries()` — webhook delivery retry queue
 3. `reapZombieExecutions()` — mark stale `running` executions as `failed` (30 min threshold)
 4. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding
-5. `enforceRetentionPolicies()` — delete conversations past per-agent retention window
+5. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows
+6. `processPendingExecutions()` — recover orphaned `pending` workflow executions
 
 Each function runs via `Promise.allSettled` — individual failures don't block others. Results are returned per-function.
 
@@ -120,3 +133,13 @@ Webhook subscription URLs are validated via Zod schema refinements that call `ch
 ## Webhook Management UI
 
 Full CRUD for webhooks is available at `/admin/orchestration/webhooks`. See [Webhook Management UI](../admin/orchestration-webhooks.md).
+
+## Retention Pruning
+
+`enforceRetentionPolicies()` in `lib/orchestration/retention.ts` handles three types of cleanup:
+
+1. **Conversation retention** — per-agent `retentionDays` field. Conversations whose `updatedAt` exceeds the window are cascade-deleted (messages, embeddings, cost logs).
+2. **Webhook delivery pruning** — `pruneWebhookDeliveries()` reads `webhookRetentionDays` from the global `AiOrchestrationSettings` singleton. Skips if null.
+3. **Cost log pruning** — `pruneCostLogs()` reads `costLogRetentionDays` from the same settings row. Skips if null.
+
+Both prune functions accept an optional `maxAgeDays` parameter to override the settings lookup. Configure retention via the admin settings API (`PATCH /api/v1/admin/orchestration/settings`).

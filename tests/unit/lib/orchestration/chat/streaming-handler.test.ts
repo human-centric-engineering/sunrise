@@ -16,9 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findFirst: vi.fn() },
-    aiConversation: { findFirst: vi.fn(), create: vi.fn() },
+    aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn() },
     aiMessage: { findMany: vi.fn(), create: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },
+    aiOrchestrationSettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -54,6 +55,10 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
     isLocal: false,
   })),
   logCost: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@/lib/orchestration/llm/budget-mutex', () => ({
+  withAgentBudgetLock: vi.fn((_id: string, fn: () => Promise<unknown>) => fn()),
 }));
 
 vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
@@ -225,8 +230,10 @@ beforeEach(() => {
   });
   (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(makeAgent());
   (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(makeConversation());
+  (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     async ({ data }: { data: Record<string, unknown> }) =>
@@ -734,8 +741,10 @@ describe('StreamingChatHandler', () => {
     (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation()
     );
+    (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       async ({ data }: { data: Record<string, unknown> }) =>

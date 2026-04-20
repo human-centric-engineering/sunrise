@@ -30,6 +30,7 @@ import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
@@ -111,7 +112,9 @@ export class StreamingChatHandler {
 
       const agent = await this.loadAgent(request.agentSlug);
 
-      const budget = await checkBudget(agent.id);
+      // Per-agent mutex prevents TOCTOU race between concurrent budget reads.
+      // See lib/orchestration/llm/budget-mutex.ts for accepted over-run tolerance.
+      const budget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
 
       // Budget warning at 80%
       if (
@@ -149,9 +152,28 @@ export class StreamingChatHandler {
         return;
       }
 
-      const conversation = await this.loadOrCreateConversation(agent, request);
+      // Load cap settings once — used for conversation and message limits.
+      const capSettings = await prisma.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { maxConversationsPerUser: true, maxMessagesPerConversation: true },
+      });
+
+      const conversation = await this.loadOrCreateConversation(
+        agent,
+        request,
+        capSettings?.maxConversationsPerUser ?? null
+      );
       conversationId = conversation.id;
       const history = await this.loadHistory(conversation.id);
+
+      // Enforce message-per-conversation cap
+      const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
+      if (maxMessages !== null && history.length >= maxMessages) {
+        throw new ChatError(
+          'conversation_length_cap_reached',
+          `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
+        );
+      }
 
       // Persist the user message up front so a mid-stream crash still
       // leaves an audit trail.
@@ -386,6 +408,10 @@ export class StreamingChatHandler {
               code: 'provider_retry',
               message: `Retrying with fallback provider...`,
             };
+
+            // Signal client to discard any content deltas received so far —
+            // a fallback provider retry is about to start from scratch.
+            yield { type: 'content_reset', reason: 'provider_fallback' };
 
             // Reset accumulated content for the retry
             assistantText = '';
@@ -798,6 +824,29 @@ export class StreamingChatHandler {
         userId: request.userId,
         conversationId,
       });
+
+      // Persist an error-marker assistant message so the conversation has
+      // no orphaned user message with no response. Clients can detect the
+      // marker via metadata.error === true.
+      if (conversationId) {
+        try {
+          await this.persistMessage({
+            conversationId,
+            role: 'assistant',
+            content: '[An error occurred and the response could not be completed.]',
+            metadata: {
+              error: true,
+              errorCode: 'internal_error',
+            } as unknown as MessageMetadata,
+          });
+        } catch (persistErr) {
+          log.warn('Failed to persist error-marker assistant message', {
+            conversationId,
+            error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+          });
+        }
+      }
+
       // Do NOT forward raw err.message — it can leak Prisma internals,
       // provider SDK details, and internal hostnames to the client. The
       // detailed error has already been logged via logger.error above.
@@ -815,7 +864,8 @@ export class StreamingChatHandler {
 
   private async loadOrCreateConversation(
     agent: AiAgent,
-    request: ChatRequest
+    request: ChatRequest,
+    maxConversationsPerUser: number | null
   ): Promise<AiConversation> {
     if (request.conversationId) {
       const existing = await prisma.aiConversation.findFirst({
@@ -830,6 +880,19 @@ export class StreamingChatHandler {
         throw new ChatError('conversation_not_found', 'Conversation not found');
       }
       return existing;
+    }
+
+    // Enforce per-user conversation cap before creating a new one
+    if (maxConversationsPerUser !== null) {
+      const count = await prisma.aiConversation.count({
+        where: { userId: request.userId, agentId: agent.id, isActive: true },
+      });
+      if (count >= maxConversationsPerUser) {
+        throw new ChatError(
+          'conversation_cap_reached',
+          `You have reached the maximum number of conversations (${maxConversationsPerUser}) for this agent.`
+        );
+      }
     }
 
     const data: Prisma.AiConversationUncheckedCreateInput = {

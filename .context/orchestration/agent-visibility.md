@@ -47,6 +47,10 @@ For `invite_only` agents, access is granted via opaque tokens managed by admins.
 
 All fields optional. Token can only be created for agents with `visibility = 'invite_only'`.
 
+### Admin UI
+
+Tokens are managed in the agent form's **Tab 6 — Invite tokens** (`components/admin/orchestration/agent-invite-tokens-tab.tsx`). The tab is only enabled when editing an agent with `visibility = 'invite_only'`. It provides a full CRUD table with create dialog, copy-to-clipboard, status badges (active / revoked / expired / exhausted), and per-row revoke action. See [`agent-form.md`](../admin/agent-form.md#tab-6--invite-tokens) for full details.
+
 ### Consumer Usage
 
 Pass `inviteToken` in the consumer chat request body:

@@ -1,6 +1,6 @@
 # Agent form
 
-Shared create/edit form for `AiAgent`. Five shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
+Shared create/edit form for `AiAgent`. Six shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
 
 **File:** `components/admin/orchestration/agent-form.tsx`
 **Pattern:** raw `react-hook-form` + `zodResolver(agentFormSchema)`, no shadcn Form wrapper (mirrors `components/admin/feature-flag-form.tsx`).
@@ -8,15 +8,16 @@ Shared create/edit form for `AiAgent`. Five shadcn tabs, one underlying `<form>`
 
 ## Tab structure
 
-| #   | Tab          | Create | Edit | Notes                                                                                                                 |
-| --- | ------------ | ------ | ---- | --------------------------------------------------------------------------------------------------------------------- |
-| 1   | General      | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                       |
-| 2   | Model        | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
-| 3   | Instructions | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
-| 4   | Capabilities | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
-| 5   | Test         | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
+| #   | Tab           | Create | Edit | Notes                                                                                                                 |
+| --- | ------------- | ------ | ---- | --------------------------------------------------------------------------------------------------------------------- |
+| 1   | General       | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                       |
+| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
+| 3   | Instructions  | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
+| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
+| 5   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
+| 6   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
 
-Tabs 4 and 5 are `disabled` in create mode — attaching capabilities and streaming a test chat both require a persisted `agent.id` / `agent.slug`.
+Tabs 4 and 5 are `disabled` in create mode — attaching capabilities and streaming a test chat both require a persisted `agent.id` / `agent.slug`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
 
 ## Tab 1 — General
 
@@ -149,6 +150,45 @@ File: `components/admin/orchestration/agent-test-chat.tsx`.
 - Renders `content` deltas into a growing reply; stops on `done`.
 - `error` frame → **"The agent ran into a problem. Check the server logs for details."** The raw `data.message` is never forwarded to the DOM. The wizard test pins this behaviour; any regression is caught by two unit tests (wizard + direct chat component).
 - Holds an `AbortController` and calls `.abort()` on unmount or on a new send.
+
+## Tab 6 — Invite tokens
+
+**Component:** `components/admin/orchestration/agent-invite-tokens-tab.tsx`
+
+Edit mode only, and only enabled when the agent's `visibility` is `invite_only`. For other visibility modes the tab trigger is disabled.
+
+### Token table
+
+Columns: label, truncated token (with copy-to-clipboard), status badge, usage / limit, expiry date, created date.
+
+**Status badges** are derived, not stored:
+
+| Badge       | Condition                                     |
+| ----------- | --------------------------------------------- |
+| `active`    | Not revoked, not expired, not exhausted       |
+| `revoked`   | `revokedAt` is set                            |
+| `expired`   | `expiresAt` is in the past                    |
+| `exhausted` | `useCount >= maxUses` (when `maxUses` is set) |
+
+### Create dialog
+
+Opens from a "Create token" button above the table. Fields: **label** (optional text), **max uses** (optional number), **expiry** (optional date picker). POSTs to `agentInviteTokens(id)`. On success the table refetches and the new token is shown — the full token value is only visible at creation time.
+
+### Revoke action
+
+Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedAt` server-side; the row's badge updates to `revoked` on refetch.
+
+### API endpoints
+
+| Action | Call                                       |
+| ------ | ------------------------------------------ |
+| List   | `GET agentInviteTokens(id)`                |
+| Create | `POST agentInviteTokens(id)`               |
+| Revoke | `DELETE agentInviteTokenById(id, tokenId)` |
+
+### Help copy
+
+- **Invite tokens** — "Invite tokens control access to invite-only agents. Common use cases: restricting access to specific clients, gating beta features, managing partner integrations, and creating paid tiers with separate tokens per customer."
 
 ## Submit flow
 

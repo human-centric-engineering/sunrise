@@ -157,6 +157,7 @@ function WorkflowBuilderInner({
   // Save flow state.
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Capabilities for the Tool Call editor — server-prefetched via props,
@@ -368,6 +369,8 @@ function WorkflowBuilderInner({
         if (mode === 'create') {
           router.push(`/admin/orchestration/workflows/${saved.id}`);
         } else {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2500);
           router.refresh();
         }
       } catch (err) {
@@ -460,6 +463,7 @@ function WorkflowBuilderInner({
         templates={templates}
         templatesDisabled={mode === 'edit'}
         saving={saving}
+        saved={saved}
         hasErrors={validationErrors.length > 0}
       />
 

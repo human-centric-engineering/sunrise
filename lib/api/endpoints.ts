@@ -74,6 +74,10 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
       agentInstructionsRevert: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
+      agentInviteTokens: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/invite-tokens`,
+      agentInviteTokenById: (id: string, tokenId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/invite-tokens/${tokenId}`,
       agentVersions: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/versions`,
       agentVersionRestore: (id: string, versionId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}/restore`,

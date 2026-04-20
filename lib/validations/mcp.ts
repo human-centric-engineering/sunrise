@@ -195,6 +195,18 @@ export const updateApiKeySchema = z
 export type UpdateApiKey = z.infer<typeof updateApiKeySchema>;
 
 /**
+ * Rotate MCP API key (POST /api/v1/admin/orchestration/mcp/keys/:id/rotate)
+ *
+ * Generates new key material. The plaintext is returned once and never stored.
+ * Optionally update the key's expiry at rotation time.
+ */
+export const mcpApiKeyRotateSchema = z.object({
+  expiresAt: z.coerce.date().nullable().optional(),
+});
+
+export type McpApiKeyRotate = z.infer<typeof mcpApiKeyRotateSchema>;
+
+/**
  * List API keys query (GET /api/v1/admin/orchestration/mcp/keys)
  */
 export const listApiKeysQuerySchema = z.object({

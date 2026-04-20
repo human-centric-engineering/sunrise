@@ -74,6 +74,16 @@ Pre-check via `checkBudget(agentId)` in `streaming-handler.ts`:
 - **80% warning**: if `spent / limit >= 0.8`, yields `{ type: 'warning', code: 'budget_warning', message: '...' }` and logs. Stream continues.
 - **Exceeded**: yields `{ type: 'error', code: 'budget_exceeded' }` with user-friendly message. Stream terminates.
 
+### Budget Check Atomicity
+
+`checkBudget()` reads a SUM aggregate; `logCost()` writes a new row after the LLM call completes. Without protection, concurrent requests for the same agent could all pass the budget check before any cost is logged.
+
+**Solution:** `withAgentBudgetLock(agentId, fn)` in `lib/orchestration/llm/budget-mutex.ts` — an in-memory per-agent promise-chain mutex. Calls for the same `agentId` are serialised; calls for different agents proceed in parallel.
+
+**Accepted over-run tolerance:** `logCost()` is fire-and-forget after streaming (not wrapped by the mutex, which would block the stream). The worst case is one LLM turn per concurrent in-flight request for the same agent — typically < $0.01.
+
+**Multi-instance note:** This mutex is in-process only. If horizontal scaling is needed in future, replace with `SELECT pg_try_advisory_xact_lock(hashtext(agentId))` or a Redis-based lock.
+
 ## Input Sanitisation
 
 `scanForInjection(message)` detects three pattern categories:

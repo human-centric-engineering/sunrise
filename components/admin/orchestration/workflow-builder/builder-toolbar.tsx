@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import {
+  Check,
   ChevronLeft,
   CheckCircle2,
   ClipboardCopy,
@@ -53,6 +54,8 @@ export interface BuilderToolbarProps {
   templatesDisabled: boolean;
   /** True while a save is in flight — Save shows a spinner. */
   saving: boolean;
+  /** True briefly after a successful save — Save shows a checkmark. */
+  saved: boolean;
   /** True when live validation is reporting at least one error — Save outlines in red. */
   hasErrors: boolean;
 }
@@ -69,6 +72,7 @@ export function BuilderToolbar({
   templates,
   templatesDisabled,
   saving,
+  saved,
   hasErrors,
 }: BuilderToolbarProps) {
   const executeDisabled = mode !== 'edit';
@@ -160,18 +164,28 @@ export function BuilderToolbar({
       <Button
         size="sm"
         onClick={onSave}
-        disabled={saving}
+        disabled={saving || saved}
         aria-label={
           hasErrors ? 'Save (validation errors present — click Validate to see details)' : undefined
         }
-        className={cn(hasErrors && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
+        className={cn(hasErrors && !saved && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
       >
         {saving ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Saving…
+          </>
+        ) : saved ? (
+          <>
+            <Check className="mr-2 h-4 w-4" />
+            Saved
+          </>
         ) : (
-          <Save className="mr-2 h-4 w-4" />
+          <>
+            <Save className="mr-2 h-4 w-4" />
+            {mode === 'create' ? 'Create workflow' : 'Save changes'}
+          </>
         )}
-        {mode === 'create' ? 'Create workflow' : 'Save changes'}
       </Button>
     </div>
   );

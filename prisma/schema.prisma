@@ -394,6 +394,7 @@ model AiConversation {
   @@index([agentId])
   @@index([contextType, contextId])
   @@index([isActive])
+  @@index([updatedAt])
   @@map("ai_conversation")
 }
 
@@ -416,6 +417,7 @@ model AiMessage {
   messageEmbedding AiMessageEmbedding?
 
   @@index([conversationId])
+  @@index([conversationId, createdAt])
   @@index([role])
   @@index([createdAt])
   @@index([rating])
@@ -611,6 +613,7 @@ model AiCostLog {
   @@index([provider])
   @@index([operation])
   @@index([createdAt])
+  @@index([agentId, createdAt])
   @@map("ai_cost_log")
 }
 
@@ -723,6 +726,10 @@ model AiOrchestrationSettings {
   approvalDefaultAction  String?   @default("deny") // "deny" or "allow"
   inputGuardMode         String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  webhookRetentionDays       Int?
+  costLogRetentionDays       Int?
+  maxConversationsPerUser    Int?
+  maxMessagesPerConversation Int?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 

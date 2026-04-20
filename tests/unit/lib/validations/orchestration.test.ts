@@ -63,6 +63,7 @@ import {
   workflowDefinitionHistoryEntrySchema,
   workflowDefinitionHistorySchema,
   workflowDefinitionRevertSchema,
+  executionStatusSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1716,5 +1717,24 @@ describe('completeEvaluationBodySchema', () => {
   it('accepts unknown extra fields (passthrough for forward compat)', () => {
     const result = completeEvaluationBodySchema.safeParse({ futureOption: true });
     expect(result.success).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// executionStatusSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('executionStatusSchema', () => {
+  it.each(['pending', 'running', 'paused_for_approval', 'completed', 'failed', 'cancelled'])(
+    'accepts valid status "%s"',
+    (status) => {
+      expect(executionStatusSchema.safeParse(status).success).toBe(true);
+    }
+  );
+
+  it('rejects invalid status values', () => {
+    expect(executionStatusSchema.safeParse('unknown').success).toBe(false);
+    expect(executionStatusSchema.safeParse('').success).toBe(false);
+    expect(executionStatusSchema.safeParse(123).success).toBe(false);
   });
 });

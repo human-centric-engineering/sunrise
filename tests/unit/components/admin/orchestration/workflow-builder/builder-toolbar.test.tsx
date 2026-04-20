@@ -65,6 +65,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     templates: MOCK_TEMPLATES,
     templatesDisabled: false,
     saving: false,
+    saved: false,
     hasErrors: false,
     ...overrides,
   };

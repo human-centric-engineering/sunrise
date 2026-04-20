@@ -189,6 +189,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const initialFlavor: Flavor = provider ? flavorFromProvider(provider) : 'anthropic';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
   const [apiKeyPresent, setApiKeyPresent] = useState<boolean | null>(
@@ -250,6 +251,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const onSubmit = async (data: ProviderFormData) => {
     setSubmitting(true);
     setError(null);
+    setSaved(false);
     try {
       const meta = FLAVORS.find((f) => f.id === data.flavor);
       if (!meta) throw new Error('Unknown flavor');
@@ -283,6 +285,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           baseUrl: updated.baseUrl ?? '',
           apiKeyEnvVar: updated.apiKeyEnvVar ?? '',
         });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<ProviderRowWithStatus>(
           API.ADMIN.ORCHESTRATION.PROVIDERS,
@@ -313,11 +317,16 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/providers">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>

@@ -913,8 +913,8 @@ const providerTypeSchema = z.enum(['anthropic', 'openai-compatible', 'voyage']);
 /**
  * Provider config schema (POST /api/v1/admin/orchestration/providers)
  */
-/** Workflow status enum for listExecutionsQuerySchema filters. */
-const workflowStatusSchema = z.enum([
+/** Workflow status enum for listExecutionsQuerySchema filters and runtime validation. */
+export const executionStatusSchema = z.enum([
   'pending',
   'running',
   'paused_for_approval',
@@ -1070,7 +1070,7 @@ export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
 export const listExecutionsQuerySchema = paginationQuerySchema.extend({
   workflowId: cuidSchema.optional(),
   userId: z.string().trim().max(100).optional(),
-  status: workflowStatusSchema.optional(),
+  status: executionStatusSchema.optional(),
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
 });

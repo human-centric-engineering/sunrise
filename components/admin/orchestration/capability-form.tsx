@@ -32,7 +32,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -214,6 +214,7 @@ export function CapabilityForm({
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
@@ -451,6 +452,7 @@ export function CapabilityForm({
 
     setSubmitting(true);
     setError(null);
+    setSaved(false);
     try {
       const payload = {
         ...data,
@@ -462,6 +464,8 @@ export function CapabilityForm({
           body: payload,
         });
         reset(data);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiCapability>(API.ADMIN.ORCHESTRATION.CAPABILITIES, {
           body: payload,
@@ -512,11 +516,16 @@ export function CapabilityForm({
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/capabilities">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>

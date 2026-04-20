@@ -302,6 +302,7 @@ export type ChatEvent =
       results: Array<{ capabilitySlug: string; result: unknown }>;
     }
   | { type: 'warning'; code: string; message: string }
+  | { type: 'content_reset'; reason: string }
   | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
   | { type: 'error'; code: string; message: string };
 

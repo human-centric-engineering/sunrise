@@ -49,6 +49,7 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/scheduling', () => ({
   processDueSchedules: vi.fn(),
+  processPendingExecutions: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
@@ -71,7 +72,7 @@ vi.mock('@/lib/orchestration/retention', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
-import { processDueSchedules } from '@/lib/orchestration/scheduling';
+import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
@@ -97,7 +98,13 @@ const DEFAULT_SCHEDULE_RESULT = { triggered: 2, skipped: 0 };
 const DEFAULT_RETRY_RESULT = 3;
 const DEFAULT_REAPER_RESULT = { reaped: 1 };
 const DEFAULT_EMBEDDER_RESULT = { backfilled: 5, failed: 0 };
-const DEFAULT_RETENTION_RESULT = { deleted: 10, agentsProcessed: 2 };
+const DEFAULT_RETENTION_RESULT = {
+  deleted: 10,
+  agentsProcessed: 2,
+  webhookDeliveriesDeleted: 0,
+  costLogsDeleted: 0,
+};
+const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 
 // ─── Tests ────────────────────────────────────────────────────────────────��─
 
@@ -120,6 +127,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(reapZombieExecutions).mockResolvedValue(DEFAULT_REAPER_RESULT);
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT as never);
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
+    vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
   });
 
   // ── Authentication ──────────────────────���───────────────────���───────────
@@ -251,7 +259,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('calls all five maintenance tasks', async () => {
+  it('calls all six maintenance tasks', async () => {
     // Act
     await POST(makeRequest());
 
@@ -261,6 +269,18 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
+    expect(processPendingExecutions).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes pendingExecutionRecovery in response data', async () => {
+    // Act
+    const response = await POST(makeRequest());
+    const body = await parseJson<{
+      data: { pendingExecutionRecovery: unknown };
+    }>(response);
+
+    // Assert
+    expect(body.data.pendingExecutionRecovery).toEqual(DEFAULT_PENDING_RECOVERY_RESULT);
   });
 
   // ── Partial task failure ────────────────────────────────────────────────
@@ -311,6 +331,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(reapZombieExecutions).mockRejectedValue(new Error('Error C'));
     vi.mocked(backfillMissingEmbeddings).mockRejectedValue(new Error('Error D'));
     vi.mocked(enforceRetentionPolicies).mockRejectedValue(new Error('Error E'));
+    vi.mocked(processPendingExecutions).mockRejectedValue(new Error('Error F'));
 
     // Act
     const response = await POST(makeRequest());
@@ -322,6 +343,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
         zombieReaper: { error: string };
         embeddingBackfill: { error: string };
         retention: { error: string };
+        pendingExecutionRecovery: { error: string };
       };
     }>(response);
 
@@ -333,6 +355,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.zombieReaper).toHaveProperty('error');
     expect(body.data.embeddingBackfill).toHaveProperty('error');
     expect(body.data.retention).toHaveProperty('error');
+    expect(body.data.pendingExecutionRecovery).toHaveProperty('error');
   });
 
   it('tasks run concurrently (Promise.allSettled semantics)', async () => {

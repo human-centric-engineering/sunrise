@@ -357,10 +357,34 @@ If the LLM stream fails mid-response (network error, provider outage), the handl
 1. On stream failure, the handler records a circuit breaker failure for the current provider
 2. If the error is an `AbortError` (client disconnect), it throws immediately — no retry
 3. Otherwise, it shifts the next slug from `remainingFallbacks` and emits a `{ type: 'warning', code: 'provider_retry' }` SSE event
-4. Accumulated content and tool calls are reset, and the stream restarts from the new provider
-5. After `MAX_STREAM_RETRIES` (2) attempts or no more fallbacks, the error propagates
+4. A `{ type: 'content_reset', reason: 'provider_fallback' }` event is yielded — **clients must discard any buffered `content` deltas** received before this event
+5. Accumulated content and tool calls are reset, and the stream restarts from the new provider
+6. After `MAX_STREAM_RETRIES` (2) attempts or no more fallbacks, the error propagates
 
 This differs from the initial provider fallback (`getProviderWithFallbacks`) which only selects the starting provider based on circuit breaker state. Mid-stream retry handles failures that occur after the stream has started producing chunks.
+
+### Orphaned Message Prevention
+
+When all providers fail (error propagates to the outer catch), an **error-marker assistant message** is persisted to prevent an orphaned user message in the conversation:
+
+- `role: 'assistant'`, `content: '[An error occurred and the response could not be completed.]'`
+- `metadata: { error: true, errorCode: 'internal_error' }`
+- Only persisted when `conversationId` is set (i.e. the conversation was created before the failure)
+- Persist failure is caught and logged — it never masks the original error
+
+## Conversation and Message Caps
+
+Configurable limits prevent unbounded storage growth. Both are read from `AiOrchestrationSettings` (singleton, `slug = 'global'`):
+
+| Setting                      | Enforced where                     | Error code                        |
+| ---------------------------- | ---------------------------------- | --------------------------------- |
+| `maxConversationsPerUser`    | Before creating a new conversation | `conversation_cap_reached`        |
+| `maxMessagesPerConversation` | After loading history, before send | `conversation_length_cap_reached` |
+
+- `null` (default) means unlimited — no cap is enforced.
+- Conversation cap counts active conversations for the same user + agent pair.
+- Message cap compares `history.length` against the limit.
+- Both throw `ChatError` so the client receives a typed `{ type: 'error', code, message }` SSE event.
 
 ## Error Handling & Resilience
 
