@@ -6,11 +6,6 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
-import {
-  getPricingHistory,
-  serialisePricingHistory,
-  type SerializedPricingHistory,
-} from '@/lib/orchestration/llm/pricing-history';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
@@ -123,18 +118,13 @@ export default async function CostsPage() {
   // is fresh (< 24h); only hits OpenRouter when stale or on cold start.
   await refreshFromOpenRouter();
 
-  const [summary, alerts, perModel, modelsResponse, settings, pricingHistoryData] =
-    await Promise.all([
-      getCostSummary(),
-      getBudgetAlerts(),
-      getPerModel30Day(),
-      getModels(),
-      getSettings(),
-      getPricingHistory(),
-    ]);
-
-  // Serialise the Map-based pricing history for client-side hydration
-  const pricingHistory: SerializedPricingHistory = serialisePricingHistory(pricingHistoryData);
+  const [summary, alerts, perModel, modelsResponse, settings] = await Promise.all([
+    getCostSummary(),
+    getBudgetAlerts(),
+    getPerModel30Day(),
+    getModels(),
+    getSettings(),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -175,7 +165,6 @@ export default async function CostsPage() {
         models={modelsResponse?.models ?? null}
         settings={settings}
         registryFetchedAt={modelsResponse?.fetchedAt ?? null}
-        pricingHistory={pricingHistory}
       />
     </div>
   );
