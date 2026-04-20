@@ -41,7 +41,7 @@ export default async function AdminLayout({
       <AdminSidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <AdminHeader />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
       </div>
     </div>
   );
