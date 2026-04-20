@@ -25,6 +25,7 @@ import { SearchKnowledgeCapability } from './built-in/search-knowledge';
 import { GetPatternDetailCapability } from './built-in/get-pattern-detail';
 import { EstimateCostCapability } from './built-in/estimate-cost';
 import { ReadUserMemoryCapability, WriteUserMemoryCapability } from './built-in/user-memory';
+import { EscalateToHumanCapability } from './built-in/escalate-to-human';
 import type { CapabilityFunctionDefinition } from './types';
 
 let registered = false;
@@ -40,6 +41,7 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new EstimateCostCapability());
   capabilityDispatcher.register(new ReadUserMemoryCapability());
   capabilityDispatcher.register(new WriteUserMemoryCapability());
+  capabilityDispatcher.register(new EscalateToHumanCapability());
   registered = true;
 }
 

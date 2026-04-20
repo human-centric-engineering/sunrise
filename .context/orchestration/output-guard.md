@@ -26,11 +26,11 @@ Scans assistant responses for:
 
 ### Modes
 
-| Mode                | Behaviour                                               |
-| ------------------- | ------------------------------------------------------- |
-| `log_only`          | Log the violation, deliver the response unchanged       |
-| `warn_and_continue` | Log + emit a `warning` SSE event alongside the response |
-| `block`             | Log + emit an `error` SSE event, suppress the response  |
+| Mode                | Behaviour                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `log_only`          | Log the violation, deliver the response unchanged                                                     |
+| `warn_and_continue` | Log + emit a `warning` SSE event alongside the response                                               |
+| `block`             | Log + emit an `error` SSE event after streaming completes; client should discard the flagged response |
 
 ### How It Works
 

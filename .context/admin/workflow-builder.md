@@ -154,7 +154,7 @@ All twelve editors live under `components/admin/orchestration/workflow-builder/b
 | `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                  |
 | `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                        |
 | `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                              |
-| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` / `best-effort`)                                                |
+| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` only; `first-success` reserved for future use)                  |
 | `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                             |
 | `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                      |
 | `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                    |
@@ -281,7 +281,7 @@ interface WorkflowTemplate {
 
 The `toTemplateItem()` mapper converts an `AiWorkflow` API response into a `TemplateItem`, Zod-parsing `workflowDefinition` and `metadata` JSON columns. The `metadata` column stores `WorkflowTemplateMetadata` (`flowSummary`, `useCases`, `patterns`) populated by the 004 seed unit.
 
-Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_call` references one of the three built-in capability slugs: `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`. Every `llm_call` has a non-empty prompt. Every `route` has ≥2 branches and all parallel branches reconverge — each template passes both `validateWorkflow()` and `runExtraChecks()` out of the box.
+Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_call` references one of the built-in capability slugs: `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `escalate_to_human`. Every `llm_call` has a non-empty prompt. Every `route` has ≥2 branches and all parallel branches reconverge — each template passes both `validateWorkflow()` and `runExtraChecks()` out of the box.
 
 ### Dropdown → dialog → canvas
 
