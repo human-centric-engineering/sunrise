@@ -12,15 +12,22 @@ import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
   title: 'Settings · AI Orchestration',
-  description: 'Global orchestration settings — guard modes, budget, approvals.',
+  description:
+    'Global orchestration settings — guard modes, budget, limits, retention, approvals, and search.',
 };
 
 async function getSettings(): Promise<OrchestrationSettings> {
   const defaults: OrchestrationSettings = {
     inputGuardMode: null,
+    outputGuardMode: null,
     globalMonthlyBudgetUsd: null,
     defaultApprovalTimeoutMs: null,
     approvalDefaultAction: null,
+    searchConfig: null,
+    webhookRetentionDays: null,
+    costLogRetentionDays: null,
+    maxConversationsPerUser: null,
+    maxMessagesPerConversation: null,
   };
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS);
@@ -56,7 +63,8 @@ export default async function OrchestrationSettingsPage() {
           </FieldHelp>
         </h1>
         <p className="text-muted-foreground text-sm">
-          Global defaults for guard modes, spending caps, and approval workflows.
+          Global defaults for guard modes, spending caps, usage limits, retention, approvals, and
+          search tuning.
         </p>
       </header>
 

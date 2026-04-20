@@ -1402,6 +1402,35 @@ export const updateOrchestrationSettingsSchema = z
       .optional(),
     approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    webhookRetentionDays: z
+      .number()
+      .int()
+      .positive('Webhook retention must be a positive number of days')
+      .max(365, 'Webhook retention must be at most 365 days')
+      .nullable()
+      .optional(),
+    costLogRetentionDays: z
+      .number()
+      .int()
+      .positive('Cost log retention must be a positive number of days')
+      .max(365, 'Cost log retention must be at most 365 days')
+      .nullable()
+      .optional(),
+    maxConversationsPerUser: z
+      .number()
+      .int()
+      .positive('Max conversations must be a positive number')
+      .max(10_000, 'Max conversations must be at most 10,000')
+      .nullable()
+      .optional(),
+    maxMessagesPerConversation: z
+      .number()
+      .int()
+      .positive('Max messages must be a positive number')
+      .max(10_000, 'Max messages must be at most 10,000')
+      .nullable()
+      .optional(),
   })
   .refine(
     (v) =>
@@ -1410,7 +1439,12 @@ export const updateOrchestrationSettingsSchema = z
       v.searchConfig !== undefined ||
       v.defaultApprovalTimeoutMs !== undefined ||
       v.approvalDefaultAction !== undefined ||
-      v.inputGuardMode !== undefined,
+      v.inputGuardMode !== undefined ||
+      v.outputGuardMode !== undefined ||
+      v.webhookRetentionDays !== undefined ||
+      v.costLogRetentionDays !== undefined ||
+      v.maxConversationsPerUser !== undefined ||
+      v.maxMessagesPerConversation !== undefined,
     {
       message: 'At least one field must be provided',
     }

@@ -101,6 +101,11 @@ function makeSettingsRow(
     defaultApprovalTimeoutMs: number | null;
     approvalDefaultAction: string | null;
     inputGuardMode: string | null;
+    outputGuardMode: string | null;
+    webhookRetentionDays: number | null;
+    costLogRetentionDays: number | null;
+    maxConversationsPerUser: number | null;
+    maxMessagesPerConversation: number | null;
   }> = {}
 ) {
   return {
@@ -118,6 +123,11 @@ function makeSettingsRow(
     defaultApprovalTimeoutMs: null as number | null,
     approvalDefaultAction: 'deny' as string | null,
     inputGuardMode: 'log_only' as string | null,
+    outputGuardMode: 'log_only' as string | null,
+    webhookRetentionDays: null as number | null,
+    costLogRetentionDays: null as number | null,
+    maxConversationsPerUser: null as number | null,
+    maxMessagesPerConversation: null as number | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -410,6 +420,83 @@ describe('Admin Orchestration — /settings', () => {
       expect(body.data.inputGuardMode).toBe('warn_and_continue');
     });
 
+    it('updates outputGuardMode to block', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ outputGuardMode: 'block' }) as never
+      );
+
+      const res = await PATCH(makePatch({ outputGuardMode: 'block' }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { outputGuardMode: string } }>(res);
+      expect(body.data.outputGuardMode).toBe('block');
+    });
+
+    it('updates webhookRetentionDays', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ webhookRetentionDays: 30 }) as never
+      );
+
+      const res = await PATCH(makePatch({ webhookRetentionDays: 30 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { webhookRetentionDays: number | null } }>(res);
+      expect(body.data.webhookRetentionDays).toBe(30);
+    });
+
+    it('updates costLogRetentionDays', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: 90 }) as never
+      );
+
+      const res = await PATCH(makePatch({ costLogRetentionDays: 90 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { costLogRetentionDays: number | null } }>(res);
+      expect(body.data.costLogRetentionDays).toBe(90);
+    });
+
+    it('updates maxConversationsPerUser', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ maxConversationsPerUser: 50 }) as never
+      );
+
+      const res = await PATCH(makePatch({ maxConversationsPerUser: 50 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { maxConversationsPerUser: number | null } }>(res);
+      expect(body.data.maxConversationsPerUser).toBe(50);
+    });
+
+    it('updates maxMessagesPerConversation', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ maxMessagesPerConversation: 200 }) as never
+      );
+
+      const res = await PATCH(makePatch({ maxMessagesPerConversation: 200 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { maxMessagesPerConversation: number | null } }>(res);
+      expect(body.data.maxMessagesPerConversation).toBe(200);
+    });
+
+    it('clears retention days when set to null', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ webhookRetentionDays: null, costLogRetentionDays: null }) as never
+      );
+
+      const res = await PATCH(
+        makePatch({ webhookRetentionDays: null, costLogRetentionDays: null })
+      );
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{
+        data: { webhookRetentionDays: number | null; costLogRetentionDays: number | null };
+      }>(res);
+      expect(body.data.webhookRetentionDays).toBeNull();
+      expect(body.data.costLogRetentionDays).toBeNull();
+    });
+
     it('clears searchConfig when set to null', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
         makeSettingsRow({ searchConfig: null }) as never
@@ -449,6 +536,26 @@ describe('Admin Orchestration — /settings', () => {
       const res = await PATCH(
         makePatch({ searchConfig: { keywordBoostWeight: -0.02, vectorWeight: 5.0 } })
       );
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects negative retention days (400)', async () => {
+      const res = await PATCH(makePatch({ webhookRetentionDays: -1 }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects retention days above 365 (400)', async () => {
+      const res = await PATCH(makePatch({ costLogRetentionDays: 400 }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects negative maxConversationsPerUser (400)', async () => {
+      const res = await PATCH(makePatch({ maxConversationsPerUser: -5 }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects maxMessagesPerConversation above 10000 (400)', async () => {
+      const res = await PATCH(makePatch({ maxMessagesPerConversation: 99999 }));
       expect(res.status).toBe(400);
     });
 

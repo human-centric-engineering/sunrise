@@ -103,6 +103,21 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.inputGuardMode !== undefined) {
     updateData.inputGuardMode = body.inputGuardMode;
   }
+  if (body.outputGuardMode !== undefined) {
+    updateData.outputGuardMode = body.outputGuardMode;
+  }
+  if (body.webhookRetentionDays !== undefined) {
+    updateData.webhookRetentionDays = body.webhookRetentionDays;
+  }
+  if (body.costLogRetentionDays !== undefined) {
+    updateData.costLogRetentionDays = body.costLogRetentionDays;
+  }
+  if (body.maxConversationsPerUser !== undefined) {
+    updateData.maxConversationsPerUser = body.maxConversationsPerUser;
+  }
+  if (body.maxMessagesPerConversation !== undefined) {
+    updateData.maxMessagesPerConversation = body.maxMessagesPerConversation;
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },

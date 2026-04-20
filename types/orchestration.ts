@@ -369,6 +369,7 @@ export interface BudgetSummary {
 export type AiAgentListItem = AiAgent & {
   _count: { capabilities: number; conversations: number };
   _budget: BudgetSummary | null;
+  creator?: { name: string | null };
 };
 
 /** Enriched workflow row returned by the list endpoint. */
@@ -478,6 +479,14 @@ export interface OrchestrationSettings {
   inputGuardMode: InputGuardMode;
   /** Output guard behaviour for topic boundary enforcement. */
   outputGuardMode: OutputGuardMode;
+  /** Days to retain webhook delivery logs, or `null` for no auto-cleanup. */
+  webhookRetentionDays: number | null;
+  /** Days to retain cost logs, or `null` for no auto-cleanup. */
+  costLogRetentionDays: number | null;
+  /** Max active conversations per user per agent, or `null` for unlimited. */
+  maxConversationsPerUser: number | null;
+  /** Max messages per conversation, or `null` for unlimited. */
+  maxMessagesPerConversation: number | null;
   createdAt: Date;
   updatedAt: Date;
 }

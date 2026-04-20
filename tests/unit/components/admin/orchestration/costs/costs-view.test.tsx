@@ -143,6 +143,10 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   approvalDefaultAction: 'deny',
   inputGuardMode: 'log_only',
   outputGuardMode: 'log_only',
+  webhookRetentionDays: null,
+  costLogRetentionDays: null,
+  maxConversationsPerUser: null,
+  maxMessagesPerConversation: null,
   createdAt: NOW,
   updatedAt: NOW,
 };

@@ -65,6 +65,10 @@ export function hydrateSettings(row: {
   approvalDefaultAction: string | null;
   inputGuardMode: string | null;
   outputGuardMode: string | null;
+  webhookRetentionDays: number | null;
+  costLogRetentionDays: number | null;
+  maxConversationsPerUser: number | null;
+  maxMessagesPerConversation: number | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -93,6 +97,10 @@ export function hydrateSettings(row: {
     inputGuardMode: guardMode && VALID_GUARD_MODES.has(guardMode) ? guardMode : 'log_only',
     outputGuardMode:
       outputMode && VALID_OUTPUT_GUARD_MODES.has(outputMode) ? outputMode : 'log_only',
+    webhookRetentionDays: row.webhookRetentionDays,
+    costLogRetentionDays: row.costLogRetentionDays,
+    maxConversationsPerUser: row.maxConversationsPerUser,
+    maxMessagesPerConversation: row.maxMessagesPerConversation,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

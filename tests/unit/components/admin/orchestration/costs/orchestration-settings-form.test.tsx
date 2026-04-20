@@ -1,11 +1,11 @@
 /**
- * OrchestrationSettingsForm Component Tests
+ * OrchestrationSettingsForm Component Tests (Costs page variant)
  *
  * Test Coverage:
- * - Renders 4 Select fields + budget Input populated from settings prop
+ * - Renders 4 Select fields populated from settings prop
  * - Save button disabled when !isDirty
- * - Typing into budget input enables Save
- * - Submitting calls apiClient.patch with expected payload
+ * - Budget cap shows read-only text with link to Settings page
+ * - Submitting calls apiClient.patch with defaultModels payload
  * - 400 APIClientError → inline error banner shows message
  * - Saved state renders "Saved" text after successful submit
  *
@@ -14,8 +14,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-
 import { OrchestrationSettingsForm } from '@/components/admin/orchestration/costs/orchestration-settings-form';
 import type { OrchestrationSettings } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -63,6 +61,10 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   approvalDefaultAction: 'deny',
   inputGuardMode: 'log_only',
   outputGuardMode: 'log_only',
+  webhookRetentionDays: null,
+  costLogRetentionDays: null,
+  maxConversationsPerUser: null,
+  maxMessagesPerConversation: null,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };
@@ -120,11 +122,14 @@ describe('OrchestrationSettingsForm', () => {
       expect(combos.length).toBeGreaterThanOrEqual(4);
     });
 
-    it('renders the budget input with existing value from settings', () => {
+    it('renders budget cap as read-only text with link to Settings', () => {
       render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
 
-      const budgetInput = screen.getByRole('spinbutton');
-      expect(budgetInput).toHaveValue(500);
+      expect(screen.getByText(/current cap: \$500/i)).toBeInTheDocument();
+      expect(screen.getByText('manage in Settings')).toHaveAttribute(
+        'href',
+        '/admin/orchestration/settings'
+      );
     });
 
     it('renders the card with test id', () => {
@@ -142,43 +147,13 @@ describe('OrchestrationSettingsForm', () => {
     });
   });
 
-  describe('typing into budget input enables Save', () => {
-    it('Save button becomes enabled after changing the budget field', async () => {
-      // Arrange
-      const user = userEvent.setup();
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
-
-      // Act: clear budget and type a new value to mark form dirty
-      const budgetInput = screen.getByRole('spinbutton');
-      await user.clear(budgetInput);
-      await user.type(budgetInput, '750');
-
-      // Assert: Save button is now enabled
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
-      });
-    });
-  });
-
   describe('form submission — happy path', () => {
-    it('calls apiClient.patch with settings payload and shows "Saved" on success', async () => {
-      // Arrange
-      const user = userEvent.setup();
+    it('calls apiClient.patch with defaultModels payload and shows "Saved" on success', async () => {
       mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
 
       render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
 
-      // Make form dirty by changing budget
-      const budgetInput = screen.getByRole('spinbutton');
-      await user.clear(budgetInput);
-      await user.type(budgetInput, '600');
-
-      // Wait for Save to become enabled (form dirty)
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
-      });
-
-      // Act: submit the form directly to bypass the button's disabled state races
+      // Submit the form directly (simulates a model select change + submit)
       const form = screen.getByTestId('orchestration-settings-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
@@ -211,25 +186,13 @@ describe('OrchestrationSettingsForm', () => {
 
   describe('form submission — error handling', () => {
     it('shows error banner when PATCH rejects with APIClientError', async () => {
-      // Arrange
-      const user = userEvent.setup();
       mockedPatch.mockRejectedValueOnce(
         new APIClientError('Invalid model id in defaultModels', 'VALIDATION_ERROR', 400)
       );
 
       render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
 
-      // Make dirty
-      const budgetInput = screen.getByRole('spinbutton');
-      await user.clear(budgetInput);
-      await user.type(budgetInput, '1000');
-
-      // Wait for Save to become enabled
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
-      });
-
-      // Act: submit the form directly
+      // Submit the form directly
       const form = screen.getByTestId('orchestration-settings-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
@@ -245,21 +208,11 @@ describe('OrchestrationSettingsForm', () => {
     });
 
     it('shows generic error message for non-APIClientError rejections', async () => {
-      // Arrange
-      const user = userEvent.setup();
       mockedPatch.mockRejectedValueOnce(new Error('Network failure'));
 
       render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
 
-      const budgetInput = screen.getByRole('spinbutton');
-      await user.clear(budgetInput);
-      await user.type(budgetInput, '1000');
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
-      });
-
-      // Act: submit the form directly
+      // Submit the form directly
       const form = screen.getByTestId('orchestration-settings-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
@@ -277,13 +230,10 @@ describe('OrchestrationSettingsForm', () => {
   });
 
   describe('null settings — renders empty form', () => {
-    it('renders empty budget input when settings is null', () => {
+    it('renders "No global cap set" when settings is null', () => {
       render(<OrchestrationSettingsForm settings={null} models={MOCK_MODELS} />);
 
-      // Budget input should have empty/null value
-      const budgetInput = screen.getByRole('spinbutton');
-      // When globalMonthlyBudgetUsd is null, the input defaults to empty string
-      expect(budgetInput).toHaveValue(null);
+      expect(screen.getByText(/no global cap set/i)).toBeInTheDocument();
     });
   });
 });
