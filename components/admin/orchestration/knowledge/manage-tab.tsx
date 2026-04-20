@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, Cpu, RefreshCw, Sprout, Tag } from 'lucide-react';
+import { ChevronDown, Cpu, Eye, RefreshCw, Sprout, Tag, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,14 +11,18 @@ import { API } from '@/lib/api/endpoints';
 import type { AiKnowledgeDocument, OrchestrationSettings } from '@/types/orchestration';
 
 import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
-import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
+import { DocumentChunksModal } from '@/components/admin/orchestration/knowledge/document-chunks-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
+import { PdfPreviewModal } from '@/components/admin/orchestration/knowledge/pdf-preview-modal';
 
 const STATUS_STYLES: Record<
   string,
   { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }
 > = {
   pending: { variant: 'outline', label: 'Pending' },
+  pending_review: { variant: 'secondary', label: 'Needs Review' },
   processing: { variant: 'secondary', label: 'Processing' },
   ready: { variant: 'default', label: 'Ready' },
   failed: { variant: 'destructive', label: 'Failed' },
@@ -159,6 +163,12 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
   const [showAllAppKeywords, setShowAllAppKeywords] = useState(false);
   const [showAllSystemKeywords, setShowAllSystemKeywords] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [viewChunksId, setViewChunksId] = useState<string | null>(null);
+  const [viewChunksName, setViewChunksName] = useState<string | null>(null);
 
   const fetchMetaTags = useCallback(async () => {
     try {
@@ -254,6 +264,31 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     [onRefresh]
   );
 
+  const handleDelete = useCallback(
+    async (docId: string) => {
+      setDeletingId(docId);
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId), {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          onRefresh();
+          void fetchMetaTags();
+          void fetchEmbeddingStatus();
+        }
+      } finally {
+        setDeletingId(null);
+        setDeleteConfirmId(null);
+      }
+    },
+    [onRefresh, fetchMetaTags, fetchEmbeddingStatus]
+  );
+
+  const handlePdfPreview = useCallback((data: PdfPreviewData) => {
+    setPdfPreview(data);
+    setPdfPreviewOpen(true);
+  }, []);
+
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
   const allEmbedded =
@@ -329,9 +364,9 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         <div>
           <h3 className="text-sm font-medium">Built-in: Agentic Design Patterns</h3>
           <p className="text-muted-foreground mt-1 text-xs">
-            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns. Load them to
-            populate the Learning Patterns page, then optionally generate embeddings to enable
-            vector search for the Advisor, Quiz, and Search.
+            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns.{' '}
+            <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
+            Generate embeddings to enable vector search (requires an embedding provider).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -445,7 +480,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         )}
       </div>
 
-      <DocumentUploadZone onUploadComplete={onRefresh} />
+      <DocumentUploadZone onUploadComplete={onRefresh} onPdfPreview={handlePdfPreview} />
 
       {/* Meta-tags in use */}
       {metaTags && (hasAppTags || hasSystemTags) && (
@@ -560,7 +595,19 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                   const isSeeded = doc.fileName === 'agentic-design-patterns.md';
                   return (
                     <tr key={doc.id}>
-                      <td className="px-4 py-2 font-medium">{doc.name}</td>
+                      <td className="px-4 py-2 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewChunksId(doc.id);
+                            setViewChunksName(doc.name);
+                          }}
+                          className="text-primary text-left hover:underline"
+                          title="View chunks"
+                        >
+                          {doc.name}
+                        </button>
+                      </td>
                       <td className="px-4 py-2">
                         {doc.category ? (
                           <Badge variant="secondary" className="text-xs">
@@ -578,48 +625,89 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                         {new Date(doc.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {isSeeded ? (
-                          <span className="inline-flex items-center gap-1">
-                            <Badge variant="outline" className="text-xs">
-                              Pre-chunked
-                            </Badge>
-                            <FieldHelp title="Pre-chunked" ariaLabel="Why can't this be rechunked?">
-                              <p>
-                                This document was loaded from the built-in Agentic Design Patterns
-                                data, which ships pre-chunked with optimised section boundaries.
-                                Rechunking would use the generic chunker and produce lower-quality
-                                splits.
-                              </p>
-                              <p className="mt-2">
-                                To refresh this data, use the{' '}
-                                <strong>Load Agentic Design Patterns</strong> button above (it will
-                                skip if already loaded).
-                              </p>
-                            </FieldHelp>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={rechunkingId === doc.id}
-                              onClick={() => void handleRechunk(doc.id)}
-                            >
-                              <RefreshCw
-                                className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
-                              />
-                              Rechunk
-                            </Button>
-                            <FieldHelp title="Rechunk" ariaLabel="What does Rechunk do?">
-                              <p>
-                                Re-splits this document into chunks and regenerates all embeddings
-                                from scratch. Useful if the chunking strategy has been updated or if
-                                the embedding model has changed — the new vectors may capture
-                                meaning more accurately, improving search results.
-                              </p>
-                            </FieldHelp>
-                          </span>
-                        )}
+                        <span className="inline-flex items-center gap-1">
+                          {isSeeded ? (
+                            <>
+                              <Badge variant="outline" className="text-xs">
+                                Pre-chunked
+                              </Badge>
+                              <FieldHelp
+                                title="Pre-chunked"
+                                ariaLabel="Why can't this be rechunked?"
+                              >
+                                <p>
+                                  This document was loaded from the built-in Agentic Design Patterns
+                                  data, which ships pre-chunked with optimised section boundaries.
+                                  Rechunking would use the generic chunker and produce lower-quality
+                                  splits.
+                                </p>
+                                <p className="mt-2">
+                                  To refresh this data, use the{' '}
+                                  <strong>Load Agentic Design Patterns</strong> button above (it
+                                  will skip if already loaded).
+                                </p>
+                              </FieldHelp>
+                            </>
+                          ) : (
+                            <>
+                              {doc.status === 'pending_review' ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setViewChunksId(doc.id);
+                                    setViewChunksName(doc.name);
+                                  }}
+                                >
+                                  <Eye className="mr-1 h-3 w-3" />
+                                  Review
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={rechunkingId === doc.id}
+                                  onClick={() => void handleRechunk(doc.id)}
+                                >
+                                  <RefreshCw
+                                    className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
+                                  />
+                                  Rechunk
+                                </Button>
+                              )}
+                              {deleteConfirmId === doc.id ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="text-destructive text-xs">Delete?</span>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    disabled={deletingId === doc.id}
+                                    onClick={() => void handleDelete(doc.id)}
+                                  >
+                                    {deletingId === doc.id ? 'Deleting...' : 'Yes'}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeleteConfirmId(null)}
+                                  >
+                                    No
+                                  </Button>
+                                </span>
+                              ) : (
+                                <Tip label="Delete document and all its chunks">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeleteConfirmId(doc.id)}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </Tip>
+                              )}
+                            </>
+                          )}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -631,6 +719,27 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
       </div>
 
       <CompareProvidersModal open={compareOpen} onOpenChange={setCompareOpen} />
+      <PdfPreviewModal
+        data={pdfPreview}
+        open={pdfPreviewOpen}
+        onOpenChange={setPdfPreviewOpen}
+        onConfirmed={() => {
+          onRefresh();
+          void fetchEmbeddingStatus();
+          void fetchMetaTags();
+        }}
+      />
+      <DocumentChunksModal
+        documentId={viewChunksId}
+        documentName={viewChunksName}
+        open={viewChunksId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewChunksId(null);
+            setViewChunksName(null);
+          }
+        }}
+      />
     </div>
   );
 }

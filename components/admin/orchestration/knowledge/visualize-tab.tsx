@@ -399,7 +399,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
 
       {/* Node detail dialog */}
       <Dialog open={selectedNode !== null} onOpenChange={(open) => !open && setSelectedNode(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[80vh] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selectedNode?.name}
@@ -410,25 +410,37 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
           </DialogHeader>
 
           {selectedNode?.metadata && (
-            <div className="space-y-2">
+            <div className="space-y-3">
+              {/* Metadata grid — exclude contentPreview (rendered separately) */}
               <div className="grid grid-cols-2 gap-2 text-sm">
-                {Object.entries(selectedNode.metadata).map(([key, value]) => (
-                  <div key={key} className="col-span-2 grid grid-cols-2 gap-2">
-                    <span className="text-muted-foreground capitalize">
-                      {key.replace(/([A-Z])/g, ' $1').trim()}
-                    </span>
-                    <span className="text-xs break-all">
-                      {typeof value === 'string'
-                        ? value.length > 300
-                          ? `${value.slice(0, 300)}...`
-                          : value
-                        : typeof value === 'number'
-                          ? value.toLocaleString()
-                          : JSON.stringify(value)}
-                    </span>
-                  </div>
-                ))}
+                {Object.entries(selectedNode.metadata)
+                  .filter(([key]) => key !== 'contentPreview')
+                  .map(([key, value]) => (
+                    <div key={key} className="col-span-2 grid grid-cols-2 gap-2">
+                      <span className="text-muted-foreground capitalize">
+                        {key.replace(/([A-Z])/g, ' $1').trim()}
+                      </span>
+                      <span className="text-xs break-all">
+                        {typeof value === 'string'
+                          ? value
+                          : typeof value === 'number'
+                            ? value.toLocaleString()
+                            : JSON.stringify(value)}
+                      </span>
+                    </div>
+                  ))}
               </div>
+
+              {/* Content preview — rendered as scrollable formatted block */}
+              {typeof selectedNode.metadata.contentPreview === 'string' && (
+                <div className="space-y-1.5">
+                  <span className="text-muted-foreground text-sm capitalize">Content preview</span>
+                  <pre className="bg-muted/50 max-h-60 overflow-y-auto rounded-md border p-3 text-xs leading-relaxed whitespace-pre-wrap">
+                    {selectedNode.metadata.contentPreview}
+                  </pre>
+                </div>
+              )}
+
               <div className="flex justify-end pt-2">
                 <DialogClose asChild>
                   <Button variant="outline" size="sm">

@@ -253,7 +253,7 @@ export const GET = withAdminAuth(async (request) => {
           patternName: chunk.patternName,
           section: chunk.section,
           estimatedTokens: tokens,
-          contentPreview: chunk.content.slice(0, 200),
+          contentPreview: chunk.content,
         },
       });
 

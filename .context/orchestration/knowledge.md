@@ -2,34 +2,49 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`).
 
 ## Module Layout
 
-| File                  | Exports                                                                                | Purpose                                                                   |
-| --------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `document-manager.ts` | `uploadDocument`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Upload, delete, rechunk, list documents, meta-tag summary                 |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                  | Vector + keyword search; single-pattern lookup; pattern list for explorer |
-| `seeder.ts`           | `seedFromChunksJson`                                                                   | Idempotent seeder for the "Agentic Design Patterns" doc                   |
-| `chunker.ts`          | `chunkMarkdownDocument`, `parseMetadataComments`                                       | Markdown → chunks with type classification; metadata comment parser       |
-| `embedder.ts`         | `embedBatch`                                                                           | Generates embeddings for chunks                                           |
+| File                  | Exports                                                                                                                                                 | Purpose                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                          |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                         |
+| `seeder.ts`           | `seedFromChunksJson`                                                                                                                                    | Idempotent seeder for the "Agentic Design Patterns" doc                                           |
+| `chunker.ts`          | `chunkMarkdownDocument`, `parseMetadataComments`                                                                                                        | Markdown → chunks with type classification; metadata comment parser                               |
+| `embedder.ts`         | `embedBatch`                                                                                                                                            | Generates embeddings for chunks                                                                   |
+| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md)) |
 
 ## Quick Start
 
 ```typescript
-import { uploadDocument, listMetaTags } from '@/lib/orchestration/knowledge/document-manager';
+import {
+  uploadDocument,
+  uploadDocumentFromBuffer,
+  previewDocument,
+  confirmPreview,
+  listMetaTags,
+} from '@/lib/orchestration/knowledge/document-manager';
 import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { seedFromChunksJson } from '@/lib/orchestration/knowledge/seeder';
 
-// Upload (admin flow — content is a string, not a file handle)
+// Upload text content (admin flow — content is a string)
 const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
 
 // Upload with explicit category (overrides any in-document metadata)
 const doc2 = await uploadDocument(markdownContent, 'playbook.md', userId, 'sales');
 
+// Upload binary (EPUB/DOCX) — parsed then chunked automatically
+const doc3 = await uploadDocumentFromBuffer(epubBuffer, 'book.epub', userId, 'reference');
+
+// Upload PDF (requires preview → confirm flow)
+const preview = await previewDocument(pdfBuffer, 'report.pdf', userId);
+// Admin reviews preview.extractedText, optionally corrects it, then:
+const confirmed = await confirmPreview(preview.document.id, userId, correctedText, 'reports');
+
 // List all category and keyword values across the knowledge base
 const tags = await listMetaTags();
-// → { categories: [{ value: 'sales', chunkCount: 15, documentCount: 3 }], keywords: [...] }
+// → { app: { categories: [...], keywords: [...] }, system: { categories: [...], keywords: [...] } }
 
 // Vector search
 const results = await searchKnowledge(
@@ -47,23 +62,34 @@ await seedFromChunksJson('prisma/seeds/data/chunks/chunks.json');
 
 ## Document Lifecycle
 
-`AiKnowledgeDocument.status` moves through four states:
+`AiKnowledgeDocument.status` moves through five states:
 
 ```
 pending → processing → ready
+    ↘ pending_review → (confirm) → processing → ready
                     ↘ failed
 ```
 
-| Status       | Meaning                                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------------------ |
-| `pending`    | Row created, chunking not yet started. Rare — most uploads transition out of this state synchronously. |
-| `processing` | Chunker is running. `rechunk` is blocked in this state (409 `ConflictError` from the admin route).     |
-| `ready`      | All chunks and embeddings are persisted. Searchable.                                                   |
-| `failed`     | Chunking or embedding threw. The document row stays in place for inspection / retry via rechunk.       |
+| Status           | Meaning                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `pending`        | Row created, chunking not yet started. Rare — most uploads transition out of this state synchronously. |
+| `pending_review` | PDF uploaded — extracted text needs admin review/correction before chunking proceeds.                  |
+| `processing`     | Chunker is running. `rechunk` is blocked in this state (409 `ConflictError` from the admin route).     |
+| `ready`          | All chunks and embeddings are persisted. Searchable.                                                   |
+| `failed`         | Chunking or embedding threw. The document row stays in place for inspection / retry via rechunk.       |
 
 ## Upload
 
-`uploadDocument(content, fileName, userId, category?)` parses the markdown, generates chunks, embeds them, and writes the `AiKnowledgeDocument` + `AiKnowledgeChunk` rows in one go.
+The upload route (`POST /knowledge/documents`) supports multiple formats with format-specific processing pipelines. See [document-ingestion.md](./document-ingestion.md) for full parser details.
+
+**Supported formats:**
+
+| Format | Extensions                 | Pipeline                                 | Max Size |
+| ------ | -------------------------- | ---------------------------------------- | -------- |
+| Text   | `.md`, `.markdown`, `.txt` | Read as string → chunk → embed → store   | 50 MB    |
+| EPUB   | `.epub`                    | Parse → chunk → embed → store            | 50 MB    |
+| DOCX   | `.docx`                    | Parse → chunk → embed → store            | 50 MB    |
+| PDF    | `.pdf`                     | Parse → preview → admin confirms → chunk | 50 MB    |
 
 **Category resolution** (priority order):
 
@@ -73,13 +99,15 @@ pending → processing → ready
 
 When a document-level category is resolved, it propagates to any chunks that don't have their own category from section-level metadata comments.
 
-The admin upload route (`POST /knowledge/documents`) is the caller for human-initiated uploads:
+**Route details:**
 
 - **Multipart only** (`multipart/form-data`), `file` field + optional `category` field
-- **10 MB max** (`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in the route)
-- **Extension whitelist**: `.md`, `.markdown`, `.txt` — text only this session. PDF / HTML are future work (they need `pdf-parse` / `sanitize-html` plus new chunker branches)
+- **50 MB max** (`MAX_UPLOAD_BYTES` in the route)
+- **Extension whitelist**: `.md`, `.markdown`, `.txt`, `.epub`, `.docx`, `.pdf`
 - MIME type is advisory — the extension is the source of truth
+- Text formats also have line-count (100k) and line-length (10k chars) guards
 - Returns the created document at 201 with the standard response envelope
+- PDFs return a preview object with `requiresConfirmation: true` instead
 
 Knowledge documents are **not per-user scoped**. `uploadedBy` is stored for audit, but GET / DELETE / rechunk work on any document regardless of which admin created it.
 
@@ -151,16 +179,16 @@ Seed file lives at `prisma/seeds/data/chunks/chunks.json`. The admin route (`POS
 
 **Don't** add a "knowledge scope" check to the admin routes. Knowledge is a global asset by design — adding per-user scoping would fork the admin and runtime capability code paths.
 
-**Don't** add PDF or HTML parsing to `chunker.ts` without adding the extension to the admin route whitelist in the same change. The whitelist is the source of truth; adding parsers without updating it leaves dormant code.
-
-**Don't** rely on `file.type` (the MIME header) for security — browsers frequently omit it for `.md` files. The `.md` / `.markdown` / `.txt` extension check is the load-bearing validation.
+**Don't** rely on `file.type` (the MIME header) for security — browsers frequently omit it for `.md` files. The extension check is the load-bearing validation.
 
 **Don't** import from `next/*` inside `lib/orchestration/knowledge/` — keep it platform-agnostic. HTTP wrapping lives in `app/api/v1/admin/orchestration/knowledge/*`.
 
 ## Related Documentation
 
-- [Admin API — Knowledge Base](./admin-api.md) — HTTP surface for all six routes
+- [Document Ingestion Pipeline](./document-ingestion.md) — multi-format parser architecture, PDF preview flow
+- [Admin API — Knowledge Base](./admin-api.md) — HTTP surface for all routes
 - [Capabilities](./capabilities.md) — `search_knowledge_base` and `get_pattern_detail` built-in tools that consume this layer
 - [Streaming Chat](./chat.md) — `buildContext` uses `getPatternDetail` for locked-context injection
+- [Knowledge Base UI](../admin/orchestration-knowledge-ui.md) — admin interface documentation
 - `prisma/schema.prisma` — `AiKnowledgeDocument`, `AiKnowledgeChunk` models
-- `lib/validations/orchestration.ts` — `knowledgeSearchSchema`, `listDocumentsQuerySchema`, `getPatternParamSchema`
+- `lib/validations/orchestration.ts` — `knowledgeSearchSchema`, `listDocumentsQuerySchema`, `confirmDocumentPreviewSchema`

@@ -58,21 +58,21 @@ describe('DocumentUploadZone', () => {
   it('renders accepted format text', () => {
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
-    expect(screen.getByText(/\.md, \.markdown, \.txt/)).toBeInTheDocument();
+    expect(screen.getByText(/\.md, \.txt, \.epub, \.docx, \.pdf/)).toBeInTheDocument();
   });
 
-  it('rejects files over 10 MB', async () => {
+  it('rejects files over 50 MB', async () => {
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
     const input = screen.getByLabelText(/upload document/i);
-    const largeFile = new File(['x'.repeat(11 * 1024 * 1024)], 'big.md', {
+    const largeFile = new File(['x'.repeat(51 * 1024 * 1024)], 'big.md', {
       type: 'text/markdown',
     });
 
     fireEvent.change(input, { target: { files: [largeFile] } });
 
     await waitFor(() => {
-      expect(screen.getByText(/exceeds 10 mb/i)).toBeInTheDocument();
+      expect(screen.getByText(/exceeds 50 mb/i)).toBeInTheDocument();
     });
 
     // File should not be staged
@@ -83,12 +83,106 @@ describe('DocumentUploadZone', () => {
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
     const input = screen.getByLabelText(/upload document/i);
+    const htmlFile = new File(['content'], 'doc.html', { type: 'text/html' });
+
+    fireEvent.change(input, { target: { files: [htmlFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/unsupported file type/i)).toBeInTheDocument();
+    });
+  });
+
+  it('accepts PDF files', async () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
     const pdfFile = new File(['content'], 'doc.pdf', { type: 'application/pdf' });
 
     fireEvent.change(input, { target: { files: [pdfFile] } });
 
     await waitFor(() => {
-      expect(screen.getByText(/unsupported file type/i)).toBeInTheDocument();
+      expect(screen.getByText('doc.pdf')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^upload$/i })).toBeInTheDocument();
+    });
+  });
+
+  it('accepts EPUB files', async () => {
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const epubFile = new File(['content'], 'book.epub', { type: 'application/epub+zip' });
+
+    fireEvent.change(input, { target: { files: [epubFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('book.epub')).toBeInTheDocument();
+    });
+  });
+
+  it('calls onPdfPreview when upload returns a preview response', async () => {
+    const onPdfPreview = vi.fn();
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('/meta-tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                app: { categories: [], keywords: [] },
+                system: { categories: [], keywords: [] },
+              },
+            }),
+        });
+      }
+      if (options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                document: {
+                  id: 'doc-1',
+                  name: 'test.pdf',
+                  fileName: 'test.pdf',
+                  status: 'pending_review',
+                },
+                preview: {
+                  extractedText: 'Hello world',
+                  title: 'Test PDF',
+                  author: null,
+                  sectionCount: 3,
+                  warnings: [],
+                  requiresConfirmation: true,
+                },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} onPdfPreview={onPdfPreview} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const pdfFile = new File(['content'], 'test.pdf', { type: 'application/pdf' });
+
+    fireEvent.change(input, { target: { files: [pdfFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^upload$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    await waitFor(() => {
+      expect(onPdfPreview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          document: expect.objectContaining({ id: 'doc-1' }),
+          preview: expect.objectContaining({ requiresConfirmation: true }),
+        })
+      );
+      expect(onUploadComplete).not.toHaveBeenCalled();
     });
   });
 

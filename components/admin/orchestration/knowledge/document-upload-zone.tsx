@@ -8,14 +8,28 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { API } from '@/lib/api/endpoints';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt'];
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'];
+
+/** PDF preview data returned when a PDF upload requires confirmation. */
+export interface PdfPreviewData {
+  document: { id: string; name: string; fileName: string; status: string };
+  preview: {
+    extractedText: string;
+    title: string | null;
+    author: string | null;
+    sectionCount: number;
+    warnings: string[];
+    requiresConfirmation: boolean;
+  };
+}
 
 interface DocumentUploadZoneProps {
   onUploadComplete: () => void;
+  onPdfPreview?: (data: PdfPreviewData) => void;
 }
 
-export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps) {
+export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentUploadZoneProps) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +72,7 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
 
   const validateFile = useCallback((file: File): string | null => {
     if (file.size > MAX_FILE_SIZE) {
-      return `File exceeds 10 MB limit (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+      return `File exceeds 50 MB limit (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
     }
     const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -104,6 +118,16 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
         throw new Error(parsed?.error?.message ?? 'Upload failed');
       }
 
+      const responseBody = (await res.json()) as { data?: PdfPreviewData };
+
+      // PDF preview flow — hand off to the preview modal
+      if (responseBody.data?.preview?.requiresConfirmation && onPdfPreview) {
+        setStagedFile(null);
+        setCategory('');
+        onPdfPreview(responseBody.data);
+        return;
+      }
+
       // Reset state
       setStagedFile(null);
       setCategory('');
@@ -113,7 +137,7 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
     } finally {
       setUploading(false);
     }
-  }, [stagedFile, category, onUploadComplete]);
+  }, [stagedFile, category, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -266,11 +290,19 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
           </p>
 
           <p className="text-foreground mt-3 font-medium">Supported formats</p>
-          <p>
-            <strong>.md, .markdown, .txt</strong> only. PDFs and Word documents aren&apos;t
-            supported yet because their formatting makes reliable text extraction difficult. Maximum
-            size: 10 MB per file.
-          </p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+            <li>
+              <strong>.md, .markdown, .txt</strong> — text files, chunked immediately
+            </li>
+            <li>
+              <strong>.epub, .docx</strong> — parsed to text, then chunked automatically
+            </li>
+            <li>
+              <strong>.pdf</strong> — extracted text shown for review before chunking (OCR quality
+              varies; you can correct the text before confirming)
+            </li>
+          </ul>
+          <p className="mt-2 text-xs">Maximum size: 50 MB per file.</p>
         </FieldHelp>
       </div>
 
@@ -298,7 +330,9 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
         >
           <Upload className="text-muted-foreground mb-2 h-8 w-8" />
           <p className="text-sm font-medium">Drop a file here or click to browse</p>
-          <p className="text-muted-foreground mt-1 text-xs">.md, .markdown, .txt — up to 10 MB</p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            .md, .txt, .epub, .docx, .pdf — up to 50 MB
+          </p>
         </div>
       ) : (
         /* Staged file — category + upload */
@@ -393,7 +427,7 @@ export function DocumentUploadZone({ onUploadComplete }: DocumentUploadZoneProps
       <input
         ref={inputRef}
         type="file"
-        accept=".md,.markdown,.txt"
+        accept=".md,.markdown,.txt,.epub,.docx,.pdf"
         className="hidden"
         onChange={handleFileChange}
         aria-label="Upload document"

@@ -136,6 +136,10 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
       knowledgeDocumentRetry: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/retry`,
+      knowledgeDocumentConfirm: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/confirm`,
+      knowledgeDocumentChunks: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/chunks`,
       KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
       KNOWLEDGE_GRAPH: '/api/v1/admin/orchestration/knowledge/graph',
       KNOWLEDGE_PATTERNS: '/api/v1/admin/orchestration/knowledge/patterns',
