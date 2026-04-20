@@ -97,6 +97,9 @@ describe('components/analytics/user-identifier', () => {
       writable: false,
       configurable: true,
     });
+    // Belt-and-suspenders: clear sessionStorage in afterEach too, so a failing test
+    // that sets oauth_login_pending can't pollute siblings even if beforeEach errors.
+    sessionStorage.clear();
   });
 
   describe('Waiting for Analytics and Session', () => {
@@ -303,6 +306,55 @@ describe('components/analytics/user-identifier', () => {
       await waitFor(() => {
         expect(mockIdentify).toHaveBeenCalledWith('user-456');
       });
+    });
+
+    it('should track USER_LOGGED_IN for pending OAuth login and remove sessionStorage key', async () => {
+      // Arrange: Seed sessionStorage with oauth_login_pending BEFORE render.
+      // Source L64-70: if session.user.id exists AND sessionStorage has
+      // 'oauth_login_pending', the component fires track(EVENTS.USER_LOGGED_IN)
+      // with { method: 'oauth', provider } and removes the key.
+      sessionStorage.setItem('oauth_login_pending', 'google');
+
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'oauth-user-1' } },
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      // Assert: track called with correct event and provider
+      await waitFor(() => {
+        expect(mockTrack).toHaveBeenCalledWith('user_logged_in', {
+          method: 'oauth',
+          provider: 'google',
+        });
+      });
+
+      // Assert: sessionStorage key was removed
+      expect(sessionStorage.getItem('oauth_login_pending')).toBeNull();
+
+      // Assert: identify and page still fired (OAuth login path doesn't skip them)
+      expect(mockIdentify).toHaveBeenCalledWith('oauth-user-1');
+      expect(mockPage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT track USER_LOGGED_IN when no oauth_login_pending in sessionStorage', async () => {
+      // Arrange: No oauth_login_pending key — normal logged-in render
+      mockUseSession.mockReturnValue({
+        data: { user: { id: 'regular-user-1' } },
+        isPending: false,
+      });
+
+      // Act
+      render(<UserIdentifier />);
+
+      await waitFor(() => {
+        expect(mockIdentify).toHaveBeenCalledTimes(1);
+      });
+
+      // Assert: track was NOT called (no pending OAuth login)
+      expect(mockTrack).not.toHaveBeenCalled();
     });
 
     it('should track page with correct parameters after identify', async () => {

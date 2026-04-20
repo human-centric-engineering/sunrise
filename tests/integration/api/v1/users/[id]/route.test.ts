@@ -394,8 +394,8 @@ describe('PATCH /api/v1/users/:id', () => {
       // Fake timers are scoped to this test only so siblings aren't affected.
       // afterUpdatedAt is derived from the fake clock rather than a hardcoded literal,
       // preventing calendar drift when the real date rolls past the hardcoded value.
-      vi.useFakeTimers({ now: new Date('2026-04-19T12:00:00.000Z') });
       try {
+        vi.useFakeTimers({ now: new Date('2026-04-19T12:00:00.000Z') });
         const beforeUpdatedAt = new Date('2025-01-01T00:00:00.000Z');
         const afterUpdatedAt = new Date(); // == faked now: 2026-04-19T12:00:00.000Z
 
@@ -516,6 +516,28 @@ describe('PATCH /api/v1/users/:id', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
       // ID validation fires before any DB access
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should return 500 with INTERNAL_ERROR envelope when prisma.user.update rejects after a successful findUnique', async () => {
+      // Arrange — findUnique succeeds (user exists), then update throws a DB error.
+      // This exercises the handler's unhandled-exception path for a write failure.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUserFixture());
+      vi.mocked(prisma.user.update).mockRejectedValue(new Error('DB write failure'));
+
+      const request = makePatchRequest(TARGET_USER_ID, { name: 'Updated Name' });
+      const context = makeContext(TARGET_USER_ID);
+
+      // Act
+      const response = await PATCH(request, context);
+
+      // Assert — status first, then full error envelope
+      expect(response.status).toBe(500);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      // Proves update was attempted (unlike the findUnique-null / 404 path)
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
     });
 
     it('should return 404 with NOT_FOUND envelope when PATCH targets a non-existent user', async () => {

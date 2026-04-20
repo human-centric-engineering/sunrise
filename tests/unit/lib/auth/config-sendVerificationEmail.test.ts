@@ -225,18 +225,20 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-04-20T12:00:00Z'));
 
-      const user = createMockUser({ id: 'user-5', email: 'timer@example.com', name: 'Timer' });
-      const url = 'https://example.com/verify?token=abc&callbackURL=%2F';
+      try {
+        const user = createMockUser({ id: 'user-5', email: 'timer@example.com', name: 'Timer' });
+        const url = 'https://example.com/verify?token=abc&callbackURL=%2F';
 
-      // Act
-      await sendVerificationEmailHook({ user, url, token: 'abc' });
+        // Act
+        await sendVerificationEmailHook({ user, url, token: 'abc' });
 
-      vi.useRealTimers();
-
-      // Assert: expiresAt is exactly 24 hours later
-      expect(VerifyEmailEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ expiresAt: new Date('2026-04-21T12:00:00Z') })
-      );
+        // Assert: expiresAt is exactly 24 hours later
+        expect(VerifyEmailEmail).toHaveBeenCalledWith(
+          expect.objectContaining({ expiresAt: new Date('2026-04-21T12:00:00Z') })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

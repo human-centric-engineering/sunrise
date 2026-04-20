@@ -245,10 +245,7 @@ describe('POST /api/v1/contact', () => {
       const request = createMockRequest(validContactData);
       await POST(request);
 
-      // Wait for promise to resolve (non-blocking email)
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Assert: Email was sent to admin
+      // Assert: Email was sent to admin (sendEmail is awaited in the handler)
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith({
         to: 'admin@sunrise.example.com',
         subject: `[Sunrise Contact] ${validContactData.subject}`,
@@ -287,10 +284,7 @@ describe('POST /api/v1/contact', () => {
         const request = createMockRequest(validContactData);
         await POST(request);
 
-        // Wait for promise to resolve
-        await new Promise((resolve) => setTimeout(resolve, 10));
-
-        // Assert: Email was sent to EMAIL_FROM
+        // Assert: Email was sent to EMAIL_FROM (sendEmail is awaited in the handler)
         expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
           expect.objectContaining({
             to: 'noreply@sunrise.example.com',
@@ -327,10 +321,7 @@ describe('POST /api/v1/contact', () => {
       // test-review:accept no_arg_called — presence check after email failure; write-path payload shape is asserted via toHaveBeenCalledWith at L212
       expect(vi.mocked(prisma.contactSubmission.create)).toHaveBeenCalled();
 
-      // Wait for promise to resolve
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Assert: Warning was logged
+      // Assert: Warning was logged (sendEmail failure is caught inside the handler)
       const mockLogger = await getMockLogger();
       expect(mockLogger.warn).toHaveBeenCalledWith(
         'Failed to send contact notification email',
@@ -856,10 +847,7 @@ describe('POST /api/v1/contact', () => {
         // test-review:accept tobe_true — body.success is the API envelope field; structural
         expect(body.success).toBe(true);
 
-        // Wait for promise resolution
-        await new Promise((resolve) => setTimeout(resolve, 10));
-
-        // Assert: No email was sent
+        // Assert: No email was sent (no admin email configured)
         expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
 
         // Assert: Warning was logged
@@ -898,10 +886,7 @@ describe('POST /api/v1/contact', () => {
       // test-review:accept tobe_true — body.success is the API envelope field; structural
       expect(body.success).toBe(true);
 
-      // Wait for promise resolution
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Assert: Error was logged
+      // Assert: Error was logged (sendEmail failure is caught inside the handler)
       const mockLogger = await getMockLogger();
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Error sending contact notification email',

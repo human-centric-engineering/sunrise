@@ -52,6 +52,9 @@ const createMockSessionData = (role?: string | number | null) => ({
 });
 
 describe('lib/auth/client', () => {
+  // IMPORTANT: vi.resetModules() means every test MUST use `await import('@/lib/auth/client')`
+  // inside its body to get a fresh module instance. Using a stale top-level import will
+  // silently test the previous module snapshot and give false passes.
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();

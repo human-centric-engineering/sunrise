@@ -708,35 +708,37 @@ describe('lib/auth/config - sendResetPassword callback', () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-04-18T12:00:00Z'));
 
-      const mockUser = createMockUser({
-        id: 'timer-test-user',
-        email: 'timer@example.com',
-        name: 'Timer Test User',
-      });
+      try {
+        const mockUser = createMockUser({
+          id: 'timer-test-user',
+          email: 'timer@example.com',
+          name: 'Timer Test User',
+        });
 
-      prisma.account.findFirst.mockResolvedValue({
-        id: 'account-timer',
-        userId: mockUser.id,
-        accountId: 'credential-account',
-        providerId: 'credential',
-        password: 'hashed-password',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+        prisma.account.findFirst.mockResolvedValue({
+          id: 'account-timer',
+          userId: mockUser.id,
+          accountId: 'credential-account',
+          providerId: 'credential',
+          password: 'hashed-password',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
 
-      // Act: Call the real hook under frozen clock
-      await sendResetPasswordHook({
-        user: mockUser,
-        url: 'https://example.com/reset?token=timer123',
-        token: 'timer123',
-      });
+        // Act: Call the real hook under frozen clock
+        await sendResetPasswordHook({
+          user: mockUser,
+          url: 'https://example.com/reset?token=timer123',
+          token: 'timer123',
+        });
 
-      vi.useRealTimers();
-
-      // Assert: expiresAt should be exactly 1 hour after the frozen "now"
-      expect(ResetPasswordEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ expiresAt: new Date('2026-04-18T13:00:00Z') })
-      );
+        // Assert: expiresAt should be exactly 1 hour after the frozen "now"
+        expect(ResetPasswordEmail).toHaveBeenCalledWith(
+          expect.objectContaining({ expiresAt: new Date('2026-04-18T13:00:00Z') })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

@@ -284,6 +284,36 @@ describe('GET /api/v1/users/[id]', () => {
         },
       });
     });
+
+    it('should return 404 when admin fetches a non-existent user', async () => {
+      // Arrange — admin session fetching a different user's ID, but that user doesn't exist.
+      // This covers the admin-then-404 path (source L50: role=ADMIN bypasses ForbiddenError,
+      // source L74: findUnique returns null → NotFoundError).
+      const adminUser = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminUser);
+
+      const nonExistentId = 'cmjbv4i3x00005wsloputgwuy'; // Valid CUID, different from admin
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      const mockRequest = {} as NextRequest;
+      const params = createMockParams(nonExistentId);
+
+      // Act
+      const response = await GET(mockRequest, { params });
+      const data = await parseResponse<ErrorResponse>(response);
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('NOT_FOUND');
+      expect(data.error.message).toBe('User not found');
+
+      // Admin bypassed the 403 gate — DB WAS queried
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: nonExistentId },
+        select: expect.objectContaining({ id: true, email: true }),
+      });
+    });
   });
 
   describe('Successful User Retrieval', () => {
