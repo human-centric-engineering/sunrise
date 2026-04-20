@@ -152,7 +152,7 @@ export class OrchestrationEngine {
     });
 
     // --------------------------------------------------------------
-    // 2. DAG walk
+    // 2. DAG walk (supports parallel execution of sibling branches)
     // --------------------------------------------------------------
     const byId = new Map(workflow.definition.steps.map((s) => [s.id, s]));
     const visited = new Set<string>();
@@ -160,12 +160,44 @@ export class OrchestrationEngine {
       ? this.nextIdsAfter(byId, resumeAfterStepId)
       : [workflow.definition.entryStepId];
 
+    // On resume, seed visited with steps already recorded in the trace
+    // so the in-degree check doesn't block successors of completed steps.
+    if (resumeAfterStepId) {
+      for (const entry of trace) {
+        visited.add(entry.stepId);
+      }
+    }
+
+    // Build in-degree map for convergence detection. A step is "ready"
+    // only when ALL its predecessors have been visited.
+    const inDegree = new Map<string, Set<string>>();
+    for (const step of workflow.definition.steps) {
+      for (const edge of step.nextSteps) {
+        if (!inDegree.has(edge.targetStepId)) {
+          inDegree.set(edge.targetStepId, new Set());
+        }
+        inDegree.get(edge.targetStepId)!.add(step.id);
+      }
+    }
+
+    const isReady = (stepId: string): boolean => {
+      const preds = inDegree.get(stepId);
+      if (!preds || preds.size === 0) return true;
+      for (const pred of preds) {
+        if (!visited.has(pred)) return false;
+      }
+      return true;
+    };
+
+    // Steps waiting for predecessors to complete before they can run.
+    const pending = new Set<string>();
+
     let stepCount = 0;
     let finalOutput: unknown = null;
     let failed = false;
     let failureReason: string | null = null;
 
-    while (queue.length > 0) {
+    while (queue.length > 0 || pending.size > 0) {
       if (options.signal?.aborted) {
         failureReason = 'Execution aborted by client';
         yield workflowFailed(failureReason);
@@ -185,126 +217,132 @@ export class OrchestrationEngine {
         break;
       }
 
-      if (stepCount++ >= MAX_STEPS_PER_RUN) {
+      // Promote any pending steps whose predecessors have all completed.
+      for (const pid of pending) {
+        if (isReady(pid)) {
+          pending.delete(pid);
+          queue.push(pid);
+        }
+      }
+
+      if (queue.length === 0) {
+        // All remaining steps are pending with unmet dependencies — deadlock.
+        break;
+      }
+
+      // Partition queue into ready and not-yet-ready steps (deduplicated).
+      const readySet = new Set<string>();
+      for (const id of queue) {
+        if (visited.has(id) || readySet.has(id)) continue;
+        if (isReady(id)) {
+          readySet.add(id);
+        } else {
+          pending.add(id);
+        }
+      }
+      queue.length = 0;
+      const ready = [...readySet];
+
+      if (ready.length === 0) continue;
+
+      // ── Single step (sequential path — unchanged semantics) ──────
+      if (ready.length === 1) {
+        const stepId = ready[0];
+        if (stepCount++ >= MAX_STEPS_PER_RUN) {
+          failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
+          yield workflowFailed(failureReason);
+          failed = true;
+          break;
+        }
+
+        const step = byId.get(stepId);
+        if (!step) {
+          failureReason = `Unknown step id "${stepId}"`;
+          yield workflowFailed(failureReason, stepId);
+          failed = true;
+          break;
+        }
+        visited.add(stepId);
+
+        const singleResult = yield* this.executeSingleStep(
+          step,
+          ctx,
+          trace,
+          executionId,
+          budgetLimitUsd,
+          baseLogger
+        );
+
+        if (singleResult.paused) return;
+        if (singleResult.failed) {
+          failed = true;
+          failureReason = singleResult.failureReason ?? null;
+          break;
+        }
+        if (singleResult.output !== undefined) finalOutput = singleResult.output;
+        if (singleResult.terminal) break;
+
+        // Enqueue next steps.
+        for (const id of singleResult.nextIds) {
+          if (!visited.has(id)) queue.push(id);
+        }
+        continue;
+      }
+
+      // ── Parallel batch (multiple ready steps — run concurrently) ──
+      // Validate batch size against step count cap.
+      if (stepCount + ready.length > MAX_STEPS_PER_RUN) {
         failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
         yield workflowFailed(failureReason);
         failed = true;
         break;
       }
+      stepCount += ready.length;
 
-      const stepId = queue.shift() as string;
-      if (visited.has(stepId)) continue;
-      const step = byId.get(stepId);
-      if (!step) {
-        failureReason = `Unknown step id "${stepId}"`;
-        yield workflowFailed(failureReason, stepId);
-        failed = true;
-        break;
-      }
-      visited.add(stepId);
-
-      yield stepStarted(step.id, step.type, step.name);
-
-      await this.markCurrentStep(executionId, step.id);
-
-      const started = Date.now();
-      let stepResult: StepResult | null = null;
-      let stepError: ExecutorError | null = null;
-
-      try {
-        stepResult = yield* this.runStepWithStrategy(step, ctx);
-      } catch (err) {
-        if (err instanceof PausedForApproval) {
-          // Paused — record the trace entry with `awaiting_approval`,
-          // flip the row, and exit cleanly.
-          const durationMs = Date.now() - started;
-          trace.push({
-            stepId: step.id,
-            stepType: step.type,
-            label: step.name,
-            status: 'awaiting_approval',
-            output: err.payload,
-            tokensUsed: 0,
-            costUsd: 0,
-            startedAt: new Date(started).toISOString(),
-            completedAt: new Date().toISOString(),
-            durationMs,
-          });
-          await this.pauseForApproval(executionId, ctx, trace, step.id);
-          yield approvalRequired(step.id, err.payload);
-          return;
-        }
-        if (err instanceof BudgetExceeded) {
-          failureReason = 'Budget exceeded';
-          yield workflowFailed(failureReason, step.id);
+      // Resolve all steps and mark visited before execution.
+      const batchSteps: WorkflowStep[] = [];
+      let batchValid = true;
+      for (const stepId of ready) {
+        const step = byId.get(stepId);
+        if (!step) {
+          failureReason = `Unknown step id "${stepId}"`;
+          yield workflowFailed(failureReason, stepId);
           failed = true;
+          batchValid = false;
           break;
         }
-        stepError =
-          err instanceof ExecutorError
-            ? err
-            : new ExecutorError(
-                step.id,
-                'executor_threw',
-                err instanceof Error ? err.message : 'Executor threw an unknown error',
-                err
-              );
+        batchSteps.push(step);
+        visited.add(stepId);
+      }
+      if (!batchValid) break;
+
+      // Execute all branch steps concurrently.
+      const batchResult = await this.executeParallelBatch(
+        batchSteps,
+        ctx,
+        trace,
+        executionId,
+        budgetLimitUsd,
+        baseLogger
+      );
+
+      // Yield all collected events from the batch.
+      for (const event of batchResult.events) {
+        yield event;
       }
 
-      const durationMs = Date.now() - started;
-
-      if (stepError) {
-        baseLogger.error('Workflow step failed', stepError, {
-          executionId,
-          stepId: step.id,
-          code: stepError.code,
-        });
-        trace.push({
-          stepId: step.id,
-          stepType: step.type,
-          label: step.name,
-          status: 'failed',
-          output: null,
-          error: sanitizeError(stepError),
-          tokensUsed: 0,
-          costUsd: 0,
-          startedAt: new Date(started).toISOString(),
-          completedAt: new Date().toISOString(),
-          durationMs,
-        });
-        await this.checkpoint(executionId, ctx, trace);
-        failureReason = sanitizeError(stepError);
-        yield workflowFailed(failureReason, step.id);
+      if (batchResult.paused) return;
+      if (batchResult.failed) {
         failed = true;
+        failureReason = batchResult.failureReason ?? null;
         break;
       }
+      if (batchResult.lastOutput !== undefined) finalOutput = batchResult.lastOutput;
 
-      // stepResult must be non-null here because the above branches
-      // either returned or set stepError.
-      const result = stepResult as StepResult;
-      mergeStepResult(ctx, step.id, result);
-      trace.push({
-        stepId: step.id,
-        stepType: step.type,
-        label: step.name,
-        status: 'completed',
-        output: result.output,
-        tokensUsed: result.tokensUsed,
-        costUsd: result.costUsd,
-        startedAt: new Date(started).toISOString(),
-        completedAt: new Date().toISOString(),
-        durationMs,
-      });
-      await this.checkpoint(executionId, ctx, trace);
-
-      yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
-
-      finalOutput = result.output;
-
-      // Budget check
+      // Budget check after the batch.
       if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
         failureReason = 'Budget exceeded';
-        yield workflowFailed(failureReason, step.id);
+        yield workflowFailed(failureReason);
         failed = true;
         break;
       }
@@ -317,14 +355,8 @@ export class OrchestrationEngine {
         yield budgetWarning(ctx.totalCostUsd, budgetLimitUsd);
       }
 
-      if (result.terminal) break;
-
-      // Enqueue next steps.
-      const nextIds =
-        result.nextStepIds && result.nextStepIds.length > 0
-          ? result.nextStepIds
-          : step.nextSteps.map((edge) => edge.targetStepId);
-      for (const id of nextIds) {
+      // Enqueue next steps from all completed branches.
+      for (const id of batchResult.nextIds) {
         if (!visited.has(id)) queue.push(id);
       }
     }
@@ -492,6 +524,440 @@ export class OrchestrationEngine {
       }
 
       // strategy === 'fail' — propagate.
+      throw execErr;
+    }
+  }
+
+  // ================================================================
+  // Step execution helpers
+  // ================================================================
+
+  /**
+   * Execute a single step with full lifecycle: start event, strategy
+   * wrapping, trace, checkpoint, and completion/failure events.
+   *
+   * Returns a descriptor so the main loop can decide what to do next
+   * without duplicating the post-step logic.
+   */
+  private async *executeSingleStep(
+    step: WorkflowStep,
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): AsyncGenerator<
+    ExecutionEvent,
+    {
+      failed: boolean;
+      paused: boolean;
+      terminal: boolean;
+      failureReason?: string;
+      output?: unknown;
+      nextIds: string[];
+    },
+    unknown
+  > {
+    yield stepStarted(step.id, step.type, step.name);
+    await this.markCurrentStep(executionId, step.id);
+
+    const started = Date.now();
+    let stepResult: StepResult | null = null;
+    let stepError: ExecutorError | null = null;
+
+    try {
+      stepResult = yield* this.runStepWithStrategy(step, ctx);
+    } catch (err) {
+      if (err instanceof PausedForApproval) {
+        const durationMs = Date.now() - started;
+        trace.push({
+          stepId: step.id,
+          stepType: step.type,
+          label: step.name,
+          status: 'awaiting_approval',
+          output: err.payload,
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: new Date(started).toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs,
+        });
+        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        yield approvalRequired(step.id, err.payload);
+        return { failed: false, paused: true, terminal: true, nextIds: [] };
+      }
+      if (err instanceof BudgetExceeded) {
+        yield workflowFailed('Budget exceeded', step.id);
+        return {
+          failed: true,
+          paused: false,
+          terminal: true,
+          failureReason: 'Budget exceeded',
+          nextIds: [],
+        };
+      }
+      stepError =
+        err instanceof ExecutorError
+          ? err
+          : new ExecutorError(
+              step.id,
+              'executor_threw',
+              err instanceof Error ? err.message : 'Executor threw an unknown error',
+              err
+            );
+    }
+
+    const durationMs = Date.now() - started;
+
+    if (stepError) {
+      baseLogger.error('Workflow step failed', stepError, {
+        executionId,
+        stepId: step.id,
+        code: stepError.code,
+      });
+      trace.push({
+        stepId: step.id,
+        stepType: step.type,
+        label: step.name,
+        status: 'failed',
+        output: null,
+        error: sanitizeError(stepError),
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: new Date(started).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs,
+      });
+      await this.checkpoint(executionId, ctx, trace);
+      const reason = sanitizeError(stepError);
+      yield workflowFailed(reason, step.id);
+      return { failed: true, paused: false, terminal: true, failureReason: reason, nextIds: [] };
+    }
+
+    const result = stepResult as StepResult;
+    mergeStepResult(ctx, step.id, result);
+    trace.push({
+      stepId: step.id,
+      stepType: step.type,
+      label: step.name,
+      status: 'completed',
+      output: result.output,
+      tokensUsed: result.tokensUsed,
+      costUsd: result.costUsd,
+      startedAt: new Date(started).toISOString(),
+      completedAt: new Date().toISOString(),
+      durationMs,
+    });
+    await this.checkpoint(executionId, ctx, trace);
+
+    yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+
+    // Budget check
+    if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
+      yield workflowFailed('Budget exceeded', step.id);
+      return {
+        failed: true,
+        paused: false,
+        terminal: true,
+        failureReason: 'Budget exceeded',
+        nextIds: [],
+      };
+    }
+    if (
+      budgetLimitUsd &&
+      ctx.totalCostUsd >= budgetLimitUsd * BUDGET_WARN_FRACTION &&
+      !ctx.variables.__budgetWarned
+    ) {
+      ctx.variables.__budgetWarned = true;
+      yield budgetWarning(ctx.totalCostUsd, budgetLimitUsd);
+    }
+
+    const nextIds =
+      result.nextStepIds && result.nextStepIds.length > 0
+        ? result.nextStepIds
+        : step.nextSteps.map((edge) => edge.targetStepId);
+
+    return {
+      failed: false,
+      paused: false,
+      terminal: result.terminal ?? false,
+      output: result.output,
+      nextIds,
+    };
+  }
+
+  /**
+   * Execute multiple steps concurrently (parallel branches).
+   *
+   * Each step's executor runs via Promise.allSettled for true concurrency.
+   * Results are merged into context **sequentially** after all settle to
+   * avoid race conditions on `ctx.totalCostUsd` and `ctx.totalTokensUsed`.
+   *
+   * Events from all branches are collected and returned — the caller
+   * yields them after this method returns.
+   */
+  private async executeParallelBatch(
+    steps: WorkflowStep[],
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    _budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): Promise<{
+    events: ExecutionEvent[];
+    failed: boolean;
+    paused: boolean;
+    failureReason?: string;
+    lastOutput?: unknown;
+    nextIds: string[];
+  }> {
+    const allEvents: ExecutionEvent[] = [];
+    const allNextIds: string[] = [];
+    let lastOutput: unknown = undefined;
+    let batchFailed = false;
+    let batchPaused = false;
+    let batchFailureReason: string | undefined;
+
+    // Mark all steps as current (best-effort).
+    for (const step of steps) {
+      void this.markCurrentStep(executionId, step.id);
+    }
+
+    // Run all steps concurrently. Each step runs its full strategy
+    // (including retries) independently.
+    // Note: allEvents.push() from concurrent callbacks is safe because
+    // Node.js is single-threaded — each push() completes atomically between awaits.
+    const promises = steps.map(async (step) => {
+      const started = Date.now();
+      allEvents.push(stepStarted(step.id, step.type, step.name));
+
+      try {
+        const result = await this.runStepToCompletion(step, ctx);
+        const durationMs = Date.now() - started;
+        return { step, result, durationMs, started, error: null as ExecutorError | null };
+      } catch (err) {
+        const durationMs = Date.now() - started;
+        if (err instanceof PausedForApproval) {
+          return {
+            step,
+            result: null,
+            durationMs,
+            started,
+            paused: true,
+            payload: err.payload,
+            error: null,
+          };
+        }
+        const execErr =
+          err instanceof ExecutorError
+            ? err
+            : new ExecutorError(
+                step.id,
+                'executor_threw',
+                err instanceof Error ? err.message : 'Executor threw an unknown error',
+                err
+              );
+        return { step, result: null, durationMs, started, error: execErr };
+      }
+    });
+
+    const settled = await Promise.allSettled(promises);
+
+    // Process results sequentially to merge safely.
+    for (const outcome of settled) {
+      if (outcome.status === 'rejected') {
+        // Should not happen — inner function catches all errors.
+        continue;
+      }
+      const { step, result, durationMs, started, error } = outcome.value;
+
+      // Handle pause (rare in parallel — only if human_approval is in a branch)
+      if ('paused' in outcome.value && outcome.value.paused) {
+        trace.push({
+          stepId: step.id,
+          stepType: step.type,
+          label: step.name,
+          status: 'awaiting_approval',
+          output: outcome.value.payload,
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: new Date(started).toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs,
+        });
+        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        allEvents.push(approvalRequired(step.id, outcome.value.payload));
+        batchPaused = true;
+        continue;
+      }
+
+      if (error) {
+        baseLogger.error('Workflow step failed (parallel)', error, {
+          executionId,
+          stepId: step.id,
+          code: error.code,
+        });
+        trace.push({
+          stepId: step.id,
+          stepType: step.type,
+          label: step.name,
+          status: 'failed',
+          output: null,
+          error: sanitizeError(error),
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: new Date(started).toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs,
+        });
+        await this.checkpoint(executionId, ctx, trace);
+        allEvents.push(workflowFailed(sanitizeError(error), step.id));
+        batchFailed = true;
+        batchFailureReason = sanitizeError(error);
+        continue;
+      }
+
+      // Success — merge result into context.
+      const stepResult = result as StepResult;
+      mergeStepResult(ctx, step.id, stepResult);
+      trace.push({
+        stepId: step.id,
+        stepType: step.type,
+        label: step.name,
+        status: 'completed',
+        output: stepResult.output,
+        tokensUsed: stepResult.tokensUsed,
+        costUsd: stepResult.costUsd,
+        startedAt: new Date(started).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs,
+      });
+      await this.checkpoint(executionId, ctx, trace);
+
+      allEvents.push(
+        stepCompleted(
+          step.id,
+          stepResult.output,
+          stepResult.tokensUsed,
+          stepResult.costUsd,
+          durationMs
+        )
+      );
+
+      lastOutput = stepResult.output;
+
+      const nextIds =
+        stepResult.nextStepIds && stepResult.nextStepIds.length > 0
+          ? stepResult.nextStepIds
+          : step.nextSteps.map((edge) => edge.targetStepId);
+      allNextIds.push(...nextIds);
+    }
+
+    return {
+      events: allEvents,
+      failed: batchFailed,
+      paused: batchPaused,
+      failureReason: batchFailureReason,
+      lastOutput,
+      nextIds: allNextIds,
+    };
+  }
+
+  /**
+   * Run a step through its error strategy to completion (non-generator).
+   * Used by executeParallelBatch where we cannot yield from inside Promise.all.
+   */
+  private async runStepToCompletion(
+    step: WorkflowStep,
+    ctx: ExecutionContext
+  ): Promise<StepResult> {
+    const executor = getExecutor(step.type);
+    const errorConfig = stepErrorConfigSchema.parse(step.config);
+    const strategy = errorConfig.errorStrategy ?? ctx.defaultErrorStrategy ?? 'fail';
+    const retryCount =
+      typeof errorConfig.retryCount === 'number' ? errorConfig.retryCount : DEFAULT_RETRY_COUNT;
+    const stepTimeoutMs = errorConfig.timeoutMs;
+
+    const invokeExecutor = async (): Promise<StepResult> => {
+      if (!stepTimeoutMs) {
+        return executor(step, snapshotContext(ctx));
+      }
+      return Promise.race([
+        executor(step, snapshotContext(ctx)),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new ExecutorError(
+                  step.id,
+                  'step_timeout',
+                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                  undefined,
+                  false
+                )
+              ),
+            stepTimeoutMs
+          );
+        }),
+      ]);
+    };
+
+    if (strategy === 'retry') {
+      let lastError: ExecutorError | null = null;
+      for (let attempt = 0; attempt <= retryCount; attempt++) {
+        try {
+          return await invokeExecutor();
+        } catch (err) {
+          if (err instanceof PausedForApproval) throw err;
+          lastError =
+            err instanceof ExecutorError
+              ? err
+              : new ExecutorError(
+                  step.id,
+                  'executor_threw',
+                  err instanceof Error ? err.message : 'Executor threw an unknown error',
+                  err
+                );
+          if (!lastError.retriable) throw lastError;
+          if (attempt < retryCount) {
+            await sleep(backoffDelayMs(attempt));
+          }
+        }
+      }
+      throw lastError ?? new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
+    }
+
+    try {
+      return await invokeExecutor();
+    } catch (err) {
+      if (err instanceof PausedForApproval) throw err;
+      const execErr =
+        err instanceof ExecutorError
+          ? err
+          : new ExecutorError(
+              step.id,
+              'executor_threw',
+              err instanceof Error ? err.message : 'Executor threw an unknown error',
+              err
+            );
+
+      if (strategy === 'skip') {
+        return { output: null, tokensUsed: 0, costUsd: 0 };
+      }
+
+      if (strategy === 'fallback') {
+        if (errorConfig.fallbackStepId) {
+          return {
+            output: null,
+            tokensUsed: 0,
+            costUsd: 0,
+            nextStepIds: [errorConfig.fallbackStepId],
+          };
+        }
+        return { output: null, tokensUsed: 0, costUsd: 0 };
+      }
+
+      // strategy === 'fail'
       throw execErr;
     }
   }

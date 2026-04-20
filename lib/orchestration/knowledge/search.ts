@@ -62,6 +62,7 @@ export interface SearchFilters {
   chunkType?: string;
   patternNumber?: number;
   category?: string;
+  categories?: string[];
   section?: string;
   documentId?: string;
   scope?: string;
@@ -113,6 +114,14 @@ export async function searchKnowledge(
     conditions.push(`c.category = $${paramIdx}`);
     params.push(filters.category);
     paramIdx++;
+  }
+  if (filters?.categories && filters.categories.length > 0) {
+    const placeholders = filters.categories.map((_, i) => `$${paramIdx + i}`).join(', ');
+    conditions.push(`c.category IN (${placeholders})`);
+    for (const cat of filters.categories) {
+      params.push(cat);
+      paramIdx++;
+    }
   }
   if (filters?.section) {
     conditions.push(`c.section = $${paramIdx}`);

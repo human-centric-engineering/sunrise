@@ -786,4 +786,270 @@ describe('OrchestrationEngine', () => {
       })
     ).rejects.toThrow('not found');
   });
+
+  // ─── Parallel Execution ─────────────────────────────────────────────────
+
+  it('runs parallel fan-out branches concurrently', async () => {
+    const executionOrder: string[] = [];
+
+    registerStepType('parallel', async (step) => ({
+      output: { parallel: true, branches: step.nextSteps.map((e) => e.targetStepId) },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      executionOrder.push(`start:${step.id}`);
+      // Simulate async work — if truly parallel, both start before either finishes
+      await new Promise((r) => setTimeout(r, 10));
+      executionOrder.push(`end:${step.id}`);
+      return { output: `out:${step.id}`, tokensUsed: 5, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Both branches should have started before either finished (concurrent)
+    const startA = executionOrder.indexOf('start:a');
+    const startB = executionOrder.indexOf('start:b');
+    const endA = executionOrder.indexOf('end:a');
+    const endB = executionOrder.indexOf('end:b');
+
+    expect(startA).toBeLessThan(endA);
+    expect(startB).toBeLessThan(endB);
+    // Both started before the first one ended — proof of concurrency
+    expect(startA).toBeLessThan(endB);
+    expect(startB).toBeLessThan(endA);
+
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  it('parallel branches converge at a join step', async () => {
+    const executionOrder: string[] = [];
+
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      executionOrder.push(step.id);
+      return { output: `out:${step.id}`, tokensUsed: 5, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'join' }],
+        },
+        {
+          id: 'b',
+          name: 'B',
+          type: 'llm_call',
+          config: { prompt: 'B' },
+          nextSteps: [{ targetStepId: 'join' }],
+        },
+        { id: 'join', name: 'Join', type: 'llm_call', config: { prompt: 'merge' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Join step runs exactly once, after both A and B
+    expect(executionOrder.filter((id) => id === 'join')).toHaveLength(1);
+    const joinIdx = executionOrder.indexOf('join');
+    expect(executionOrder.indexOf('a')).toBeLessThan(joinIdx);
+    expect(executionOrder.indexOf('b')).toBeLessThan(joinIdx);
+
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  it('tokens and cost accumulate correctly across parallel branches', async () => {
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async () => ({
+      output: 'done',
+      tokensUsed: 10,
+      costUsd: 0.05,
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const completed = events.find((e) => e.type === 'workflow_completed');
+    expect(completed).toBeDefined();
+    if (completed?.type === 'workflow_completed') {
+      // parallel node (0) + branch A (10) + branch B (10) = 20
+      expect(completed.totalTokensUsed).toBe(20);
+      expect(completed.totalCostUsd).toBeCloseTo(0.1);
+    }
+  });
+
+  it('parallel branch failure with skip strategy continues other branches', async () => {
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError(step.id, 'test_fail', 'intentional failure');
+      return { output: `out:${step.id}`, tokensUsed: 5, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'skip' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Workflow should complete — skipped branch doesn't kill workflow
+    const types = events.map((e) => e.type);
+    expect(types).toContain('workflow_completed');
+    // Branch B still executed
+    const completedSteps = events.filter((e) => e.type === 'step_completed');
+    expect(completedSteps.some((e) => e.type === 'step_completed' && e.stepId === 'b')).toBe(true);
+  });
+
+  it('parallel branch failure with fail strategy stops workflow', async () => {
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError(step.id, 'test_fail', 'intentional failure');
+      return { output: `out:${step.id}`, tokensUsed: 5, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'fail' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+  });
+
+  it('sequential workflows are unaffected by parallel refactor', async () => {
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 10,
+      costUsd: 0.01,
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'b' }],
+        },
+        {
+          id: 'b',
+          name: 'B',
+          type: 'llm_call',
+          config: { prompt: 'B' },
+          nextSteps: [{ targetStepId: 'c' }],
+        },
+        { id: 'c', name: 'C', type: 'llm_call', config: { prompt: 'C' }, nextSteps: [] },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const started = events.filter((e) => e.type === 'step_started');
+    expect(started).toHaveLength(3);
+    // Order must be a → b → c
+    expect(started[0].type === 'step_started' && started[0].stepId).toBe('a');
+    expect(started[1].type === 'step_started' && started[1].stepId).toBe('b');
+    expect(started[2].type === 'step_started' && started[2].stepId).toBe('c');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
 });

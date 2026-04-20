@@ -14,6 +14,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiCapability: { findMany: vi.fn() },
     aiAgentCapability: { findMany: vi.fn() },
+    aiAgent: { findUnique: vi.fn() },
   },
 }));
 
@@ -144,6 +145,10 @@ beforeEach(() => {
   capabilityDispatcher.clearCache();
   // Default: no explicit pivot rows → default-allow
   mockAgentFindMany.mockResolvedValue([]);
+  // Default: agent with no category restrictions (for SearchKnowledgeCapability)
+  (prisma.aiAgent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+    knowledgeCategories: [],
+  });
 });
 
 // ---------------------------------------------------------------------------
