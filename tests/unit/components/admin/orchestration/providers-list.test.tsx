@@ -9,6 +9,8 @@
  * - Test-connection success updates dot to green and renders model count
  * - Test-connection rejection → friendly fallback; raw SDK error absent
  * - Delete dropdown → AlertDialog → confirm → DELETE removes the card
+ * - Circuit breaker badge shown when state is open/half-open; reset button
+ * - Reactivate action shown for inactive providers; PATCHes isActive=true
  *
  * @see components/admin/orchestration/providers-list.tsx
  */
@@ -67,6 +69,7 @@ function makeProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     updatedAt: new Date('2025-01-01'),
     deletedAt: null,
     metadata: {},
+    circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null },
     ...overrides,
   } as ProviderRow;
 }
@@ -344,6 +347,117 @@ describe('ProvidersList', () => {
         expect(screen.queryByText('Delete provider')).not.toBeInTheDocument();
       });
       expect(apiClient.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Circuit breaker badge ─────────────────────────────────────────────────
+
+  describe('circuit breaker badge', () => {
+    it('shows "Circuit open" badge when breaker state is open', () => {
+      const provider = makeProvider({
+        circuitBreaker: { state: 'open', failureCount: 5, openedAt: '2025-01-01T00:00:00Z' },
+      });
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      expect(screen.getByText(/circuit open/i)).toBeInTheDocument();
+    });
+
+    it('shows "Circuit half-open" badge when breaker state is half-open', () => {
+      const provider = makeProvider({
+        circuitBreaker: { state: 'half-open', failureCount: 3, openedAt: null },
+      });
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      expect(screen.getByText(/circuit half-open/i)).toBeInTheDocument();
+    });
+
+    it('does not show breaker badge when state is closed', () => {
+      const provider = makeProvider({
+        circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null },
+      });
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      expect(screen.queryByText(/circuit open/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/circuit half-open/i)).not.toBeInTheDocument();
+    });
+
+    it('Reset button calls POST /providers/:id/health', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        state: 'closed',
+        failureCount: 0,
+        openedAt: null,
+      });
+
+      const provider = makeProvider({
+        circuitBreaker: { state: 'open', failureCount: 5, openedAt: '2025-01-01T00:00:00Z' },
+      });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      await user.click(screen.getByRole('button', { name: /reset/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/providers/prov-1/health'),
+          expect.anything()
+        );
+      });
+
+      // Badge should disappear after successful reset
+      await waitFor(() => {
+        expect(screen.queryByText(/circuit open/i)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Reactivate action ─────────────────────────────────────────────────────
+
+  describe('reactivate action', () => {
+    it('shows Reactivate menu item for inactive providers', async () => {
+      const inactiveProvider = makeProvider({ isActive: false });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[inactiveProvider]} />);
+
+      const moreBtn = document.querySelector('button[aria-haspopup="menu"]')!;
+      await user.click(moreBtn as HTMLElement);
+
+      expect(await screen.findByRole('menuitem', { name: /reactivate/i })).toBeInTheDocument();
+    });
+
+    it('does NOT show Reactivate menu item for active providers', async () => {
+      const activeProvider = makeProvider({ isActive: true });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[activeProvider]} />);
+
+      const moreBtn = document.querySelector('button[aria-haspopup="menu"]')!;
+      await user.click(moreBtn as HTMLElement);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('menuitem', { name: /reactivate/i })).not.toBeInTheDocument();
+      });
+    });
+
+    it('clicking Reactivate PATCHes isActive=true and updates card', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'prov-1', isActive: true });
+
+      const inactiveProvider = makeProvider({ isActive: false });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[inactiveProvider]} />);
+
+      const moreBtn = document.querySelector('button[aria-haspopup="menu"]')!;
+      await user.click(moreBtn as HTMLElement);
+
+      const reactivateItem = await screen.findByRole('menuitem', { name: /reactivate/i });
+      await user.click(reactivateItem);
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/providers/prov-1'),
+          expect.objectContaining({ body: { isActive: true } })
+        );
+      });
     });
   });
 });

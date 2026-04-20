@@ -6,21 +6,22 @@
  * Shared create / edit form for `AiProviderConfig`. Raw RHF + Zod,
  * sticky action bar, every non-trivial field wrapped in `<FieldHelp>`.
  *
- * **Flavor selector.** The backend only knows two `providerType`
- * values (`anthropic`, `openai-compatible`) but the UI shows four
+ * **Flavor selector.** The backend knows three `providerType` values
+ * (`anthropic`, `openai-compatible`, `voyage`) but the UI shows five
  * flavors:
  *
- *   - Anthropic        — `providerType: 'anthropic'`
- *   - OpenAI           — `providerType: 'openai-compatible'`, base URL
- *                        pinned to `https://api.openai.com/v1`
- *   - Ollama (Local)   — `providerType: 'openai-compatible'`,
- *                        `isLocal: true`, loopback base URL
+ *   - Anthropic         — `providerType: 'anthropic'`
+ *   - OpenAI            — `providerType: 'openai-compatible'`, base URL
+ *                         pinned to `https://api.openai.com/v1`
+ *   - Voyage AI         — `providerType: 'voyage'`, embedding-focused
+ *   - Ollama (Local)    — `providerType: 'openai-compatible'`,
+ *                         `isLocal: true`, loopback base URL
  *   - OpenAI-Compatible — free-form base URL + optional env var
  *
  * The flavor drives which fields render. On submit, we compose the
  * backend payload from `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?,
- * isActive }`. On edit, we reverse-map the provider row back to a
- * flavor so the UI round-trips cleanly.
+ * isActive, timeoutMs?, maxRetries? }`. On edit, we reverse-map the
+ * provider row back to a flavor so the UI round-trips cleanly.
  *
  * API-key policy: the UI never accepts, stores, transmits, or renders
  * a raw API key value. The `apiKeyEnvVar` field is the *name* of an
@@ -35,7 +36,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save, X } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, ChevronRight, Loader2, Save, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -152,11 +153,22 @@ const providerFormSchema = z.object({
     .optional()
     .or(z.literal('')),
   isActive: z.boolean(),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1000, 'Minimum 1000 ms')
+    .max(300000, 'Maximum 300000 ms')
+    .optional(),
+  maxRetries: z.number().int().min(0, 'Minimum 0').max(10, 'Maximum 10').optional(),
 });
 
 type ProviderFormData = z.infer<typeof providerFormSchema>;
 
-export type ProviderRowWithStatus = AiProviderConfig & { apiKeyPresent?: boolean };
+export type ProviderRowWithStatus = AiProviderConfig & {
+  apiKeyPresent?: boolean;
+  timeoutMs?: number | null;
+  maxRetries?: number | null;
+};
 
 export interface ProviderFormProps {
   mode: 'create' | 'edit';
@@ -195,6 +207,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const [apiKeyPresent, setApiKeyPresent] = useState<boolean | null>(
     provider?.apiKeyPresent ?? null
   );
+  const [advancedOpen, setAdvancedOpen] = useState(!!(provider?.timeoutMs || provider?.maxRetries));
 
   const {
     register,
@@ -212,6 +225,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       baseUrl: provider?.baseUrl ?? '',
       apiKeyEnvVar: provider?.apiKeyEnvVar ?? '',
       isActive: provider?.isActive ?? true,
+      timeoutMs: provider?.timeoutMs ?? undefined,
+      maxRetries: provider?.maxRetries ?? undefined,
     },
   });
 
@@ -273,6 +288,10 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       };
       if (baseUrl) payload.baseUrl = baseUrl;
       if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
+      if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
+        payload.timeoutMs = data.timeoutMs;
+      if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
+        payload.maxRetries = data.maxRetries;
 
       if (isEdit && provider) {
         const updated = await apiClient.patch<ProviderRowWithStatus>(
@@ -514,6 +533,69 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           checked={watch('isActive')}
           onCheckedChange={(checked) => setValue('isActive', checked)}
         />
+      </div>
+
+      {/* Advanced settings — collapsible */}
+      <div className="rounded-md border">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 p-3 text-sm font-medium"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+          Advanced settings
+        </button>
+        {advancedOpen && (
+          <div className="space-y-4 border-t px-3 pt-3 pb-4">
+            <div className="grid gap-2">
+              <Label htmlFor="timeoutMs">
+                Timeout (ms){' '}
+                <FieldHelp title="Request timeout">
+                  Maximum time in milliseconds to wait for a response from this provider. Leave
+                  empty to use the system default.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="timeoutMs"
+                type="number"
+                {...register('timeoutMs')}
+                placeholder="e.g. 30000"
+                className="font-mono text-xs"
+                min={1000}
+                max={300000}
+              />
+              {errors.timeoutMs && (
+                <p className="text-destructive text-xs">{errors.timeoutMs.message}</p>
+              )}
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="maxRetries">
+                Max retries{' '}
+                <FieldHelp title="Automatic retries">
+                  Number of automatic retries on transient failures (network errors, 5xx responses).
+                  Leave empty to use the system default.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="maxRetries"
+                type="number"
+                {...register('maxRetries')}
+                placeholder="e.g. 3"
+                className="font-mono text-xs"
+                min={0}
+                max={10}
+              />
+              {errors.maxRetries && (
+                <p className="text-destructive text-xs">{errors.maxRetries.message}</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Test connection — edit only (create mode has no id yet) */}

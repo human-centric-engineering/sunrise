@@ -8,12 +8,15 @@
  * mount. Local providers (`isLocal: true`) hide pricing columns
  * because pricing is N/A for self-hosted inference.
  *
+ * Each model row has a "Test" button that sends a trivial prompt via
+ * POST /providers/:id/test-model and reports round-trip latency.
+ *
  * Errors are never raw — the server route already sanitizes the
  * upstream SDK error; we layer a friendly fallback on top.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, Play, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -45,6 +48,11 @@ interface ProviderModelsResponse {
   models: ProviderModelInfo[];
 }
 
+interface TestModelResult {
+  ok: boolean;
+  latencyMs: number | null;
+}
+
 export interface ProviderModelsPanelProps {
   providerId: string;
   providerName: string;
@@ -62,6 +70,8 @@ export function ProviderModelsPanel({
   const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
   const [loading, setLoading] = useState(apiKeyPresent);
   const [error, setError] = useState<string | null>(null);
+  const [testingModel, setTestingModel] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, TestModelResult>>({});
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -78,6 +88,24 @@ export function ProviderModelsPanel({
       setLoading(false);
     }
   }, [providerId]);
+
+  const handleTestModel = useCallback(
+    async (modelId: string) => {
+      setTestingModel(modelId);
+      try {
+        const result = await apiClient.post<TestModelResult>(
+          API.ADMIN.ORCHESTRATION.providerTestModel(providerId),
+          { body: { model: modelId } }
+        );
+        setTestResults((prev) => ({ ...prev, [modelId]: result }));
+      } catch {
+        setTestResults((prev) => ({ ...prev, [modelId]: { ok: false, latencyMs: null } }));
+      } finally {
+        setTestingModel(null);
+      }
+    },
+    [providerId]
+  );
 
   useEffect(() => {
     if (!apiKeyPresent) return;
@@ -152,38 +180,65 @@ export function ProviderModelsPanel({
                   </>
                 )}
                 <TableHead className="text-right">Available</TableHead>
+                <TableHead className="text-right">Test</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {models.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>
-                    <div className="font-medium">{m.name}</div>
-                    <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
-                  </TableCell>
-                  <TableCell className="text-xs">{m.maxContext.toLocaleString()} tok</TableCell>
-                  <TableCell>
-                    <span className="text-xs capitalize">{m.tier}</span>
-                  </TableCell>
-                  {!isLocal && (
-                    <>
-                      <TableCell className="text-right text-xs tabular-nums">
-                        ${m.inputCostPerMillion.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">
-                        ${m.outputCostPerMillion.toFixed(2)}
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="text-right">
-                    {m.available === false ? (
-                      <span className="text-muted-foreground text-xs">—</span>
-                    ) : (
-                      <span className="text-xs text-green-600">✓</span>
+              {models.map((m) => {
+                const result = testResults[m.id];
+                const isTesting = testingModel === m.id;
+                return (
+                  <TableRow key={m.id}>
+                    <TableCell>
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
+                    </TableCell>
+                    <TableCell className="text-xs">{m.maxContext.toLocaleString()} tok</TableCell>
+                    <TableCell>
+                      <span className="text-xs capitalize">{m.tier}</span>
+                    </TableCell>
+                    {!isLocal && (
+                      <>
+                        <TableCell className="text-right text-xs tabular-nums">
+                          ${m.inputCostPerMillion.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">
+                          ${m.outputCostPerMillion.toFixed(2)}
+                        </TableCell>
+                      </>
                     )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                    <TableCell className="text-right">
+                      {m.available === false ? (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      ) : (
+                        <span className="text-xs text-green-600">✓</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {isTesting ? (
+                        <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
+                      ) : result ? (
+                        <span
+                          className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}
+                        >
+                          {result.ok ? `${result.latencyMs} ms` : 'Failed'}
+                        </span>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => void handleTestModel(m.id)}
+                          title={`Test ${m.name}`}
+                        >
+                          <Play className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

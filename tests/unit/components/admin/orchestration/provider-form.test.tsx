@@ -4,12 +4,14 @@
  * Test Coverage:
  * - Changing flavor from Anthropic → Ollama swaps visible fields
  * - Changing to OpenAI-Compatible shows BOTH baseUrl and apiKeyEnvVar
- * - Submit body shape per flavor (anthropic, openai, ollama, openai-compatible)
+ * - Submit body shape per flavor (anthropic, openai, ollama, openai-compatible, voyage)
  * - Edit mode reverse-map: provider row → correct flavor radio
  * - apiKeyPresent=false renders red "missing" indicator
  * - apiKeyPresent=true renders green "set" indicator
  * - Server-side 400 (APIClientError) rendered inline via error banner
  * - Slug input disabled in edit mode
+ * - Advanced settings collapsible with timeoutMs and maxRetries
+ * - Voyage AI flavor: radio, submit payload, reverse mapping
  *
  * @see components/admin/orchestration/provider-form.tsx
  */
@@ -114,11 +116,12 @@ describe('ProviderForm', () => {
   // ── Flavor selector ────────────────────────────────────────────────────────
 
   describe('flavor selector', () => {
-    it('renders all 4 flavor radio options', () => {
+    it('renders all 5 flavor radio options', () => {
       render(<ProviderForm mode="create" />);
 
       expect(getFlavorRadio('Anthropic')).toBeInTheDocument();
       expect(getFlavorRadio('OpenAI')).toBeInTheDocument();
+      expect(getFlavorRadio('Voyage AI')).toBeInTheDocument();
       expect(getFlavorRadio('Ollama (Local)')).toBeInTheDocument();
       expect(getFlavorRadio('OpenAI-Compatible')).toBeInTheDocument();
     });
@@ -334,7 +337,7 @@ describe('ProviderForm', () => {
     it('apiKeyPresent=true renders green "set" indicator', () => {
       render(<ProviderForm mode="edit" provider={makeProvider({ apiKeyPresent: true })} />);
 
-      expect(screen.getByText(/set/i)).toBeInTheDocument();
+      expect(screen.getByText(/^set$/i)).toBeInTheDocument();
     });
   });
 
@@ -380,6 +383,122 @@ describe('ProviderForm', () => {
       render(<ProviderForm mode="edit" provider={makeProvider()} />);
 
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+  });
+
+  // ── Voyage AI flavor ──────────────────────────────────────────────────────
+
+  describe('Voyage AI flavor', () => {
+    it('voyage flavor submits { providerType: "voyage", isLocal: false, apiKeyEnvVar }', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        id: 'prov-new',
+        name: 'Voyage AI',
+        slug: 'voyage-ai',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      await selectFlavor(user, 'Voyage AI');
+      await user.click(screen.getByRole('button', { name: /create provider/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/providers'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              providerType: 'voyage',
+              isLocal: false,
+              apiKeyEnvVar: 'VOYAGE_API_KEY',
+            }),
+          })
+        );
+      });
+    });
+
+    it('voyage providerType → radio "Voyage AI" checked on edit', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'voyage',
+            isLocal: false,
+            baseUrl: 'https://api.voyageai.com/v1',
+            apiKeyEnvVar: 'VOYAGE_API_KEY',
+          })}
+        />
+      );
+
+      const voyageRadio = getFlavorRadio('Voyage AI');
+      expect(voyageRadio).toHaveAttribute('aria-checked', 'true');
+    });
+  });
+
+  // ── Advanced settings ─────────────────────────────────────────────────────
+
+  describe('advanced settings', () => {
+    it('Advanced settings section is collapsed by default in create mode', () => {
+      render(<ProviderForm mode="create" />);
+
+      expect(screen.getByText(/advanced settings/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/timeout/i)).not.toBeInTheDocument();
+    });
+
+    it('clicking Advanced settings reveals timeoutMs and maxRetries fields', async () => {
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      await user.click(screen.getByText(/advanced settings/i));
+
+      await waitFor(() => {
+        expect(document.getElementById('timeoutMs')).toBeInTheDocument();
+        expect(document.getElementById('maxRetries')).toBeInTheDocument();
+      });
+    });
+
+    it('Advanced settings auto-opens when provider has timeoutMs', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ timeoutMs: 30000 })} />);
+
+      // Should be expanded — fields visible
+      expect(document.getElementById('timeoutMs')).toBeInTheDocument();
+    });
+
+    it('Advanced settings auto-opens when provider has maxRetries', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ maxRetries: 3 })} />);
+
+      expect(document.getElementById('maxRetries')).toBeInTheDocument();
+    });
+
+    it('timeoutMs and maxRetries are included in submit payload', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Anthropic',
+        slug: 'anthropic',
+        apiKeyPresent: true,
+        baseUrl: null,
+        apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+      });
+
+      const user = userEvent.setup();
+      render(
+        <ProviderForm mode="edit" provider={makeProvider({ timeoutMs: 30000, maxRetries: 3 })} />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/providers/prov-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              timeoutMs: 30000,
+              maxRetries: 3,
+            }),
+          })
+        );
+      });
     });
   });
 });

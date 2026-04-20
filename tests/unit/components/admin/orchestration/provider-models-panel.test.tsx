@@ -6,6 +6,7 @@
  * - "Refresh models" button calls apiClient.get again
  * - Loading skeleton during fetch; error banner on rejection
  * - isLocal=true hides "Input $/1M" and "Output $/1M" columns
+ * - Per-model test button shows latency on success, "Failed" on error
  *
  * @see components/admin/orchestration/provider-models-panel.tsx
  */
@@ -256,6 +257,73 @@ describe('ProviderModelsPanel', () => {
       );
 
       expect(screen.queryByRole('button', { name: /refresh models/i })).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Per-model test button ─────────────────────────────────────────────────
+
+  describe('per-model test button', () => {
+    it('renders a Test header column', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test')).toBeInTheDocument();
+      });
+    });
+
+    it('clicking test button posts to test-model endpoint and shows latency', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        latencyMs: 320,
+        model: 'claude-opus-4-6',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+      });
+
+      // Find the play button (test) for the first model
+      const testButtons = screen.getAllByTitle(/test/i);
+      await user.click(testButtons[0]);
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/providers/prov-1/test-model'),
+          expect.objectContaining({ body: { model: 'claude-opus-4-6' } })
+        );
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('320 ms')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "Failed" text when test-model request fails', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'));
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+      });
+
+      const testButtons = screen.getAllByTitle(/test/i);
+      await user.click(testButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed')).toBeInTheDocument();
+      });
     });
   });
 });

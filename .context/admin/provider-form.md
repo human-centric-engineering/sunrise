@@ -4,20 +4,21 @@ Shared create/edit form for `AiProviderConfig`. Raw `react-hook-form` + `zodReso
 
 **File:** `components/admin/orchestration/provider-form.tsx`
 
-The form's interesting feature is the **flavor selector** — the backend only knows two `providerType` values (`anthropic`, `openai-compatible`), but the UI presents four choices so admins don't have to think about provider-compatibility plumbing.
+The form's interesting feature is the **flavor selector** — the backend knows three `providerType` values (`anthropic`, `openai-compatible`, `voyage`), but the UI presents five choices so admins don't have to think about provider-compatibility plumbing.
 
 ## Flavor selector
 
-A `role="radiogroup"` of four bordered cards at the top of the form. The selected flavor drives the rest of the form — which fields are visible, what their defaults are, and how the submit payload is composed.
+A `role="radiogroup"` of five bordered cards at the top of the form. The selected flavor drives the rest of the form — which fields are visible, what their defaults are, and how the submit payload is composed.
 
-| Flavor              | Shown fields                              | `providerType`      | `baseUrl` default           | `isLocal` | `apiKeyEnvVar` default |
-| ------------------- | ----------------------------------------- | ------------------- | --------------------------- | --------- | ---------------------- |
-| `anthropic`         | Name, Slug, apiKeyEnvVar, Active          | `anthropic`         | — (not asked)               | `false`   | `ANTHROPIC_API_KEY`    |
-| `openai`            | Name, Slug, apiKeyEnvVar, Active          | `openai-compatible` | `https://api.openai.com/v1` | `false`   | `OPENAI_API_KEY`       |
-| `ollama`            | Name, Slug, baseUrl, Active               | `openai-compatible` | `http://localhost:11434/v1` | `true`    | — (not asked)          |
-| `openai-compatible` | Name, Slug, baseUrl, apiKeyEnvVar, Active | `openai-compatible` | — (required input)          | `false`   | — (optional input)     |
+| Flavor              | Shown fields                              | `providerType`      | `baseUrl` default             | `isLocal` | `apiKeyEnvVar` default |
+| ------------------- | ----------------------------------------- | ------------------- | ----------------------------- | --------- | ---------------------- |
+| `anthropic`         | Name, Slug, apiKeyEnvVar, Active          | `anthropic`         | — (not asked)                 | `false`   | `ANTHROPIC_API_KEY`    |
+| `openai`            | Name, Slug, apiKeyEnvVar, Active          | `openai-compatible` | `https://api.openai.com/v1`   | `false`   | `OPENAI_API_KEY`       |
+| `voyage`            | Name, Slug, apiKeyEnvVar, Active          | `voyage`            | `https://api.voyageai.com/v1` | `false`   | `VOYAGE_API_KEY`       |
+| `ollama`            | Name, Slug, baseUrl, Active               | `openai-compatible` | `http://localhost:11434/v1`   | `true`    | — (not asked)          |
+| `openai-compatible` | Name, Slug, baseUrl, apiKeyEnvVar, Active | `openai-compatible` | — (required input)            | `false`   | — (optional input)     |
 
-`providerType` and `isLocal` are never tracked in form state — they're derived from `flavor` on submit and injected into the POST/PATCH payload. The client-side Zod schema only tracks `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?, isActive }`.
+`providerType` and `isLocal` are never tracked in form state — they're derived from `flavor` on submit and injected into the POST/PATCH payload. The client-side Zod schema only tracks `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?, isActive, timeoutMs?, maxRetries? }`.
 
 ### Reverse mapping on edit
 
@@ -26,6 +27,7 @@ When rendering an existing provider the form reverse-maps the row back to a flav
 ```ts
 function flavorFromProvider(p): Flavor {
   if (p.providerType === 'anthropic') return 'anthropic';
+  if (p.providerType === 'voyage') return 'voyage';
   if (p.isLocal) return 'ollama';
   if (p.baseUrl?.includes('api.openai.com')) return 'openai';
   return 'openai-compatible';
@@ -59,6 +61,17 @@ A green ✓ "set" or red ✗ "missing" indicator renders next to the input based
 ### Active
 
 Shadcn `<Switch>`. Inactive providers stay in the list but are skipped when resolving agents.
+
+## Advanced settings
+
+A collapsible section below the Active toggle exposing two optional fields:
+
+| Field        | Type   | Range         | Default | Help copy                                                                            |
+| ------------ | ------ | ------------- | ------- | ------------------------------------------------------------------------------------ |
+| `timeoutMs`  | number | 1 000–300 000 | —       | "Maximum time in milliseconds to wait for a response from this provider."            |
+| `maxRetries` | number | 0–10          | —       | "Number of automatic retries on transient failures (network errors, 5xx responses)." |
+
+Both fields are optional — when empty the backend falls back to its built-in defaults. The collapsible opens automatically if either field has a saved value.
 
 ## Test connection
 

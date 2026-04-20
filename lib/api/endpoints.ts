@@ -93,6 +93,7 @@ export const API = {
       providerTestModel: (id: string): string =>
         `/api/v1/admin/orchestration/providers/${id}/test-model`,
       providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
+      providerHealth: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/health`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
       workflowById: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}`,
