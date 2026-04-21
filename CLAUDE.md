@@ -276,6 +276,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Orchestration Engine    | `.context/orchestration/engine.md`                   | Runtime executor, registry, events, strategies           |
 | External Calls          | `.context/orchestration/external-calls.md`           | HTTP executor, outbound rate limits, auth, response caps |
 | Resilience & Errors     | `.context/orchestration/resilience.md`               | Circuit breaker, fallback, budget UX, input guard        |
+| MCP Server              | `.context/orchestration/mcp.md`                      | MCP protocol, tools, resources, keys, audit              |
 | Orchestration Admin API | `.context/orchestration/admin-api.md`                | Agents, capabilities, chat, knowledge, executions        |
 | Orchestration Endpoints | `.context/api/orchestration-endpoints.md`            | Consumer HTTP reference for all 65 routes                |
 | SSE Bridge              | `.context/api/sse.md`                                | `sseResponse` helper, framing, sanitization              |
