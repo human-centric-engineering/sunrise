@@ -141,9 +141,22 @@ A fresh install with `ANTHROPIC_API_KEY` exported lights up Anthropic immediatel
 
 In development, the clear block deletes `AiProviderConfig` rows before deleting users to avoid a `createdBy` foreign-key violation.
 
+## Provider Models (Selection Matrix)
+
+`AiProviderConfig` tracks **operational config** (API keys, base URLs, timeouts). For **per-model intelligence** — tier classification, reasoning depth, latency characteristics, cost efficiency, embedding capabilities, and recommended agent roles — see the separate **Provider Models** system.
+
+Provider models are stored in the `AiProviderModel` table and managed at `/admin/orchestration/provider-models`. They are linked to configs via a soft match on `providerSlug` → `AiProviderConfig.slug` — a model entry can exist without a config (landscape entry) and vice versa.
+
+The flat table view shows all models with filters for provider, tier, and capability (Chat / Embedding / All). Each row shows capability badges and a configured-status dot (green = matching `AiProviderConfig` exists and is active). A built-in decision heuristic recommends models for a given task intent (`thinking`, `doing`, `fast_looping`, `high_reliability`, `private`, `embedding`).
+
+The embedding models in this table also power the "Compare Embedding Providers" modal on the Knowledge Base page, providing a single source of truth for embedding model data.
+
+See [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) for full details.
+
 ## Related
 
 - [Provider form](./provider-form.md) — 5-flavor selector, reverse-mapping, field help
+- [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — tier classification, decision heuristic, model CRUD
 - [LLM providers (runtime)](../orchestration/llm-providers.md) — provider abstraction, model registry, cost tracking
 - [Admin API reference](../orchestration/admin-api.md)
 - [Agent form](./agent-form.md) — the Model tab consumes the same `<ProviderTestButton>`

@@ -42,6 +42,7 @@ export type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  AiProviderModel,
   McpServerConfig,
   McpExposedTool,
   McpExposedResource,

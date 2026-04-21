@@ -43,6 +43,9 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/providers/:id/health`             | GET, POST          | Read / reset circuit breaker state                      | 5.1     |
 | `/providers/:id/models`             | GET                | Provider-reported models                                | 3.2     |
 | `/models`                           | GET                | Aggregated model registry                               | 3.2     |
+| `/provider-models`                  | GET, POST          | List / create provider model entries (selection matrix) | 5.2     |
+| `/provider-models/:id`              | GET, PATCH, DELETE | Read / update / soft-delete provider model              | 5.2     |
+| `/provider-models/recommend`        | GET                | Scored model recommendations by task intent             | 5.2     |
 | `/workflows`                        | GET, POST          | List / create workflows                                 | 3.2     |
 | `/workflows/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
 | `/workflows/:id/validate`           | POST               | DAG validation                                          | 3.2     |
@@ -227,6 +230,26 @@ Asks the provider directly. Same error-sanitization guarantee as `/test`.
 ### `GET /models`
 
 Aggregated registry across all configured providers. Query: `?refresh=true` to bypass the in-process cache.
+
+---
+
+## Provider Models (Selection Matrix)
+
+### `GET /provider-models`
+
+Paginated list of `AiProviderModel` entries enriched with `configured: boolean` and `configuredActive: boolean` (from matching `AiProviderConfig` by `providerSlug`). Filters: `capability` (`chat` | `embedding`), `providerSlug`, `tierRole`, `isActive`, `q` (text search across name, slug, providerSlug, modelId, description).
+
+### `POST /provider-models`
+
+Create a model entry. Body validated by `createProviderModelSchema`. Sets `isDefault: false`. Rate-limited by `adminLimiter`. Returns 409 on slug conflict.
+
+### `GET / PATCH / DELETE /provider-models/:id`
+
+Standard CRUD. `PATCH` sets `isDefault: false` on seed-managed rows (opt-out from future seed updates). `DELETE` is a soft delete (`isActive = false`). Both are rate-limited.
+
+### `GET /provider-models/recommend?intent=thinking`
+
+Scored model recommendations for a task intent. Query params: `intent` (required — `thinking`, `doing`, `fast_looping`, `high_reliability`, `private`, `embedding`), `limit` (optional, default 5, max 20). Response includes `recommendations[]` sorted by score and a `heuristic` object with human-readable rules.
 
 ---
 

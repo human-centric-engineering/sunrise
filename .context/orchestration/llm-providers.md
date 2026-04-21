@@ -268,9 +268,30 @@ Run just this module:
 npx vitest run tests/unit/lib/orchestration/llm
 ```
 
+## Provider Models & Decision Heuristic
+
+Beyond runtime provider config, the platform maintains a **Provider Selection Matrix** — a DB-managed registry of individual model entries (`AiProviderModel`) with tier classification, capability ratings, and chat/embedding distinction.
+
+The decision heuristic in `lib/orchestration/llm/provider-selector.ts` scores models against a task intent and returns ranked recommendations:
+
+```typescript
+import { recommendModels } from '@/lib/orchestration/llm';
+
+const recs = await recommendModels('thinking', { limit: 3 });
+// → [{ slug: 'anthropic-claude-opus-4', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
+
+// Embedding-specific recommendations
+const embedRecs = await recommendModels('embedding', { limit: 3 });
+```
+
+Models are cached with a 60-second TTL (same pattern as `settings-resolver.ts`). Cache is invalidated by the CRUD API routes.
+
+See [Provider Selection Matrix](./provider-selection-matrix.md) for the full 6-tier classification, scoring algorithm, and API reference.
+
 ## Related Documentation
 
 - [Orchestration Overview](./overview.md) — domain entry point
+- [Provider Selection Matrix](./provider-selection-matrix.md) — tier classification, decision heuristic, model CRUD
 - `.claude/docs/agent-orchestration.md` — architectural brief
 - `types/orchestration.ts` — shared types (`CostSummary`, `CostOperation`, `ChatEvent`, ...)
-- `prisma/schema.prisma` — `AiProviderConfig`, `AiAgent`, `AiCostLog`
+- `prisma/schema.prisma` — `AiProviderConfig`, `AiAgent`, `AiCostLog`, `AiProviderModel`

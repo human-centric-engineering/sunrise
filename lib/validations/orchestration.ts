@@ -1059,6 +1059,156 @@ export const listProvidersQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
 });
 
+// ============================================================================
+// Provider Models (Selection Matrix)
+// ============================================================================
+
+const tierRoleSchema = z.enum([
+  'thinking',
+  'worker',
+  'infrastructure',
+  'control_plane',
+  'local_sovereign',
+  'embedding',
+]);
+
+const ratingLevelSchema = z.enum(['very_high', 'high', 'medium', 'none']);
+const contextLengthLevelSchema = z.enum(['very_high', 'high', 'medium', 'n_a']);
+const latencyLevelSchema = z.enum(['very_fast', 'fast', 'medium']);
+const toolUseLevelSchema = z.enum(['strong', 'moderate', 'none']);
+const capabilitySchema = z.enum(['chat', 'embedding']);
+const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
+
+/** POST body for creating a provider model. */
+export const createProviderModelSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
+
+  slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')),
+
+  providerSlug: z
+    .string()
+    .min(1, 'Provider slug is required')
+    .max(50, 'Provider slug must be less than 50 characters')
+    .trim(),
+
+  modelId: z
+    .string()
+    .min(1, 'Model ID is required')
+    .max(100, 'Model ID must be less than 100 characters')
+    .trim(),
+
+  description: z
+    .string()
+    .min(1, 'Description is required')
+    .max(2000, 'Description must be less than 2000 characters')
+    .trim(),
+
+  capabilities: z.array(capabilitySchema).min(1).default(['chat']),
+  tierRole: tierRoleSchema,
+  reasoningDepth: ratingLevelSchema,
+  latency: latencyLevelSchema,
+  costEfficiency: ratingLevelSchema,
+  contextLength: contextLengthLevelSchema,
+  toolUse: toolUseLevelSchema,
+  bestRole: z
+    .string()
+    .min(1, 'Best role is required')
+    .max(200, 'Best role must be less than 200 characters')
+    .trim(),
+
+  // Embedding-specific (optional)
+  dimensions: z.number().int().positive().optional(),
+  schemaCompatible: z.boolean().optional(),
+  costPerMillionTokens: z.number().nonnegative().optional(),
+  hasFreeTier: z.boolean().optional(),
+  local: z.boolean().default(false),
+  quality: embeddingQualitySchema.optional(),
+  strengths: z.string().max(500).trim().optional(),
+  setup: z.string().max(500).trim().optional(),
+
+  isActive: z.boolean().default(true),
+
+  metadata: metadataSchema,
+});
+
+/** PATCH body for updating a provider model. All fields optional. */
+export const updateProviderModelSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim()
+    .optional(),
+
+  slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')).optional(),
+
+  providerSlug: z
+    .string()
+    .min(1, 'Provider slug is required')
+    .max(50, 'Provider slug must be less than 50 characters')
+    .trim()
+    .optional(),
+
+  modelId: z
+    .string()
+    .min(1, 'Model ID is required')
+    .max(100, 'Model ID must be less than 100 characters')
+    .trim()
+    .optional(),
+
+  description: z
+    .string()
+    .min(1, 'Description is required')
+    .max(2000, 'Description must be less than 2000 characters')
+    .trim()
+    .optional(),
+
+  capabilities: z.array(capabilitySchema).min(1).optional(),
+  tierRole: tierRoleSchema.optional(),
+  reasoningDepth: ratingLevelSchema.optional(),
+  latency: latencyLevelSchema.optional(),
+  costEfficiency: ratingLevelSchema.optional(),
+  contextLength: contextLengthLevelSchema.optional(),
+  toolUse: toolUseLevelSchema.optional(),
+  bestRole: z
+    .string()
+    .min(1, 'Best role is required')
+    .max(200, 'Best role must be less than 200 characters')
+    .trim()
+    .optional(),
+
+  // Embedding-specific (optional)
+  dimensions: z.number().int().positive().nullable().optional(),
+  schemaCompatible: z.boolean().nullable().optional(),
+  costPerMillionTokens: z.number().nonnegative().nullable().optional(),
+  hasFreeTier: z.boolean().nullable().optional(),
+  local: z.boolean().optional(),
+  quality: embeddingQualitySchema.nullable().optional(),
+  strengths: z.string().max(500).trim().nullable().optional(),
+  setup: z.string().max(500).trim().nullable().optional(),
+
+  isActive: z.boolean().optional(),
+
+  metadata: metadataSchema,
+});
+
+/** List provider models query — GET /api/v1/admin/orchestration/provider-models */
+export const listProviderModelsQuerySchema = paginationQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+  tierRole: tierRoleSchema.optional(),
+  capability: capabilitySchema.optional(),
+  providerSlug: z.string().trim().max(50).optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+export type CreateProviderModelInput = z.infer<typeof createProviderModelSchema>;
+export type UpdateProviderModelInput = z.infer<typeof updateProviderModelSchema>;
+export type ListProviderModelsQuery = z.infer<typeof listProviderModelsQuerySchema>;
+
 /** List workflows query schema — GET /api/v1/admin/orchestration/workflows */
 export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
   isActive: z.coerce.boolean().optional(),

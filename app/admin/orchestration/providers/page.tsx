@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { ProvidersList, type ProviderRow } from '@/components/admin/orchestration/providers-list';
+import type { ProviderRow } from '@/components/admin/orchestration/providers-list';
+import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
+import { ProvidersTabs } from '@/components/admin/orchestration/providers-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -9,17 +11,9 @@ import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
   title: 'Providers · AI Orchestration',
-  description: 'LLM provider configurations — status, keys, and model catalogues.',
+  description: 'LLM provider configurations, model matrix, and selection heuristic.',
 };
 
-/**
- * Admin — Providers list page (Phase 4 Session 4.3).
- *
- * Thin async server shell. Fetches the provider list (every row
- * hydrated with `apiKeyPresent: boolean` on the backend) and hands
- * it to `<ProvidersList>`. Fetch failures never throw — the list
- * renders empty so the page remains usable.
- */
 async function getProviders(): Promise<ProviderRow[]> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`);
@@ -27,13 +21,25 @@ async function getProviders(): Promise<ProviderRow[]> {
     const body = await parseApiResponse<ProviderRow[]>(res);
     return body.success ? body.data : [];
   } catch (err) {
-    logger.error('providers list page: initial fetch failed', err);
+    logger.error('providers page: provider fetch failed', err);
+    return [];
+  }
+}
+
+async function getModels(): Promise<ModelRow[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?page=1&limit=100`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<ModelRow[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('providers page: model fetch failed', err);
     return [];
   }
 }
 
 export default async function ProvidersListPage() {
-  const providers = await getProviders();
+  const [providers, models] = await Promise.all([getProviders(), getModels()]);
 
   return (
     <div className="space-y-6">
@@ -53,27 +59,24 @@ export default async function ProvidersListPage() {
               any OpenAI-compatible API. It stores the base URL and model catalogue. API keys are
               referenced by environment variable name, never displayed in the UI.
             </p>
-            <p className="text-foreground mt-2 font-medium">How it works</p>
-            <p>
-              When an agent sends a prompt, the runtime looks up its provider, reads the API key
-              from the server environment, and makes the LLM call. You can run multiple providers
-              and assign different ones to different agents — e.g. a fast model for triage, a
-              powerful model for analysis.
-            </p>
-            <p className="text-foreground mt-2 font-medium">This page</p>
+            <p className="text-foreground mt-2 font-medium">Configuration tab</p>
             <p>
               See configured providers, check API-key status, browse available models, and add new
               backends.
             </p>
+            <p className="text-foreground mt-2 font-medium">Model Matrix tab</p>
+            <p>
+              Per-model analysis of every LLM and embedding model in the landscape — tier
+              classification, capabilities, and selection heuristic.
+            </p>
           </FieldHelp>
         </h1>
         <p className="text-muted-foreground text-sm">
-          LLM backends your agents can call. API keys live in environment variables on the server —
-          this UI only references them by name.
+          LLM backend configuration and per-model analysis matrix.
         </p>
       </header>
 
-      <ProvidersList initialProviders={providers} />
+      <ProvidersTabs initialProviders={providers} initialModels={models} />
     </div>
   );
 }

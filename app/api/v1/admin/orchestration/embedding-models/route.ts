@@ -3,8 +3,9 @@
  *
  * GET /api/v1/admin/orchestration/embedding-models
  *
- * Returns a curated list of embedding models from the static registry,
+ * Returns embedding models from the provider models DB table,
  * optionally filtered by schema compatibility, free tier, or local.
+ * Falls back to the static registry if the DB query fails.
  *
  * Authentication: Admin role required.
  */
@@ -15,7 +16,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateQueryParams } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { filterEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
+import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 
 const booleanQueryParam = z
   .enum(['true', 'false'])
@@ -31,7 +32,7 @@ const embeddingModelsQuerySchema = z.object({
     .optional(),
 });
 
-export const GET = withAdminAuth((request) => {
+export const GET = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -42,7 +43,17 @@ export const GET = withAdminAuth((request) => {
     embeddingModelsQuerySchema
   );
 
-  const models = filterEmbeddingModels({ schemaCompatibleOnly, hasFreeTier, local });
+  let models = await getEmbeddingModels();
+
+  if (schemaCompatibleOnly) {
+    models = models.filter((m) => m.schemaCompatible);
+  }
+  if (hasFreeTier) {
+    models = models.filter((m) => m.hasFreeTier);
+  }
+  if (local !== undefined) {
+    models = models.filter((m) => m.local === local);
+  }
 
   return successResponse(models);
 });

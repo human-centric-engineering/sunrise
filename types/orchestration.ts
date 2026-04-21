@@ -20,6 +20,7 @@ import type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  AiProviderModel,
 } from '@/types/prisma';
 
 // ============================================================================
@@ -627,6 +628,81 @@ export interface WorkflowTemplateMetadata {
   patterns: readonly { number: number; name: string }[];
 }
 
+// ============================================================================
+// Provider Selection Matrix
+// ============================================================================
+
+/** Provider tier roles for the selection matrix decision heuristic. */
+export const TIER_ROLES = [
+  'thinking',
+  'worker',
+  'infrastructure',
+  'control_plane',
+  'local_sovereign',
+  'embedding',
+] as const;
+export type TierRole = (typeof TIER_ROLES)[number];
+
+/** Rating levels used for reasoning depth, cost efficiency, and context length. */
+export const RATING_LEVELS = ['very_high', 'high', 'medium', 'none'] as const;
+export type RatingLevel = (typeof RATING_LEVELS)[number];
+
+/** Context length levels. */
+export const CONTEXT_LENGTH_LEVELS = ['very_high', 'high', 'medium', 'n_a'] as const;
+export type ContextLengthLevel = (typeof CONTEXT_LENGTH_LEVELS)[number];
+
+/** Latency rating levels. */
+export const LATENCY_LEVELS = ['very_fast', 'fast', 'medium'] as const;
+export type LatencyLevel = (typeof LATENCY_LEVELS)[number];
+
+/** Tool-use capability levels. */
+export const TOOL_USE_LEVELS = ['strong', 'moderate', 'none'] as const;
+export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
+
+/** Model capability types. */
+export const MODEL_CAPABILITIES = ['chat', 'embedding'] as const;
+export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+
+/** Embedding quality levels. */
+export const EMBEDDING_QUALITY_LEVELS = ['high', 'medium', 'budget'] as const;
+export type EmbeddingQuality = (typeof EMBEDDING_QUALITY_LEVELS)[number];
+
+/** Task intents for the decision heuristic — maps to tier roles. */
+export const TASK_INTENTS = [
+  'thinking',
+  'doing',
+  'fast_looping',
+  'high_reliability',
+  'private',
+  'embedding',
+] as const;
+export type TaskIntent = (typeof TASK_INTENTS)[number];
+
+/** Human-readable tier metadata for display. */
+export const TIER_ROLE_META: Record<TierRole, { label: string; description: string }> = {
+  thinking: {
+    label: 'Thinking',
+    description: 'Expensive, sparse use — planning, decomposition, critical reasoning',
+  },
+  worker: {
+    label: 'Worker',
+    description: 'Cheap, parallel — tool execution, summarisation, transformations',
+  },
+  infrastructure: { label: 'Infrastructure', description: 'Scaling, latency-sensitive loops' },
+  control_plane: {
+    label: 'Control Plane',
+    description: 'Fallback logic, A/B testing, cost routing',
+  },
+  local_sovereign: {
+    label: 'Local / Sovereign',
+    description: 'Privacy-sensitive workloads, offline capability',
+  },
+  embedding: {
+    label: 'Embedding',
+    description: 'Vector embedding models for semantic search and retrieval',
+  },
+};
+
 // Re-export Prisma model types for convenience
 export type {
   AiAgent,
@@ -641,4 +717,5 @@ export type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  AiProviderModel,
 };

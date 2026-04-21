@@ -1,14 +1,19 @@
 /**
  * Embedding Model Registry
  *
- * Static, curated catalogue of embedding models from major providers.
+ * Provides embedding model data from the `AiProviderModel` database table
+ * (capability = 'embedding'), falling back to a static snapshot if the
+ * DB query fails.
+ *
  * Used by the compare-providers modal, advisory copy, and the
  * `/api/v1/admin/orchestration/embedding-models` endpoint.
  *
- * No runtime discovery — this is a hand-maintained snapshot. Models
- * that can output 1 536-dimension vectors (matching the pgvector
+ * Models that can output 1 536-dimension vectors (matching the pgvector
  * `vector(1536)` column) are marked `schemaCompatible: true`.
  */
+
+import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 
 /** A single embedding model entry in the registry. */
 export interface EmbeddingModelInfo {
@@ -45,8 +50,9 @@ export interface EmbeddingModelInfo {
 }
 
 /**
- * Curated list of embedding models.
+ * @deprecated Static fallback — prefer getEmbeddingModels() which reads from DB.
  *
+ * Curated list of embedding models, used as offline fallback.
  * Sorted by recommended-first: schema-compatible, then quality, then cost.
  */
 export const EMBEDDING_MODELS: readonly EmbeddingModelInfo[] = [
@@ -191,7 +197,81 @@ export const EMBEDDING_MODELS: readonly EmbeddingModelInfo[] = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Filter helpers
+// DB-driven embedding models
+// ---------------------------------------------------------------------------
+
+/** Provider slug → display name mapping. */
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  voyage: 'Voyage AI',
+  google: 'Google',
+  cohere: 'Cohere',
+  mistral: 'Mistral',
+  ollama: 'Ollama',
+  meta: 'Meta',
+};
+
+/**
+ * Fetch embedding models from the DB, mapped to the EmbeddingModelInfo
+ * interface for backward compatibility with the compare modal.
+ */
+async function getEmbeddingModelsFromDb(): Promise<EmbeddingModelInfo[]> {
+  const rows = await prisma.aiProviderModel.findMany({
+    where: {
+      capabilities: { has: 'embedding' },
+      isActive: true,
+    },
+    orderBy: [{ providerSlug: 'asc' }, { name: 'asc' }],
+  });
+
+  return rows
+    .filter((r) => r.dimensions != null) // only models with embedding metadata
+    .map((r) => ({
+      id: `${r.providerSlug}/${r.modelId}`,
+      name: r.name,
+      provider: PROVIDER_DISPLAY_NAMES[r.providerSlug] ?? r.providerSlug,
+      model: r.modelId,
+      dimensions: r.dimensions!,
+      schemaCompatible: r.schemaCompatible ?? false,
+      costPerMillionTokens: r.costPerMillionTokens ?? 0,
+      hasFreeTier: r.hasFreeTier ?? false,
+      local: r.local,
+      quality: (r.quality as 'high' | 'medium' | 'budget') ?? 'medium',
+      strengths: r.strengths ?? r.description,
+      setup: r.setup ?? '',
+    }));
+}
+
+/**
+ * Get embedding models from DB, falling back to the static array on error.
+ * Sorted by: schema-compatible first, then quality, then cost.
+ */
+export async function getEmbeddingModels(): Promise<EmbeddingModelInfo[]> {
+  try {
+    const models = await getEmbeddingModelsFromDb();
+    if (models.length > 0) {
+      // Sort: schema-compatible first, then quality, then cost
+      const qualityOrder: Record<string, number> = { high: 3, medium: 2, budget: 1 };
+      models.sort((a, b) => {
+        if (a.schemaCompatible !== b.schemaCompatible) return a.schemaCompatible ? -1 : 1;
+        const qa = qualityOrder[a.quality] ?? 0;
+        const qb = qualityOrder[b.quality] ?? 0;
+        if (qa !== qb) return qb - qa;
+        return a.costPerMillionTokens - b.costPerMillionTokens;
+      });
+      return models;
+    }
+  } catch (err) {
+    logger.warn('Failed to load embedding models from DB, using static fallback', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return [...EMBEDDING_MODELS];
+}
+
+// ---------------------------------------------------------------------------
+// Legacy filter helpers (deprecated — use DB queries or getEmbeddingModels)
 // ---------------------------------------------------------------------------
 
 export interface EmbeddingModelFilters {
@@ -200,7 +280,7 @@ export interface EmbeddingModelFilters {
   local?: boolean;
 }
 
-/** Return models matching the given filters. */
+/** @deprecated Use getEmbeddingModels() with manual filtering instead. */
 export function filterEmbeddingModels(filters: EmbeddingModelFilters = {}): EmbeddingModelInfo[] {
   let result: EmbeddingModelInfo[] = [...EMBEDDING_MODELS];
 

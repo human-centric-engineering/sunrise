@@ -17,3 +17,12 @@ export { OpenAiCompatibleProvider } from './openai-compatible';
 export * as modelRegistry from './model-registry';
 export * as providerManager from './provider-manager';
 export * as costTracker from './cost-tracker';
+export {
+  recommendModels,
+  recommendProviders,
+  invalidateModelCache,
+  invalidateProfileCache,
+  type ModelRecommendation,
+  type ProviderRecommendation,
+  type RecommendOptions,
+} from './provider-selector';

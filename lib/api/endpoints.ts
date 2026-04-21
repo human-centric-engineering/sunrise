@@ -87,6 +87,10 @@ export const API = {
         `/api/v1/admin/orchestration/capabilities/${id}/agents`,
       capabilityStats: (id: string): string =>
         `/api/v1/admin/orchestration/capabilities/${id}/stats`,
+      PROVIDER_MODELS: '/api/v1/admin/orchestration/provider-models',
+      providerModelById: (id: string): string =>
+        `/api/v1/admin/orchestration/provider-models/${id}`,
+      PROVIDER_MODEL_RECOMMEND: '/api/v1/admin/orchestration/provider-models/recommend',
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
