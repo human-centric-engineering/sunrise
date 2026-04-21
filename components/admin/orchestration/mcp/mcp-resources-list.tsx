@@ -174,7 +174,9 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       {/* Create Resource Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogTrigger asChild>
-          <Button size="sm">Create Resource</Button>
+          <Button size="sm" data-testid="create-resource-trigger">
+            Create Resource
+          </Button>
         </DialogTrigger>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -205,7 +207,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                 </SelectContent>
               </Select>
               {form.resourceType && (
-                <p className="text-muted-foreground mt-1 text-xs">
+                <p className="text-muted-foreground mt-1 text-xs" data-testid="resource-type-hint">
                   {RESOURCE_TYPES.find((t) => t.value === form.resourceType)?.description}
                 </p>
               )}
