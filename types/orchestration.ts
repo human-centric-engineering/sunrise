@@ -540,6 +540,7 @@ export interface GraphNode {
 export interface GraphLink {
   source: string;
   target: string;
+  label?: string;
 }
 
 /** Knowledge graph category */

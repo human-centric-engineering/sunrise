@@ -347,6 +347,21 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
               compose an answer grounded in your documents. The LLM itself does not store the
               knowledge — it reads the relevant chunks on every request.
             </p>
+            <p className="text-foreground mt-2 font-medium">Can I undo this?</p>
+            <p>
+              Yes. Deleting a document permanently removes the document, all its chunks, and all
+              associated embeddings from the database. The document will no longer appear in search
+              results and agents will not be able to reference it. Nothing is retained.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How do I update a document?</p>
+            <p>
+              There is no versioning — each upload is treated as a standalone document. To update a
+              document, delete the old version first, then upload the revised file. The old chunks
+              and embeddings are removed on delete, and the new upload will be chunked and embedded
+              from scratch. If you upload a file with identical content to one that already exists,
+              the system will recognise the duplicate and return the existing document instead of
+              creating a new one.
+            </p>
             <p className="text-foreground mt-2 font-medium">Example</p>
             <p>
               You upload a 50-page design-patterns guide. It gets split into ~80 chunks, each chunk
@@ -677,7 +692,9 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                               )}
                               {deleteConfirmId === doc.id ? (
                                 <span className="inline-flex items-center gap-1">
-                                  <span className="text-destructive text-xs">Delete?</span>
+                                  <span className="text-destructive text-xs">
+                                    Delete? Chunks &amp; embeddings will also be removed.
+                                  </span>
                                   <Button
                                     variant="destructive"
                                     size="sm"
@@ -695,7 +712,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                                   </Button>
                                 </span>
                               ) : (
-                                <Tip label="Delete document and all its chunks">
+                                <Tip label="Permanently delete this document, all its chunks, and their embeddings">
                                   <Button
                                     variant="ghost"
                                     size="sm"

@@ -102,7 +102,7 @@ export async function uploadDocument(
 
     // Generate embeddings for all chunks
     const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts);
 
     // Store chunks with embeddings using raw SQL for pgvector
     for (let i = 0; i < chunks.length; i++) {
@@ -113,10 +113,12 @@ export async function uploadDocument(
         `INSERT INTO ai_knowledge_chunk (
           id, "chunkKey", "documentId", content, embedding,
           "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
         ) VALUES (
           gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
         )`,
         chunk.id,
         document.id,
@@ -129,7 +131,10 @@ export async function uploadDocument(
         chunk.section,
         chunk.keywords,
         chunk.estimatedTokens,
-        JSON.stringify(null)
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
       );
     }
 
@@ -346,7 +351,7 @@ export async function confirmPreview(
     }
 
     const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts);
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
@@ -356,10 +361,12 @@ export async function confirmPreview(
         `INSERT INTO ai_knowledge_chunk (
           id, "chunkKey", "documentId", content, embedding,
           "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
         ) VALUES (
           gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
         )`,
         chunk.id,
         documentId,
@@ -372,7 +379,10 @@ export async function confirmPreview(
         chunk.section,
         chunk.keywords,
         chunk.estimatedTokens,
-        JSON.stringify(null)
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
       );
     }
 
@@ -473,7 +483,7 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
 
     // Re-embed
     const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts);
 
     // Store new chunks
     for (let i = 0; i < chunks.length; i++) {
@@ -484,10 +494,12 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
         `INSERT INTO ai_knowledge_chunk (
           id, "chunkKey", "documentId", content, embedding,
           "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
         ) VALUES (
           gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
         )`,
         chunk.id,
         documentId,
@@ -500,7 +512,10 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
         chunk.section,
         chunk.keywords,
         chunk.estimatedTokens,
-        JSON.stringify(null)
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
       );
     }
 

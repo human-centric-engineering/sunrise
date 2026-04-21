@@ -468,9 +468,11 @@ describe('embedBatch() inputType parameter', () => {
     const results = await embedBatch(['first', 'second'], 10, 'document');
 
     // Assert
-    expect(results).toHaveLength(2);
-    expect(results[0]).toEqual(vec1);
-    expect(results[1]).toEqual(vec2);
+    expect(results.embeddings).toHaveLength(2);
+    expect(results.embeddings[0]).toEqual(vec1);
+    expect(results.embeddings[1]).toEqual(vec2);
+    expect(results.provenance.provider).toBe('voyage');
+    expect(results.provenance.model).toBe('voyage-3');
   });
 
   it('should not include Voyage params in batch calls for non-Voyage providers', async () => {

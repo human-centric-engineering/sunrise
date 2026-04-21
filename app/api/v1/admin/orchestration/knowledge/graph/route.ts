@@ -198,7 +198,11 @@ export const GET = withAdminAuth(async (request) => {
       },
     });
 
-    links.push({ source: 'kb', target: doc.id });
+    links.push({
+      source: 'kb',
+      target: doc.id,
+      label: chunkCount > 0 ? `contains (${chunkCount} chunks)` : 'contains',
+    });
   }
 
   // Chunk nodes (only if below threshold)
@@ -214,11 +218,15 @@ export const GET = withAdminAuth(async (request) => {
       section: string | null;
       estimatedTokens: number | null;
       content: string;
+      embeddingModel: string | null;
+      embeddingProvider: string | null;
+      embeddedAt: Date | null;
     }>;
 
     if (embeddedOnly) {
       chunks = await prisma.$queryRaw<typeof chunks>`
-        SELECT id, "chunkKey", "documentId", "chunkType", "patternName", section, "estimatedTokens", content
+        SELECT id, "chunkKey", "documentId", "chunkType", "patternName", section,
+               "estimatedTokens", content, "embeddingModel", "embeddingProvider", "embeddedAt"
          FROM ai_knowledge_chunk
          WHERE "documentId" = ANY(${filteredDocIds}::text[]) AND embedding IS NOT NULL
       `;
@@ -234,6 +242,9 @@ export const GET = withAdminAuth(async (request) => {
           section: true,
           estimatedTokens: true,
           content: true,
+          embeddingModel: true,
+          embeddingProvider: true,
+          embeddedAt: true,
         },
       });
     }
@@ -254,10 +265,21 @@ export const GET = withAdminAuth(async (request) => {
           section: chunk.section,
           estimatedTokens: tokens,
           contentPreview: chunk.content,
+          ...(chunk.embeddingModel ? { embeddingModel: chunk.embeddingModel } : {}),
+          ...(chunk.embeddingProvider ? { embeddingProvider: chunk.embeddingProvider } : {}),
+          ...(chunk.embeddedAt ? { embeddedAt: chunk.embeddedAt } : {}),
         },
       });
 
-      links.push({ source: chunk.documentId, target: chunk.id });
+      const edgeLabel =
+        chunk.chunkType === 'pattern_overview'
+          ? 'overview'
+          : chunk.chunkType === 'pattern_section'
+            ? `section${chunk.section ? `: ${chunk.section}` : ''}`
+            : chunk.chunkType === 'glossary'
+              ? 'glossary'
+              : chunk.chunkType.replace(/_/g, ' ');
+      links.push({ source: chunk.documentId, target: chunk.id, label: edgeLabel });
     }
   }
 

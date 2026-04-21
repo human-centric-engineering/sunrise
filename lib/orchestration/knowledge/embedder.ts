@@ -17,6 +17,13 @@ const DEFAULT_BATCH_SIZE = 100;
 /** Rate limit: pause between batches (ms) */
 const BATCH_DELAY_MS = 200;
 
+/** Provenance info returned alongside embedding vectors */
+export interface EmbeddingProvenance {
+  model: string;
+  provider: string;
+  embeddedAt: Date;
+}
+
 interface EmbeddingProvider {
   baseUrl: string;
   apiKey: string | null;
@@ -170,18 +177,24 @@ export async function embedText(text: string, inputType?: 'document' | 'query'):
   return results[0];
 }
 
+/** Result of a batch embedding operation */
+export interface EmbedBatchResult {
+  embeddings: number[][];
+  provenance: EmbeddingProvenance;
+}
+
 /**
  * Generate embeddings for multiple texts with batching and rate limiting.
  *
  * @param texts - Array of texts to embed
  * @param batchSize - Number of texts per API call (default 100)
- * @returns Array of embedding vectors in the same order as input
+ * @returns Embedding vectors and provenance metadata
  */
 export async function embedBatch(
   texts: string[],
   batchSize: number = DEFAULT_BATCH_SIZE,
   inputType?: 'document' | 'query'
-): Promise<number[][]> {
+): Promise<EmbedBatchResult> {
   const provider = await resolveProvider();
   const allEmbeddings: number[][] = [];
 
@@ -191,6 +204,8 @@ export async function embedBatch(
     model: provider.model,
     isLocal: provider.isLocal,
   });
+
+  const embeddedAt = new Date();
 
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
@@ -217,5 +232,12 @@ export async function embedBatch(
     totalEmbeddings: allEmbeddings.length,
   });
 
-  return allEmbeddings;
+  return {
+    embeddings: allEmbeddings,
+    provenance: {
+      model: provider.model,
+      provider: provider.providerType,
+      embeddedAt,
+    },
+  };
 }

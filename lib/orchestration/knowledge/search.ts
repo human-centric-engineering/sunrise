@@ -222,6 +222,9 @@ export async function searchKnowledge(
       section: row.section,
       keywords: row.keywords,
       estimatedTokens: row.estimatedTokens,
+      embeddingModel: null,
+      embeddingProvider: null,
+      embeddedAt: null,
       metadata: row.metadata,
     };
     return {

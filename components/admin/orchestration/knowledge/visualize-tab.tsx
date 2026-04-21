@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { API } from '@/lib/api/endpoints';
 import type { GraphData, GraphNode } from '@/types/orchestration';
@@ -79,8 +80,28 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
     const lowerFilter = filterText.toLowerCase();
     const hasFilter = lowerFilter.length > 0;
 
+    const nodeMatches = (node: GraphNode): boolean => {
+      if (!hasFilter) return true;
+      // Search across name and key metadata fields
+      const searchable = [
+        node.name,
+        ...(node.metadata
+          ? [
+              node.metadata.fileName,
+              node.metadata.patternName,
+              node.metadata.chunkType,
+              node.metadata.section,
+              node.metadata.category,
+              node.metadata.status,
+              node.metadata.contentPreview,
+            ]
+          : []),
+      ];
+      return searchable.some((v) => typeof v === 'string' && v.toLowerCase().includes(lowerFilter));
+    };
+
     const nodes = graphData.nodes.map((node) => {
-      const matches = !hasFilter || node.name.toLowerCase().includes(lowerFilter);
+      const matches = nodeMatches(node);
       return {
         id: node.id,
         name: node.name,
@@ -101,11 +122,38 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       };
     });
 
-    const links = graphData.links.map((link) => ({
-      source: link.source,
-      target: link.target,
-      lineStyle: { opacity: 0.3, width: 1 },
-    }));
+    // Build a lookup so edge tooltips can reference node data
+    const nodeById = new Map(graphData.nodes.map((n) => [n.id, n]));
+
+    const links = graphData.links.map((link) => {
+      const sourceNode = nodeById.get(link.source);
+      const targetNode = nodeById.get(link.target);
+      return {
+        source: link.source,
+        target: link.target,
+        lineStyle: { opacity: 0.3, width: 1 },
+        label: {
+          show: false,
+          formatter: link.label ?? '',
+          fontSize: 10,
+          color: '#94a3b8',
+        },
+        emphasis: {
+          label: { show: true, fontSize: 11, color: '#e2e8f0' },
+          lineStyle: { width: 2, opacity: 0.85 },
+        },
+        // Stash for the edge tooltip
+        edgeMeta: {
+          label: link.label,
+          sourceName: sourceNode?.name ?? link.source,
+          sourceType: sourceNode?.type ?? 'unknown',
+          sourceMeta: sourceNode?.metadata,
+          targetName: targetNode?.name ?? link.target,
+          targetType: targetNode?.type ?? 'unknown',
+          targetMeta: targetNode?.metadata,
+        },
+      };
+    });
 
     const categories = graphData.categories.map((cat, i) => ({
       name: cat.name,
@@ -115,7 +163,58 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
     return {
       tooltip: {
         trigger: 'item' as const,
-        formatter: (params: { data?: { value?: GraphNode; name?: string } }) => {
+        formatter: (params: {
+          dataType?: string;
+          data?: {
+            value?: GraphNode;
+            name?: string;
+            edgeMeta?: {
+              label?: string;
+              sourceName: string;
+              sourceType: string;
+              sourceMeta?: Record<string, unknown>;
+              targetName: string;
+              targetType: string;
+              targetMeta?: Record<string, unknown>;
+            };
+          };
+        }) => {
+          // --- Edge tooltip ---
+          if (params.dataType === 'edge') {
+            const em = params.data?.edgeMeta;
+            if (!em) return '';
+
+            const nodeLine = (
+              name: string,
+              type: string,
+              meta?: Record<string, unknown>
+            ): string => {
+              const m = meta ?? {};
+              const num = (k: string) => (typeof m[k] === 'number' ? m[k] : 0);
+              const str = (k: string) => (typeof m[k] === 'string' ? m[k] : '');
+              if (type === 'kb') return 'Knowledge Base';
+              if (type === 'document') {
+                const detail = `${num('chunkCount')} chunks`;
+                return `${name}<br/><span style="color:#888;font-size:11px">${detail}</span>`;
+              }
+              const label = str('patternName') || name;
+              const tokens = num('estimatedTokens');
+              const provider = str('embeddingProvider');
+              const detail =
+                str('chunkType').replace(/_/g, ' ') +
+                (tokens ? ` · ${tokens} tok` : '') +
+                (provider ? ` · ${provider}` : '');
+              return `${label}<br/><span style="color:#888;font-size:11px">${detail}</span>`;
+            };
+
+            return `<div style="max-width:260px;font-size:12px">
+              <div>${nodeLine(em.sourceName, em.sourceType, em.sourceMeta)}</div>
+              <div style="text-align:center;color:#facc15;font-size:11px;padding:2px 0">↓ ${em.label ?? ''}</div>
+              <div>${nodeLine(em.targetName, em.targetType, em.targetMeta)}</div>
+            </div>`;
+          }
+
+          // --- Node tooltip ---
           const node = params.data?.value;
           if (!node?.metadata) return params.data?.name ?? '';
 
@@ -148,11 +247,15 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
           }
 
           // Chunk
+          const embeddingInfo = str('embeddingProvider')
+            ? `${str('embeddingProvider')} · ${str('embeddingModel')}${meta.embeddedAt ? ` · ${new Date(meta.embeddedAt as string).toLocaleDateString()}` : ''}`
+            : 'not embedded';
           return `<div style="max-width:300px">
             <strong>${str('patternName') || node.name}</strong><br/>
             Type: ${str('chunkType')}<br/>
             ${meta.section ? `Section: ${str('section')}<br/>` : ''}
             Tokens: ${num('estimatedTokens')}<br/>
+            Embedding: ${embeddingInfo}<br/>
             <div style="margin-top:4px;font-size:11px;color:#888;max-height:80px;overflow:hidden">
               ${str('contentPreview').slice(0, 150)}...
             </div>
@@ -184,7 +287,19 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
           },
           emphasis: {
             focus: 'adjacency' as const,
-            lineStyle: { width: 3 },
+            itemStyle: {
+              borderWidth: 2,
+              borderColor: '#facc15',
+              shadowBlur: 6,
+              shadowColor: 'rgba(250, 204, 21, 0.3)',
+            },
+            lineStyle: { width: 2, opacity: 0.8, color: '#facc15' },
+            label: { show: true, fontSize: 12 },
+          },
+          blur: {
+            itemStyle: { opacity: 0.15 },
+            lineStyle: { opacity: 0.1 },
+            label: { opacity: 0.15 },
           },
           lineStyle: {
             color: 'source',
@@ -219,15 +334,43 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
 
   if (!graphData || graphData.stats.documentCount === 0) {
     const scopeLabel = scope === 'system' ? 'system' : scope === 'app' ? 'app-specific' : '';
+    // When the embedded view is empty but structure has data, show the toggle so users can switch back
+    const showToggle = view === 'embedded' && graphData !== null;
     return (
-      <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
-        <Network className="mx-auto mb-3 h-10 w-10 opacity-40" />
-        <p className="text-sm font-medium">No {scopeLabel} knowledge base data</p>
-        <p className="mt-1 text-xs">
-          {scope === 'app'
-            ? 'Upload app-specific documents to see them here.'
-            : 'Upload documents and generate embeddings to visualize the knowledge graph.'}
-        </p>
+      <div className="space-y-4">
+        {showToggle && (
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-xs font-medium">View</span>
+            <div className="bg-muted inline-flex items-center rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setView('structure')}
+                className="text-muted-foreground hover:text-foreground rounded-md px-3 py-1 text-xs font-medium transition-colors"
+              >
+                Structure
+              </button>
+              <button
+                type="button"
+                className="bg-background text-foreground rounded-md px-3 py-1 text-xs font-medium shadow-sm transition-colors"
+              >
+                Embedded
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
+          <Network className="mx-auto mb-3 h-10 w-10 opacity-40" />
+          <p className="text-sm font-medium">
+            {showToggle ? 'No embedded chunks yet' : `No ${scopeLabel} knowledge base data`}
+          </p>
+          <p className="mt-1 text-xs">
+            {showToggle
+              ? 'Generate embeddings to see chunks in this view, or switch to Structure.'
+              : scope === 'app'
+                ? 'Upload app-specific documents to see them here.'
+                : 'Upload documents and generate embeddings to visualize the knowledge graph.'}
+          </p>
+        </div>
       </div>
     );
   }
@@ -361,6 +504,75 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         </Card>
       </div>
 
+      {/* Knowledge graph explainer */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">
+          Knowledge Graph{' '}
+          <FieldHelp
+            title="Knowledge Graph"
+            ariaLabel="About the knowledge graph"
+            contentClassName="w-96 max-h-80 overflow-y-auto"
+          >
+            <p>
+              This is a <strong>knowledge graph</strong> — a visual representation of how your
+              knowledge base is structured. Each element in the graph is a <strong>node</strong>,
+              and the lines connecting them are <strong>edges</strong> that show relationships.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Nodes</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+              <li>
+                <strong>Knowledge Base</strong> (indigo) — the central root node representing your
+                entire knowledge base.
+              </li>
+              <li>
+                <strong>Documents</strong> (green/amber/red) — each uploaded file. Colour indicates
+                status: green for ready, amber for pending, red for failed.
+              </li>
+              <li>
+                <strong>Chunks</strong> (slate) — the individual text segments that a document was
+                split into. Each chunk has its own embedding vector for search.
+              </li>
+            </ul>
+            <p className="text-foreground mt-2 font-medium">Edges</p>
+            <p>
+              Edges represent the relationship between nodes. A{' '}
+              <strong>&quot;contains&quot;</strong> edge connects the knowledge base to each
+              document, showing how many chunks it holds (e.g. &quot;contains (12 chunks)&quot;).
+              Document-to-chunk edges describe the chunk&apos;s role — for example{' '}
+              <strong>&quot;overview&quot;</strong>,{' '}
+              <strong>&quot;section: Implementation&quot;</strong>, or{' '}
+              <strong>&quot;glossary&quot;</strong>. This means you can always trace any chunk — and
+              its embedding — back to the source document it came from.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Interaction</p>
+            <p>
+              <strong>Hover a node</strong> to highlight it and its connected edges and neighbours
+              in yellow — the rest of the graph fades so you can focus on the relationships. Edge
+              labels appear on the highlighted edges.
+            </p>
+            <p className="mt-1">
+              <strong>Hover an edge</strong> to see a summary of both connected nodes — the source
+              and target — so you can quickly understand the relationship without clicking.
+            </p>
+            <p className="mt-1">
+              <strong>Click</strong> a node to open a detail panel. You can also{' '}
+              <strong>drag</strong> nodes to rearrange the layout and <strong>scroll</strong> to
+              zoom.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Views</p>
+            <p>
+              <strong>Structure</strong> shows all documents and chunks regardless of embedding
+              status. <strong>Embedded</strong> filters to only chunks that have vector embeddings —
+              useful to see what is actually searchable by your agents.
+            </p>
+            <p className="mt-2 text-xs">
+              When the knowledge base exceeds 500 chunks, individual chunk nodes are hidden for
+              performance and the graph shows document-level nodes only.
+            </p>
+          </FieldHelp>
+        </span>
+      </div>
+
       {/* View toggle: Structure / Embedded */}
       <div className="flex items-center gap-3">
         <span className="text-muted-foreground text-xs font-medium">View</span>
@@ -421,11 +633,16 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
                         {key.replace(/([A-Z])/g, ' $1').trim()}
                       </span>
                       <span className="text-xs break-all">
-                        {typeof value === 'string'
-                          ? value
-                          : typeof value === 'number'
-                            ? value.toLocaleString()
-                            : JSON.stringify(value)}
+                        {typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)
+                          ? new Date(value).toLocaleString(undefined, {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            })
+                          : typeof value === 'string'
+                            ? value
+                            : typeof value === 'number'
+                              ? value.toLocaleString()
+                              : JSON.stringify(value)}
                       </span>
                     </div>
                   ))}

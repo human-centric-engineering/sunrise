@@ -517,9 +517,12 @@ model AiKnowledgeChunk {
   patternName     String?
   category        String?
   section         String?
-  keywords        String?                      @db.Text
-  estimatedTokens Int?
-  metadata        Json?
+  keywords          String?                      @db.Text
+  estimatedTokens   Int?
+  embeddingModel    String? // e.g. "voyage-3", "text-embedding-3-small"
+  embeddingProvider String? // e.g. "voyage", "openai-compatible", "ollama"
+  embeddedAt        DateTime? // when the embedding was generated
+  metadata          Json?
 
   // Relations
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
