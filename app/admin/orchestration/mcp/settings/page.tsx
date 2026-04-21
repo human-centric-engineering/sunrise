@@ -5,27 +5,20 @@ import { McpSettingsForm } from '@/components/admin/orchestration/mcp/mcp-settin
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
 export const metadata: Metadata = {
   title: 'MCP Settings · AI Orchestration',
   description: 'Configure MCP server rate limits, sessions, and retention.',
 };
 
-interface McpSettings {
-  isEnabled: boolean;
-  serverName: string;
-  serverVersion: string;
-  maxSessionsPerKey: number;
-  globalRateLimit: number;
-  auditRetentionDays: number;
-}
-
-async function getSettings(): Promise<McpSettings | null> {
+async function getSettings(): Promise<McpSettingsResponse | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
     if (!res.ok) return null;
-    const body = await parseApiResponse<McpSettings>(res);
-    return body.success ? body.data : null;
+    const body = await parseApiResponse<unknown>(res);
+    if (!body.success) return null;
+    return mcpSettingsResponseSchema.parse(body.data);
   } catch (err) {
     logger.error('MCP settings page: fetch failed', err);
     return null;

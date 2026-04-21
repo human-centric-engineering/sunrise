@@ -42,23 +42,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface ExposedToolRow {
-  id: string;
-  capabilityId: string;
-  isEnabled: boolean;
-  customName: string | null;
-  customDescription: string | null;
-  rateLimitPerKey: number | null;
-  requiresScope: string | null;
-  capability: {
-    id: string;
-    name: string;
-    slug: string;
-    description: string;
-    category: string;
-  };
-}
+import { exposedToolRowSchema, type ExposedToolRow } from '@/lib/validations/mcp';
 
 interface CapabilityRow {
   id: string;
@@ -111,9 +95,10 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     if (!selectedCapabilityId) return;
     setAdding(true);
     try {
-      const data = await apiClient.post<ExposedToolRow>(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
+      const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
         body: { capabilityId: selectedCapabilityId, isEnabled: false },
       });
+      const data = exposedToolRowSchema.parse(raw);
       setTools((prev) => [...prev, data]);
       setSelectedCapabilityId('');
     } catch {

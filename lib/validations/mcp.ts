@@ -279,6 +279,90 @@ export const mcpPromptGetParamsSchema = z.object({
 });
 
 // ============================================================================
+// Admin UI Response Schemas
+// ============================================================================
+
+/** MCP settings response — used by mcp-dashboard */
+export const mcpSettingsResponseSchema = z.object({
+  isEnabled: z.boolean(),
+  serverName: z.string(),
+  serverVersion: z.string(),
+  maxSessionsPerKey: z.number(),
+  globalRateLimit: z.number(),
+  auditRetentionDays: z.number(),
+});
+export type McpSettingsResponse = z.infer<typeof mcpSettingsResponseSchema>;
+
+/** Exposed resource row — used by mcp-resources-list */
+export const resourceRowSchema = z.object({
+  id: z.string(),
+  uri: z.string(),
+  name: z.string(),
+  description: z.string(),
+  mimeType: z.string(),
+  resourceType: z.string(),
+  isEnabled: z.boolean(),
+});
+export type ResourceRow = z.infer<typeof resourceRowSchema>;
+
+/** Exposed tool with joined capability — used by mcp-tools-list */
+export const exposedToolRowSchema = z.object({
+  id: z.string(),
+  capabilityId: z.string(),
+  isEnabled: z.boolean(),
+  customName: z.string().nullable(),
+  customDescription: z.string().nullable(),
+  rateLimitPerKey: z.number().nullable(),
+  requiresScope: z.string().nullable(),
+  capability: z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+    description: z.string(),
+    category: z.string(),
+  }),
+});
+export type ExposedToolRow = z.infer<typeof exposedToolRowSchema>;
+
+/** API key row — used by mcp-keys-list */
+export const apiKeyRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  keyPrefix: z.string(),
+  scopes: z.array(z.string()),
+  isActive: z.boolean(),
+  expiresAt: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  rateLimitOverride: z.number().nullable(),
+  createdAt: z.string(),
+  creator: z.object({ name: z.string(), email: z.string() }),
+});
+export type ApiKeyRow = z.infer<typeof apiKeyRowSchema>;
+
+/** Audit log entry — used by mcp-audit-log */
+export const auditEntrySchema = z.object({
+  id: z.string(),
+  method: z.string(),
+  toolSlug: z.string().nullable(),
+  resourceUri: z.string().nullable(),
+  responseCode: z.string(),
+  errorMessage: z.string().nullable(),
+  durationMs: z.number(),
+  clientIp: z.string().nullable(),
+  createdAt: z.string(),
+  apiKey: z.object({ name: z.string(), keyPrefix: z.string() }).nullable(),
+});
+export type AuditEntry = z.infer<typeof auditEntrySchema>;
+
+export const auditMetaSchema = z.object({
+  page: z.number(),
+  limit: z.number(),
+  total: z.number(),
+  totalPages: z.number(),
+});
+export type AuditMeta = z.infer<typeof auditMetaSchema>;
+
+// ============================================================================
 // Exported constants
 // ============================================================================
 

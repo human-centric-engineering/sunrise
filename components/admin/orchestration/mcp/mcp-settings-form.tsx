@@ -18,20 +18,10 @@ import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface McpSettings {
-  isEnabled: boolean;
-  serverName: string;
-  serverVersion: string;
-  maxSessionsPerKey: number;
-  globalRateLimit: number;
-  auditRetentionDays: number;
-}
-
-export type { McpSettings };
+import { type McpSettingsResponse } from '@/lib/validations/mcp';
 
 interface McpSettingsFormProps {
-  initialSettings: McpSettings | null;
+  initialSettings: McpSettingsResponse | null;
 }
 
 const mcpSettingsFormSchema = z.object({

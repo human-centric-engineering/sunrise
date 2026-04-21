@@ -42,16 +42,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface ResourceRow {
-  id: string;
-  uri: string;
-  name: string;
-  description: string;
-  mimeType: string;
-  resourceType: string;
-  isEnabled: boolean;
-}
+import { resourceRowSchema, type ResourceRow } from '@/lib/validations/mcp';
 
 interface McpResourcesListProps {
   initialResources: ResourceRow[];
@@ -116,9 +107,10 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     if (!form.name.trim() || !form.uri.trim() || !form.resourceType) return;
     setCreating(true);
     try {
-      const data = await apiClient.post<ResourceRow>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
+      const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
         body: form,
       });
+      const data = resourceRowSchema.parse(raw);
       setResources((prev) => [...prev, data]);
       setForm({
         name: '',

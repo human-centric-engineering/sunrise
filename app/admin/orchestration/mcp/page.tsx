@@ -6,27 +6,20 @@ import { McpDashboard } from '@/components/admin/orchestration/mcp/mcp-dashboard
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
 export const metadata: Metadata = {
   title: 'MCP Server · AI Orchestration',
   description: 'Configure Model Context Protocol server for external AI client access.',
 };
 
-interface McpSettingsData {
-  isEnabled: boolean;
-  serverName: string;
-  serverVersion: string;
-  maxSessionsPerKey: number;
-  globalRateLimit: number;
-  auditRetentionDays: number;
-}
-
-async function getMcpSettings(): Promise<McpSettingsData | null> {
+async function getMcpSettings(): Promise<McpSettingsResponse | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS);
     if (!res.ok) return null;
-    const body = await parseApiResponse<McpSettingsData>(res);
-    return body.success ? body.data : null;
+    const body = await parseApiResponse<unknown>(res);
+    if (!body.success) return null;
+    return mcpSettingsResponseSchema.parse(body.data);
   } catch (err) {
     logger.error('MCP dashboard: settings fetch failed', err);
     return null;

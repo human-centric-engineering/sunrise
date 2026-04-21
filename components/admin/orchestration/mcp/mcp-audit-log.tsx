@@ -31,26 +31,13 @@ import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface AuditEntry {
-  id: string;
-  method: string;
-  toolSlug: string | null;
-  resourceUri: string | null;
-  responseCode: string;
-  errorMessage: string | null;
-  durationMs: number;
-  clientIp: string | null;
-  createdAt: string;
-  apiKey: { name: string; keyPrefix: string } | null;
-}
-
-interface AuditMeta {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
-}
+import {
+  auditEntrySchema,
+  auditMetaSchema,
+  type AuditEntry,
+  type AuditMeta,
+} from '@/lib/validations/mcp';
+import { z } from 'zod';
 
 interface McpAuditLogProps {
   initialEntries: AuditEntry[];
@@ -108,19 +95,19 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
         if (f.dateFrom) params.dateFrom = f.dateFrom;
         if (f.dateTo) params.dateTo = f.dateTo;
 
-        const data = await apiClient.get<{ data: AuditEntry[]; meta: AuditMeta }>(
-          API.ADMIN.ORCHESTRATION.MCP_AUDIT,
-          { params }
-        );
+        const raw = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_AUDIT, { params });
         // The API wraps in { data, meta } — apiClient extracts the top-level data field
         // which contains both data array and meta
-        if (Array.isArray(data)) {
+        if (Array.isArray(raw)) {
           // Flat array response
-          setEntries(data as unknown as AuditEntry[]);
+          setEntries(z.array(auditEntrySchema).parse(raw));
           setMeta(null);
-        } else if (data && typeof data === 'object' && 'data' in data) {
-          setEntries(data.data);
-          setMeta(data.meta);
+        } else if (raw && typeof raw === 'object' && 'data' in raw) {
+          const envelope = z
+            .object({ data: z.array(auditEntrySchema), meta: auditMetaSchema })
+            .parse(raw);
+          setEntries(envelope.data);
+          setMeta(envelope.meta);
         }
       } catch {
         // silent

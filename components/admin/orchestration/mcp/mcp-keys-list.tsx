@@ -34,19 +34,8 @@ import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { McpScope, ALL_MCP_SCOPES } from '@/types/mcp';
-
-interface ApiKeyRow {
-  id: string;
-  name: string;
-  keyPrefix: string;
-  scopes: string[];
-  isActive: boolean;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  rateLimitOverride: number | null;
-  createdAt: string;
-  creator: { name: string; email: string };
-}
+import { apiKeyRowSchema, type ApiKeyRow } from '@/lib/validations/mcp';
+import { z } from 'zod';
 
 interface McpKeysListProps {
   initialKeys: ApiKeyRow[];
@@ -94,10 +83,10 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setShowPlaintext(data.plaintext);
 
       // Refetch to get full row data
-      const listData = await apiClient.get<ApiKeyRow[]>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
+      const rawList = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
         params: { page: 1, limit: 50 },
       });
-      setKeys(listData);
+      setKeys(z.array(apiKeyRowSchema).parse(rawList));
       setNewKeyName('');
       setNewKeyScopes([McpScope.TOOLS_LIST, McpScope.TOOLS_EXECUTE]);
       setNewKeyExpiry('');
@@ -129,10 +118,10 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setRotatedPlaintext({ keyId, plaintext: data.plaintextKey });
 
       // Refetch to update prefix
-      const listData = await apiClient.get<ApiKeyRow[]>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
+      const rawList = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_KEYS, {
         params: { page: 1, limit: 50 },
       });
-      setKeys(listData);
+      setKeys(z.array(apiKeyRowSchema).parse(rawList));
     } catch {
       // silent
     } finally {

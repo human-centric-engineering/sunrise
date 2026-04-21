@@ -16,22 +16,14 @@ import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface McpSettings {
-  isEnabled: boolean;
-  serverName: string;
-  serverVersion: string;
-  maxSessionsPerKey: number;
-  globalRateLimit: number;
-  auditRetentionDays: number;
-}
+import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
 interface McpDashboardProps {
-  initialSettings: McpSettings | null;
+  initialSettings: McpSettingsResponse | null;
   stats: { tools: number; resources: number; keys: number };
 }
 
-const DEFAULT_SETTINGS: McpSettings = {
+const DEFAULT_SETTINGS: McpSettingsResponse = {
   isEnabled: false,
   serverName: 'Sunrise MCP Server',
   serverVersion: '1.0.0',
@@ -41,7 +33,9 @@ const DEFAULT_SETTINGS: McpSettings = {
 };
 
 export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
-  const [settings, setSettings] = useState<McpSettings>(initialSettings ?? DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<McpSettingsResponse>(
+    initialSettings ?? DEFAULT_SETTINGS
+  );
   const [toggling, setToggling] = useState(false);
 
   async function handleToggle(enabled: boolean) {
@@ -49,10 +43,10 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
     setSettings((s) => ({ ...s, isEnabled: enabled }));
     setToggling(true);
     try {
-      const data = await apiClient.patch<McpSettings>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
+      const raw = await apiClient.patch<unknown>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
         body: { isEnabled: enabled },
       });
-      setSettings(data);
+      setSettings(mcpSettingsResponseSchema.parse(raw));
     } catch {
       setSettings(prev);
     } finally {

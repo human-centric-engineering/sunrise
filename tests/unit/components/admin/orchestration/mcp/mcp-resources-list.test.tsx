@@ -570,7 +570,10 @@ describe('toggle handler', () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', isEnabled: false });
-    mockFetch.mockResolvedValue({ ok: true } as Response);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: {} }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act
@@ -590,7 +593,10 @@ describe('toggle handler', () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', isEnabled: false });
-    mockFetch.mockResolvedValue({ ok: true } as Response);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: {} }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act
@@ -606,7 +612,12 @@ describe('toggle handler', () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', isEnabled: false });
-    mockFetch.mockResolvedValue({ ok: false } as Response);
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => ({ success: false, error: { code: 'ERROR', message: 'fail' } }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act
@@ -628,7 +639,10 @@ describe('remove handler', () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', name: 'Knowledge Search' });
-    mockFetch.mockResolvedValue({ ok: true } as Response);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: {} }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act
@@ -646,7 +660,10 @@ describe('remove handler', () => {
     const user = userEvent.setup();
     // Use a name that doesn't appear in the RESOURCE_TYPES hint cards shown in empty state
     const resource = makeResource({ id: 'r-1', name: 'My Custom Resource' });
-    mockFetch.mockResolvedValue({ ok: true } as Response);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: {} }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act
@@ -662,7 +679,12 @@ describe('remove handler', () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', name: 'Knowledge Search' });
-    mockFetch.mockResolvedValue({ ok: false } as Response);
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => ({ success: false, error: { code: 'ERROR', message: 'fail' } }),
+    } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
     // Act

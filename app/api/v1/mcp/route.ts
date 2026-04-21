@@ -148,19 +148,52 @@ export async function POST(request: NextRequest): Promise<Response> {
     const sessionManager = getMcpSessionManager();
     const rateLimiter = getMcpRateLimiter();
 
-    // 6. Session management — use first request to determine session
-    const firstRequest = validRequests[0];
+    // 6. Session management
+    const hasInitialize = validRequests.some((r) => r.method === 'initialize');
     const sessionId = request.headers.get(MCP_SESSION_HEADER);
     let session;
 
-    if (firstRequest.method === 'initialize') {
+    if (hasInitialize) {
+      // initialize must be the sole request in the batch — mixing it with
+      // other methods leads to ambiguous session state.
+      if (validRequests.length > 1) {
+        const initReq = validRequests.find((r) => r.method === 'initialize');
+        return Response.json(
+          {
+            jsonrpc: '2.0',
+            id: initReq?.id ?? null,
+            error: {
+              code: JsonRpcErrorCode.INVALID_REQUEST,
+              message: 'initialize must be the only request in the batch',
+            },
+          },
+          { status: 400 }
+        );
+      }
+
+      // Reject initialize when a session header is already present — prevents
+      // unlimited session creation by replaying initialize-first batches.
+      if (sessionId) {
+        return Response.json(
+          {
+            jsonrpc: '2.0',
+            id: validRequests[0].id ?? null,
+            error: {
+              code: JsonRpcErrorCode.INVALID_REQUEST,
+              message: 'Cannot send initialize with an existing session header',
+            },
+          },
+          { status: 400 }
+        );
+      }
+
       // Create new session
       session = sessionManager.createSession(auth.apiKeyId, serverState.maxSessionsPerKey);
       if (!session) {
         return Response.json(
           {
             jsonrpc: '2.0',
-            id: firstRequest.id ?? null,
+            id: validRequests[0].id ?? null,
             error: { code: JsonRpcErrorCode.INTERNAL_ERROR, message: 'Max sessions exceeded' },
           },
           { status: 429 }
@@ -172,7 +205,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         return Response.json(
           {
             jsonrpc: '2.0',
-            id: firstRequest.id ?? null,
+            id: validRequests[0].id ?? null,
             error: {
               code: JsonRpcErrorCode.INTERNAL_ERROR,
               message: 'Session not found or expired',
@@ -185,7 +218,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       return Response.json(
         {
           jsonrpc: '2.0',
-          id: firstRequest.id ?? null,
+          id: validRequests[0].id ?? null,
           error: {
             code: JsonRpcErrorCode.INVALID_REQUEST,
             message: 'Missing Mcp-Session-Id header',
@@ -269,6 +302,17 @@ export async function GET(request: NextRequest): Promise<Response> {
       // Create a queue that the session manager can push notifications into
       const queue: Array<{ type: string; data?: string }> = [];
       let resolve: (() => void) | null = null;
+      let aborted = false;
+
+      // Wire request.signal so a client disconnect resolves any pending await
+      const onAbort = (): void => {
+        aborted = true;
+        if (resolve) {
+          resolve();
+          resolve = null;
+        }
+      };
+      request.signal.addEventListener('abort', onAbort, { once: true });
 
       if (sessionId) {
         sessionManager.registerSseListener(sessionId, (notification) => {
@@ -285,7 +329,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
       try {
         // Yield notifications as they arrive
-        while (true) {
+        while (!aborted) {
           if (queue.length > 0) {
             yield queue.shift()!;
           } else {
@@ -295,6 +339,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           }
         }
       } finally {
+        request.signal.removeEventListener('abort', onAbort);
         if (sessionId) {
           sessionManager.unregisterSseListener(sessionId);
         }
