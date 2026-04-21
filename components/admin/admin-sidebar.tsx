@@ -31,6 +31,7 @@ import {
   Settings,
   Hammer,
   Activity,
+  ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCallback, useMemo, useState } from 'react';
@@ -165,9 +166,15 @@ const navSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/evaluations',
-            label: 'Evaluations',
+            label: 'Testing',
             icon: ClipboardCheck,
-            description: 'Agent test runs',
+            description: 'Evaluations & experiments',
+          },
+          {
+            href: '/admin/orchestration/audit-log',
+            label: 'Audit Log',
+            icon: ClipboardList,
+            description: 'Admin action history',
           },
         ],
       },

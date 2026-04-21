@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Sparkles,
   UserCheck,
+  Bell,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -217,6 +218,22 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     patternNumber: 8,
     defaultConfig: { agentSlug: '', message: '{{input}}', maxToolIterations: 5 },
     estimatedDuration: '~3-15s',
+  },
+  {
+    type: 'send_notification',
+    label: 'Send Notification',
+    description: 'Send an email or webhook notification with templated content.',
+    category: 'output',
+    icon: Bell,
+    inputs: 1,
+    outputs: 1,
+    defaultConfig: {
+      channel: 'email',
+      to: '',
+      subject: '',
+      bodyTemplate: '{{input}}',
+    },
+    estimatedDuration: '~1-3s',
   },
 ] as const;
 

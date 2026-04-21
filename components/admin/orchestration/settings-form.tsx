@@ -14,7 +14,7 @@ import * as React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Save, Plus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,6 +33,12 @@ import { API } from '@/lib/api/endpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface EscalationConfig {
+  emailAddresses: string[];
+  webhookUrl?: string;
+  notifyOnPriority: 'all' | 'high' | 'medium_and_above';
+}
+
 export interface OrchestrationSettings {
   inputGuardMode: string | null;
   outputGuardMode: string | null;
@@ -44,6 +50,7 @@ export interface OrchestrationSettings {
   costLogRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
+  escalationConfig?: EscalationConfig | null;
 }
 
 export interface SettingsFormProps {
@@ -54,6 +61,7 @@ export interface SettingsFormProps {
 
 const GUARD_MODES = ['none', 'log_only', 'warn_and_continue', 'block'] as const;
 const APPROVAL_ACTIONS = ['deny', 'allow'] as const;
+const ESCALATION_PRIORITY_FILTERS = ['all', 'medium_and_above', 'high'] as const;
 
 const nullableNumber = z
   .union([z.literal(''), z.coerce.number()])
@@ -78,6 +86,10 @@ const settingsFormSchema = z.object({
   // Search
   keywordBoostWeight: nullableNumber.pipe(z.number().min(-0.2).max(0).nullable()),
   vectorWeight: nullableNumber.pipe(z.number().min(0.1).max(2.0).nullable()),
+  // Escalation
+  escalationEnabled: z.boolean(),
+  escalationPriorityFilter: z.enum(ESCALATION_PRIORITY_FILTERS),
+  escalationWebhookUrl: z.string().url().max(2000).or(z.literal('')).optional(),
 });
 
 type SettingsFormData = z.input<typeof settingsFormSchema>;
@@ -105,6 +117,10 @@ function guardModeToApi(v: string): string | null {
 export function SettingsForm({ initialSettings }: SettingsFormProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
+  const [escalationEmails, setEscalationEmails] = React.useState<string[]>(
+    initialSettings.escalationConfig?.emailAddresses ?? []
+  );
+  const [emailInput, setEmailInput] = React.useState('');
 
   const defaults: SettingsFormData = React.useMemo(
     () => ({
@@ -119,6 +135,9 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
       keywordBoostWeight: toStr(initialSettings.searchConfig?.keywordBoostWeight),
       vectorWeight: toStr(initialSettings.searchConfig?.vectorWeight),
+      escalationEnabled: !!initialSettings.escalationConfig,
+      escalationPriorityFilter: initialSettings.escalationConfig?.notifyOnPriority ?? 'all',
+      escalationWebhookUrl: initialSettings.escalationConfig?.webhookUrl ?? '',
     }),
     [initialSettings]
   );
@@ -148,6 +167,15 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           ? { keywordBoostWeight: values.keywordBoostWeight, vectorWeight: values.vectorWeight }
           : null;
 
+      const escalationConfig =
+        values.escalationEnabled && escalationEmails.length > 0
+          ? {
+              emailAddresses: escalationEmails,
+              notifyOnPriority: values.escalationPriorityFilter,
+              ...(values.escalationWebhookUrl ? { webhookUrl: values.escalationWebhookUrl } : {}),
+            }
+          : null;
+
       await apiClient.patch(API.ADMIN.ORCHESTRATION.SETTINGS, {
         body: {
           inputGuardMode: guardModeToApi(values.inputGuardMode),
@@ -160,6 +188,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           defaultApprovalTimeoutMs: values.approvalTimeout,
           approvalDefaultAction: values.approvalDefaultAction,
           searchConfig,
+          escalationConfig,
         },
       });
       reset();
@@ -429,6 +458,154 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                 </Select>
               )}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Escalation ────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Escalation Routing</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Notify humans when agents escalate conversations.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Controller
+              name="escalationEnabled"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Enable escalation notifications
+                  <FieldHelp title="Escalation notifications">
+                    When enabled, the system sends email (and optional webhook) notifications when
+                    an agent escalates a conversation to a human.
+                  </FieldHelp>
+                </label>
+              )}
+            />
+          </div>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1">
+                Notification emails
+                <FieldHelp title="Escalation recipients">
+                  Email addresses that receive escalation notifications. Add at least one to enable
+                  email alerts.
+                </FieldHelp>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  type="email"
+                  placeholder="Add email address…"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const val = emailInput.trim();
+                      if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
+                        setEscalationEmails((prev) => [...prev, val]);
+                        setEmailInput('');
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const val = emailInput.trim();
+                    if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
+                      setEscalationEmails((prev) => [...prev, val]);
+                      setEmailInput('');
+                    }
+                  }}
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  Add
+                </Button>
+              </div>
+              {escalationEmails.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {escalationEmails.map((email) => (
+                    <span
+                      key={email}
+                      className="bg-muted inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs"
+                    >
+                      {email}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEscalationEmails((prev) => prev.filter((e) => e !== email))
+                        }
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="escalationPriorityFilter" className="flex items-center gap-1">
+                  Notify on priority
+                  <FieldHelp title="Priority filter">
+                    Which escalation priorities trigger a notification. &ldquo;All&rdquo; sends for
+                    every escalation; &ldquo;Medium+&rdquo; skips low-priority; &ldquo;High
+                    only&rdquo; only notifies for high-priority.
+                  </FieldHelp>
+                </Label>
+                <Controller
+                  name="escalationPriorityFilter"
+                  control={control}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger id="escalationPriorityFilter">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All priorities</SelectItem>
+                        <SelectItem value="medium_and_above">Medium and above</SelectItem>
+                        <SelectItem value="high">High only</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="escalationWebhookUrl" className="flex items-center gap-1">
+                  Webhook URL (optional)
+                  <FieldHelp title="Escalation webhook">
+                    An additional HTTP endpoint to POST escalation payloads to. Useful for Slack,
+                    PagerDuty, or custom integrations. This is separate from the webhook
+                    subscription system.
+                  </FieldHelp>
+                </Label>
+                <Input
+                  id="escalationWebhookUrl"
+                  type="url"
+                  placeholder="https://…"
+                  {...register('escalationWebhookUrl')}
+                />
+                {errors.escalationWebhookUrl && (
+                  <p className="text-xs text-red-600">{errors.escalationWebhookUrl.message}</p>
+                )}
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

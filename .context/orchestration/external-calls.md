@@ -129,7 +129,6 @@ For `external_call`, there are two timeout layers:
 
 The external call executor links to the execution-level abort signal (`ctx.signal`). Before sending any HTTP request, the executor checks if `ctx.signal` is already aborted and fails fast with a non-retriable `request_aborted` error. During the request, the signal is forwarded to the `fetch` call's `AbortController` so that client disconnects or DB-side cancellations propagate to the outbound HTTP request. When the request completes (or fails), the abort listener is cleaned up to avoid memory leaks.
 
-
 ## Observability
 
 The executor logs:

@@ -5,6 +5,7 @@ import {
   SettingsForm,
   type OrchestrationSettings,
 } from '@/components/admin/orchestration/settings-form';
+import { BackupPanel } from '@/components/admin/orchestration/settings/backup-panel';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -28,6 +29,7 @@ async function getSettings(): Promise<OrchestrationSettings> {
     costLogRetentionDays: null,
     maxConversationsPerUser: null,
     maxMessagesPerConversation: null,
+    escalationConfig: null,
   };
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS);
@@ -69,6 +71,8 @@ export default async function OrchestrationSettingsPage() {
       </header>
 
       <SettingsForm initialSettings={settings} />
+
+      <BackupPanel />
     </div>
   );
 }

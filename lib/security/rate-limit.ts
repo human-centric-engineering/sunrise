@@ -298,6 +298,16 @@ export const consumerChatLimiter = createRateLimiter({
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 
+/**
+ * Rate limiter for embeddable chat widget (per token + IP).
+ * Stricter than consumer chat — 10 requests per minute.
+ */
+export const embedChatLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: 10,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
 // =============================================================================
 // Dynamic Rate Limiter Factory
 // =============================================================================

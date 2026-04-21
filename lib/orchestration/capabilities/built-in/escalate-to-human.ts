@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { logger } from '@/lib/logging';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { notifyEscalation } from '@/lib/orchestration/capabilities/built-in/escalation-notifier';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type {
   CapabilityContext,
@@ -78,14 +79,18 @@ export class EscalateToHumanCapability extends BaseCapability<Args, Data> {
       priority,
     });
 
-    void dispatchWebhookEvent('conversation_escalated', {
+    const escalationPayload = {
       agentId: context.agentId,
       userId: context.userId,
       conversationId: context.conversationId ?? null,
       reason,
       priority,
       metadata: metadata ?? null,
-    });
+    };
+
+    void dispatchWebhookEvent('conversation_escalated', escalationPayload);
+
+    void notifyEscalation(escalationPayload);
 
     return Promise.resolve(
       this.success({

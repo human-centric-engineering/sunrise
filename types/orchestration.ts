@@ -149,6 +149,7 @@ export const KNOWN_STEP_TYPES = [
   'evaluate',
   'external_call',
   'agent_call',
+  'send_notification',
 ] as const;
 
 /** A conditional edge connecting workflow steps */
@@ -460,6 +461,13 @@ export type InputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
 /** Output guard behaviour for topic boundary enforcement. */
 export type OutputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
 
+/** Escalation notification configuration stored in settings JSON column. */
+export interface EscalationConfig {
+  emailAddresses: string[];
+  webhookUrl?: string;
+  notifyOnPriority: 'all' | 'high' | 'medium_and_above';
+}
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -488,6 +496,8 @@ export interface OrchestrationSettings {
   maxConversationsPerUser: number | null;
   /** Max messages per conversation, or `null` for unlimited. */
   maxMessagesPerConversation: number | null;
+  /** Escalation notification routing config, or `null` if not configured. */
+  escalationConfig: EscalationConfig | null;
   createdAt: Date;
   updatedAt: Date;
 }

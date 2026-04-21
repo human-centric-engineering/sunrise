@@ -45,6 +45,7 @@ function makeDocument(
     status: overrides.status ?? 'ready',
     scope: 'app',
     category: null,
+    sourceUrl: null,
     errorMessage: null,
     metadata: null,
     uploadedBy: 'user-1',

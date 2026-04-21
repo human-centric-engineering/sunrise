@@ -18,6 +18,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
 import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
 
@@ -158,6 +159,15 @@ export const POST = withAdminAuth(async (request, session) => {
       agentId: agent.id,
       slug: agent.slug,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.create',
+      entityType: 'agent',
+      entityId: agent.id,
+      entityName: agent.name,
+      clientIp: clientIP,
     });
 
     return successResponse(agent, undefined, { status: 201 });

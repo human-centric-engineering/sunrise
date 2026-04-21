@@ -26,6 +26,7 @@ import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
   hydrateSettings,
@@ -118,6 +119,12 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.maxMessagesPerConversation !== undefined) {
     updateData.maxMessagesPerConversation = body.maxMessagesPerConversation;
   }
+  if (body.escalationConfig !== undefined) {
+    updateData.escalationConfig =
+      body.escalationConfig === null
+        ? Prisma.JsonNull
+        : (body.escalationConfig as unknown as Prisma.InputJsonValue);
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },
@@ -133,6 +140,15 @@ export const PATCH = withAdminAuth(async (request, session) => {
   });
 
   invalidateSettingsCache();
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'settings.update',
+    entityType: 'settings',
+    entityId: 'global',
+    metadata: { changedKeys: Object.keys(body) },
+    clientIp: clientIP,
+  });
 
   log.info('Orchestration settings updated', {
     adminId: session.user.id,

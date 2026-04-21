@@ -24,6 +24,7 @@ import {
   createCapabilitySchema,
   listCapabilitiesQuerySchema,
 } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -107,6 +108,15 @@ export const POST = withAdminAuth(async (request, session) => {
       capabilityId: capability.id,
       slug: capability.slug,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'capability.create',
+      entityType: 'capability',
+      entityId: capability.id,
+      entityName: capability.name,
+      clientIp: clientIP,
     });
 
     return successResponse(capability, undefined, { status: 201 });

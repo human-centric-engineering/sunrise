@@ -55,6 +55,9 @@ model User {
   aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
   aiEventHooks           AiEventHook[]           @relation("AiEventHookCreator")
   aiProviderModels       AiProviderModel[]       @relation("AiProviderModelCreator")
+  aiAdminAuditLogs       AiAdminAuditLog[]       @relation("AiAdminAuditLogUser")
+  aiEmbedTokens          AiAgentEmbedToken[]     @relation("EmbedTokenCreator")
+  aiExperiments          AiExperiment[]          @relation("AiExperimentCreator")
 
   // MCP Server relations
   mcpApiKeys McpApiKey[] @relation("McpApiKeyCreator")
@@ -193,6 +196,8 @@ model AiAgent {
   costLogs      AiCostLog[]
   inviteTokens  AiAgentInviteToken[]
   versions      AiAgentVersion[]
+  embedTokens   AiAgentEmbedToken[]
+  experiments   AiExperiment[]
 
   @@index([createdBy])
   @@index([provider])
@@ -238,6 +243,26 @@ model AiAgentVersion {
   @@unique([agentId, version])
   @@index([agentId])
   @@map("ai_agent_version")
+}
+
+// Embeddable widget token for an agent — allows unauthenticated chat via embed
+model AiAgentEmbedToken {
+  id             String   @id @default(cuid())
+  agentId        String
+  token          String   @unique @default(cuid()) // opaque token for X-Embed-Token header
+  label          String?  // admin label (e.g. "Marketing site", "Help center")
+  allowedOrigins String[] @default([]) // CORS origins; empty = allow all
+  isActive       Boolean  @default(true)
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("EmbedTokenCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([token])
+  @@map("ai_agent_embed_token")
 }
 
 // A discrete tool/function an agent can call
@@ -488,6 +513,7 @@ model AiKnowledgeDocument {
   status       String // "processing", "ready", "failed"
   scope        String   @default("app") // "system" | "app"
   category     String? // user-assigned or extracted from document metadata
+  sourceUrl    String? // URL the document was fetched from (null = manual upload)
   errorMessage String?  @db.Text
   metadata     Json? // format-specific metadata, preview data for pending_review docs
   uploadedBy   String
@@ -784,10 +810,71 @@ model AiOrchestrationSettings {
   costLogRetentionDays       Int?
   maxConversationsPerUser    Int?
   maxMessagesPerConversation Int?
+  escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
   @@map("ai_orchestration_settings")
+}
+
+/// Immutable audit trail for admin configuration changes.
+///
+/// Fire-and-forget writes — never blocks the request. Tracks agent edits,
+/// workflow changes, knowledge uploads, settings changes, and deletions.
+model AiAdminAuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String // e.g. "agent.create", "agent.update", "workflow.delete"
+  entityType String // "agent", "workflow", "capability", "knowledge_document", "settings", "webhook"
+  entityId   String?
+  entityName String? // human-readable name at time of action
+  changes    Json? // { field: { from, to } } diff for updates
+  metadata   Json? // extra context
+  clientIp   String?
+  createdAt  DateTime @default(now())
+
+  user User @relation("AiAdminAuditLogUser", fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("ai_admin_audit_log")
+}
+
+// A/B prompt experiment — compares agent version variants
+model AiExperiment {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  status      String   @default("draft") // "draft" | "running" | "completed"
+  agentId     String
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agent    AiAgent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator  User                  @relation("AiExperimentCreator", fields: [createdBy], references: [id])
+  variants AiExperimentVariant[]
+
+  @@index([agentId])
+  @@index([status])
+  @@map("ai_experiment")
+}
+
+// A variant (arm) in an A/B experiment — points to an agent version snapshot
+model AiExperimentVariant {
+  id                  String  @id @default(cuid())
+  experimentId        String
+  agentVersionId      String? // references AiAgentVersion.id (null if using live agent)
+  evaluationSessionId String? // filled after experiment run
+  label               String  // e.g. "Control", "Variant A"
+  score               Float?  // aggregated evaluation score after run
+
+  experiment AiExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+  @@map("ai_experiment_variant")
 }
 
 /// Tracks which seed units have been applied, keyed by unit name.

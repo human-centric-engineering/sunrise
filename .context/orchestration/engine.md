@@ -181,7 +181,6 @@ Notable non-retriable error codes from the `external_call` executor:
 
 See [`external-calls.md`](./external-calls.md) for the full error code table.
 
-
 ### Per-step timeout
 
 Every step config supports an optional `timeoutMs` field (on `stepErrorConfigSchema`). When set, the engine wraps the executor call in `Promise.race` against a timeout. Timeout produces a non-retriable `step_timeout` `ExecutorError`.

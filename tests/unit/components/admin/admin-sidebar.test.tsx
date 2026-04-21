@@ -93,10 +93,10 @@ describe('AdminSidebar', () => {
     // Section headings hidden when collapsed
     expect(screen.queryByText('AI Orchestration')).not.toBeInTheDocument();
 
-    // Links are still present (so icons + hrefs remain navigable)
-    expect(screen.getByRole('link', { name: /capabilities/i })).toHaveAttribute(
+    // Top-level links are still present (so icons + hrefs remain navigable)
+    expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute(
       'href',
-      '/admin/orchestration/capabilities'
+      '/admin/orchestration/settings'
     );
   });
 });

@@ -28,6 +28,7 @@ import {
 } from '@/lib/orchestration/knowledge/document-manager';
 import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB (EPUBs can be large)
 const MAX_LINE_COUNT = 100_000;
@@ -148,6 +149,15 @@ export const POST = withAdminAuth(async (request, session) => {
       adminId: session.user.id,
     });
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_document.create',
+      entityType: 'knowledge_document',
+      entityId: document.id,
+      entityName: file.name,
+      clientIp: clientIP,
+    });
+
     return successResponse({ document }, undefined, { status: 201 });
   }
 
@@ -195,6 +205,15 @@ export const POST = withAdminAuth(async (request, session) => {
     sizeBytes: file.size,
     category: document.category ?? 'none',
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_document.create',
+    entityType: 'knowledge_document',
+    entityId: document.id,
+    entityName: file.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ document }, undefined, { status: 201 });

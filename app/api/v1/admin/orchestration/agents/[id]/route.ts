@@ -22,6 +22,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import {
   systemInstructionsHistorySchema,
@@ -192,6 +193,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       fieldsChanged: Object.keys(data),
     });
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.update',
+      entityType: 'agent',
+      entityId: id,
+      entityName: agent.name,
+      changes: computeChanges(
+        current as unknown as Record<string, unknown>,
+        agent as unknown as Record<string, unknown>
+      ),
+      clientIp: clientIP,
+    });
+
     const response = successResponse(agent);
 
     // Warn callers when system agent instructions are modified.
@@ -238,6 +252,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     agentId: id,
     slug: agent.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.delete',
+    entityType: 'agent',
+    entityId: id,
+    entityName: current.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ id, isActive: false });

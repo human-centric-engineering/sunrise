@@ -1520,6 +1520,16 @@ export const searchConfigSchema = z.object({
     .max(2.0, 'Vector weight must be at most 2.0'),
 });
 
+/** Escalation notification routing configuration. */
+export const escalationConfigSchema = z.object({
+  emailAddresses: z
+    .array(z.string().email('Each entry must be a valid email address'))
+    .min(1, 'At least one email address is required')
+    .max(20, 'At most 20 email addresses'),
+  webhookUrl: z.string().url('Must be a valid URL').max(2000).optional(),
+  notifyOnPriority: z.enum(['all', 'high', 'medium_and_above']).default('all'),
+});
+
 export const updateOrchestrationSettingsSchema = z
   .object({
     defaultModels: z
@@ -1581,6 +1591,7 @@ export const updateOrchestrationSettingsSchema = z
       .max(10_000, 'Max messages must be at most 10,000')
       .nullable()
       .optional(),
+    escalationConfig: escalationConfigSchema.nullable().optional(),
   })
   .refine(
     (v) =>
@@ -1594,7 +1605,8 @@ export const updateOrchestrationSettingsSchema = z
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
-      v.maxMessagesPerConversation !== undefined,
+      v.maxMessagesPerConversation !== undefined ||
+      v.escalationConfig !== undefined,
     {
       message: 'At least one field must be provided',
     }
@@ -1972,3 +1984,16 @@ export const saveQuizScoreSchema = z
   });
 
 export type SaveQuizScoreInput = z.infer<typeof saveQuizScoreSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin Audit Log
+// ---------------------------------------------------------------------------
+
+export const listAuditLogQuerySchema = paginationQuerySchema.extend({
+  action: z.string().trim().max(50).optional(),
+  entityType: z.string().trim().max(50).optional(),
+  entityId: z.string().trim().max(50).optional(),
+  userId: z.string().trim().max(50).optional(),
+  dateFrom: z.coerce.date().optional(),
+  dateTo: z.coerce.date().optional(),
+});

@@ -9,10 +9,15 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
-import { searchConfigSchema, storedDefaultModelsSchema } from '@/lib/validations/orchestration';
+import {
+  searchConfigSchema,
+  storedDefaultModelsSchema,
+  escalationConfigSchema,
+} from '@/lib/validations/orchestration';
 import {
   TASK_TYPES,
   type ApprovalDefaultAction,
+  type EscalationConfig,
   type InputGuardMode,
   type OutputGuardMode,
   type OrchestrationSettings,
@@ -43,6 +48,17 @@ export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): Sea
 }
 
 /**
+ * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.escalationConfig`
+ * into a typed `EscalationConfig` via Zod. Returns `null` if absent or invalid.
+ */
+export function parseEscalationConfig(
+  raw: Prisma.JsonValue | null | undefined
+): EscalationConfig | null {
+  const parsed = escalationConfigSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
  * filling in any task keys the stored JSON is missing from the registry defaults.
  */
@@ -69,6 +85,7 @@ export function hydrateSettings(row: {
   costLogRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
+  escalationConfig?: Prisma.JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -101,6 +118,7 @@ export function hydrateSettings(row: {
     costLogRetentionDays: row.costLogRetentionDays,
     maxConversationsPerUser: row.maxConversationsPerUser,
     maxMessagesPerConversation: row.maxMessagesPerConversation,
+    escalationConfig: parseEscalationConfig(row.escalationConfig),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

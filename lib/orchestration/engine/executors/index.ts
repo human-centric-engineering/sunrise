@@ -22,3 +22,4 @@ import './guard';
 import './evaluate';
 import './external-call';
 import './agent-call';
+import './notification';

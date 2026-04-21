@@ -43,7 +43,8 @@ export async function uploadDocument(
   content: string,
   fileName: string,
   userId: string,
-  category?: string
+  category?: string,
+  sourceUrl?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(content).digest('hex');
   const name = fileName.replace(/\.[^.]+$/, '');
@@ -74,6 +75,7 @@ export async function uploadDocument(
       fileHash,
       scope: 'app',
       category: resolvedCategory,
+      sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
     },
@@ -183,7 +185,8 @@ export async function uploadDocumentFromBuffer(
   buffer: Buffer,
   fileName: string,
   userId: string,
-  category?: string
+  category?: string,
+  sourceUrl?: string
 ): Promise<AiKnowledgeDocument> {
   if (requiresPreview(fileName)) {
     throw new Error(
@@ -206,7 +209,7 @@ export async function uploadDocumentFromBuffer(
   const ext = extname(fileName).toLowerCase();
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
-  return uploadDocument(content, fileName, userId, category);
+  return uploadDocument(content, fileName, userId, category, sourceUrl);
 }
 
 /** Result of a document preview (parse-only, no chunking/embedding). */

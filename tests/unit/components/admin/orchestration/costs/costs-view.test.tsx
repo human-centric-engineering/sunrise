@@ -161,6 +161,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   costLogRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
+  escalationConfig: null,
   createdAt: NOW,
   updatedAt: NOW,
 };

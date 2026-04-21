@@ -14,6 +14,16 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // Embed widget routes — allow framing and cross-origin access
+        source: '/api/v1/embed/:path*',
+        headers: [
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+        ],
+      },
+      {
         source: '/(.*)',
         headers: [
           {

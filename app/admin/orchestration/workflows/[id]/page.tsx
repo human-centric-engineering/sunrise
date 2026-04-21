@@ -7,6 +7,7 @@ import {
 } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { WorkflowSchedulesTab } from '@/components/admin/orchestration/workflow-schedules-tab';
+import { VersionHistoryPanel } from '@/components/admin/orchestration/workflows/version-history-panel';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -95,6 +96,19 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
       />
       <hr />
       <WorkflowSchedulesTab workflowId={workflow.id} />
+      <hr />
+      <VersionHistoryPanel
+        history={
+          (Array.isArray(workflow.workflowDefinitionHistory)
+            ? workflow.workflowDefinitionHistory
+            : []) as Array<{
+            definition: Record<string, unknown>;
+            changedAt: string;
+            changedBy: string;
+          }>
+        }
+        currentDefinition={(workflow.workflowDefinition as Record<string, unknown>) ?? {}}
+      />
     </div>
   );
 }
