@@ -94,9 +94,9 @@ describe('TemplateBanner', () => {
       expect(screen.getByText('Multi-channel support automation')).toBeInTheDocument();
     });
 
-    it('shows a "Built-in template:" label', () => {
+    it('shows a "Template" badge', () => {
       renderBanner();
-      expect(screen.getByText(/built-in template/i)).toBeInTheDocument();
+      expect(screen.getByText('Template')).toBeInTheDocument();
     });
 
     it('shows the "More" toggle button when collapsed', () => {

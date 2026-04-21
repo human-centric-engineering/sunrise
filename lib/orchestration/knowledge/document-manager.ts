@@ -9,9 +9,21 @@
 import { createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { chunkMarkdownDocument } from './chunker';
-import { embedBatch } from './embedder';
+import {
+  chunkMarkdownDocument,
+  parseMetadataComments,
+} from '@/lib/orchestration/knowledge/chunker';
+import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { AiKnowledgeDocument } from '@/types/prisma';
+
+/**
+ * Extract a document-level category from metadata comments.
+ * Looks for `<!-- metadata: category=... -->` at the top level.
+ */
+function extractDocumentCategory(content: string): string | null {
+  const meta = parseMetadataComments(content);
+  return meta['category'] || null;
+}
 
 /**
  * Upload a document to the knowledge base.
@@ -22,12 +34,14 @@ import type { AiKnowledgeDocument } from '@/types/prisma';
  * @param content - Raw document content (markdown)
  * @param fileName - Original file name
  * @param userId - ID of the uploading user
+ * @param category - Optional category (overrides any in-document metadata)
  * @returns The created document record
  */
 export async function uploadDocument(
   content: string,
   fileName: string,
-  userId: string
+  userId: string,
+  category?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(content).digest('hex');
   const name = fileName.replace(/\.[^.]+$/, '');
@@ -47,12 +61,17 @@ export async function uploadDocument(
     return existing;
   }
 
+  // Resolve category: explicit param → document-level metadata → null
+  const resolvedCategory = category || extractDocumentCategory(content) || null;
+
   // Create document record with processing status
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
       name,
       fileName,
       fileHash,
+      scope: 'app',
+      category: resolvedCategory,
       status: 'processing',
       uploadedBy: userId,
     },
@@ -61,6 +80,15 @@ export async function uploadDocument(
   try {
     // Chunk the document
     const chunks = chunkMarkdownDocument(content, name);
+
+    // If a document-level category was set, apply it to chunks that have none
+    if (resolvedCategory) {
+      for (const chunk of chunks) {
+        if (!chunk.category) {
+          chunk.category = resolvedCategory;
+        }
+      }
+    }
 
     if (chunks.length === 0) {
       await prisma.aiKnowledgeDocument.update({
@@ -261,4 +289,86 @@ export async function listDocuments(): Promise<AiKnowledgeDocument[]> {
   return prisma.aiKnowledgeDocument.findMany({
     orderBy: { createdAt: 'desc' },
   });
+}
+
+/** A single meta-tag value with usage count */
+export interface MetaTagEntry {
+  value: string;
+  chunkCount: number;
+  documentCount: number;
+}
+
+/** Meta-tags for a single scope (app or system) */
+export interface ScopedMetaTags {
+  categories: MetaTagEntry[];
+  keywords: MetaTagEntry[];
+}
+
+/** Summary of all meta-tags grouped by knowledge base scope */
+export interface MetaTagSummary {
+  app: ScopedMetaTags;
+  system: ScopedMetaTags;
+}
+
+interface RawTagRow {
+  scope: string;
+  value: string;
+  chunk_count: bigint;
+  doc_count: bigint;
+}
+
+function mapTagRows(rows: RawTagRow[]): { app: MetaTagEntry[]; system: MetaTagEntry[] } {
+  const app: MetaTagEntry[] = [];
+  const system: MetaTagEntry[] = [];
+  for (const r of rows) {
+    const entry = {
+      value: r.value.trim(),
+      chunkCount: Number(r.chunk_count),
+      documentCount: Number(r.doc_count),
+    };
+    if (r.scope === 'system') {
+      system.push(entry);
+    } else {
+      app.push(entry);
+    }
+  }
+  return { app, system };
+}
+
+/**
+ * List all distinct meta-tag values (categories and keywords) across chunks,
+ * grouped by document scope (app vs system), with chunk and document counts.
+ */
+export async function listMetaTags(): Promise<MetaTagSummary> {
+  const [categoryRows, keywordRows] = await Promise.all([
+    prisma.$queryRaw<RawTagRow[]>`
+      SELECT d.scope, c.category AS value,
+             COUNT(*)::bigint AS chunk_count,
+             COUNT(DISTINCT c."documentId")::bigint AS doc_count
+      FROM ai_knowledge_chunk c
+      JOIN ai_knowledge_document d ON d.id = c."documentId"
+      WHERE c.category IS NOT NULL AND c.category <> ''
+      GROUP BY d.scope, c.category
+      ORDER BY chunk_count DESC
+    `,
+    prisma.$queryRaw<RawTagRow[]>`
+      SELECT d.scope, kw AS value,
+             COUNT(*)::bigint AS chunk_count,
+             COUNT(DISTINCT c."documentId")::bigint AS doc_count
+      FROM ai_knowledge_chunk c
+      JOIN ai_knowledge_document d ON d.id = c."documentId",
+           LATERAL unnest(string_to_array(c.keywords, ',')) AS kw
+      WHERE c.keywords IS NOT NULL AND c.keywords <> ''
+      GROUP BY d.scope, kw
+      ORDER BY chunk_count DESC
+    `,
+  ]);
+
+  const cats = mapTagRows(categoryRows);
+  const kws = mapTagRows(keywordRows);
+
+  return {
+    app: { categories: cats.app, keywords: kws.app },
+    system: { categories: cats.system, keywords: kws.system },
+  };
 }

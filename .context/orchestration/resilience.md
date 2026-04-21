@@ -4,15 +4,19 @@ Phase 7 Session 7.3 — circuit breaker, provider fallback, budget UX, input gua
 
 ## Quick Reference
 
-| Feature                | Path                                                                       |
-| ---------------------- | -------------------------------------------------------------------------- |
-| Circuit breaker        | `lib/orchestration/llm/circuit-breaker.ts`                                 |
-| Provider fallback      | `lib/orchestration/llm/provider-manager.ts` → `getProviderWithFallbacks()` |
-| Input guard            | `lib/orchestration/chat/input-guard.ts`                                    |
-| Error message registry | `lib/orchestration/chat/error-messages.ts`                                 |
-| Chat rate limiter      | `lib/security/rate-limit.ts` → `chatLimiter`                               |
-| Warning ChatEvent      | `types/orchestration.ts` → `{ type: 'warning' }`                           |
-| Client reconnect       | `components/admin/orchestration/agent-test-chat.tsx`                       |
+| Feature                 | Path                                                                       |
+| ----------------------- | -------------------------------------------------------------------------- |
+| Circuit breaker         | `lib/orchestration/llm/circuit-breaker.ts`                                 |
+| Provider fallback       | `lib/orchestration/llm/provider-manager.ts` → `getProviderWithFallbacks()` |
+| Outbound rate limiter   | `lib/orchestration/engine/outbound-rate-limiter.ts`                        |
+| Per-step timeout        | `lib/orchestration/engine/orchestration-engine.ts` → `runStepWithStrategy` |
+| Non-retriable errors    | `lib/orchestration/engine/errors.ts` → `ExecutorError.retriable`           |
+| External call hardening | `lib/orchestration/engine/executors/external-call.ts`                      |
+| Input guard             | `lib/orchestration/chat/input-guard.ts`                                    |
+| Error message registry  | `lib/orchestration/chat/error-messages.ts`                                 |
+| Chat rate limiter       | `lib/security/rate-limit.ts` → `chatLimiter`                               |
+| Warning ChatEvent       | `types/orchestration.ts` → `{ type: 'warning' }`                           |
+| Client reconnect        | `components/admin/orchestration/agent-test-chat.tsx`                       |
 
 ## Circuit Breaker
 
@@ -42,6 +46,16 @@ if (breaker.canAttempt()) {
 }
 ```
 
+### Observability
+
+Circuit breaker state is exposed via the admin API:
+
+- **Provider list** (`GET /providers`): each row includes `circuitBreaker: { state, failureCount, openedAt, config }`.
+- **Dedicated health endpoint** (`GET /providers/:id/health`): detailed breaker status for a single provider.
+- **Manual reset** (`POST /providers/:id/health`): resets the breaker to closed (rate-limited).
+
+Public getters on `CircuitBreaker`: `failureCount` (prunes window first), `currentConfig` (copy), `openedAtTimestamp`. Module-level helpers: `getCircuitBreakerStatus(slug)` → status snapshot or `null`, `getAllBreakerSlugs()` → all registered slugs.
+
 ## Provider Fallback Chain
 
 `getProviderWithFallbacks(primarySlug, fallbackSlugs)` resolves a provider by checking circuit breakers in order:
@@ -68,7 +82,15 @@ Pre-check via `checkBudget(agentId)` in `streaming-handler.ts`:
 - `role_confusion` — "you are now", "act as if you", "pretend you"
 - `delimiter_injection` — `###`, `---`, `***`, `<system>`, `</system>`, etc.
 
-**Log-only** — never blocks requests. Logs pattern labels only, never message content.
+**Configurable mode** via `OrchestrationSettings.inputGuardMode`:
+
+| Mode                 | Behavior                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `log_only` (default) | Log detection, continue — never blocks requests. Logs pattern labels only, not content |
+| `warn_and_continue`  | Log + yield `{ type: 'warning', code: 'input_flagged' }` event to client               |
+| `block`              | Yield `{ type: 'error', code: 'input_blocked' }`, stop processing                      |
+
+Set via `PATCH /api/v1/admin/orchestration/settings` with `{ "inputGuardMode": "warn_and_continue" }`. Changes take effect within the 30s settings cache TTL.
 
 ## Error Message Registry
 

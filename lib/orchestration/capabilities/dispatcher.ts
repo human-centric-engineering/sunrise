@@ -24,16 +24,20 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';
 import { CostOperation } from '@/types/orchestration';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
-import { BaseCapability, CapabilityValidationError } from './base-capability';
+import {
+  BaseCapability,
+  CapabilityValidationError,
+} from '@/lib/orchestration/capabilities/base-capability';
 import type {
   AgentCapabilityBinding,
   CapabilityContext,
   CapabilityFunctionDefinition,
   CapabilityRegistryEntry,
   CapabilityResult,
-} from './types';
+} from '@/lib/orchestration/capabilities/types';
 
 /**
  * Parse a Prisma `Json` value from `AiCapability.functionDefinition` into a
@@ -209,11 +213,25 @@ class CapabilityDispatcher {
       }
     }
 
-    // 6. Approval gate — later slices will plug the admin UI into this.
+    // 6. Approval gate — includes timeout metadata for the approval UI.
     if (entry.requiresApproval) {
+      let timeoutMs: number | null = entry.approvalTimeoutMs;
+      let defaultAction: string = 'deny';
+      if (timeoutMs === null) {
+        try {
+          const settings = await getOrchestrationSettings();
+          timeoutMs = settings.defaultApprovalTimeoutMs;
+          defaultAction = settings.approvalDefaultAction ?? 'deny';
+        } catch {
+          // Settings unavailable — proceed with no timeout
+        }
+      }
+
       logger.info('Capability dispatch: requires approval', {
         slug,
         agentId: context.agentId,
+        timeoutMs,
+        defaultAction,
       });
       return {
         success: false,
@@ -222,6 +240,10 @@ class CapabilityDispatcher {
           message: 'Capability requires admin approval',
         },
         skipFollowup: true,
+        metadata: {
+          timeoutMs,
+          defaultAction,
+        },
       };
     }
 
@@ -381,6 +403,7 @@ interface AiCapabilityRow {
   category: string;
   functionDefinition: unknown;
   requiresApproval: boolean;
+  approvalTimeoutMs: number | null;
   rateLimit: number | null;
   isActive: boolean;
 }
@@ -395,6 +418,7 @@ function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
     category: row.category,
     functionDefinition,
     requiresApproval: row.requiresApproval,
+    approvalTimeoutMs: row.approvalTimeoutMs ?? null,
     rateLimit: row.rateLimit,
     isActive: row.isActive,
   };

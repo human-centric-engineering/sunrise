@@ -4,9 +4,10 @@
  * GET   /api/v1/admin/orchestration/settings — read the singleton row (upsert-on-read
  *       with computed defaults from the model registry). Lazy seed: no seeder touches
  *       this row, so admin edits survive re-seeds.
- * PATCH /api/v1/admin/orchestration/settings — partial update of `defaultModels` or
- *       `globalMonthlyBudgetUsd`. Validates every model id against the registry and
- *       invalidates the in-memory cache so the next chat turn picks up the change.
+ * PATCH /api/v1/admin/orchestration/settings — partial update of `defaultModels`,
+ *       `globalMonthlyBudgetUsd`, or `searchConfig`. Validates every model id
+ *       against the registry and invalidates the in-memory cache so the next chat
+ *       turn picks up the change.
  *
  * Authentication: Admin role required. Both GET and PATCH are rate-limited via
  * the shared `adminLimiter` — GET performs an upsert-on-read, so it is a
@@ -21,6 +22,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
@@ -38,10 +40,15 @@ export const GET = withAdminAuth(async (request) => {
 
   const log = await getRouteLogger(request);
   const settings = await getOrchestrationSettings();
+
+  const etag = computeETag(settings);
+  const notModified = checkConditional(request, etag);
+  if (notModified) return notModified;
+
   log.info('Orchestration settings fetched', {
     hasGlobalCap: settings.globalMonthlyBudgetUsd !== null,
   });
-  return successResponse(settings);
+  return successResponse(settings, undefined, { headers: { ETag: etag } });
 });
 
 export const PATCH = withAdminAuth(async (request, session) => {
@@ -81,6 +88,21 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.globalMonthlyBudgetUsd !== undefined) {
     updateData.globalMonthlyBudgetUsd = body.globalMonthlyBudgetUsd;
   }
+  if (body.searchConfig !== undefined) {
+    updateData.searchConfig =
+      body.searchConfig === null
+        ? Prisma.JsonNull
+        : (body.searchConfig as unknown as Prisma.InputJsonValue);
+  }
+  if (body.defaultApprovalTimeoutMs !== undefined) {
+    updateData.defaultApprovalTimeoutMs = body.defaultApprovalTimeoutMs;
+  }
+  if (body.approvalDefaultAction !== undefined) {
+    updateData.approvalDefaultAction = body.approvalDefaultAction;
+  }
+  if (body.inputGuardMode !== undefined) {
+    updateData.inputGuardMode = body.inputGuardMode;
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },
@@ -88,6 +110,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
       slug: 'global',
       defaultModels: mergedDefaults as unknown as Prisma.InputJsonValue,
       globalMonthlyBudgetUsd: body.globalMonthlyBudgetUsd ?? null,
+      searchConfig: body.searchConfig
+        ? (body.searchConfig as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
     },
     update: updateData,
   });

@@ -4,11 +4,17 @@
  * Covers:
  *   - Happy path: successful HTTP call returns parsed JSON body.
  *   - Missing URL → ExecutorError('missing_url').
- *   - Host not in allowlist → ExecutorError('host_not_allowed').
- *   - Non-2xx response → ExecutorError('http_error').
- *   - Request timeout → ExecutorError('request_failed').
- *   - Auth header resolution (bearer, api-key).
- *   - GET requests omit body.
+ *   - Host not in allowlist → ExecutorError('host_not_allowed') (non-retriable).
+ *   - Auth header resolution (bearer, api-key, query-param).
+ *   - Missing auth secret → ExecutorError('missing_auth_secret') (non-retriable).
+ *   - GET/DELETE requests omit body and Content-Type.
+ *   - Non-2xx response → classified as retriable (429, 502, 503, 504) or non-retriable.
+ *   - Retry-After header recorded on 429.
+ *   - Response size limit enforcement.
+ *   - Outbound rate limiting.
+ *   - Request timeout handling.
+ *   - Observability logging.
+ *   - Content-type aware response parsing.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,10 +27,23 @@ vi.mock('@/lib/orchestration/engine/executor-registry', () => ({
 vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
   interpolatePrompt: vi.fn((template: string) => template),
 }));
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
-import { executeExternalCall } from '@/lib/orchestration/engine/executors/external-call';
+import {
+  executeExternalCall,
+  resetAllowlistCache,
+} from '@/lib/orchestration/engine/executors/external-call';
+import { resetOutboundRateLimiters } from '@/lib/orchestration/engine/outbound-rate-limiter';
+import { logger } from '@/lib/logging';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
@@ -40,6 +59,7 @@ function makeCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
     variables: {},
     totalTokensUsed: 0,
     totalCostUsd: 0,
+    defaultErrorStrategy: 'fail',
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -51,7 +71,7 @@ function makeCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
   };
 }
 
-function makeExternalCallStep(overrides?: Partial<WorkflowStep['config']>): WorkflowStep {
+function makeStep(overrides?: Partial<WorkflowStep['config']>): WorkflowStep {
   return {
     id: 'ext1',
     name: 'Test External Call',
@@ -74,6 +94,8 @@ describe('executeExternalCall', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAllowlistCache();
+    resetOutboundRateLimiters();
     process.env = {
       ...originalEnv,
       ORCHESTRATION_ALLOWED_HOSTS: 'api.allowed.com,other.allowed.com',
@@ -85,7 +107,9 @@ describe('executeExternalCall', () => {
     vi.restoreAllMocks();
   });
 
-  it('happy path: returns parsed JSON response', async () => {
+  // ─── Happy path ──────────────────────────────────────────────────────
+
+  it('returns parsed JSON response on success', async () => {
     const mockResponse = { result: 'success' };
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify(mockResponse), {
@@ -94,7 +118,7 @@ describe('executeExternalCall', () => {
       })
     );
 
-    const result = await executeExternalCall(makeExternalCallStep(), makeCtx());
+    const result = await executeExternalCall(makeStep(), makeCtx());
 
     expect(result).toMatchObject({
       output: { status: 200, body: mockResponse },
@@ -103,71 +127,120 @@ describe('executeExternalCall', () => {
     });
   });
 
-  it('throws ExecutorError with code "missing_url" when URL is empty', async () => {
-    const step = makeExternalCallStep({ url: '' });
+  it('returns text response when content-type is not JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('plain text response', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
 
-    await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+    const result = await executeExternalCall(makeStep(), makeCtx());
+    expect(result.output).toMatchObject({ status: 200, body: 'plain text response' });
+  });
+
+  it('logs request and response metadata', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(makeStep(), makeCtx());
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'External call: sending request',
+      expect.objectContaining({
+        stepId: 'ext1',
+        method: 'POST',
+        hostname: 'api.allowed.com',
+      })
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      'External call: success',
+      expect.objectContaining({
+        stepId: 'ext1',
+        status: 200,
+      })
+    );
+  });
+
+  // ─── URL validation ──────────────────────────────────────────────────
+
+  it('throws "missing_url" when URL is empty', async () => {
+    await expect(executeExternalCall(makeStep({ url: '' }), makeCtx())).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'missing_url',
     });
   });
 
-  it('throws ExecutorError with code "missing_url" when URL is absent', async () => {
-    const step = makeExternalCallStep({ url: undefined });
-
-    await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+  it('throws "missing_url" when URL is absent', async () => {
+    await expect(
+      executeExternalCall(makeStep({ url: undefined }), makeCtx())
+    ).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'missing_url',
     });
   });
 
-  it('throws ExecutorError with code "host_not_allowed" for non-allowlisted host', async () => {
-    const step = makeExternalCallStep({ url: 'https://evil.com/attack' });
+  it('throws non-retriable "host_not_allowed" for non-allowlisted host', async () => {
+    const err: any = await executeExternalCall(
+      makeStep({ url: 'https://evil.com/attack' }),
+      makeCtx()
+    ).catch((e) => e);
 
-    await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
-      name: 'ExecutorError',
-      code: 'host_not_allowed',
-    });
+    expect(err.code).toBe('host_not_allowed');
+    expect(err.retriable).toBe(false);
   });
 
-  it('throws ExecutorError with code "host_not_allowed" when allowlist is empty', async () => {
+  it('throws "host_not_allowed" when allowlist is empty', async () => {
     process.env.ORCHESTRATION_ALLOWED_HOSTS = '';
-    const step = makeExternalCallStep();
+    resetAllowlistCache();
 
-    await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
-      name: 'ExecutorError',
+    await expect(executeExternalCall(makeStep(), makeCtx())).rejects.toMatchObject({
       code: 'host_not_allowed',
     });
   });
 
-  it('throws ExecutorError with code "http_error" for non-2xx response', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not Found', { status: 404 }));
+  // ─── Auth resolution (fail-fast on missing secrets) ──────────────────
 
-    await expect(executeExternalCall(makeExternalCallStep(), makeCtx())).rejects.toMatchObject({
-      name: 'ExecutorError',
-      code: 'http_error',
-    });
+  it('throws non-retriable "missing_auth_secret" when bearer env var is unset', async () => {
+    const step = makeStep({ authType: 'bearer', authSecret: 'NONEXISTENT_TOKEN' });
+
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+
+    expect(err.code).toBe('missing_auth_secret');
+    expect(err.retriable).toBe(false);
+    expect(err.message).toContain('NONEXISTENT_TOKEN');
   });
 
-  it('throws ExecutorError with code "request_failed" on fetch error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+  it('throws non-retriable "missing_auth_secret" for api-key auth with unset env var', async () => {
+    const step = makeStep({ authType: 'api-key', authSecret: 'NONEXISTENT_KEY' });
 
-    await expect(executeExternalCall(makeExternalCallStep(), makeCtx())).rejects.toMatchObject({
-      name: 'ExecutorError',
-      code: 'request_failed',
-    });
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+    expect(err.code).toBe('missing_auth_secret');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('throws non-retriable "missing_auth_secret" for query-param auth with unset env var', async () => {
+    const step = makeStep({ authType: 'query-param', authSecret: 'NONEXISTENT_KEY' });
+
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+    expect(err.code).toBe('missing_auth_secret');
+    expect(err.retriable).toBe(false);
   });
 
   it('includes bearer auth header when configured', async () => {
     process.env.MY_TOKEN = 'secret123';
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
 
-    const step = makeExternalCallStep({
-      authType: 'bearer',
-      authSecret: 'MY_TOKEN',
-    });
-
-    await executeExternalCall(step, makeCtx());
+    await executeExternalCall(makeStep({ authType: 'bearer', authSecret: 'MY_TOKEN' }), makeCtx());
 
     expect(fetch).toHaveBeenCalledWith(
       expect.any(String),
@@ -181,14 +254,17 @@ describe('executeExternalCall', () => {
 
   it('includes API key header when configured', async () => {
     process.env.MY_API_KEY = 'key456';
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
 
-    const step = makeExternalCallStep({
-      authType: 'api-key',
-      authSecret: 'MY_API_KEY',
-    });
-
-    await executeExternalCall(step, makeCtx());
+    await executeExternalCall(
+      makeStep({ authType: 'api-key', authSecret: 'MY_API_KEY' }),
+      makeCtx()
+    );
 
     expect(fetch).toHaveBeenCalledWith(
       expect.any(String),
@@ -200,18 +276,322 @@ describe('executeExternalCall', () => {
     );
   });
 
-  it('omits body for GET requests', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
-
-    const step = makeExternalCallStep({ method: 'GET', bodyTemplate: '{"ignored": true}' });
-    await executeExternalCall(step, makeCtx());
-
-    expect(fetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        method: 'GET',
-        body: undefined,
+  it('appends query-param auth to URL', async () => {
+    process.env.MAP_KEY = 'mapkey789';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
       })
     );
+
+    await executeExternalCall(
+      makeStep({
+        authType: 'query-param',
+        authSecret: 'MAP_KEY',
+        authQueryParam: 'key',
+      }),
+      makeCtx()
+    );
+
+    const calledUrl = (fetch as any).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('key=mapkey789');
+  });
+
+  it('uses "api_key" as default query param name', async () => {
+    process.env.MAP_KEY = 'mapkey789';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(
+      makeStep({ authType: 'query-param', authSecret: 'MAP_KEY' }),
+      makeCtx()
+    );
+
+    const calledUrl = (fetch as any).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('api_key=mapkey789');
+  });
+
+  // ─── HTTP method behavior ────────────────────────────────────────────
+
+  it('omits body and Content-Type for GET requests', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(
+      makeStep({ method: 'GET', bodyTemplate: '{"ignored": true}' }),
+      makeCtx()
+    );
+
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.headers['Content-Type']).toBeUndefined();
+  });
+
+  it('omits body and Content-Type for DELETE requests', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(makeStep({ method: 'DELETE' }), makeCtx());
+
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    expect(init.headers['Content-Type']).toBeUndefined();
+  });
+
+  it('supports PATCH method', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(makeStep({ method: 'PATCH' }), makeCtx());
+
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(init.method).toBe('PATCH');
+    expect(init.headers['Content-Type']).toBe('application/json');
+  });
+
+  // ─── HTTP error classification ───────────────────────────────────────
+
+  it('throws retriable error for 429 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Rate limited', { status: 429 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+
+    expect(err.code).toBe('http_error_retriable');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('throws retriable error for 502 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad Gateway', { status: 502 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error_retriable');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('throws retriable error for 503 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Service Unavailable', { status: 503 })
+    );
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error_retriable');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('throws retriable error for 504 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Gateway Timeout', { status: 504 })
+    );
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error_retriable');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('throws non-retriable error for 400 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad Request', { status: 400 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('throws non-retriable error for 401 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Unauthorized', { status: 401 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('throws non-retriable error for 403 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Forbidden', { status: 403 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('throws non-retriable error for 404 responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not Found', { status: 404 }));
+
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('http_error');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('logs warning with body preview for non-2xx responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"error": "bad request"}', { status: 400 })
+    );
+
+    await executeExternalCall(makeStep(), makeCtx()).catch(() => {});
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'External call: non-2xx response',
+      expect.objectContaining({
+        status: 400,
+        retriable: false,
+      })
+    );
+  });
+
+  // ─── Retry-After header handling ─────────────────────────────────────
+
+  it('records Retry-After header from 429 response', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('Rate limited', {
+          status: 429,
+          headers: { 'Retry-After': '30' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+    // First call: 429 with Retry-After.
+    await executeExternalCall(makeStep(), makeCtx()).catch(() => {});
+
+    // Second call: should be blocked by outbound rate limiter's Retry-After window.
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('outbound_rate_limited');
+  });
+
+  // ─── Response size limit ─────────────────────────────────────────────
+
+  it('throws "response_too_large" when response exceeds maxResponseBytes', async () => {
+    const largeBody = 'x'.repeat(2000);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(largeBody, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
+
+    const step = makeStep({ maxResponseBytes: 100 });
+    const err: any = await executeExternalCall(step, makeCtx()).catch((e) => e);
+
+    expect(err.code).toBe('response_too_large');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('uses default 1MB limit when maxResponseBytes not specified', async () => {
+    // This should pass — response is well under 1MB.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await executeExternalCall(makeStep(), makeCtx());
+    expect(result.output).toMatchObject({ status: 200 });
+  });
+
+  // ─── Outbound rate limiting ──────────────────────────────────────────
+
+  it('throws retriable "outbound_rate_limited" when host rate limit exceeded', async () => {
+    // Set a very low limit.
+    process.env.ORCHESTRATION_OUTBOUND_RATE_LIMIT = '2';
+    resetOutboundRateLimiters();
+
+    // Each call needs a fresh Response (body streams can only be read once).
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+
+    // First two calls should succeed.
+    await executeExternalCall(makeStep(), makeCtx());
+    await executeExternalCall(makeStep(), makeCtx());
+
+    // Third call should be rate limited (before fetch is even called).
+    const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
+    expect(err.code).toBe('outbound_rate_limited');
+    expect(err.retriable).toBe(true);
+  });
+
+  // ─── Timeout and abort ───────────────────────────────────────────────
+
+  it('throws "request_failed" on fetch network error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    await expect(executeExternalCall(makeStep(), makeCtx())).rejects.toMatchObject({
+      code: 'request_failed',
+    });
+  });
+
+  it('throws "request_aborted" when execution signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      executeExternalCall(makeStep(), makeCtx({ signal: controller.signal }))
+    ).rejects.toMatchObject({
+      code: 'request_aborted',
+    });
+  });
+
+  // ─── Allowlist caching ───────────────────────────────────────────────
+
+  it('does not re-parse allowlist on every call when env var is unchanged', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+
+    // Two calls with the same env var value should both succeed.
+    await executeExternalCall(makeStep(), makeCtx());
+    await executeExternalCall(makeStep(), makeCtx());
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes cache when env var value changes after reset', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeExternalCall(makeStep(), makeCtx());
+
+    // Change env and reset cache.
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = '';
+    resetAllowlistCache();
+
+    await expect(executeExternalCall(makeStep(), makeCtx())).rejects.toMatchObject({
+      code: 'host_not_allowed',
+    });
   });
 });

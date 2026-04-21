@@ -142,7 +142,8 @@ describe('ChatInterface', () => {
     await user.click(screen.getByRole('button', { name: /send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/ran into a problem/i)).toBeInTheDocument();
+      // getUserFacingError('internal_error') → title: 'Something Went Wrong'
+      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
 
     expect(document.body.textContent ?? '').not.toContain(SECRET);
@@ -239,8 +240,9 @@ describe('ChatInterface', () => {
     expect(secondBody.conversationId).toBe('conv-123');
   });
 
-  it('shows friendly fallback when fetch throws', async () => {
-    const user = userEvent.setup();
+  it('shows friendly fallback when fetch throws after retries', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
     render(<ChatInterface agentSlug="test-agent" />);
@@ -249,9 +251,49 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
+    // Advance through reconnect attempts (1s + 2s + 4s backoff)
+    await vi.advanceTimersByTimeAsync(8000);
+
     await waitFor(() => {
-      expect(screen.getByText(/could not reach the chat stream/i)).toBeInTheDocument();
+      expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
     });
+
+    vi.useRealTimers();
+  });
+
+  it('shows reconnecting warning during retry attempts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    // Fail first, then succeed on second attempt
+    const fetchMock = vi.fn();
+    fetchMock.mockRejectedValueOnce(new Error('Network error'));
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      body: makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('Recovered!'), doneFrame()]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // After first failure, warning should appear
+    await waitFor(() => {
+      expect(screen.getByText(/reconnecting/i)).toBeInTheDocument();
+    });
+
+    // Advance past the backoff delay
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // After reconnect succeeds, content should appear
+    await waitFor(() => {
+      expect(screen.getByText('Recovered!')).toBeInTheDocument();
+    });
+
+    vi.useRealTimers();
   });
 
   it('renders in embedded mode without card wrapper', () => {
@@ -294,7 +336,7 @@ describe('ChatInterface', () => {
 
   it('shows error and removes pending message when res.ok is false', async () => {
     const user = userEvent.setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, body: null }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, body: null }));
 
     render(<ChatInterface agentSlug="test-agent" />);
 
@@ -303,7 +345,8 @@ describe('ChatInterface', () => {
     await user.click(screen.getByRole('button', { name: /send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/chat stream failed to start/i)).toBeInTheDocument();
+      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
+      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
 
     // User message should still be visible, but the empty assistant message should be removed
@@ -313,9 +356,9 @@ describe('ChatInterface', () => {
     expect(messageBubbles).toHaveLength(1);
   });
 
-  it('shows error when res.body is null despite res.ok', async () => {
+  it('shows rate limit error on 429 response', async () => {
     const user = userEvent.setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: null }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, body: null }));
 
     render(<ChatInterface agentSlug="test-agent" />);
 
@@ -324,7 +367,24 @@ describe('ChatInterface', () => {
     await user.click(screen.getByRole('button', { name: /send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/chat stream failed to start/i)).toBeInTheDocument();
+      // getUserFacingError('rate_limited') → title: 'Too Many Requests'
+      expect(screen.getByText(/too many requests/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when res.body is null despite res.ok', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, body: null }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
+      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
   });
 });

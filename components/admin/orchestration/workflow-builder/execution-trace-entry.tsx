@@ -7,8 +7,17 @@
  */
 
 import { useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, Clock, Loader2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Loader2,
+  RotateCcw,
+  XCircle,
+} from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
@@ -24,6 +33,8 @@ export interface ExecutionTraceEntryRowProps {
   tokensUsed?: number;
   costUsd?: number;
   durationMs?: number;
+  /** Fires when the user clicks "Retry" on a failed step. */
+  onRetry?: (stepId: string) => void;
 }
 
 const STATUS_STYLES: Record<Status, { icon: React.ElementType; colour: string; text: string }> = {
@@ -44,6 +55,7 @@ export function ExecutionTraceEntryRow({
   tokensUsed = 0,
   costUsd = 0,
   durationMs,
+  onRetry,
 }: ExecutionTraceEntryRowProps) {
   const [expanded, setExpanded] = useState(false);
   const style = STATUS_STYLES[status];
@@ -91,6 +103,20 @@ export function ExecutionTraceEntryRow({
             <pre className="bg-muted/40 overflow-x-auto rounded p-2 font-mono text-xs">
               {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
             </pre>
+          )}
+          {status === 'failed' && onRetry && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry(stepId);
+              }}
+            >
+              <RotateCcw className="mr-2 h-3.5 w-3.5" />
+              Retry from this step
+            </Button>
           )}
         </div>
       )}

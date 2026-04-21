@@ -13,6 +13,7 @@
  */
 
 import { useCallback } from 'react';
+import { useTheme } from '@/hooks/use-theme';
 import {
   Background,
   Controls,
@@ -32,9 +33,9 @@ import '@xyflow/react/dist/style.css';
 
 import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 
-import { addNode } from './add-node';
-import { nodeTypes } from './node-types';
-import type { PatternNode } from './workflow-mappers';
+import { addNode } from '@/components/admin/orchestration/workflow-builder/add-node';
+import { nodeTypes } from '@/components/admin/orchestration/workflow-builder/node-types';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export interface WorkflowCanvasProps {
   nodes: PatternNode[];
@@ -57,6 +58,8 @@ export function WorkflowCanvas({
   onNodeAdd,
 }: WorkflowCanvasProps) {
   const { screenToFlowPosition } = useReactFlow();
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
 
   const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -97,13 +100,14 @@ export function WorkflowCanvas({
         onConnect={onConnect as (connection: Connection) => void}
         onNodeClick={(_, node) => onNodeClick(node.id)}
         onPaneClick={() => onNodeClick(null)}
+        colorMode={isDark ? 'dark' : 'light'}
         snapToGrid
         snapGrid={[16, 16]}
         fitView
         proOptions={{ hideAttribution: true }}
         aria-label="Workflow canvas"
       >
-        <Background gap={16} />
+        <Background gap={16} color={isDark ? '#3f3f46' : undefined} />
         <Controls className="dark:!border-zinc-700 dark:!bg-zinc-800 dark:!shadow-lg [&>button]:dark:!border-zinc-700 [&>button]:dark:!bg-zinc-800 [&>button]:dark:!fill-zinc-300 [&>button:hover]:dark:!bg-zinc-700" />
         <MiniMap
           zoomable

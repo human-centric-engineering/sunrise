@@ -63,7 +63,7 @@ function readLayout(config: Record<string, unknown>): StoredLayout | null {
  * Strip the internal `_layout` key from a config object so we don't
  * leak UI metadata into the round-trip before re-writing a fresh one.
  */
-function stripLayout(config: Record<string, unknown>): Record<string, unknown> {
+export function stripLayout(config: Record<string, unknown>): Record<string, unknown> {
   if (!(LAYOUT_KEY in config)) return config;
   const copy = { ...config };
   delete copy[LAYOUT_KEY];

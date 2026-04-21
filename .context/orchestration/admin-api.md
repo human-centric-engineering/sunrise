@@ -10,50 +10,67 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 
 ## Quick Reference
 
-| Endpoint                                                      | Methods            | Purpose                                             |
-| ------------------------------------------------------------- | ------------------ | --------------------------------------------------- |
-| `/api/v1/admin/orchestration/agents`                          | GET, POST          | List / create agents                                |
-| `/api/v1/admin/orchestration/agents/:id`                      | GET, PATCH, DELETE | Read / update / soft-delete an agent                |
-| `/api/v1/admin/orchestration/agents/:id/capabilities`         | GET, POST          | List attached pivots / attach a capability          |
-| `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`  | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row         |
-| `/api/v1/admin/orchestration/agents/:id/instructions-history` | GET                | Read the full `systemInstructions` audit trail      |
-| `/api/v1/admin/orchestration/agents/:id/instructions-revert`  | POST               | Revert to a previous `systemInstructions` version   |
-| `/api/v1/admin/orchestration/agents/export`                   | POST               | Export selected agents as a versioned bundle        |
-| `/api/v1/admin/orchestration/agents/import`                   | POST               | Import an agent bundle (skip / overwrite)           |
-| `/api/v1/admin/orchestration/capabilities`                    | GET, POST          | List / create capabilities                          |
-| `/api/v1/admin/orchestration/capabilities/:id`                | GET, PATCH, DELETE | Read / update / soft-delete a capability            |
-| `/api/v1/admin/orchestration/capabilities/:id/agents`         | GET                | Reverse-lookup — agents attaching this capability   |
-| `/api/v1/admin/orchestration/providers`                       | GET, POST          | List / create LLM provider configs                  |
-| `/api/v1/admin/orchestration/providers/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a provider config       |
-| `/api/v1/admin/orchestration/providers/:id/test`              | POST               | Run a live connection test against a provider       |
-| `/api/v1/admin/orchestration/providers/:id/models`            | GET                | Ask the provider directly what models it exposes    |
-| `/api/v1/admin/orchestration/models`                          | GET                | Aggregated model registry (all providers)           |
-| `/api/v1/admin/orchestration/workflows`                       | GET, POST          | List / create workflows                             |
-| `/api/v1/admin/orchestration/workflows/:id`                   | GET, PATCH, DELETE | Read / update / soft-delete a workflow              |
-| `/api/v1/admin/orchestration/workflows/:id/validate`          | POST               | DAG validation of the stored `workflowDefinition`   |
-| `/api/v1/admin/orchestration/workflows/:id/execute`           | POST               | Run a workflow — SSE `text/event-stream`            |
-| `/api/v1/admin/orchestration/executions/:id`                  | GET                | Read an execution row + parsed trace                |
-| `/api/v1/admin/orchestration/executions/:id/approve`          | POST               | Approve a `paused_for_approval` execution           |
-| `/api/v1/admin/orchestration/chat/stream`                     | POST               | Streaming chat turn (SSE `text/event-stream`)       |
-| `/api/v1/admin/orchestration/knowledge/search`                | POST               | Hybrid vector + keyword search over chunks          |
-| `/api/v1/admin/orchestration/knowledge/patterns/:number`      | GET                | Fetch all chunks for a single design pattern        |
-| `/api/v1/admin/orchestration/knowledge/documents`             | GET, POST          | List documents / upload a new one (multipart)       |
-| `/api/v1/admin/orchestration/knowledge/documents/:id`         | GET, DELETE        | Read / delete a document (chunks cascade)           |
-| `/api/v1/admin/orchestration/knowledge/documents/:id/rechunk` | POST               | Re-run chunking + embedding on an existing doc      |
-| `/api/v1/admin/orchestration/knowledge/seed`                  | POST               | Seed the canonical "Agentic Design Patterns" doc    |
-| `/api/v1/admin/orchestration/conversations`                   | GET                | List the caller's own conversations                 |
-| `/api/v1/admin/orchestration/conversations/:id`               | DELETE             | Delete one of the caller's conversations            |
-| `/api/v1/admin/orchestration/conversations/:id/messages`      | GET                | Read messages for one of the caller's conversations |
-| `/api/v1/admin/orchestration/conversations/clear`             | POST               | Bulk-delete the caller's conversations by filter    |
-| `/api/v1/admin/orchestration/costs`                           | GET                | Cost breakdown by day / agent / model               |
-| `/api/v1/admin/orchestration/costs/summary`                   | GET                | Today / week / month totals, per-agent, per-model   |
-| `/api/v1/admin/orchestration/costs/alerts`                    | GET                | Agents at or above 80% of their monthly budget      |
-| `/api/v1/admin/orchestration/settings`                        | GET, PATCH         | Singleton: task-type model defaults + global cap    |
-| `/api/v1/admin/orchestration/agents/:id/budget`               | GET                | Read-only budget status (use PATCH agent to mutate) |
-| `/api/v1/admin/orchestration/evaluations`                     | GET, POST          | List the caller's evaluation sessions / create one  |
-| `/api/v1/admin/orchestration/evaluations/:id`                 | GET, PATCH         | Read / update an evaluation session                 |
-| `/api/v1/admin/orchestration/evaluations/:id/logs`            | GET                | Read log events for one of the caller's sessions    |
-| `/api/v1/admin/orchestration/evaluations/:id/complete`        | POST               | Run the AI analysis pass and flip to `completed`    |
+| Endpoint                                                       | Methods            | Purpose                                                   |
+| -------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
+| `/api/v1/admin/orchestration/agents`                           | GET, POST          | List / create agents                                      |
+| `/api/v1/admin/orchestration/agents/:id`                       | GET, PATCH, DELETE | Read / update / soft-delete an agent                      |
+| `/api/v1/admin/orchestration/agents/:id/capabilities`          | GET, POST          | List attached pivots / attach a capability                |
+| `/api/v1/admin/orchestration/agents/:id/capabilities/:capId`   | PATCH, DELETE      | Toggle / reconfigure / detach the pivot row               |
+| `/api/v1/admin/orchestration/agents/:id/capabilities/usage`    | GET                | Rate limit usage counts per capability (last 60s)         |
+| `/api/v1/admin/orchestration/agents/:id/instructions-history`  | GET                | Read the full `systemInstructions` audit trail            |
+| `/api/v1/admin/orchestration/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions` version         |
+| `/api/v1/admin/orchestration/agents/:id/clone`                 | POST               | Deep-clone agent with capability bindings                 |
+| `/api/v1/admin/orchestration/agents/bulk`                      | POST               | Bulk activate/deactivate/delete agents                    |
+| `/api/v1/admin/orchestration/agents/compare`                   | GET                | Compare two agents side-by-side                           |
+| `/api/v1/admin/orchestration/agents/export`                    | POST               | Export selected agents as a versioned bundle              |
+| `/api/v1/admin/orchestration/agents/import`                    | POST               | Import an agent bundle (skip / overwrite)                 |
+| `/api/v1/admin/orchestration/capabilities`                     | GET, POST          | List / create capabilities                                |
+| `/api/v1/admin/orchestration/capabilities/:id`                 | GET, PATCH, DELETE | Read / update / soft-delete a capability                  |
+| `/api/v1/admin/orchestration/capabilities/:id/agents`          | GET                | Reverse-lookup — agents attaching this capability         |
+| `/api/v1/admin/orchestration/capabilities/:id/stats`           | GET                | Capability execution metrics + daily breakdown            |
+| `/api/v1/admin/orchestration/providers`                        | GET, POST          | List / create LLM provider configs                        |
+| `/api/v1/admin/orchestration/providers/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete a provider config             |
+| `/api/v1/admin/orchestration/providers/:id/test`               | POST               | Run a live connection test against a provider             |
+| `/api/v1/admin/orchestration/providers/:id/test-model`         | POST               | Send a trivial prompt to a specific model, report latency |
+| `/api/v1/admin/orchestration/providers/:id/models`             | GET                | Ask the provider directly what models it exposes          |
+| `/api/v1/admin/orchestration/providers/:id/health`             | GET, POST          | Read / reset circuit breaker state for a provider         |
+| `/api/v1/admin/orchestration/models`                           | GET                | Aggregated model registry (all providers)                 |
+| `/api/v1/admin/orchestration/workflows`                        | GET, POST          | List / create workflows                                   |
+| `/api/v1/admin/orchestration/workflows/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete a workflow                    |
+| `/api/v1/admin/orchestration/workflows/:id/validate`           | POST               | Structural + semantic validation                          |
+| `/api/v1/admin/orchestration/workflows/:id/dry-run`            | POST               | Validate + check inputData against template vars          |
+| `/api/v1/admin/orchestration/workflows/:id/execute`            | POST               | Run a workflow — SSE `text/event-stream`                  |
+| `/api/v1/admin/orchestration/executions/:id`                   | GET                | Read an execution row + parsed trace                      |
+| `/api/v1/admin/orchestration/executions/:id/approve`           | POST               | Approve a `paused_for_approval` execution                 |
+| `/api/v1/admin/orchestration/executions/:id/cancel`            | POST               | Cancel a running/paused execution                         |
+| `/api/v1/admin/orchestration/workflows/:id/definition-history` | GET                | Workflow definition version history (newest-first)        |
+| `/api/v1/admin/orchestration/workflows/:id/definition-revert`  | POST               | Revert to a previous workflow definition version          |
+| `/api/v1/admin/orchestration/chat/stream`                      | POST               | Streaming chat turn (SSE `text/event-stream`)             |
+| `/api/v1/admin/orchestration/knowledge/search`                 | POST               | Hybrid vector + keyword search over chunks                |
+| `/api/v1/admin/orchestration/knowledge/patterns/:number`       | GET                | Fetch all chunks for a single design pattern              |
+| `/api/v1/admin/orchestration/knowledge/documents`              | GET, POST          | List documents / upload a new one (multipart)             |
+| `/api/v1/admin/orchestration/knowledge/documents/:id`          | GET, DELETE        | Read / delete a document (chunks cascade)                 |
+| `/api/v1/admin/orchestration/knowledge/documents/:id/rechunk`  | POST               | Re-run chunking + embedding on an existing doc            |
+| `/api/v1/admin/orchestration/knowledge/documents/:id/retry`    | POST               | Retry failed document ingestion                           |
+| `/api/v1/admin/orchestration/knowledge/graph`                  | GET                | Knowledge graph data (nodes + links)                      |
+| `/api/v1/admin/orchestration/knowledge/seed`                   | POST               | Seed the canonical "Agentic Design Patterns" doc          |
+| `/api/v1/admin/orchestration/conversations`                    | GET                | List the caller's own conversations                       |
+| `/api/v1/admin/orchestration/conversations/:id`                | DELETE             | Delete one of the caller's conversations                  |
+| `/api/v1/admin/orchestration/conversations/:id/messages`       | GET                | Read messages for one of the caller's conversations       |
+| `/api/v1/admin/orchestration/conversations/clear`              | POST               | Bulk-delete the caller's conversations by filter          |
+| `/api/v1/admin/orchestration/costs`                            | GET                | Cost breakdown by day / agent / model                     |
+| `/api/v1/admin/orchestration/costs/summary`                    | GET                | Today / week / month totals, per-agent, per-model         |
+| `/api/v1/admin/orchestration/costs/alerts`                     | GET                | Agents at or above 80% of their monthly budget            |
+| `/api/v1/admin/orchestration/settings`                         | GET, PATCH         | Singleton: model defaults, global cap, search config      |
+| `/api/v1/admin/orchestration/agents/:id/budget`                | GET                | Read-only budget status (use PATCH agent to mutate)       |
+| `/api/v1/admin/orchestration/evaluations`                      | GET, POST          | List the caller's evaluation sessions / create one        |
+| `/api/v1/admin/orchestration/evaluations/:id`                  | GET, PATCH         | Read / update an evaluation session                       |
+| `/api/v1/admin/orchestration/evaluations/:id/logs`             | GET                | Read log events for one of the caller's sessions          |
+| `/api/v1/admin/orchestration/evaluations/:id/complete`         | POST               | Run the AI analysis pass and flip to `completed`          |
+| `/api/v1/admin/orchestration/quiz-scores`                      | GET, POST          | List / save quiz scores                                   |
+| `/api/v1/admin/orchestration/webhooks`                         | GET, POST          | List / create webhook subscriptions                       |
+| `/api/v1/admin/orchestration/webhooks/:id`                     | GET, PATCH, DELETE | Get / update / delete a webhook subscription              |
+| `/api/v1/admin/orchestration/observability/dashboard-stats`    | GET                | Aggregated observability metrics                          |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 
@@ -100,9 +117,19 @@ All `updateAgentSchema` fields are optional and applied conditionally. The **onl
 - If `systemInstructionsHistory` is malformed in the DB, it's logged via `logger.warn` and reset to `[]` before the push. Nothing explodes.
 - Updates that don't change `systemInstructions` never touch the history column.
 
+### System agent protection
+
+Agents seeded by the platform (e.g. `pattern-advisor`, `quiz-master`) have `isSystem: true`. System agents:
+
+- **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System agents cannot be deleted')`.
+- **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System agents cannot be deactivated')`.
+- **Can be edited** — `PATCH` with other fields succeeds, but when `systemInstructions` changes the response includes an `X-System-Warning` header so the UI can surface a confirmation. The previous instructions are still versioned in `systemInstructionsHistory` and revertible via `/instructions-revert`.
+
+The `isSystem` flag is set during seeding and is not exposed as a writable field on create/update schemas.
+
 ### Delete agent
 
-`DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
+`DELETE /api/v1/admin/orchestration/agents/:id` is a **soft delete** (`isActive = false`). Rejected with 403 if the agent is a system agent (`isSystem: true`). `AiAgent` has FKs from `AiConversation`, `AiMessage`, `AiCostLog`, and `AiEvaluationSession`; a hard delete would either cascade audit data or fail. If you really need a hard delete, use Prisma Studio.
 
 ## Agent ↔ Capability pivot
 
@@ -136,6 +163,18 @@ Creates an `AiAgentCapability` row. Validates that both the agent and capability
 - `DELETE` returns `{ agentId, capabilityId, detached: true }`.
 - `P2025` (link not found) → 404.
 - Both call `capabilityDispatcher.clearCache()` on success.
+
+### Capability usage
+
+```
+GET /api/v1/admin/orchestration/agents/:id/capabilities/usage
+```
+
+Returns a map of capability slug → call count within the last 60-second sliding window. Queries `AiCostLog` where `operation = 'tool_call'`, grouped by `metadata->>'slug'`. Used by the capabilities tab to render live usage badges against configured rate limits.
+
+```json
+{ "success": true, "data": { "usage": { "search_knowledge_base": 12, "get_pattern_detail": 3 } } }
+```
 
 ## Instructions history & revert
 
@@ -179,6 +218,25 @@ Validated by `instructionsRevertSchema`. `versionIndex` is an index into the sto
 5. Writes the target version into `systemInstructions` and the grown history back to the column in a single Prisma `update`.
 
 Without step 4, an accidental revert would be permanent. Don't remove it.
+
+### Clone agent
+
+```
+POST /api/v1/admin/orchestration/agents/:id/clone
+```
+
+Deep-clones an agent including capability bindings in a single transaction. The new agent gets a fresh `systemInstructionsHistory` (empty) and the session user as `createdBy`.
+
+**Optional body** (defaults apply when omitted):
+
+| Field  | Type   | Default                  |
+| ------ | ------ | ------------------------ |
+| `name` | string | `"{source.name} (Copy)"` |
+| `slug` | string | `"{source.slug}-copy"`   |
+
+Slug collision: if the slug is taken, retries with `-copy-2`, `-copy-3`, up to 5 attempts. Returns **201** with the new agent on success, **409** if all slug variants are taken.
+
+Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
 
 ## Export / import
 
@@ -276,11 +334,19 @@ curl -X POST /api/v1/admin/orchestration/capabilities \
     "executionHandler": "WebSearchCapability"
   }'
 
-# Soft delete (returns { id, isActive: false })
+# Soft delete (returns { id, isActive: false }) — blocked for system capabilities
 curl -X DELETE /api/v1/admin/orchestration/capabilities/<id>
 ```
 
 Slug collisions on create → 409 `ConflictError`. On PATCH slug collisions → 400 `ValidationError` with `{ slug: ['Slug is already in use'] }`.
+
+### System capability protection
+
+Capabilities seeded by the platform (e.g. `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`) have `isSystem: true`. System capabilities:
+
+- **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System capabilities cannot be deleted')`.
+- **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System capabilities cannot be deactivated')`.
+- **Can be edited** — other fields (description, rateLimit, etc.) can still be updated.
 
 ### Reverse-lookup: agents using a capability
 
@@ -327,7 +393,7 @@ No DNS resolution happens at validate-time — defending against DNS rebinding w
 curl '/api/v1/admin/orchestration/providers?isActive=true&providerType=anthropic&q=claude'
 ```
 
-Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent`.
+Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent` and `circuitBreaker: { state, failureCount, openedAt, config }` (from in-memory breaker state, defaults to `{ state: 'closed', failureCount: 0 }` if no breaker exists).
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/providers \
@@ -360,6 +426,22 @@ Rate-limited. Loads the provider row, calls `providerManager.testProvider(slug)`
 
 `{ ok: false }` is returned with **HTTP 200** — the endpoint itself succeeded; the provider just failed. Only 404 / 401 / 403 / 5xx indicate the endpoint itself broke. A thrown `ProviderError` is caught and surfaced in `{ ok: false, error }` at 200.
 
+### Test model
+
+```bash
+curl -X POST /api/v1/admin/orchestration/providers/<id>/test-model \
+  -H 'Content-Type: application/json' \
+  -d '{ "model": "claude-sonnet-4-6" }'
+```
+
+Rate-limited. Sends a trivial prompt (`"Say hello."`, maxTokens: 10, temperature: 0) to the specified provider + model combination. Returns:
+
+```json
+{ "success": true, "data": { "ok": true, "latencyMs": 246, "model": "claude-sonnet-4-6" } }
+```
+
+On model failure: `{ ok: false, latencyMs: null, model }` at **HTTP 200** (same convention as `/test`). Raw SDK errors are logged server-side but never forwarded to the client.
+
 ### List models (per provider)
 
 ```bash
@@ -367,6 +449,24 @@ curl /api/v1/admin/orchestration/providers/<id>/models
 ```
 
 Calls `getProvider(slug).listModels()` live — this is "what does _this_ provider say it has", distinct from the aggregated registry below. Failures return 503 via a typed error so callers can differentiate transient provider outages from 404s.
+
+### Provider health (circuit breaker)
+
+```bash
+# Read breaker state
+curl /api/v1/admin/orchestration/providers/<id>/health
+
+# Reset the breaker (rate-limited)
+curl -X POST /api/v1/admin/orchestration/providers/<id>/health
+```
+
+GET returns the circuit breaker status for the provider: `{ state, failureCount, openedAt, config }`. When no breaker exists yet (provider has never been called), returns a default closed state.
+
+POST resets the breaker to closed (useful after a provider outage is resolved). Rate-limited by `adminLimiter`.
+
+### Per-provider timeout
+
+Providers support optional `timeoutMs` (1,000–300,000 ms) and `maxRetries` (0–10) fields set via POST/PATCH. Resolution order in `buildProviderFromConfig()`: `config.timeoutMs` → `LOCAL_TIMEOUT_MS` (if `isLocal`) → `DEFAULT_TIMEOUT_MS`. These are passed to the provider SDK constructor.
 
 ### Aggregated model registry
 
@@ -407,13 +507,17 @@ curl -X POST /api/v1/admin/orchestration/workflows \
 
 Validated by `createWorkflowSchema`. `PATCH` re-runs `updateWorkflowSchema` over provided fields — including the Zod validation of `workflowDefinition` — so a malformed update never slips in. `DELETE` is a **soft delete**.
 
-### Validate DAG structure
+### Validate workflow
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/workflows/<id>/validate
 ```
 
-Empty body. Runs `validateWorkflow(workflow.workflowDefinition)` from `lib/orchestration/workflows`. Response:
+Empty body. Runs structural validation (`validateWorkflow`) then semantic validation (`semanticValidateWorkflow`). Structural checks: DAG integrity, cycles, reachability, step-type configs. Semantic checks: model overrides exist in registry, their providers are active, capability slugs are active.
+
+**Structural error codes:** `MISSING_ENTRY`, `UNKNOWN_TARGET`, `UNREACHABLE_STEP`, `CYCLE_DETECTED`, `DUPLICATE_STEP_ID`, `MISSING_APPROVAL_PROMPT`, `MISSING_CAPABILITY_SLUG`, `MISSING_GUARD_RULES`, `MISSING_EVALUATE_RUBRIC`, `MISSING_EXTERNAL_URL`.
+
+**Semantic error codes:** `UNKNOWN_MODEL_OVERRIDE`, `INACTIVE_PROVIDER`, `INACTIVE_CAPABILITY`.
 
 ```json
 {
@@ -421,20 +525,39 @@ Empty body. Runs `validateWorkflow(workflow.workflowDefinition)` from `lib/orche
   "data": {
     "ok": false,
     "errors": [
-      {
-        "code": "UNKNOWN_TARGET",
-        "stepId": "a",
-        "message": "Step 'a' references unknown target 'ghost'"
-      },
-      { "code": "CYCLE_DETECTED", "path": ["a", "b", "a"], "message": "Cycle detected: a → b → a" }
+      { "code": "UNKNOWN_TARGET", "stepId": "a", "message": "..." },
+      { "code": "INACTIVE_PROVIDER", "stepId": "b", "message": "..." }
     ]
   }
 }
 ```
 
-Errors are **typed by `code`**, never just message strings — clients and the future workflow-editor UI should render them structurally. Every `code`, its meaning, and the validator's algorithm are documented in [`workflows.md`](./workflows.md).
+Errors are **typed by `code`**, never just message strings — clients and the workflow-editor UI should render them structurally.
 
-The validator is reused verbatim by `POST /workflows/:id/execute` as a pre-flight check before the engine call, and again by the engine's defence-in-depth pass on the stored definition.
+### Dry-run workflow
+
+```bash
+curl -X POST /api/v1/admin/orchestration/workflows/<id>/dry-run \
+  -d '{ "inputData": { "query": "test", "topic": "AI" } }'
+```
+
+Runs structural + semantic validation and extracts `{{input.key}}` template variables from step configs. Checks if `inputData` covers all referenced variables.
+
+```json
+{
+  "success": true,
+  "data": {
+    "ok": true,
+    "errors": [],
+    "warnings": ["Template variable \"{{input.missing}}\" is not provided in inputData"],
+    "extractedVariables": ["missing", "query", "topic"]
+  }
+}
+```
+
+`extractedVariables` includes `"__whole__"` when a step uses bare `{{input}}`. Warnings are informational — they don't set `ok: false`.
+
+Schema: `dryRunWorkflowBodySchema` in `lib/validations/orchestration.ts`.
 
 ## Executions
 
@@ -533,6 +656,45 @@ Validated by `approveExecutionBodySchema` (`approvalPayload` optional object, `n
 ```
 
 The client is then expected to reconnect via `POST /workflows/:id/execute?resumeFromExecutionId=<id>` to drain the remaining events. This keeps the engine stateless between HTTP boundaries.
+
+### Cancel execution
+
+```bash
+curl -X POST /api/v1/admin/orchestration/executions/<id>/cancel
+```
+
+No request body. The route:
+
+1. Auth + rate limit + CUID + ownership check (cross-user → **404**).
+2. Rejects with **400** if `execution.status` is not `running` or `paused_for_approval`.
+3. Sets `status: 'cancelled'`, `completedAt: now`, `errorMessage: 'Cancelled by user'`.
+
+```json
+{
+  "success": true,
+  "data": { "success": true, "executionId": "<id>" }
+}
+```
+
+The engine polls execution status between steps and stops when it sees `cancelled`.
+
+### Workflow definition history
+
+```bash
+curl /api/v1/admin/orchestration/workflows/<id>/definition-history
+```
+
+Returns `{ workflowId, slug, current, history }` where `history` is newest-first, each entry annotated with `versionIndex` (the raw oldest→newest DB array index). Malformed history JSON returns an empty array with a warning log.
+
+### Revert workflow definition
+
+```bash
+curl -X POST /api/v1/admin/orchestration/workflows/<id>/definition-revert \
+  -H 'Content-Type: application/json' \
+  -d '{ "versionIndex": 0 }'
+```
+
+Validated by `workflowDefinitionRevertSchema`. Pushes the current definition onto history before overwriting with the target version. Returns the updated workflow. Rejects with **400** if `versionIndex >= history.length`.
 
 ## Chat (streaming)
 
@@ -1072,7 +1234,7 @@ Successive runs inside the 60-second `adminLimiter` window may hit 429s — wait
 
 ## Orchestration settings (singleton)
 
-`AiOrchestrationSettings` is a single row (`slug: 'global'`) storing task-type model defaults and an optional cross-agent monthly budget cap. Lazily upserted on first read — the seeder deliberately does not touch it, so admin edits survive re-seeds.
+`AiOrchestrationSettings` is a single row (`slug: 'global'`) storing task-type model defaults, an optional cross-agent monthly budget cap, optional hybrid-search weight overrides, and the timestamp of the last knowledge-base seed. Lazily upserted on first read — the seeder deliberately does not touch most fields, so admin edits survive re-seeds (only `lastSeededAt` is updated by the seeder).
 
 ### GET /settings
 
@@ -1095,6 +1257,11 @@ Returns the hydrated singleton. Missing task keys are filled in from `computeDef
       "embeddings": "claude-haiku-4-5"
     },
     "globalMonthlyBudgetUsd": null,
+    "searchConfig": null,
+    "lastSeededAt": "2026-04-15T12:00:00.000Z",
+    "defaultApprovalTimeoutMs": null,
+    "approvalDefaultAction": "deny",
+    "inputGuardMode": "log_only",
     "createdAt": "2026-04-11T00:00:00.000Z",
     "updatedAt": "2026-04-11T00:00:00.000Z"
   }
@@ -1115,6 +1282,11 @@ Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`
 - `defaultModels` keys must be one of `routing | chat | reasoning | embeddings`
 - Every model id must resolve via `getModel()` in the in-memory registry (`validateTaskDefaults()`)
 - `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
+- `searchConfig` — optional object `{ keywordBoostWeight: number, vectorWeight: number }` or `null` to reset to defaults. `keywordBoostWeight` must be between -0.2 and 0 (non-positive, reduces cosine distance for keyword matches). `vectorWeight` must be between 0.1 and 2.0 (multiplier on vector similarity score).
+- `lastSeededAt` — read-only, set automatically by the knowledge seeder; not accepted in PATCH
+- `defaultApprovalTimeoutMs` — optional `number | null`, positive int ≤ 3,600,000. Global fallback timeout for capability approval gates. When a capability has no `approvalTimeoutMs`, this value is used.
+- `approvalDefaultAction` — `'deny' | 'allow' | null`. What happens when an approval gate times out. Default: `'deny'`.
+- `inputGuardMode` — `'log_only' | 'warn_and_continue' | 'block'`. Controls the input guard behavior when prompt injection is detected. `log_only` silently logs (default), `warn_and_continue` yields a warning event to the client, `block` returns an error and stops processing.
 - At least one field must be present (empty PATCH rejected)
 
 On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` so the next chat turn picks up the new defaults immediately (otherwise the 30s TTL cache would delay the change).
@@ -1125,6 +1297,28 @@ On success the handler calls `invalidateSettingsCache()` in `model-registry.ts` 
 - `checkBudget()` in `lib/orchestration/llm/cost-tracker.ts` consults `globalMonthlyBudgetUsd` in addition to the per-agent cap. When the month-to-date cross-agent total meets or exceeds the cap it returns `{ withinBudget: false, globalCapExceeded: true }`, which the streaming chat handler translates into a `BUDGET_EXCEEDED_GLOBAL` error frame.
 
 Failures in the global-cap lookup are swallowed and the code falls back to the per-agent path so a flaky Prisma read can't lock up chat globally.
+
+## ETag Support
+
+Three frequently polled GET endpoints return weak ETags and support conditional requests via `If-None-Match`:
+
+| Endpoint                             | Purpose                 |
+| ------------------------------------ | ----------------------- |
+| `GET /costs/summary`                 | Cost dashboard totals   |
+| `GET /observability/dashboard-stats` | Observability dashboard |
+| `GET /settings`                      | Orchestration settings  |
+
+```bash
+# First request — get the ETag
+curl -i /api/v1/admin/orchestration/costs/summary
+# → ETag: W/"abc123..."
+
+# Subsequent poll — send it back
+curl -H 'If-None-Match: W/"abc123..."' /api/v1/admin/orchestration/costs/summary
+# → 304 Not Modified (no body)
+```
+
+Implementation: `computeETag()` and `checkConditional()` from `lib/api/etag.ts`. SHA-256 of the JSON response body, truncated to 27 base64url chars.
 
 - [`overview.md`](./overview.md) — Orchestration module layout and architecture decisions
 - [`workflows.md`](./workflows.md) — DAG validator, step shapes, error codes, Phase 5.2 roadmap

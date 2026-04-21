@@ -25,6 +25,8 @@ import { uploadDocument } from '@/lib/orchestration/knowledge/document-manager';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_LINE_COUNT = 100_000;
+const MAX_LINE_LENGTH = 10_000;
 const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt'] as const;
 
 function hasAllowedExtension(name: string): boolean {
@@ -35,11 +37,16 @@ function hasAllowedExtension(name: string): boolean {
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, status, q } = validateQueryParams(searchParams, listDocumentsQuerySchema);
+  const { page, limit, status, scope, category, q } = validateQueryParams(
+    searchParams,
+    listDocumentsQuerySchema
+  );
   const skip = (page - 1) * limit;
 
   const where: Prisma.AiKnowledgeDocumentWhereInput = {};
   if (status) where.status = status;
+  if (scope) where.scope = scope;
+  if (category) where.category = category;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },
@@ -106,12 +113,31 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const content = await file.text();
 
-  const document = await uploadDocument(content, file.name, session.user.id);
+  // Guard against pathological documents that could exhaust memory during chunking
+  const lines = content.split('\n');
+  if (lines.length > MAX_LINE_COUNT) {
+    throw new ValidationError('Document has too many lines', {
+      file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
+    });
+  }
+  if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
+    throw new ValidationError('Document contains excessively long lines', {
+      file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
+    });
+  }
+
+  // Optional category from form field
+  const categoryField = formData.get('category');
+  const category =
+    typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
+
+  const document = await uploadDocument(content, file.name, session.user.id, category);
 
   log.info('Document uploaded', {
     documentId: document.id,
     fileName: file.name,
     sizeBytes: file.size,
+    category: document.category ?? 'none',
     adminId: session.user.id,
   });
 

@@ -23,6 +23,7 @@ import { adminLimiter, chatLimiter, createRateLimitResponse } from '@/lib/securi
 import { getClientIP } from '@/lib/security/ip';
 import { streamChat } from '@/lib/orchestration/chat';
 import { chatStreamRequestSchema } from '@/lib/validations/orchestration';
+import { getRequestId } from '@/lib/logging/context';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -34,6 +35,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, chatStreamRequestSchema);
+  const requestId = await getRequestId();
 
   log.info('Chat stream started', {
     agentSlug: body.agentSlug,
@@ -49,6 +51,7 @@ export const POST = withAdminAuth(async (request, session) => {
     contextType: body.contextType,
     contextId: body.contextId,
     entityContext: body.entityContext,
+    requestId,
     signal: request.signal,
   });
 

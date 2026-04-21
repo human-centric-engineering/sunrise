@@ -27,8 +27,10 @@ const QUIZ_CAPABILITY_SLUGS = ['search_knowledge_base', 'get_pattern_detail'] as
 /**
  * Seed the "quiz-master" agent with two knowledge capabilities.
  *
- * Idempotent — safe to run on every deploy. The capabilities already
- * exist from `005-pattern-advisor`; we only create the pivot links.
+ * Idempotent — safe to run on every deploy. The `update` branch only
+ * sets `isSystem: true` so re-seeding never overwrites admin edits.
+ * The capabilities already exist from `005-pattern-advisor`; we only
+ * create the pivot links.
  */
 const unit: SeedUnit = {
   name: '006-quiz-master',
@@ -46,7 +48,7 @@ const unit: SeedUnit = {
 
     const agent = await prisma.aiAgent.upsert({
       where: { slug: 'quiz-master' },
-      update: {},
+      update: { isSystem: true },
       create: {
         name: 'Pattern Quiz Master',
         slug: 'quiz-master',
@@ -58,6 +60,7 @@ const unit: SeedUnit = {
         temperature: 0.5,
         maxTokens: 4096,
         isActive: true,
+        isSystem: true,
         createdBy,
       },
     });

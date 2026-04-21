@@ -77,6 +77,8 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     isLocal: false,
     isActive: true,
     metadata: null,
+    timeoutMs: null,
+    maxRetries: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),

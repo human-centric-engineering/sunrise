@@ -23,6 +23,8 @@ export interface ChatRequest {
   contextId?: string;
   /** Free-form metadata forwarded into the capability dispatcher. */
   entityContext?: Record<string, unknown>;
+  /** Request-scoped correlation ID for structured log tracing. */
+  requestId?: string;
   /** Abort mid-stream. Forwarded into LlmOptions.signal. */
   signal?: AbortSignal;
 }

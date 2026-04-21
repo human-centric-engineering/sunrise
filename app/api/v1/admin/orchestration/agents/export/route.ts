@@ -14,6 +14,7 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError } from '@/lib/api/errors';
@@ -28,6 +29,8 @@ import {
   type AgentBundle,
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
+
+const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -79,16 +82,16 @@ export const POST = withAdminAuth(async (request, session) => {
         systemInstructionsHistory: history,
         model: agent.model,
         provider: agent.provider,
-        providerConfig: (agent.providerConfig ?? null) as Record<string, unknown> | null,
+        providerConfig: jsonRecord.parse(agent.providerConfig),
         temperature: agent.temperature,
         maxTokens: agent.maxTokens,
         monthlyBudgetUsd: agent.monthlyBudgetUsd,
-        metadata: (agent.metadata ?? null) as Record<string, unknown> | null,
+        metadata: jsonRecord.parse(agent.metadata),
         isActive: agent.isActive,
         capabilities: agent.capabilities.map((link) => ({
           slug: link.capability.slug,
           isEnabled: link.isEnabled,
-          customConfig: (link.customConfig ?? null) as Record<string, unknown> | null,
+          customConfig: jsonRecord.parse(link.customConfig),
           customRateLimit: link.customRateLimit,
         })),
       };

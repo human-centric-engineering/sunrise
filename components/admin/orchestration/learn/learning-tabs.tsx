@@ -8,14 +8,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API } from '@/lib/api/endpoints';
+import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
 import type { PatternSummary } from '@/types/orchestration';
 
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
-import { PatternCardGrid } from './pattern-card-grid';
+import { PatternCardGrid } from '@/components/admin/orchestration/learn/pattern-card-grid';
 
 interface LearningTabsProps {
   patterns: PatternSummary[];
+  defaultTab?: string;
+  contextType?: string;
+  contextId?: string;
 }
 
 const ADVISOR_PROMPTS = [
@@ -43,27 +47,6 @@ function parseQuizScore(text: string): { correct: number; total: number } | null
   return { correct, total };
 }
 
-/** Extract a workflow-definition code block from assistant text. */
-function extractWorkflowDefinition(text: string): string | null {
-  const match = /```workflow-definition\n([\s\S]*?)\n```/.exec(text);
-  if (!match?.[1]) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(match[1]);
-    if (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      'steps' in parsed &&
-      Array.isArray((parsed as Record<string, unknown>).steps)
-    ) {
-      return match[1];
-    }
-  } catch {
-    // Invalid JSON — ignore
-  }
-  return null;
-}
-
 interface EmbeddingStatus {
   total: number;
   embedded: number;
@@ -71,7 +54,7 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
-export function LearningTabs({ patterns }: LearningTabsProps) {
+export function LearningTabs({ patterns, defaultTab, contextType, contextId }: LearningTabsProps) {
   const router = useRouter();
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
@@ -82,6 +65,15 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
       .then((res) => (res.ok ? res.json() : null))
       .then((body: { data?: EmbeddingStatus } | null) => {
         if (body?.data) setEmbeddingStatus(body.data);
+      })
+      .catch(() => {});
+
+    // Load the most recent persisted quiz score
+    fetch(API.ADMIN.ORCHESTRATION.QUIZ_SCORES)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { data?: { correct: number; total: number }[] } | null) => {
+        const latest = body?.data?.[0];
+        if (latest) setQuizScore({ correct: latest.correct, total: latest.total });
       })
       .catch(() => {});
   }, []);
@@ -97,6 +89,12 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
     const score = parseQuizScore(fullText);
     if (score) {
       setQuizScore(score);
+      // Persist to database (fire-and-forget)
+      fetch(API.ADMIN.ORCHESTRATION.QUIZ_SCORES, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(score),
+      }).catch(() => {});
     }
   }, []);
 
@@ -108,7 +106,7 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
   }, [router, workflowRecommendation]);
 
   return (
-    <Tabs defaultValue="patterns">
+    <Tabs defaultValue={defaultTab ?? 'patterns'}>
       <TabsList>
         <TabsTrigger value="patterns">Patterns</TabsTrigger>
         <TabsTrigger value="advisor">Advisor</TabsTrigger>
@@ -131,6 +129,8 @@ export function LearningTabs({ patterns }: LearningTabsProps) {
           <ChatInterface
             agentSlug="pattern-advisor"
             embedded
+            contextType={contextType}
+            contextId={contextId}
             starterPrompts={ADVISOR_PROMPTS}
             onStreamComplete={handleStreamComplete}
             className="h-[600px]"

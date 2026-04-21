@@ -59,6 +59,12 @@ Button that POSTs `/providers/:id/test` (where `:id` is the selected provider's 
 
 **Shared extract (Phase 4 Session 4.3):** This button is now the `<ProviderTestButton>` at `components/admin/orchestration/provider-test-button.tsx`, shared with `<ProviderForm>`. Behaviour is unchanged; when the selected provider slug doesn't yet correspond to a saved row, the button shows a "save it first" disabled message instead of firing the request. See [`orchestration-providers.md`](./orchestration-providers.md#providertestbutton--shared-extract).
 
+### Test model
+
+Button below "Test connection" that sends a trivial prompt (`"Say hello."`, maxTokens: 10) to the selected provider + model combination and reports round-trip latency. POSTs `/providers/:id/test-model` with `{ model }`. On success: green check + latency in ms. On failure: red × + generic message. Disabled when no provider or model is selected.
+
+**Component:** `<ModelTestButton>` at `components/admin/orchestration/model-test-button.tsx`.
+
 ### Help copy
 
 - **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. Default: `anthropic`."
@@ -99,6 +105,10 @@ Mutations:
 | Configure | `PATCH /agents/:id/capabilities/:capId` with `{ body: { customConfig, customRateLimit } }` |
 
 All four refetch the left column on success. Errors surface as an inline banner above the two columns.
+
+### Rate limit usage badges
+
+Each attached capability shows a live usage badge next to its name, fetched from `GET /agents/:id/capabilities/usage` (queries `AiCostLog` for `tool_call` operations in the last 60 seconds). Auto-refreshes every 15 seconds. Format: `12 / 60 /min` (amber at ≥80%, red at ≥100%). When no rate limit is configured, shows `5 calls/min` without a denominator. Zero usage with no limit renders no badge.
 
 ## Tab 5 — Test
 

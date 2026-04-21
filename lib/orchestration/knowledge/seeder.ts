@@ -14,7 +14,7 @@ import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { embedBatch } from './embedder';
+import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
 const seedChunkMetadataSchema = z.object({
@@ -111,6 +111,7 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       name: DOCUMENT_NAME,
       fileName: DOCUMENT_FILE_NAME,
       fileHash,
+      scope: 'system',
       status: 'ready',
       uploadedBy: uploaderId,
       chunkCount: chunks.length,
@@ -145,6 +146,14 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       })
     );
   }
+
+  // Record the seed timestamp on the settings singleton (upsert to handle
+  // the case where settings haven't been lazily created yet).
+  await prisma.aiOrchestrationSettings.upsert({
+    where: { slug: 'global' },
+    create: { slug: 'global', defaultModels: {}, lastSeededAt: new Date() },
+    update: { lastSeededAt: new Date() },
+  });
 
   logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
     documentId: document.id,

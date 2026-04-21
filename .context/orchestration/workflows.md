@@ -95,6 +95,38 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 }
 ```
 
+## `semanticValidateWorkflow(def)`
+
+```typescript
+import { semanticValidateWorkflow } from '@/lib/orchestration/workflows';
+
+const result = await semanticValidateWorkflow(workflow.workflowDefinition);
+if (!result.ok) {
+  // result.errors is Array<{ code, message, stepId }>
+}
+```
+
+DB-backed validation that checks whether a workflow's steps reference real, active resources. Separated from the pure structural `validateWorkflow()` so callers without DB access can still run structural checks independently.
+
+Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + model registry.
+
+### Algorithm
+
+1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate` steps) and capability slugs (from `tool_call` steps).
+2. **Batch DB queries** — two parallel queries: active providers and active capabilities matching the collected slugs.
+3. **Check model overrides** — each `modelOverride` must exist in the model registry and its provider must be active.
+4. **Check capability slugs** — each `capabilitySlug` must match an active capability.
+
+### Semantic error codes
+
+| `code`                   | `stepId` | Meaning                                                       |
+| ------------------------ | -------- | ------------------------------------------------------------- |
+| `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                   |
+| `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider         |
+| `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability |
+
+The `/validate` and `/dry-run` endpoints run both structural and semantic validation. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
+
 ## Consumers
 
 | Consumer                                   | Purpose                                                               |

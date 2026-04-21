@@ -134,5 +134,6 @@ export function sseResponse<T extends { type: string }>(
 }
 
 function formatFrame<T extends { type: string }>(event: T): string {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+  const safeType = /^[a-z0-9_]+$/i.test(event.type) ? event.type : 'unknown';
+  return `event: ${safeType}\ndata: ${JSON.stringify(event)}\n\n`;
 }

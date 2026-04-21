@@ -54,8 +54,17 @@ import {
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@/types/orchestration';
-import { createContext, mergeStepResult, snapshotContext, type ExecutionContext } from './context';
-import { BudgetExceeded, ExecutorError, PausedForApproval } from './errors';
+import {
+  createContext,
+  mergeStepResult,
+  snapshotContext,
+  type ExecutionContext,
+} from '@/lib/orchestration/engine/context';
+import {
+  BudgetExceeded,
+  ExecutorError,
+  PausedForApproval,
+} from '@/lib/orchestration/engine/errors';
 import {
   approvalRequired,
   budgetWarning,
@@ -65,12 +74,12 @@ import {
   workflowCompleted,
   workflowFailed,
   workflowStarted,
-} from './events';
-import { getExecutor } from './executor-registry';
+} from '@/lib/orchestration/engine/events';
+import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
-import './executors';
+import '@/lib/orchestration/engine/executors';
 
 /** Default retry count for `retry` strategy. */
 const DEFAULT_RETRY_COUNT = 2;
@@ -138,6 +147,18 @@ export class OrchestrationEngine {
     while (queue.length > 0) {
       if (options.signal?.aborted) {
         failureReason = 'Execution aborted by client';
+        yield workflowFailed(failureReason);
+        failed = true;
+        break;
+      }
+
+      // Check if the execution was cancelled via the cancel endpoint.
+      const row = await prisma.aiWorkflowExecution.findUnique({
+        where: { id: ctx.executionId },
+        select: { status: true },
+      });
+      if (row?.status === WorkflowStatus.CANCELLED) {
+        failureReason = 'Execution cancelled by user';
         yield workflowFailed(failureReason);
         failed = true;
         break;
@@ -312,6 +333,10 @@ export class OrchestrationEngine {
    * Run a single step with retry / fallback / skip / fail semantics.
    * Yields `step_failed` events for retries so the client sees them.
    * Returns the successful `StepResult` or throws an `ExecutorError`.
+   *
+   * Per-step timeout: if `config.timeoutMs` is set, the executor is
+   * aborted after that many milliseconds. The timeout wraps the entire
+   * step (including all retry attempts).
    */
   private async *runStepWithStrategy(
     step: WorkflowStep,
@@ -319,15 +344,41 @@ export class OrchestrationEngine {
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
-    const strategy = errorConfig.errorStrategy ?? 'fail';
+    const strategy = errorConfig.errorStrategy ?? ctx.defaultErrorStrategy ?? 'fail';
     const retryCount =
       typeof errorConfig.retryCount === 'number' ? errorConfig.retryCount : DEFAULT_RETRY_COUNT;
+    const stepTimeoutMs = errorConfig.timeoutMs;
+
+    // Wrap the executor call with an optional per-step timeout.
+    const invokeExecutor = async (): Promise<StepResult> => {
+      if (!stepTimeoutMs) {
+        return executor(step, snapshotContext(ctx));
+      }
+      return Promise.race([
+        executor(step, snapshotContext(ctx)),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new ExecutorError(
+                  step.id,
+                  'step_timeout',
+                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                  undefined,
+                  false
+                )
+              ),
+            stepTimeoutMs
+          );
+        }),
+      ]);
+    };
 
     if (strategy === 'retry') {
       let lastError: ExecutorError | null = null;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
-          return await executor(step, snapshotContext(ctx));
+          return await invokeExecutor();
         } catch (err) {
           if (err instanceof PausedForApproval) throw err;
           lastError =
@@ -339,6 +390,8 @@ export class OrchestrationEngine {
                   err instanceof Error ? err.message : 'Executor threw an unknown error',
                   err
                 );
+          // Don't retry non-retriable errors.
+          if (!lastError.retriable) throw lastError;
           if (attempt < retryCount) {
             yield stepFailed(step.id, sanitizeError(lastError), true);
             await sleep(backoffDelayMs(attempt));
@@ -350,7 +403,7 @@ export class OrchestrationEngine {
     }
 
     try {
-      return await executor(step, snapshotContext(ctx));
+      return await invokeExecutor();
     } catch (err) {
       if (err instanceof PausedForApproval) throw err;
       const execErr =
@@ -371,9 +424,6 @@ export class OrchestrationEngine {
       if (strategy === 'fallback') {
         yield stepFailed(step.id, sanitizeError(execErr), false);
         if (errorConfig.fallbackStepId) {
-          // Fallback is modelled as "skip this step; walker enqueues
-          // the fallback id instead". Return a sentinel that sets
-          // nextStepIds to the fallback.
           return {
             output: null,
             tokensUsed: 0,
@@ -424,6 +474,7 @@ export class OrchestrationEngine {
         workflowId: workflow.id,
         userId: options.userId,
         inputData,
+        defaultErrorStrategy: workflow.definition.errorStrategy,
         budgetLimitUsd: row.budgetLimitUsd ?? options.budgetLimitUsd,
         signal: options.signal,
         logger: baseLogger.withContext({ executionId: row.id }),
@@ -468,6 +519,7 @@ export class OrchestrationEngine {
       workflowId: workflow.id,
       userId: options.userId,
       inputData,
+      defaultErrorStrategy: workflow.definition.errorStrategy,
       budgetLimitUsd: options.budgetLimitUsd,
       signal: options.signal,
       logger: baseLogger.withContext({ executionId: row.id }),

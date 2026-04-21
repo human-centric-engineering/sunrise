@@ -20,12 +20,15 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
       if (!containerRef.current) return;
 
       try {
-        const mermaid = (await import('mermaid')).default;
+        const [mermaid, DOMPurify] = await Promise.all([
+          import('mermaid').then((m) => m.default),
+          import('dompurify').then((m) => m.default),
+        ]);
         if (!mermaidInitialized) {
           mermaid.initialize({
             startOnLoad: false,
             theme: 'neutral',
-            securityLevel: 'loose',
+            securityLevel: 'strict',
           });
           mermaidInitialized = true;
         }
@@ -34,7 +37,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         const { svg } = await mermaid.render(id, code);
 
         if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = svg;
+          containerRef.current.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } });
           setLoading(false);
         }
       } catch (err) {

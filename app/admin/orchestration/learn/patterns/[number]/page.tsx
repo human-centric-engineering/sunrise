@@ -1,12 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { DiscussPatternButton } from '@/components/admin/orchestration/learn/discuss-pattern-button';
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
+import { RelatedPatterns } from '@/components/admin/orchestration/learn/related-patterns';
+import { UsePatternButton } from '@/components/admin/orchestration/learn/use-pattern-button';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import type { AiKnowledgeChunk } from '@/types/orchestration';
+import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
+import type { AiKnowledgeChunk, PatternSummary } from '@/types/orchestration';
 
 interface PatternDetail {
   patternName: string | null;
@@ -27,6 +31,18 @@ async function getPatternDetail(num: number): Promise<PatternDetail | null> {
   } catch (err) {
     logger.error('pattern detail page: fetch failed', err);
     return null;
+  }
+}
+
+async function getPatternNames(): Promise<Map<number, string>> {
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS);
+    if (!res.ok) return new Map();
+    const body = await parseApiResponse<PatternSummary[]>(res);
+    if (!body.success) return new Map();
+    return new Map(body.data.map((p) => [p.patternNumber, p.patternName]));
+  } catch {
+    return new Map();
   }
 }
 
@@ -73,7 +89,7 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
-  const detail = await getPatternDetail(num);
+  const [detail, patternNames] = await Promise.all([getPatternDetail(num), getPatternNames()]);
 
   if (!detail || detail.chunks.length === 0) {
     return (
@@ -96,6 +112,8 @@ export default async function PatternDetailPage({ params }: PageProps) {
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
+  const relatedPatterns = extractRelatedPatterns(detail.chunks, num, patternNames);
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
@@ -110,7 +128,13 @@ export default async function PatternDetailPage({ params }: PageProps) {
           {' / '}
           <span>{detail.patternName}</span>
         </nav>
-        <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
+          <div className="flex gap-2">
+            <DiscussPatternButton patternNumber={num} />
+            <UsePatternButton patternNumber={num} />
+          </div>
+        </div>
       </header>
 
       {/* Hero sections — always visible in cards */}
@@ -122,6 +146,9 @@ export default async function PatternDetailPage({ params }: PageProps) {
           <PatternContent content={stripEmbeddingPrefix(chunk.content)} />
         </div>
       ))}
+
+      {/* Related patterns — extracted from cross-references in content */}
+      <RelatedPatterns patterns={relatedPatterns} />
 
       {/* Remaining sections — collapsible accordions */}
       {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}

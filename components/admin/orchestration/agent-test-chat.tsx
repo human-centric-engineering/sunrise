@@ -45,13 +45,14 @@ interface ParsedSseEvent {
   data: Record<string, unknown>;
 }
 
-const DEFAULT_INITIAL_MESSAGE = 'Hello! Can you tell me what you help with?';
+const DEFAULT_PLACEHOLDER =
+  'Try a question your users would ask, e.g. "Summarise last week\'s tickets"';
 
 export function AgentTestChat({
   agentSlug,
-  placeholder,
+  placeholder = DEFAULT_PLACEHOLDER,
   minHeight = 'min-h-[100px]',
-  initialMessage = DEFAULT_INITIAL_MESSAGE,
+  initialMessage = '',
 }: AgentTestChatProps) {
   const [message, setMessage] = useState(initialMessage);
   const [reply, setReply] = useState('');

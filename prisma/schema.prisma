@@ -47,6 +47,7 @@ model User {
   aiKnowledgeDocuments AiKnowledgeDocument[] @relation("AiKnowledgeDocumentUploader")
   aiEvaluationSessions AiEvaluationSession[] @relation("AiEvaluationSessionUser")
   aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
+  aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
 
   @@unique([email])
   @@index([role])
@@ -158,7 +159,9 @@ model AiAgent {
   maxTokens                 Int      @default(4096)
   monthlyBudgetUsd          Float?
   metadata                  Json?
+  knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
   isActive                  Boolean  @default(true)
+  isSystem                  Boolean  @default(false)
   createdBy                 String
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -188,8 +191,10 @@ model AiCapability {
   executionHandler   String // class path or endpoint
   executionConfig    Json?
   requiresApproval   Boolean @default(false)
+  approvalTimeoutMs  Int? // ms before auto-deny/allow; null = use global default
   rateLimit          Int? // calls per minute
   isActive           Boolean @default(true)
+  isSystem           Boolean @default(false)
   metadata           Json?
 
   // Relations
@@ -226,8 +231,9 @@ model AiWorkflow {
   name               String
   slug               String   @unique
   description        String   @db.Text
-  workflowDefinition Json // DAG of pattern steps
-  patternsUsed       Int[] // pattern numbers used in this workflow
+  workflowDefinition        Json // DAG of pattern steps
+  workflowDefinitionHistory Json     @default("[]") // [{definition, changedAt, changedBy}]
+  patternsUsed              Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
   metadata           Json?
@@ -284,10 +290,12 @@ model AiConversation {
   title       String?
   contextType String?
   contextId   String?
-  metadata    Json?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  metadata              Json?
+  summary               String?   @db.Text
+  summaryUpToMessageId  String?
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   // Relations
   user     User        @relation("AiConversationUser", fields: [userId], references: [id])
@@ -331,6 +339,8 @@ model AiKnowledgeDocument {
   fileHash     String // SHA-256 for deduplication
   chunkCount   Int      @default(0)
   status       String // "processing", "ready", "failed"
+  scope        String   @default("app") // "system" | "app"
+  category     String? // user-assigned or extracted from document metadata
   errorMessage String?  @db.Text
   uploadedBy   String
   createdAt    DateTime @default(now())
@@ -342,6 +352,8 @@ model AiKnowledgeDocument {
 
   @@index([uploadedBy])
   @@index([status])
+  @@index([scope])
+  @@index([category])
   @@index([fileHash])
   @@map("ai_knowledge_document")
 }
@@ -457,6 +469,24 @@ model AiCostLog {
   @@map("ai_cost_log")
 }
 
+// Webhook subscriptions for outbound event notifications
+model AiWebhookSubscription {
+  id          String   @id @default(cuid())
+  url         String // destination URL (validated as safe)
+  secret      String // HMAC-SHA256 signing key
+  events      String[] // e.g. ["budget_exceeded","workflow_failed"]
+  isActive    Boolean  @default(true)
+  description String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation("AiWebhookUser", fields: [createdBy], references: [id])
+
+  @@index([isActive])
+  @@map("ai_webhook_subscription")
+}
+
 // Configured LLM providers
 model AiProviderConfig {
   id           String   @id @default(cuid())
@@ -468,6 +498,8 @@ model AiProviderConfig {
   isLocal      Boolean  @default(false)
   isActive     Boolean  @default(true)
   metadata     Json?
+  timeoutMs    Int? // per-provider request timeout; null = use default (30s cloud, 10s local)
+  maxRetries   Int? // per-provider retry count; null = use default (3)
   createdBy    String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -492,12 +524,17 @@ model AiProviderConfig {
 /// Upserted lazily on the first `GET /api/v1/admin/orchestration/settings`
 /// call; never touched by the seeder so admin edits survive deploys.
 model AiOrchestrationSettings {
-  id                     String   @id @default(cuid())
-  slug                   String   @unique @default("global")
+  id                     String    @id @default(cuid())
+  slug                   String    @unique @default("global")
   defaultModels          Json // { routing: string, chat: string, reasoning: string, embeddings: string }
   globalMonthlyBudgetUsd Float?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  searchConfig           Json? // { keywordBoostWeight: number, vectorWeight: number }
+  lastSeededAt           DateTime?
+  defaultApprovalTimeoutMs Int? // ms before auto-action on approval gates; null = no timeout
+  approvalDefaultAction  String?   @default("deny") // "deny" or "allow"
+  inputGuardMode         String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@map("ai_orchestration_settings")
 }

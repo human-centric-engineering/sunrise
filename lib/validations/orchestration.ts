@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema, slugSchema } from './common';
+import { paginationQuerySchema, cuidSchema, slugSchema } from '@/lib/validations/common';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
@@ -210,6 +210,17 @@ export const instructionsRevertSchema = z.object({
   versionIndex: z.number().int().min(0),
 });
 
+/**
+ * Clone agent body (POST /api/v1/admin/orchestration/agents/:id/clone)
+ *
+ * Both fields are optional — defaults to "{source.name} (Copy)" and
+ * "{source.slug}-copy".
+ */
+export const cloneAgentBodySchema = z.object({
+  name: z.string().min(1).max(100).trim().optional(),
+  slug: slugSchema.pipe(z.string().max(100)).optional(),
+});
+
 // ============================================================================
 // Capability Schemas
 // ============================================================================
@@ -259,6 +270,14 @@ export const createCapabilitySchema = z.object({
   executionConfig: z.record(z.string(), z.unknown()).optional(),
 
   requiresApproval: z.boolean().default(false),
+
+  approvalTimeoutMs: z
+    .number()
+    .int('Approval timeout must be an integer')
+    .positive('Approval timeout must be positive')
+    .max(3_600_000, 'Approval timeout must be at most 1 hour')
+    .nullable()
+    .optional(),
 
   rateLimit: z
     .number()
@@ -319,6 +338,14 @@ export const updateCapabilitySchema = z.object({
   executionConfig: z.record(z.string(), z.unknown()).optional(),
 
   requiresApproval: z.boolean().optional(),
+
+  approvalTimeoutMs: z
+    .number()
+    .int('Approval timeout must be an integer')
+    .positive('Approval timeout must be positive')
+    .max(3_600_000, 'Approval timeout must be at most 1 hour')
+    .nullable()
+    .optional(),
 
   rateLimit: z
     .number()
@@ -392,6 +419,59 @@ export const updateAgentCapabilitySchema = z.object({
  */
 export const exportAgentsSchema = z.object({
   agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
+});
+
+/** Bulk operations on multiple agents at once. */
+export const bulkAgentActionSchema = z.object({
+  action: z.enum(['activate', 'deactivate', 'delete']),
+  agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
+});
+
+// ============================================================================
+// Webhook Schemas
+// ============================================================================
+
+const WEBHOOK_EVENT_TYPES = [
+  'budget_exceeded',
+  'workflow_failed',
+  'approval_required',
+  'circuit_breaker_opened',
+] as const;
+
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
+
+export const createWebhookSchema = z.object({
+  url: z
+    .string()
+    .url('Must be a valid URL')
+    .max(2000)
+    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+  secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
+  events: z
+    .array(z.enum(WEBHOOK_EVENT_TYPES))
+    .min(1, 'At least one event type is required')
+    .max(WEBHOOK_EVENT_TYPES.length),
+  description: z.string().max(500).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const updateWebhookSchema = z.object({
+  url: z
+    .string()
+    .url('Must be a valid URL')
+    .max(2000)
+    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)')
+    .optional(),
+  secret: z.string().min(16).max(256).optional(),
+  events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).min(1).max(WEBHOOK_EVENT_TYPES.length).optional(),
+  description: z.string().max(500).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const listWebhooksQuerySchema = paginationQuerySchema.extend({
+  isActive: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
+    .optional(),
 });
 
 /**
@@ -470,7 +550,39 @@ const workflowStepSchema = z.object({
 export const workflowDefinitionSchema = z.object({
   steps: z.array(workflowStepSchema).min(1, 'Workflow must have at least one step'),
   entryStepId: z.string().min(1, 'Entry step ID is required'),
-  errorStrategy: z.enum(['retry', 'fallback', 'fail']),
+  errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']),
+});
+
+/**
+ * A single entry in `AiWorkflow.workflowDefinitionHistory`. Pushed on every
+ * PATCH that actually changes `workflowDefinition`, and on every successful revert.
+ */
+export const workflowDefinitionHistoryEntrySchema = z.object({
+  definition: z.record(z.string(), z.unknown()),
+  changedAt: z.string().datetime(),
+  changedBy: z.string().min(1),
+});
+
+/**
+ * Runtime validator for the full `workflowDefinitionHistory` JSON column.
+ * Use `safeParse` at read time — same pattern as `systemInstructionsHistorySchema`.
+ */
+export const workflowDefinitionHistorySchema = z.array(workflowDefinitionHistoryEntrySchema);
+
+/**
+ * Revert request — `versionIndex` is an index into the history array
+ * (oldest→newest). The endpoint pushes the current definition onto
+ * history before overwriting, so the forward value is never lost.
+ */
+export const workflowDefinitionRevertSchema = z.object({
+  versionIndex: z.number().int().min(0),
+});
+
+/**
+ * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run)
+ */
+export const dryRunWorkflowBodySchema = z.object({
+  inputData: z.record(z.string(), z.unknown()),
 });
 
 /**
@@ -625,6 +737,9 @@ const chunkTypeSchema = z.enum([
 /**
  * Knowledge search schema (GET /api/v1/admin/orchestration/knowledge/search)
  */
+/** Document scope enum — "system" for built-in patterns, "app" for user uploads */
+const documentScopeSchema = z.enum(['system', 'app']);
+
 export const knowledgeSearchSchema = z.object({
   query: z
     .string()
@@ -637,6 +752,8 @@ export const knowledgeSearchSchema = z.object({
   patternNumber: z.coerce.number().int().positive().optional(),
 
   category: z.string().max(100).optional(),
+
+  scope: documentScopeSchema.optional(),
 
   limit: z.coerce
     .number()
@@ -767,6 +884,20 @@ export const providerConfigSchema = z
     isActive: z.boolean().default(true),
 
     metadata: metadataSchema,
+
+    timeoutMs: z
+      .number()
+      .int('Timeout must be an integer')
+      .min(1000, 'Timeout must be at least 1 second')
+      .max(300_000, 'Timeout must be at most 5 minutes')
+      .optional(),
+
+    maxRetries: z
+      .number()
+      .int('Max retries must be an integer')
+      .min(0, 'Max retries must be non-negative')
+      .max(10, 'Max retries must be at most 10')
+      .optional(),
   })
   .superRefine(refineProviderBaseUrl);
 
@@ -808,6 +939,22 @@ export const updateProviderConfigSchema = z
     isActive: z.boolean().optional(),
 
     metadata: metadataSchema,
+
+    timeoutMs: z
+      .number()
+      .int('Timeout must be an integer')
+      .min(1000, 'Timeout must be at least 1 second')
+      .max(300_000, 'Timeout must be at most 5 minutes')
+      .nullable()
+      .optional(),
+
+    maxRetries: z
+      .number()
+      .int('Max retries must be an integer')
+      .min(0, 'Max retries must be non-negative')
+      .max(10, 'Max retries must be at most 10')
+      .nullable()
+      .optional(),
   })
   .superRefine(refineProviderBaseUrl);
 
@@ -855,6 +1002,11 @@ export const executeWorkflowBodySchema = z.object({
 export const approveExecutionBodySchema = z.object({
   approvalPayload: z.record(z.string(), z.unknown()).optional(),
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
+});
+
+/** Retry failed step request body (POST /executions/[id]/retry-step). */
+export const retryStepBodySchema = z.object({
+  stepId: z.string().min(1, 'stepId is required'),
 });
 
 /**
@@ -907,6 +1059,8 @@ export const listConversationsQuerySchema = paginationQuerySchema.extend({
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),
   q: z.string().trim().min(1).max(200).optional(),
+  /** Full-text search across message content (case-insensitive). */
+  messageSearch: z.string().trim().min(1).max(500).optional(),
 });
 
 /**
@@ -928,6 +1082,8 @@ export const clearConversationsBodySchema = z
 /** List knowledge documents query (GET /admin/orchestration/knowledge/documents). */
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+  scope: documentScopeSchema.optional(),
+  category: z.string().max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -1085,6 +1241,18 @@ export const completeEvaluationBodySchema = z.object({}).passthrough();
  */
 export const storedDefaultModelsSchema = z.record(z.string(), z.string()).catch({});
 
+/** Zod schema for hybrid search weight configuration. */
+export const searchConfigSchema = z.object({
+  keywordBoostWeight: z
+    .number()
+    .min(-0.2, 'Keyword boost must be at least -0.2')
+    .max(0, 'Keyword boost must be non-positive (it reduces cosine distance for matches)'),
+  vectorWeight: z
+    .number()
+    .min(0.1, 'Vector weight must be at least 0.1')
+    .max(2.0, 'Vector weight must be at most 2.0'),
+});
+
 export const updateOrchestrationSettingsSchema = z
   .object({
     defaultModels: z
@@ -1107,10 +1275,29 @@ export const updateOrchestrationSettingsSchema = z
       .max(1_000_000, 'Global monthly budget must be at most $1,000,000')
       .nullable()
       .optional(),
+    searchConfig: searchConfigSchema.nullable().optional(),
+    defaultApprovalTimeoutMs: z
+      .number()
+      .int()
+      .positive('Approval timeout must be positive')
+      .max(3_600_000, 'Approval timeout must be at most 1 hour')
+      .nullable()
+      .optional(),
+    approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
+    inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   })
-  .refine((v) => v.defaultModels !== undefined || v.globalMonthlyBudgetUsd !== undefined, {
-    message: 'At least one field must be provided',
-  });
+  .refine(
+    (v) =>
+      v.defaultModels !== undefined ||
+      v.globalMonthlyBudgetUsd !== undefined ||
+      v.searchConfig !== undefined ||
+      v.defaultApprovalTimeoutMs !== undefined ||
+      v.approvalDefaultAction !== undefined ||
+      v.inputGuardMode !== undefined,
+    {
+      message: 'At least one field must be provided',
+    }
+  );
 
 // ============================================================================
 // Execution Trace — Prisma Json column parsing
@@ -1146,6 +1333,9 @@ export const stepErrorConfigSchema = z.object({
   errorStrategy: z.enum(['retry', 'fallback', 'skip', 'fail']).optional(),
   retryCount: z.number().int().nonnegative().optional(),
   fallbackStepId: z.string().optional(),
+  /** Per-step execution timeout in milliseconds. When exceeded, the step
+   *  fails with code 'step_timeout'. The error strategy still applies. */
+  timeoutMs: z.number().int().positive().optional(),
 });
 
 export const llmCallConfigSchema = stepErrorConfigSchema.extend({
@@ -1213,12 +1403,16 @@ export const evaluateConfigSchema = stepErrorConfigSchema.extend({
 
 export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   url: z.string().optional(),
-  method: z.enum(['GET', 'POST', 'PUT']).optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
   headers: z.record(z.string(), z.string()).optional(),
   bodyTemplate: z.string().optional(),
   timeoutMs: z.number().optional(),
-  authType: z.enum(['none', 'bearer', 'api-key']).optional(),
+  authType: z.enum(['none', 'bearer', 'api-key', 'query-param']).optional(),
   authSecret: z.string().optional(),
+  /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
+  authQueryParam: z.string().optional(),
+  /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
+  maxResponseBytes: z.number().int().positive().optional(),
 });
 
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
@@ -1241,6 +1435,7 @@ export const messageMetadataSchema = z.object({
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 export type UpdateAgentInput = z.infer<typeof updateAgentSchema>;
+export type CloneAgentBody = z.infer<typeof cloneAgentBodySchema>;
 export type ListAgentsQuery = z.infer<typeof listAgentsQuerySchema>;
 export type SystemInstructionsHistoryEntry = z.infer<typeof systemInstructionsHistoryEntrySchema>;
 export type InstructionsRevertInput = z.infer<typeof instructionsRevertSchema>;
@@ -1252,6 +1447,8 @@ export type UpdateAgentCapabilityInput = z.infer<typeof updateAgentCapabilitySch
 export type ExportAgentsInput = z.infer<typeof exportAgentsSchema>;
 export type AgentBundle = z.infer<typeof agentBundleSchema>;
 export type ImportAgentsInput = z.infer<typeof importAgentsSchema>;
+export type WorkflowDefinitionHistoryEntry = z.infer<typeof workflowDefinitionHistoryEntrySchema>;
+export type WorkflowDefinitionRevertInput = z.infer<typeof workflowDefinitionRevertSchema>;
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;
 export type ChatMessageInput = z.infer<typeof chatMessageSchema>;
@@ -1280,3 +1477,20 @@ export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
 export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
 export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;
 export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestrationSettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Quiz scores
+// ---------------------------------------------------------------------------
+
+/** POST body for saving a quiz score. */
+export const saveQuizScoreSchema = z
+  .object({
+    correct: z.number().int().min(0),
+    total: z.number().int().min(1),
+  })
+  .refine((d) => d.correct <= d.total, {
+    message: 'correct must be ≤ total',
+    path: ['correct'],
+  });
+
+export type SaveQuizScoreInput = z.infer<typeof saveQuizScoreSchema>;

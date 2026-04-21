@@ -66,6 +66,8 @@ const MOCK_PROVIDERS = [
     updatedAt: new Date(),
     baseUrl: null,
     metadata: {},
+    timeoutMs: null,
+    maxRetries: null,
   },
 ];
 
@@ -157,11 +159,13 @@ describe('AgentForm — General tab', () => {
         maxTokens: 4096,
         monthlyBudgetUsd: null,
         isActive: true,
+        isSystem: false,
         createdBy: 'system',
         createdAt: new Date(),
         updatedAt: new Date(),
         systemInstructionsHistory: [],
         metadata: {},
+        knowledgeCategories: [],
         deletedAt: null,
         fallbackProviders: [],
       };

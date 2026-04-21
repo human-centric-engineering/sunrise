@@ -9,22 +9,38 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
+import { validateQueryParams } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { filterEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
+
+const booleanQueryParam = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((v) => v === 'true');
+
+const embeddingModelsQuerySchema = z.object({
+  schemaCompatibleOnly: booleanQueryParam,
+  hasFreeTier: booleanQueryParam,
+  local: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
+});
 
 export const GET = withAdminAuth((request) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-  const url = new URL(request.url);
-  const schemaCompatibleOnly = url.searchParams.get('schemaCompatibleOnly') === 'true';
-  const hasFreeTier = url.searchParams.get('hasFreeTier') === 'true';
-  const localParam = url.searchParams.get('local');
-  const local = localParam === null ? undefined : localParam === 'true';
+  const { searchParams } = new URL(request.url);
+  const { schemaCompatibleOnly, hasFreeTier, local } = validateQueryParams(
+    searchParams,
+    embeddingModelsQuerySchema
+  );
 
   const models = filterEmbeddingModels({ schemaCompatibleOnly, hasFreeTier, local });
 

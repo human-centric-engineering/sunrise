@@ -20,6 +20,12 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: mockRefresh,
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+  usePathname: vi.fn(() => '/admin/orchestration/knowledge'),
+}));
+
+vi.mock('@/lib/analytics', () => ({
+  useAnalytics: vi.fn(() => ({ track: vi.fn() })),
 }));
 
 const mockFetch = vi.fn();
@@ -35,6 +41,8 @@ const MOCK_DOCUMENTS = [
     fileHash: 'abc',
     chunkCount: 42,
     status: 'ready',
+    scope: 'system',
+    category: null,
     errorMessage: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-01'),
@@ -47,6 +55,8 @@ const MOCK_DOCUMENTS = [
     fileHash: 'def',
     chunkCount: 0,
     status: 'processing',
+    scope: 'app',
+    category: null,
     errorMessage: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-02'),

@@ -11,7 +11,7 @@ Shared create/edit form for `AiCapability`. Four shadcn tabs, one underlying `<f
 | #   | Tab                 | Create | Edit | Notes                                                               |
 | --- | ------------------- | ------ | ---- | ------------------------------------------------------------------- |
 | 1   | Basic               | ✅     | ✅   | Name, slug, description, category, active                           |
-| 2   | Function definition | ✅     | ✅   | Visual builder ⟷ JSON editor with live preview                      |
+| 2   | Function definition | ✅     | ✅   | Builder ⟷ JSON editor with live preview                             |
 | 3   | Execution           | ✅     | ✅   | Execution type, handler, optional execution config                  |
 | 4   | Safety              | ✅     | ✅   | Requires approval, rate limit, "used by N agents" panel (edit only) |
 
@@ -55,7 +55,7 @@ This is the most involved tab — an admin can edit the OpenAI function-definiti
 }
 ```
 
-### Visual builder (default)
+### Builder mode (default)
 
 - **Top fields** — `fn.name` and `fn.description`. Client-side validation prevents empty name; the backend also enforces it via `capabilityFunctionDefinitionSchema`.
 - **Parameters table** — `useState<ParameterRow[]>` outside RHF. Each row has:
@@ -70,10 +70,10 @@ Every keystroke recompiles the rows into the OpenAI shape via `compileFunctionDe
 ### JSON editor (escape hatch)
 
 - `<Textarea rows=20 class="font-mono">` with a **debounced 200 ms parse**. Valid JSON → writes to `parsedFn` and updates the live preview. Invalid JSON → inline red error, `parsedFn` is not touched, submit is blocked.
-- Switching Visual → JSON serializes the current compiled shape into the textarea.
-- Switching JSON → Visual attempts `tryReverseCompile()`. If the shape uses features the visual builder can't represent (nested objects, `oneOf`, enums, etc.), the visual toggle is **disabled** and an amber banner explains that the admin must stay in JSON mode to edit.
+- Switching Builder → JSON serializes the current compiled shape into the textarea.
+- Switching JSON → Builder attempts `tryReverseCompile()`. If the shape uses features the Builder can't represent (nested objects, `oneOf`, enums, etc.), the Builder toggle is **disabled** and an amber banner explains why. If the admin simplifies the schema, the toggle re-enables automatically. If JSON is simply invalid (syntax error), the switch is blocked with an inline error instead of permanently disabling the toggle.
 
-Both modes parse through `capabilityFunctionDefinitionSchema` (defined in `lib/validations/orchestration.ts:31`) before touching form state — no `as` casts.
+Both modes parse through `capabilityFunctionDefinitionSchema` (defined in `lib/validations/orchestration.ts:31`) before touching form state — no `as` casts. The `visualDisabled` flag is re-evaluated on every successful JSON parse, so simplifying a complex schema back to a Builder-compatible shape re-enables the toggle without a page reload.
 
 ### Live preview
 

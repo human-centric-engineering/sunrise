@@ -23,12 +23,16 @@ import type { AiProviderConfig } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
-import { AnthropicProvider } from './anthropic';
-import { getBreaker } from './circuit-breaker';
-import { OpenAiCompatibleProvider } from './openai-compatible';
-import { ProviderError, type LlmProvider, type ProviderTestResult } from './provider';
-import type { ProviderConfig } from './types';
-import { VoyageProvider } from './voyage';
+import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
+import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
+import {
+  ProviderError,
+  type LlmProvider,
+  type ProviderTestResult,
+} from '@/lib/orchestration/llm/provider';
+import type { ProviderConfig } from '@/lib/orchestration/llm/types';
+import { VoyageProvider } from '@/lib/orchestration/llm/voyage';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -243,6 +247,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       type: 'anthropic',
       apiKey,
       isLocal: config.isLocal,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 
@@ -259,6 +265,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       apiKey,
       baseUrl: config.baseUrl ?? undefined,
       isLocal: false,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 
@@ -299,6 +307,8 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
       baseUrl: config.baseUrl,
       ...(apiKey !== undefined ? { apiKey } : {}),
       isLocal: config.isLocal,
+      ...(config.timeoutMs != null ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.maxRetries != null ? { maxRetries: config.maxRetries } : {}),
     });
   }
 

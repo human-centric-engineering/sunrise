@@ -20,8 +20,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Save } from 'lucide-react';
+import { AlertCircle, Loader2, Save, Shield } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
@@ -40,8 +41,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
+import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
+import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
@@ -177,7 +180,15 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       {/* Sticky action bar */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
         <div>
-          <h1 className="text-xl font-semibold">{isEdit ? agent?.name : 'New agent'}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">{isEdit ? agent?.name : 'New agent'}</h1>
+            {isEdit && agent?.isSystem && (
+              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                <Shield className="h-3 w-3" />
+                System
+              </Badge>
+            )}
+          </div>
           {isEdit && <p className="text-muted-foreground font-mono text-xs">{agent?.slug}</p>}
         </div>
         <div className="flex items-center gap-2">
@@ -199,6 +210,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           </Button>
         </div>
       </div>
+
+      {!isEdit && <CliAuthoringHint resource="agents" />}
 
       {error && (
         <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
@@ -315,6 +328,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               id="isActive"
               checked={currentIsActive}
               onCheckedChange={(v) => setValue('isActive', v)}
+              disabled={isEdit && agent?.isSystem}
             />
           </div>
         </TabsContent>
@@ -461,16 +475,24 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             />
           </div>
 
-          <div className="pt-2">
+          <div className="space-y-2 pt-2">
             <ProviderTestButton
               providerId={currentProviderId}
               disabledMessage="We don't have a stored config for this provider yet — save it first."
             />
+            <ModelTestButton providerId={currentProviderId} model={currentModel || null} />
           </div>
         </TabsContent>
 
         {/* ================= TAB 3 — INSTRUCTIONS ================= */}
         <TabsContent value="instructions" className="space-y-4 pt-4">
+          {isEdit && agent?.isSystem && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+              <Shield className="h-4 w-4 shrink-0" />
+              This is a system agent. Changes to instructions are versioned and can be reverted from
+              the history panel below.
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="systemInstructions">
               System instructions{' '}
