@@ -13,8 +13,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
 import type { EmbeddingModelInfo } from '@/lib/orchestration/llm/embedding-models';
+
+const modelsResponseSchema = z.object({
+  data: z.array(z.record(z.string(), z.unknown())).optional(),
+});
 
 interface CompareProvidersModalProps {
   open: boolean;
@@ -39,8 +45,8 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
       const url = `${API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS}?${params.toString()}`;
       const res = await fetch(url);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: EmbeddingModelInfo[] };
-      if (body.data) setModels(body.data);
+      const body = modelsResponseSchema.parse(await res.json());
+      if (body.data) setModels(body.data as unknown as EmbeddingModelInfo[]);
     } catch {
       // non-critical
     } finally {

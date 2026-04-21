@@ -1,12 +1,49 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Upload, X } from 'lucide-react';
+import { FileText, Globe, Loader2, Upload, X } from 'lucide-react';
+
+import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { API } from '@/lib/api/endpoints';
+
+const categoriesResponseSchema = z.object({
+  data: z
+    .object({ app: z.object({ categories: z.array(z.object({ value: z.string() })) }).optional() })
+    .optional(),
+});
+
+const errorBodySchema = z
+  .object({
+    error: z.object({ message: z.string().optional() }).optional(),
+  })
+  .nullable();
+
+const uploadResponseSchema = z.object({
+  data: z
+    .object({
+      preview: z.object({ requiresConfirmation: z.boolean() }).passthrough().optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
+const bulkUploadResponseSchema = z.object({
+  data: z
+    .object({
+      results: z.array(
+        z.object({
+          fileName: z.string(),
+          status: z.string(),
+          error: z.string().optional(),
+        })
+      ),
+    })
+    .optional(),
+});
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'];
@@ -33,7 +70,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [category, setCategory] = useState('');
   const [existingCategories, setExistingCategories] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -46,9 +83,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
         if (!res.ok) return;
-        const body = (await res.json()) as {
-          data?: { app?: { categories: Array<{ value: string }> } };
-        };
+        const body = categoriesResponseSchema.parse(await res.json());
         if (body.data?.app?.categories) {
           setExistingCategories(body.data.app.categories.map((c) => c.value));
         }
@@ -81,55 +116,119 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     return null;
   }, []);
 
-  const stageFile = useCallback(
-    (file: File) => {
-      const validationError = validateFile(file);
-      if (validationError) {
-        setError(validationError);
-        return;
+  const stageFiles = useCallback(
+    (files: File[]) => {
+      const errors: string[] = [];
+      const valid: File[] = [];
+      for (const file of files) {
+        const validationError = validateFile(file);
+        if (validationError) {
+          errors.push(`${file.name}: ${validationError}`);
+        } else {
+          valid.push(file);
+        }
       }
-      setError(null);
-      setStagedFile(file);
+      if (errors.length > 0) {
+        setError(errors.join('; '));
+      } else {
+        setError(null);
+      }
+      if (valid.length > 0) {
+        setStagedFiles((prev) => {
+          const existing = new Set(prev.map((f) => f.name));
+          const deduped = valid.filter((f) => !existing.has(f.name));
+          const combined = [...prev, ...deduped];
+          if (combined.length > 10) {
+            setError('Maximum 10 files per batch');
+            return prev;
+          }
+          return combined;
+        });
+      }
     },
     [validateFile]
   );
 
-  const uploadFile = useCallback(async () => {
-    if (!stagedFile) return;
+  const uploadFiles = useCallback(async () => {
+    if (stagedFiles.length === 0) return;
 
     setError(null);
     setUploading(true);
 
     try {
+      // Single file — use original endpoint (supports PDF preview flow)
+      if (stagedFiles.length === 1) {
+        const formData = new FormData();
+        formData.append('file', stagedFiles[0]);
+        if (category.trim()) {
+          formData.append('category', category.trim());
+        }
+
+        const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+          throw new Error((raw.success ? raw.data?.error?.message : null) ?? 'Upload failed');
+        }
+
+        const responseBody = uploadResponseSchema.parse(await res.json());
+
+        if (responseBody.data?.preview?.requiresConfirmation && onPdfPreview) {
+          setStagedFiles([]);
+          setCategory('');
+          onPdfPreview(responseBody.data as unknown as PdfPreviewData);
+          return;
+        }
+
+        setStagedFiles([]);
+        setCategory('');
+        onUploadComplete();
+        return;
+      }
+
+      // Multiple files — use bulk endpoint
       const formData = new FormData();
-      formData.append('file', stagedFile);
+      for (const file of stagedFiles) {
+        formData.append('files', file);
+      }
       if (category.trim()) {
         formData.append('category', category.trim());
       }
 
-      const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS, {
+      const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/bulk`, {
         method: 'POST',
         body: formData,
       });
 
       if (!res.ok) {
-        const body: unknown = await res.json().catch(() => null);
-        const parsed = body as { error?: { message?: string } } | null;
-        throw new Error(parsed?.error?.message ?? 'Upload failed');
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        throw new Error((raw.success ? raw.data?.error?.message : null) ?? 'Bulk upload failed');
       }
 
-      const responseBody = (await res.json()) as { data?: PdfPreviewData };
+      const responseBody = bulkUploadResponseSchema.parse(await res.json());
 
-      // PDF preview flow — hand off to the preview modal
-      if (responseBody.data?.preview?.requiresConfirmation && onPdfPreview) {
-        setStagedFile(null);
-        setCategory('');
-        onPdfPreview(responseBody.data);
-        return;
+      const results = responseBody.data?.results ?? [];
+      const errors = results.filter((r) => r.status === 'error');
+      const skippedPdfs = results.filter((r) => r.status === 'skipped_pdf');
+
+      const messages: string[] = [];
+      if (errors.length > 0) {
+        messages.push(errors.map((e) => `${e.fileName}: ${e.error}`).join('; '));
+      }
+      if (skippedPdfs.length > 0) {
+        messages.push(
+          `${skippedPdfs.length} PDF(s) skipped — upload PDFs individually for the preview flow`
+        );
       }
 
-      // Reset state
-      setStagedFile(null);
+      if (messages.length > 0) {
+        setError(messages.join('. '));
+      }
+
+      setStagedFiles([]);
       setCategory('');
       onUploadComplete();
     } catch (err) {
@@ -137,25 +236,25 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     } finally {
       setUploading(false);
     }
-  }, [stagedFile, category, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, category, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragging(false);
-      const file = e.dataTransfer.files[0];
-      if (file) stageFile(file);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) stageFiles(files);
     },
-    [stageFile]
+    [stageFiles]
   );
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) stageFile(file);
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) stageFiles(files);
       if (inputRef.current) inputRef.current.value = '';
     },
-    [stageFile]
+    [stageFiles]
   );
 
   const filteredSuggestions = existingCategories.filter(
@@ -306,7 +405,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         </FieldHelp>
       </div>
 
-      {!stagedFile ? (
+      {stagedFiles.length === 0 ? (
         /* Drop zone — file selection */
         <div
           role="button"
@@ -329,37 +428,52 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           }`}
         >
           <Upload className="text-muted-foreground mb-2 h-8 w-8" />
-          <p className="text-sm font-medium">Drop a file here or click to browse</p>
+          <p className="text-sm font-medium">Drop files here or click to browse</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            .md, .txt, .epub, .docx, .pdf — up to 50 MB
+            .md, .txt, .epub, .docx, .pdf — up to 50 MB, max 10 files
           </p>
         </div>
       ) : (
-        /* Staged file — category + upload */
+        /* Staged files — category + upload */
         <div className="space-y-3 rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText className="text-muted-foreground h-5 w-5" />
-              <div>
-                <p className="text-sm font-medium">{stagedFile.name}</p>
-                <p className="text-muted-foreground text-xs">
-                  {(stagedFile.size / 1024).toFixed(1)} KB
-                </p>
+          <div className="space-y-2">
+            {stagedFiles.map((file, idx) => (
+              <div key={`${file.name}-${idx}`} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="text-muted-foreground h-4 w-4" />
+                  <div>
+                    <p className="text-sm font-medium">{file.name}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {(file.size / 1024).toFixed(1)} KB
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setStagedFiles((prev) => prev.filter((_, i) => i !== idx));
+                    setError(null);
+                  }}
+                  disabled={uploading}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
               </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setStagedFile(null);
-                setCategory('');
-                setError(null);
-              }}
-              disabled={uploading}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            ))}
           </div>
+
+          {stagedFiles.length < 10 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => inputRef.current?.click()}
+              disabled={uploading}
+              className="w-full"
+            >
+              Add more files
+            </Button>
+          )}
 
           <div ref={categoryRef} className="relative space-y-1">
             <div className="flex items-center gap-1">
@@ -413,14 +527,30 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             )}
           </div>
 
-          <Button
-            onClick={() => void uploadFile()}
-            disabled={uploading}
-            size="sm"
-            className="w-full"
-          >
-            {uploading ? 'Uploading...' : 'Upload'}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setStagedFiles([]);
+                setCategory('');
+                setError(null);
+              }}
+              disabled={uploading}
+            >
+              Clear all
+            </Button>
+            <Button
+              onClick={() => void uploadFiles()}
+              disabled={uploading}
+              size="sm"
+              className="flex-1"
+            >
+              {uploading
+                ? 'Uploading...'
+                : `Upload ${stagedFiles.length === 1 ? '' : `${stagedFiles.length} files`}`}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -428,12 +558,90 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         ref={inputRef}
         type="file"
         accept=".md,.markdown,.txt,.epub,.docx,.pdf"
+        multiple
         className="hidden"
         onChange={handleFileChange}
-        aria-label="Upload document"
+        aria-label="Upload documents"
       />
 
+      {/* Fetch from URL */}
+      <FetchFromUrl category={category} onFetchComplete={onUploadComplete} />
+
       {error && <p className="text-destructive text-sm">{error}</p>}
+    </div>
+  );
+}
+
+// ─── Fetch from URL sub-component ──────────────────────────────────────────
+
+function FetchFromUrl({
+  category,
+  onFetchComplete,
+}: {
+  category: string;
+  onFetchComplete: () => void;
+}): React.ReactElement {
+  const [url, setUrl] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  async function handleFetch(): Promise<void> {
+    if (!url.trim()) return;
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/fetch-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url.trim(),
+          category: category.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        throw new Error(
+          (raw.success ? raw.data?.error?.message : null) ?? `Fetch failed (HTTP ${res.status})`
+        );
+      }
+      setUrl('');
+      onFetchComplete();
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Fetch failed');
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1">
+        <Globe className="text-muted-foreground h-3.5 w-3.5" />
+        <span className="text-xs font-medium">Fetch from URL</span>
+      </div>
+      <div className="flex gap-2">
+        <Input
+          type="url"
+          placeholder="https://example.com/document.md"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          disabled={fetching}
+          className="h-8 text-sm"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleFetch();
+          }}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void handleFetch()}
+          disabled={fetching || !url.trim()}
+        >
+          {fetching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+          {fetching ? 'Fetching...' : 'Fetch'}
+        </Button>
+      </div>
+      {fetchError && <p className="text-destructive text-xs">{fetchError}</p>}
     </div>
   );
 }

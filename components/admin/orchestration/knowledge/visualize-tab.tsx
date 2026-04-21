@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
 import type { GraphData, GraphNode } from '@/types/orchestration';
 
@@ -30,10 +32,10 @@ const CATEGORY_COLOURS = [
   '#94a3b8', // Chunk — slate
 ];
 
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-}
+const graphResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
 
 interface VisualizeTabProps {
   scope?: string;
@@ -58,9 +60,9 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         cache: 'no-store',
       });
       if (!res.ok) return;
-      const body = (await res.json()) as ApiResponse<GraphData>;
+      const body = graphResponseSchema.parse(await res.json());
       if (body.success && body.data) {
-        setGraphData(body.data);
+        setGraphData(body.data as unknown as GraphData);
       }
     } catch {
       // Silently handle

@@ -7,8 +7,37 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
-import type { AiKnowledgeDocument, OrchestrationSettings } from '@/types/orchestration';
+import type { AiKnowledgeDocument } from '@/types/orchestration';
+
+const metaTagsResponseSchema = z.object({
+  data: z
+    .object({ app: z.record(z.string(), z.unknown()), system: z.record(z.string(), z.unknown()) })
+    .optional(),
+});
+
+const embeddingStatusResponseSchema = z.object({
+  data: z
+    .object({
+      total: z.number(),
+      embedded: z.number(),
+      pending: z.number(),
+      hasActiveProvider: z.boolean(),
+    })
+    .optional(),
+});
+
+const settingsResponseSchema = z.object({
+  data: z.object({ lastSeededAt: z.string().nullable().optional() }).passthrough().optional(),
+});
+
+const errorBodySchema = z
+  .object({
+    error: z.object({ message: z.string().optional() }).optional(),
+  })
+  .nullable();
 
 import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
 import { DocumentChunksModal } from '@/components/admin/orchestration/knowledge/document-chunks-modal';
@@ -174,8 +203,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: MetaTagSummary };
-      if (body.data?.app && body.data?.system) setMetaTags(body.data);
+      const body = metaTagsResponseSchema.parse(await res.json());
+      if (body.data?.app && body.data?.system) setMetaTags(body.data as unknown as MetaTagSummary);
     } catch {
       // Supplementary — ignore failures
     }
@@ -185,7 +214,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: EmbeddingStatus };
+      const body = embeddingStatusResponseSchema.parse(await res.json());
       if (body.data) setEmbeddingStatus(body.data);
     } catch {
       // Silently ignore — status is supplementary
@@ -196,8 +225,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: OrchestrationSettings };
-      if (body.data?.lastSeededAt) setLastSeededAt(body.data.lastSeededAt as unknown as string);
+      const body = settingsResponseSchema.parse(await res.json());
+      if (body.data?.lastSeededAt) setLastSeededAt(body.data.lastSeededAt);
     } catch {
       // Silently ignore — supplementary info
     }
@@ -215,10 +244,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEED, { method: 'POST' });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        setSeedError(body?.error?.message ?? `Load failed (${res.status})`);
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        setSeedError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Load failed (${res.status})`
+        );
         return;
       }
       onRefresh();
@@ -237,10 +266,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBED, { method: 'POST' });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        setEmbedError(body?.error?.message ?? `Embedding failed (${res.status})`);
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        setEmbedError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Embedding failed (${res.status})`
+        );
         return;
       }
       void fetchEmbeddingStatus();

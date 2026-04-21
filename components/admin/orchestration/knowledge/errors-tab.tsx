@@ -14,14 +14,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: { message?: string };
-}
+const apiResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.array(z.record(z.string(), z.unknown())).optional(),
+  error: z.object({ message: z.string().optional() }).optional(),
+});
 
 interface ErrorsTabProps {
   scope?: string;
@@ -43,9 +45,9 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
         `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?${params.toString()}`
       );
       if (!res.ok) return;
-      const body = (await res.json()) as ApiResponse<AiKnowledgeDocument[]>;
+      const body = apiResponseSchema.parse(await res.json());
       if (body.success && body.data) {
-        setDocuments(body.data);
+        setDocuments(body.data as unknown as AiKnowledgeDocument[]);
       }
     } catch {
       // Silently ignore — will show empty state

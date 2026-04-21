@@ -14,14 +14,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
 import type { KnowledgeSearchResult } from '@/types/orchestration';
 
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: { message?: string };
-}
+const searchResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({ results: z.array(z.record(z.string(), z.unknown())) }).optional(),
+});
 
 /** Returns similarity badge colour classes based on score tier */
 function similarityClasses(score: number): string {
@@ -57,9 +58,9 @@ export function ExploreTab({ scope }: ExploreTabProps) {
           body: JSON.stringify({ query: q, limit: 20, ...(scope ? { scope } : {}) }),
         });
         if (!res.ok) return;
-        const body = (await res.json()) as ApiResponse<{ results: KnowledgeSearchResult[] }>;
+        const body = searchResponseSchema.parse(await res.json());
         if (body.success && body.data) {
-          setResults(body.data.results);
+          setResults(body.data.results as unknown as KnowledgeSearchResult[]);
         }
       } catch {
         // Silently handle — no results shown
