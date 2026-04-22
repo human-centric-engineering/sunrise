@@ -1,4 +1,4 @@
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 /**
  * Seed the provider model matrix with per-model entries.

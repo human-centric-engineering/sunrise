@@ -6,7 +6,7 @@
  * === / --- underlines), those are used as section boundaries.
  */
 
-import type { ParsedDocument, ParsedSection } from './types';
+import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Detect a line that looks like a heading (ALL CAPS, 3+ chars, no punctuation-heavy). */
 function isHeadingLine(line: string): boolean {

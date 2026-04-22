@@ -12,7 +12,7 @@
  */
 
 import { PDFParse } from 'pdf-parse';
-import type { ParsedDocument, ParsedSection } from './types';
+import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Minimum text length to consider a PDF as having extractable content. */
 const MIN_VIABLE_TEXT_LENGTH = 50;

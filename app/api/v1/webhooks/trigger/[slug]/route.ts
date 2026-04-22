@@ -16,6 +16,7 @@
 
 import type { NextRequest } from 'next/server';
 import type { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { successResponse, errorResponse } from '@/lib/api/responses';
@@ -24,6 +25,8 @@ import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
 
 const SYSTEM_USER_ID = 'webhook-trigger';
+
+const webhookInputSchema = z.record(z.string(), z.unknown());
 
 export async function POST(
   request: NextRequest,
@@ -75,8 +78,9 @@ export async function POST(
   let inputData: Prisma.InputJsonValue = {};
   try {
     const body: unknown = await request.json();
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
-      inputData = body as Prisma.InputJsonValue;
+    const parsed = webhookInputSchema.safeParse(body);
+    if (parsed.success) {
+      inputData = parsed.data as Prisma.InputJsonValue;
     }
   } catch {
     // Empty body or non-JSON — proceed with empty input

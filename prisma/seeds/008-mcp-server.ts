@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 /**
  * Seed the MCP server: global config singleton + mcp-system agent.

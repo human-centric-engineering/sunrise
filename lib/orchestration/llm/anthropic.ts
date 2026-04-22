@@ -43,7 +43,7 @@ import {
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
-} from './provider';
+} from '@/lib/orchestration/llm/provider';
 import type {
   ContentPart,
   LlmFinishReason,
@@ -55,8 +55,8 @@ import type {
   ModelInfo,
   ProviderConfig,
   StreamChunk,
-} from './types';
-import { getTextContent } from './types';
+} from '@/lib/orchestration/llm/types';
+import { getTextContent } from '@/lib/orchestration/llm/types';
 
 /** Model used for cheap connectivity pings. */
 const PING_MODEL = 'claude-haiku-4-5';

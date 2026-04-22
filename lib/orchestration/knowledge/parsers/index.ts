@@ -15,13 +15,13 @@
 
 import { extname } from 'path';
 import { logger } from '@/lib/logging';
-import type { ParsedDocument } from './types';
-import { parseTxt } from './txt-parser';
-import { parseDocx } from './docx-parser';
-import { parseEpub } from './epub-parser';
-import { parsePdf } from './pdf-parser';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
+import { parseTxt } from '@/lib/orchestration/knowledge/parsers/txt-parser';
+import { parseDocx } from '@/lib/orchestration/knowledge/parsers/docx-parser';
+import { parseEpub } from '@/lib/orchestration/knowledge/parsers/epub-parser';
+import { parsePdf } from '@/lib/orchestration/knowledge/parsers/pdf-parser';
 
-export type { ParsedDocument, ParsedSection } from './types';
+export type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Formats that require a preview/confirmation step before chunking. */
 export const PREVIEW_REQUIRED_EXTENSIONS = new Set(['.pdf']);

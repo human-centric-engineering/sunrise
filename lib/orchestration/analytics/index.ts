@@ -10,4 +10,4 @@ export {
   type ContentGap,
   type AgentFeedback,
   type FeedbackSummary,
-} from './analytics-service';
+} from '@/lib/orchestration/analytics/analytics-service';

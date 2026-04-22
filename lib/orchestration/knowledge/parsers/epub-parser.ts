@@ -14,7 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import EPub from 'epub2';
-import type { ParsedDocument, ParsedSection } from './types';
+import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Strip HTML tags and decode basic entities. */
 function stripHtml(html: string): string {

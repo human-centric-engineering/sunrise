@@ -7,7 +7,7 @@
  */
 
 import mammoth from 'mammoth';
-import type { ParsedDocument, ParsedSection } from './types';
+import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 export async function parseDocx(buffer: Buffer, fileName: string): Promise<ParsedDocument> {
   const warnings: string[] = [];

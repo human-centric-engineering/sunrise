@@ -20,9 +20,9 @@
 import type { AiCostLog, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getAvailableModels, getModel } from './model-registry';
+import { getAvailableModels, getModel } from '@/lib/orchestration/llm/model-registry';
 import type { AgentCostSummary, CostOperation, LocalSavingsResult } from '@/types/orchestration';
-import type { ModelInfo } from './types';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 /** Computed cost breakdown for a single operation. */
 export interface ComputedCost {

@@ -37,7 +37,7 @@ import type {
 } from 'openai/resources/chat/completions/completions';
 
 import { logger } from '@/lib/logging';
-import { getModel } from './model-registry';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
@@ -47,7 +47,7 @@ import {
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
-} from './provider';
+} from '@/lib/orchestration/llm/provider';
 import type {
   ContentPart,
   LlmFinishReason,
@@ -58,8 +58,8 @@ import type {
   LlmToolChoice,
   ModelInfo,
   StreamChunk,
-} from './types';
-import { getTextContent } from './types';
+} from '@/lib/orchestration/llm/types';
+import { getTextContent } from '@/lib/orchestration/llm/types';
 
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';

@@ -22,7 +22,7 @@
  */
 
 import { LRUCache } from 'lru-cache';
-import { SECURITY_CONSTANTS } from './constants';
+import { SECURITY_CONSTANTS } from '@/lib/security/constants';
 import { getStore } from '@/lib/security/rate-limit-stores';
 import type { RateLimitStore } from '@/lib/security/rate-limit-stores';
 

@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { EditorProps } from './index';
+import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors';
 
 export interface HumanApprovalConfig extends Record<string, unknown> {
   prompt: string;

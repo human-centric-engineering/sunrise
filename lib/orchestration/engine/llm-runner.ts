@@ -22,8 +22,8 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import type { ExecutionContext } from './context';
-import { ExecutorError } from './errors';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
 
 export interface LlmRunParams {
   stepId: string;

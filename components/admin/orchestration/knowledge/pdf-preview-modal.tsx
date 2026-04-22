@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { API } from '@/lib/api/endpoints';
 
-import type { PdfPreviewData } from './document-upload-zone';
+import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 
 interface PdfPreviewModalProps {
   data: PdfPreviewData | null;
