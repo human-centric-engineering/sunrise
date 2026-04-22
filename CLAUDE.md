@@ -287,6 +287,9 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Document Ingestion      | `.context/orchestration/document-ingestion.md`        | Multi-format parsing, PDF preview flow, parser arch      |
 | Scheduling & Webhooks   | `.context/orchestration/scheduling.md`                | Cron schedules, webhook triggers, scheduler tick         |
 | Client Analytics        | `.context/orchestration/analytics.md`                 | Popular topics, unanswered questions, engagement, gaps   |
+| Backup & Restore        | `.context/orchestration/backup.md`                    | Export/import config, schema versioning, ImportResult    |
+| Experiments (A/B)       | `.context/orchestration/experiments.md`               | Variants, lifecycle (draft→running→completed), run API   |
+| Embed Widget            | `.context/orchestration/embed.md`                     | Token auth, CORS, widget.js loader, Shadow DOM chat      |
 | SSE Bridge              | `.context/api/sse.md`                                 | `sseResponse` helper, framing, sanitization              |
 | Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`           | Admin landing page, data sources, layout                 |
 | Agents List / Pages     | `.context/admin/orchestration-agents.md`              | List, create, edit shells; table, bulk export            |
