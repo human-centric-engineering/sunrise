@@ -1072,3 +1072,193 @@ describe('safeParseJson helper (exercised via chatStream tool buffering)', () =>
     expect(toolChunk?.toolCall.arguments).toEqual({});
   });
 });
+
+// ---------------------------------------------------------------------------
+// Branch-hardening: SDK status-bearing errors → ProviderError mapping
+// ---------------------------------------------------------------------------
+
+describe('AnthropicProvider.chat — SDK status-bearing error mapping', () => {
+  it('wraps a 429 rate-limit SDK error as a retriable ProviderError with status 429', async () => {
+    // Arrange: simulate the SDK throwing an error that carries status=429 (like RateLimitError)
+    const rateLimitErr = Object.assign(new Error('rate limit exceeded'), { status: 429 });
+    createMock.mockRejectedValue(rateLimitErr);
+
+    const provider = makeProvider();
+
+    // Act + Assert
+    const thrown = await provider
+      .chat([{ role: 'user', content: 'hi' }], { model: 'claude-haiku-4-5' })
+      .catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(ProviderError);
+    const pe = thrown as ProviderError;
+    // toProviderError reads .status and marks it retriable when status is 429
+    expect(pe.status).toBe(429);
+    expect(pe.retriable).toBe(true);
+    expect(pe.code).toBe('http_429');
+  });
+
+  it('wraps a 400 bad-request SDK error as a non-retriable ProviderError with status 400', async () => {
+    // Arrange: simulate the SDK throwing an error that carries status=400 (like BadRequestError
+    // for context-window-exceeded or invalid parameters)
+    const badRequestErr = Object.assign(new Error('context_length_exceeded: too many tokens'), {
+      status: 400,
+    });
+    createMock.mockRejectedValue(badRequestErr);
+
+    const provider = makeProvider();
+
+    // Act + Assert
+    const thrown = await provider
+      .chat([{ role: 'user', content: 'hi' }], { model: 'claude-haiku-4-5' })
+      .catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(ProviderError);
+    const pe = thrown as ProviderError;
+    // 400 is not in the retriable set (429 or 5xx only)
+    expect(pe.status).toBe(400);
+    expect(pe.retriable).toBe(false);
+    expect(pe.code).toBe('http_400');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch-hardening: structured output extraction via tool-based pattern
+// ---------------------------------------------------------------------------
+
+describe('AnthropicProvider.chat — structured output extraction (json_schema responseFormat)', () => {
+  it('extracts structured output from __structured_ tool_use block as JSON text content', async () => {
+    // Arrange: the model responds with a tool_use block using the __structured_ convention;
+    // the provider should convert its arguments to JSON text rather than treating it as a tool call.
+    const structuredPayload = { name: 'Alice', age: 30 };
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'struct_1',
+          name: '__structured_user_profile',
+          input: structuredPayload,
+        },
+      ],
+      usage: { input_tokens: 8, output_tokens: 12 },
+      model: 'claude-sonnet-4-6',
+      stop_reason: 'tool_use',
+    });
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'extract user profile' }], {
+      model: 'claude-sonnet-4-6',
+      responseFormat: {
+        type: 'json_schema',
+        name: 'user_profile',
+        schema: {
+          type: 'object',
+          properties: { name: { type: 'string' }, age: { type: 'number' } },
+        },
+      },
+    });
+
+    // The structured extraction path should produce content (JSON string), not toolCalls
+    expect(response.content).toBe(JSON.stringify(structuredPayload));
+    expect(response.toolCalls).toBeUndefined();
+    // finishReason is forced to 'stop' for structured extractions regardless of stop_reason
+    expect(response.finishReason).toBe('stop');
+  });
+
+  it('passes the extraction tool and forced tool_choice to the SDK when responseFormat is json_schema', async () => {
+    // Arrange: verify the params sent to the SDK include the extraction tool definition
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'struct_2',
+          name: '__structured_result',
+          input: { value: 42 },
+        },
+      ],
+      usage: { input_tokens: 5, output_tokens: 5 },
+      model: 'claude-haiku-4-5',
+      stop_reason: 'tool_use',
+    });
+
+    const provider = makeProvider();
+    await provider.chat([{ role: 'user', content: 'compute' }], {
+      model: 'claude-haiku-4-5',
+      responseFormat: {
+        type: 'json_schema',
+        name: 'result',
+        schema: { type: 'object', properties: { value: { type: 'number' } } },
+      },
+    });
+
+    const callArgs = createMock.mock.calls[0][0] as {
+      tools: Array<{ name: string; description: string }>;
+      tool_choice: { type: string; name: string };
+    };
+    // The extraction tool name should be __structured_<name>
+    expect(callArgs.tools).toHaveLength(1);
+    expect(callArgs.tools[0].name).toBe('__structured_result');
+    // Tool choice must be forced to the extraction tool
+    expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_result' });
+  });
+});
+
+describe('AnthropicProvider.chatStream — structured output extraction (json_schema responseFormat)', () => {
+  it('emits assembled JSON as text chunk (not tool_call) when tool name starts with __structured_', async () => {
+    // Arrange: streaming structured output — the tool buffer is assembled and emitted as text
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'struct_s1', name: '__structured_answer' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"answer":' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '"42"}' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'tool_use' },
+        usage: { output_tokens: 6 },
+      },
+    ];
+    createMock.mockResolvedValue(makeStream(events));
+
+    const provider = makeProvider();
+    const chunks: object[] = [];
+    for await (const chunk of provider.chatStream([{ role: 'user', content: 'answer?' }], {
+      model: 'claude-haiku-4-5',
+      responseFormat: {
+        type: 'json_schema',
+        name: 'answer',
+        schema: { type: 'object', properties: { answer: { type: 'string' } } },
+      },
+    })) {
+      chunks.push(chunk);
+    }
+
+    // Should have a text chunk with the JSON-stringified parsed result, NOT a tool_call chunk
+    const textChunks = chunks.filter((c) => (c as { type: string }).type === 'text');
+    const toolChunks = chunks.filter((c) => (c as { type: string }).type === 'tool_call');
+
+    expect(toolChunks).toHaveLength(0);
+    expect(textChunks).toHaveLength(1);
+    // The content should be the JSON-stringified parsed payload
+    expect((textChunks[0] as { type: string; content: string }).content).toBe(
+      JSON.stringify({ answer: '42' })
+    );
+
+    // finishReason in done chunk should be 'stop' (forced for structured extraction)
+    const done = chunks[chunks.length - 1] as { type: string; finishReason: string };
+    expect(done.type).toBe('done');
+    expect(done.finishReason).toBe('stop');
+  });
+});

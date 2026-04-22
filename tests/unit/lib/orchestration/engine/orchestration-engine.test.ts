@@ -28,7 +28,11 @@ import {
   __resetRegistryForTests,
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
-import { ExecutorError, PausedForApproval } from '@/lib/orchestration/engine/errors';
+import {
+  BudgetExceeded,
+  ExecutorError,
+  PausedForApproval,
+} from '@/lib/orchestration/engine/errors';
 import { prisma } from '@/lib/db/client';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
@@ -79,6 +83,13 @@ describe('OrchestrationEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __resetRegistryForTests();
+
+    // Default findUnique — return a running row so the cancel-poll never fires.
+    // Tests that need a different status override this explicitly.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_test',
+      status: 'running',
+    } as never);
 
     // Default prisma behaviour — row creation returns an id the engine
     // can use, updates succeed and echo the diff.
@@ -1051,5 +1062,188 @@ describe('OrchestrationEngine', () => {
     expect(started[1].type === 'step_started' && started[1].stepId).toBe('b');
     expect(started[2].type === 'step_started' && started[2].stepId).toBe('c');
     expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── DB-cancelled workflow ─────────────────────────────────────────
+
+  it('stops with workflow_failed when DB row status is CANCELLED', async () => {
+    // Arrange — executor would succeed, but the DB row is already CANCELLED
+    // when the engine polls it at the top of the loop.
+    registerStepType('llm_call', async () => ({
+      output: 'should-not-reach',
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    // findUnique (the cancel poll) returns CANCELLED status.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_test',
+      status: 'cancelled',
+    } as never);
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+    const types = events.map((e) => e.type);
+
+    // Assert — engine emits workflow_failed for the cancellation and does not
+    // start any step (the cancel check runs before step execution).
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('step_started');
+
+    // The failure reason must reference cancellation, not some other error.
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed.error).toContain('cancel');
+  });
+
+  // ─── Per-step timeout ─────────────────────────────────────────────
+
+  it('per-step timeoutMs triggers step_timeout error and fails workflow', async () => {
+    // Arrange — executor hangs until the fake timer fires the step timeout.
+    // We use real timers here (no vi.useFakeTimers) because the engine's
+    // internal Promise.race uses setTimeout; fake timers require manual
+    // advancement which is complex with async generators. Instead we set a
+    // very short timeout (10ms) and a real-timer test timeout.
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        // Hang much longer than the step timeout.
+        await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+      }
+      return { output: 'never', tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, timeoutMs: 10 };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — the timeout triggers a failure on step a; workflow emits workflow_failed.
+    expect(types).toContain('workflow_failed');
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    // Timeout is a non-retriable ExecutorError with code 'step_timeout'.
+    // sanitizeError forwards the message for non 'executor_threw' codes.
+    expect(failed.error).toContain('timed out');
+  }, 5_000);
+
+  // ─── Non-retriable error stops retry immediately ───────────────────
+
+  it('retry strategy stops immediately on a non-retriable error', async () => {
+    let attempts = 0;
+    registerStepType('llm_call', async (step) => {
+      attempts++;
+      if (step.id === 'a') {
+        // retriable=false — engine must NOT retry, even though retryCount > 0.
+        throw new ExecutorError('a', 'permanent', 'cannot retry this', undefined, false);
+      }
+      return { output: 'x', tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'retry', retryCount: 5 };
+
+    // Act — give plenty of time; if it retried 5 times with backoff this would take much longer.
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — only ONE attempt (no retry events).
+    expect(attempts).toBe(1);
+    const types = events.map((e) => e.type);
+    expect(types).toContain('workflow_failed');
+    // No step_failed with willRetry=true should appear.
+    const retryEvents = events.filter(
+      (e) => e.type === 'step_failed' && (e as { willRetry?: boolean }).willRetry === true
+    );
+    expect(retryEvents).toHaveLength(0);
+  });
+
+  // ─── executeWithSubscriber ────────────────────────────────────────
+
+  it('executeWithSubscriber delivers every event to the subscriber', async () => {
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
+
+    const received: ExecutionEvent[] = [];
+    const subscriber = (event: ExecutionEvent) => {
+      received.push(event);
+    };
+
+    const engine = new OrchestrationEngine();
+    const yielded: ExecutionEvent[] = [];
+    for await (const e of engine.executeWithSubscriber(
+      makeWorkflow(linearDefinition()),
+      {},
+      {
+        userId: USER_ID,
+        subscriber,
+      }
+    )) {
+      yielded.push(e);
+    }
+
+    // The subscriber should have received exactly the same events as the iterator.
+    expect(received).toHaveLength(yielded.length);
+    expect(received.map((e) => e.type)).toEqual(yielded.map((e) => e.type));
+    // Sanity: at least workflow_started and workflow_completed must be present.
+    expect(received.map((e) => e.type)).toContain('workflow_started');
+    expect(received.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  it('executeWithSubscriber swallows subscriber errors without crashing', async () => {
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+
+    // Subscriber always throws — engine must not propagate.
+    const throwingSubscriber = () => {
+      throw new Error('subscriber exploded');
+    };
+
+    const engine = new OrchestrationEngine();
+    const events: ExecutionEvent[] = [];
+    // Should NOT throw.
+    for await (const e of engine.executeWithSubscriber(
+      makeWorkflow(linearDefinition()),
+      {},
+      {
+        userId: USER_ID,
+        subscriber: throwingSubscriber,
+      }
+    )) {
+      events.push(e);
+    }
+
+    // Engine delivered all events despite subscriber failures.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── BudgetExceeded from executor ─────────────────────────────────
+
+  it('BudgetExceeded thrown by executor is wrapped and sanitized like any unexpected error', async () => {
+    // Arrange — executor throws BudgetExceeded directly.
+    // NOTE: runStepWithStrategy wraps any non-PausedForApproval error (including
+    // BudgetExceeded) into ExecutorError with code 'executor_threw', so the
+    // BudgetExceeded-specific catch in executeSingleStep is bypassed.
+    // The resulting sanitized error message is the generic "failed unexpectedly" form.
+    registerStepType('llm_call', async () => {
+      throw new BudgetExceeded(1.5, 1.0);
+    });
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+    const types = events.map((e) => e.type);
+
+    // Assert — workflow fails (engine does not crash).
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    // BudgetExceeded gets wrapped into ExecutorError(code='executor_threw'),
+    // so sanitizeError returns the generic scrubbed message.
+    expect(failed.error).toBe('Step "a" failed unexpectedly');
   });
 });

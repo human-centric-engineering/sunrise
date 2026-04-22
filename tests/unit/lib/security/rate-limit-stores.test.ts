@@ -29,6 +29,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { ioredisState } from '@mocks/ioredis';
 
+import { logger } from '@/lib/logging';
 import { MemoryRateLimitStore } from '@/lib/security/rate-limit-stores/memory';
 import { RedisRateLimitStore } from '@/lib/security/rate-limit-stores/redis';
 import { getStore, resetStore, setStore } from '@/lib/security/rate-limit-stores';
@@ -148,6 +149,62 @@ describe('getStore', () => {
     delete process.env.REDIS_URL;
     const store = getStore();
     expect(store).toBeInstanceOf(MemoryRateLimitStore);
+  });
+
+  it('logs a warning when RATE_LIMIT_STORE=redis but REDIS_URL is missing', () => {
+    // Arrange — clear any calls accumulated by earlier tests in this describe block
+    process.env.RATE_LIMIT_STORE = 'redis';
+    delete process.env.REDIS_URL;
+    vi.mocked(logger.warn).mockClear();
+
+    // Act
+    getStore();
+
+    // Assert — warn called exactly once with a message mentioning both 'redis' and 'REDIS_URL'
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
+    const warnMessage = String(vi.mocked(logger.warn).mock.calls[0]?.[0]);
+    expect(warnMessage.toLowerCase()).toContain('redis');
+    expect(warnMessage).toContain('REDIS_URL');
+  });
+
+  it('returns a RedisRateLimitStore when RATE_LIMIT_STORE=redis and REDIS_URL is set', () => {
+    process.env.RATE_LIMIT_STORE = 'redis';
+    process.env.REDIS_URL = 'redis://localhost:6379';
+    const store = getStore();
+    expect(store).toBeInstanceOf(RedisRateLimitStore);
+  });
+
+  it('returns a RedisRateLimitStore when RATE_LIMIT_STORE is uppercase REDIS (case-insensitive)', () => {
+    process.env.RATE_LIMIT_STORE = 'REDIS';
+    process.env.REDIS_URL = 'redis://localhost:6379';
+    const store = getStore();
+    expect(store).toBeInstanceOf(RedisRateLimitStore);
+  });
+
+  it('returns MemoryRateLimitStore for unknown RATE_LIMIT_STORE value without warning', () => {
+    // Arrange
+    process.env.RATE_LIMIT_STORE = 'foo';
+    vi.mocked(logger.warn).mockClear();
+
+    // Act
+    const store = getStore();
+
+    // Assert — falls through to default memory branch; no warn emitted
+    expect(store).toBeInstanceOf(MemoryRateLimitStore);
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+  });
+
+  it('resetStore causes the next getStore call to return a fresh instance', () => {
+    // Arrange — get an initial instance
+    const first = getStore();
+
+    // Act — reset and get again
+    resetStore();
+    const second = getStore();
+
+    // Assert — different object references (both will be MemoryRateLimitStore in this env)
+    expect(second).not.toBe(first);
+    expect(second).toBeInstanceOf(MemoryRateLimitStore);
   });
 });
 

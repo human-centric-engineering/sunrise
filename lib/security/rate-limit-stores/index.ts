@@ -11,6 +11,7 @@
 
 import type { RateLimitStore } from '@/lib/security/rate-limit-stores/types';
 import { MemoryRateLimitStore } from '@/lib/security/rate-limit-stores/memory';
+import { RedisRateLimitStore } from '@/lib/security/rate-limit-stores/redis';
 import { logger } from '@/lib/logging';
 
 export type { RateLimitStore, RateLimitStoreEntry } from '@/lib/security/rate-limit-stores/types';
@@ -36,11 +37,6 @@ export function getStore(): RateLimitStore {
       return _store;
     }
 
-    // Dynamic import to avoid loading ioredis when not needed
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisRateLimitStore } = require('@/lib/security/rate-limit-stores/redis') as {
-      RedisRateLimitStore: new (url: string) => RateLimitStore;
-    };
     _store = new RedisRateLimitStore(redisUrl);
     return _store;
   }

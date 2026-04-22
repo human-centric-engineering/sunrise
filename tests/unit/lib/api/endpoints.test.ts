@@ -557,4 +557,501 @@ describe('API Endpoints', () => {
       expect(health).toBe('/api/health');
     });
   });
+
+  // ─── New coverage blocks ──────────────────────────────────────────────────
+
+  describe('ORCHESTRATION dynamic paths — broad coverage', () => {
+    const agentId = 'agent-1';
+    const capId = 'cap-1';
+    const providerId = 'prov-1';
+    const workflowId = 'wf-1';
+    const scheduleId = 'sched-1';
+    const execId = 'exec-1';
+    const convId = 'conv-1';
+    const docId = 'doc-1';
+    const webhookId = 'wh-1';
+    const deliveryId = 'del-1';
+    const evalId = 'eval-1';
+    const toolId = 'tool-1';
+    const resourceId = 'res-1';
+    const keyId = 'key-1';
+    const sessionId = 'sess-1';
+    const versionId = 'ver-1';
+    const tokenId = 'tok-1';
+
+    it('agentClone produces correct path', () => {
+      // Arrange/Act
+      const path = API.ADMIN.ORCHESTRATION.agentClone(agentId);
+      // Assert
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/clone');
+    });
+
+    it('agentCapabilitiesUsage produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentCapabilitiesUsage(agentId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/capabilities/usage');
+    });
+
+    it('agentInstructionsHistory produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentInstructionsHistory(agentId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/instructions-history');
+    });
+
+    it('agentInstructionsRevert produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentInstructionsRevert(agentId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/instructions-revert');
+    });
+
+    it('agentInviteTokens produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentInviteTokens(agentId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/invite-tokens');
+    });
+
+    it('agentInviteTokenById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentInviteTokenById(agentId, tokenId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/invite-tokens/tok-1');
+    });
+
+    it('agentVersions produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentVersions(agentId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/versions');
+    });
+
+    it('agentVersionRestore produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentVersionRestore(agentId, versionId);
+      expect(path).toBe('/api/v1/admin/orchestration/agents/agent-1/versions/ver-1/restore');
+    });
+
+    it('capabilityById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.capabilityById(capId);
+      expect(path).toBe('/api/v1/admin/orchestration/capabilities/cap-1');
+    });
+
+    it('capabilityAgents produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.capabilityAgents(capId);
+      expect(path).toBe('/api/v1/admin/orchestration/capabilities/cap-1/agents');
+    });
+
+    it('capabilityStats produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.capabilityStats(capId);
+      expect(path).toBe('/api/v1/admin/orchestration/capabilities/cap-1/stats');
+    });
+
+    it('providerModelById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.providerModelById('gpt-4o');
+      expect(path).toBe('/api/v1/admin/orchestration/provider-models/gpt-4o');
+    });
+
+    it('providerTestModel produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.providerTestModel(providerId);
+      expect(path).toBe('/api/v1/admin/orchestration/providers/prov-1/test-model');
+    });
+
+    it('providerHealth produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.providerHealth(providerId);
+      expect(path).toBe('/api/v1/admin/orchestration/providers/prov-1/health');
+    });
+
+    it('workflowSchedules produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowSchedules(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/schedules');
+    });
+
+    it('workflowScheduleById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowScheduleById(workflowId, scheduleId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/schedules/sched-1');
+    });
+
+    it('workflowDryRun produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowDryRun(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/dry-run');
+    });
+
+    it('workflowExecuteStream produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowExecuteStream(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/execute-stream');
+    });
+
+    it('workflowSaveAsTemplate produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowSaveAsTemplate(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/save-as-template');
+    });
+
+    it('executionCancel produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.executionCancel(execId);
+      expect(path).toBe('/api/v1/admin/orchestration/executions/exec-1/cancel');
+    });
+
+    it('executionRetryStep produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.executionRetryStep(execId);
+      expect(path).toBe('/api/v1/admin/orchestration/executions/exec-1/retry-step');
+    });
+
+    it('workflowDefinitionHistory produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowDefinitionHistory(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/definition-history');
+    });
+
+    it('workflowDefinitionRevert produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowDefinitionRevert(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/definition-revert');
+    });
+
+    it('conversationById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.conversationById(convId);
+      expect(path).toBe('/api/v1/admin/orchestration/conversations/conv-1');
+    });
+
+    it('conversationMessages produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.conversationMessages(convId);
+      expect(path).toBe('/api/v1/admin/orchestration/conversations/conv-1/messages');
+    });
+
+    it('knowledgeDocumentRetry produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.knowledgeDocumentRetry(docId);
+      expect(path).toBe('/api/v1/admin/orchestration/knowledge/documents/doc-1/retry');
+    });
+
+    it('knowledgeDocumentConfirm produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.knowledgeDocumentConfirm(docId);
+      expect(path).toBe('/api/v1/admin/orchestration/knowledge/documents/doc-1/confirm');
+    });
+
+    it('knowledgeDocumentChunks produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.knowledgeDocumentChunks(docId);
+      expect(path).toBe('/api/v1/admin/orchestration/knowledge/documents/doc-1/chunks');
+    });
+
+    it('webhookById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.webhookById(webhookId);
+      expect(path).toBe('/api/v1/admin/orchestration/webhooks/wh-1');
+    });
+
+    it('webhookDeliveries produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.webhookDeliveries(webhookId);
+      expect(path).toBe('/api/v1/admin/orchestration/webhooks/wh-1/deliveries');
+    });
+
+    it('webhookTest produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.webhookTest(webhookId);
+      expect(path).toBe('/api/v1/admin/orchestration/webhooks/wh-1/test');
+    });
+
+    it('retryDelivery produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId);
+      expect(path).toBe('/api/v1/admin/orchestration/webhooks/deliveries/del-1/retry');
+    });
+
+    it('evaluationById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.evaluationById(evalId);
+      expect(path).toBe('/api/v1/admin/orchestration/evaluations/eval-1');
+    });
+
+    it('evaluationComplete produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.evaluationComplete(evalId);
+      expect(path).toBe('/api/v1/admin/orchestration/evaluations/eval-1/complete');
+    });
+
+    it('evaluationLogs produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.evaluationLogs(evalId);
+      expect(path).toBe('/api/v1/admin/orchestration/evaluations/eval-1/logs');
+    });
+
+    it('mcpToolById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.mcpToolById(toolId);
+      expect(path).toBe('/api/v1/admin/orchestration/mcp/tools/tool-1');
+    });
+
+    it('mcpResourceById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId);
+      expect(path).toBe('/api/v1/admin/orchestration/mcp/resources/res-1');
+    });
+
+    it('mcpKeyById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.mcpKeyById(keyId);
+      expect(path).toBe('/api/v1/admin/orchestration/mcp/keys/key-1');
+    });
+
+    it('mcpKeyRotate produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.mcpKeyRotate(keyId);
+      expect(path).toBe('/api/v1/admin/orchestration/mcp/keys/key-1/rotate');
+    });
+
+    it('mcpSessionById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.mcpSessionById(sessionId);
+      expect(path).toBe('/api/v1/admin/orchestration/mcp/sessions/sess-1');
+    });
+  });
+
+  describe('ORCHESTRATION static constants', () => {
+    it('AGENTS_BULK equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.AGENTS_BULK).toBe('/api/v1/admin/orchestration/agents/bulk');
+    });
+
+    it('AGENTS_COMPARE equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.AGENTS_COMPARE).toBe(
+        '/api/v1/admin/orchestration/agents/compare'
+      );
+    });
+
+    it('AGENTS_EXPORT equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.AGENTS_EXPORT).toBe(
+        '/api/v1/admin/orchestration/agents/export'
+      );
+    });
+
+    it('AGENTS_IMPORT equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.AGENTS_IMPORT).toBe(
+        '/api/v1/admin/orchestration/agents/import'
+      );
+    });
+
+    it('PROVIDER_MODELS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.PROVIDER_MODELS).toBe(
+        '/api/v1/admin/orchestration/provider-models'
+      );
+    });
+
+    it('PROVIDER_MODEL_RECOMMEND equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.PROVIDER_MODEL_RECOMMEND).toBe(
+        '/api/v1/admin/orchestration/provider-models/recommend'
+      );
+    });
+
+    it('MODELS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MODELS).toBe('/api/v1/admin/orchestration/models');
+    });
+
+    it('EXECUTIONS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.EXECUTIONS).toBe('/api/v1/admin/orchestration/executions');
+    });
+
+    it('CONVERSATIONS_CLEAR equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.CONVERSATIONS_CLEAR).toBe(
+        '/api/v1/admin/orchestration/conversations/clear'
+      );
+    });
+
+    it('CONVERSATIONS_EXPORT equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.CONVERSATIONS_EXPORT).toBe(
+        '/api/v1/admin/orchestration/conversations/export'
+      );
+    });
+
+    it('KNOWLEDGE_GRAPH equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_GRAPH).toBe(
+        '/api/v1/admin/orchestration/knowledge/graph'
+      );
+    });
+
+    it('KNOWLEDGE_PATTERNS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_PATTERNS).toBe(
+        '/api/v1/admin/orchestration/knowledge/patterns'
+      );
+    });
+
+    it('KNOWLEDGE_SEED equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEED).toBe(
+        '/api/v1/admin/orchestration/knowledge/seed'
+      );
+    });
+
+    it('EMBEDDING_MODELS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS).toBe(
+        '/api/v1/admin/orchestration/embedding-models'
+      );
+    });
+
+    it('KNOWLEDGE_EMBED equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBED).toBe(
+        '/api/v1/admin/orchestration/knowledge/embed'
+      );
+    });
+
+    it('KNOWLEDGE_EMBEDDING_STATUS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS).toBe(
+        '/api/v1/admin/orchestration/knowledge/embedding-status'
+      );
+    });
+
+    it('KNOWLEDGE_META_TAGS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS).toBe(
+        '/api/v1/admin/orchestration/knowledge/meta-tags'
+      );
+    });
+
+    it('WEBHOOKS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.WEBHOOKS).toBe('/api/v1/admin/orchestration/webhooks');
+    });
+
+    it('COSTS_SUMMARY equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY).toBe(
+        '/api/v1/admin/orchestration/costs/summary'
+      );
+    });
+
+    it('COSTS_ALERTS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.COSTS_ALERTS).toBe('/api/v1/admin/orchestration/costs/alerts');
+    });
+
+    it('ANALYTICS_TOPICS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS).toBe(
+        '/api/v1/admin/orchestration/analytics/topics'
+      );
+    });
+
+    it('ANALYTICS_UNANSWERED equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED).toBe(
+        '/api/v1/admin/orchestration/analytics/unanswered'
+      );
+    });
+
+    it('ANALYTICS_ENGAGEMENT equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.ANALYTICS_ENGAGEMENT).toBe(
+        '/api/v1/admin/orchestration/analytics/engagement'
+      );
+    });
+
+    it('ANALYTICS_CONTENT_GAPS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS).toBe(
+        '/api/v1/admin/orchestration/analytics/content-gaps'
+      );
+    });
+
+    it('ANALYTICS_FEEDBACK equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.ANALYTICS_FEEDBACK).toBe(
+        '/api/v1/admin/orchestration/analytics/feedback'
+      );
+    });
+
+    it('MAINTENANCE_TICK equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MAINTENANCE_TICK).toBe(
+        '/api/v1/admin/orchestration/maintenance/tick'
+      );
+    });
+
+    it('EVALUATIONS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.EVALUATIONS).toBe('/api/v1/admin/orchestration/evaluations');
+    });
+
+    it('OBSERVABILITY_DASHBOARD_STATS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS).toBe(
+        '/api/v1/admin/orchestration/observability/dashboard-stats'
+      );
+    });
+
+    it('QUIZ_SCORES equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.QUIZ_SCORES).toBe('/api/v1/admin/orchestration/quiz-scores');
+    });
+
+    it('MCP_SETTINGS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_SETTINGS).toBe('/api/v1/admin/orchestration/mcp/settings');
+    });
+
+    it('MCP_TOOLS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_TOOLS).toBe('/api/v1/admin/orchestration/mcp/tools');
+    });
+
+    it('MCP_RESOURCES equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_RESOURCES).toBe(
+        '/api/v1/admin/orchestration/mcp/resources'
+      );
+    });
+
+    it('MCP_KEYS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_KEYS).toBe('/api/v1/admin/orchestration/mcp/keys');
+    });
+
+    it('MCP_AUDIT equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_AUDIT).toBe('/api/v1/admin/orchestration/mcp/audit');
+    });
+
+    it('MCP_SESSIONS equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.MCP_SESSIONS).toBe('/api/v1/admin/orchestration/mcp/sessions');
+    });
+
+    it('AUDIT_LOG equals expected path', () => {
+      expect(API.ADMIN.ORCHESTRATION.AUDIT_LOG).toBe('/api/v1/admin/orchestration/audit-log');
+    });
+  });
+
+  describe('CHAT endpoints', () => {
+    it('AGENTS equals expected path', () => {
+      expect(API.CHAT.AGENTS).toBe('/api/v1/chat/agents');
+    });
+
+    it('STREAM equals expected path', () => {
+      expect(API.CHAT.STREAM).toBe('/api/v1/chat/stream');
+    });
+
+    it('CONVERSATIONS equals expected path', () => {
+      expect(API.CHAT.CONVERSATIONS).toBe('/api/v1/chat/conversations');
+    });
+
+    it('CONVERSATIONS_SEARCH equals expected path', () => {
+      expect(API.CHAT.CONVERSATIONS_SEARCH).toBe('/api/v1/chat/conversations/search');
+    });
+
+    it('conversationById produces correct path', () => {
+      // Arrange/Act
+      const path = API.CHAT.conversationById('c-1');
+      // Assert
+      expect(path).toBe('/api/v1/chat/conversations/c-1');
+    });
+
+    it('conversationMessages produces correct path', () => {
+      const path = API.CHAT.conversationMessages('c-1');
+      expect(path).toBe('/api/v1/chat/conversations/c-1/messages');
+    });
+
+    it('validateToken produces correct path', () => {
+      const path = API.CHAT.validateToken('my-slug');
+      expect(path).toBe('/api/v1/chat/agents/my-slug/validate-token');
+    });
+  });
+
+  describe('WEBHOOKS trigger', () => {
+    it('trigger produces correct path', () => {
+      // Arrange/Act
+      const path = API.WEBHOOKS.trigger('my-slug');
+      // Assert
+      expect(path).toBe('/api/v1/webhooks/trigger/my-slug');
+    });
+  });
+
+  describe('ORCHESTRATION dynamic paths — URL-significant character behaviour', () => {
+    // These tests document the CURRENT behaviour: builders do NOT encode segments.
+    // Callers are responsible for passing clean IDs. Do not change the expected
+    // values without updating the callers accordingly.
+
+    it('agentCapabilityById — slashes in args are NOT encoded (raw interpolation)', () => {
+      // Arrange — IDs containing "/" would break routing if sent to a real server,
+      // but the builder does not encode them. This test documents that contract.
+      const path = API.ADMIN.ORCHESTRATION.agentCapabilityById('a/b', 'c/d');
+      // Assert — raw slash passes through, no %2F encoding
+      expect(path).toBe('/api/v1/admin/orchestration/agents/a/b/capabilities/c/d');
+    });
+
+    it('workflowScheduleById — question marks in args are NOT encoded (raw interpolation)', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowScheduleById('wf?x=1', 'sched?y=2');
+      // Assert — raw "?" passes through
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf?x=1/schedules/sched?y=2');
+    });
+
+    it('agentVersionRestore — slashes in args are NOT encoded (raw interpolation)', () => {
+      const path = API.ADMIN.ORCHESTRATION.agentVersionRestore('ag/1', 'v/2');
+      expect(path).toBe('/api/v1/admin/orchestration/agents/ag/1/versions/v/2/restore');
+    });
+
+    it('invitationByEmail — @ and + ARE encoded via encodeURIComponent', () => {
+      // invitationByEmail uses encodeURIComponent — this is the intentional exception
+      const path = API.ADMIN.invitationByEmail('user+tag@example.com');
+      expect(path).toBe('/api/v1/admin/invitations/user%2Btag%40example.com');
+    });
+
+    it('invitationByEmail — slash in local-part IS encoded via encodeURIComponent', () => {
+      // encodeURIComponent encodes "/" as %2F, unlike the raw-interpolation builders
+      const path = API.ADMIN.invitationByEmail('user/name@example.com');
+      expect(path).toBe('/api/v1/admin/invitations/user%2Fname%40example.com');
+    });
+  });
 });
