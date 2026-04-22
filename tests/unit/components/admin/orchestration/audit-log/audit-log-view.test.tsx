@@ -313,6 +313,26 @@ describe('AuditLogView', () => {
 
   // ── Entity type dropdown filter ────────────────────────────────────────────
 
+  it('exposes all expected entity-type options (no dead webhook entry)', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    await user.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByRole('option', { name: /all types/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^agents$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^workflows$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^capabilities$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^knowledge$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^settings$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^experiments$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^embed tokens$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^backups$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /^webhooks$/i })).not.toBeInTheDocument();
+  });
+
   it('calls fetch with entityType param when entity type is changed', async () => {
     const user = userEvent.setup();
     mockFetchSuccess([makeEntry()]);

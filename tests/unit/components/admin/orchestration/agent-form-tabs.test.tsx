@@ -116,6 +116,13 @@ describe('AgentForm — Capabilities and Test tabs', () => {
       const testTab = screen.getByRole('tab', { name: /^test$/i });
       expect(testTab).toHaveAttribute('data-disabled');
     });
+
+    it('Embed tab has disabled attribute in create mode', () => {
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+
+      const embedTab = screen.getByRole('tab', { name: /^embed$/i });
+      expect(embedTab).toHaveAttribute('data-disabled');
+    });
   });
 
   describe('edit mode', () => {
@@ -140,6 +147,18 @@ describe('AgentForm — Capabilities and Test tabs', () => {
       await waitFor(() => {
         const testTab = screen.getByRole('tab', { name: /^test$/i });
         expect(testTab).not.toHaveAttribute('data-disabled');
+      });
+    });
+
+    it('Embed tab is enabled in edit mode', async () => {
+      const agent = makeAgent();
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+
+      await waitFor(() => {
+        const embedTab = screen.getByRole('tab', { name: /^embed$/i });
+        expect(embedTab).not.toHaveAttribute('data-disabled');
       });
     });
   });
