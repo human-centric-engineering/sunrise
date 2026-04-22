@@ -30,6 +30,11 @@ vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
@@ -74,6 +79,7 @@ function makeDocument(overrides: Record<string, unknown> = {}) {
     name: 'Agentic Design Patterns',
     fileName: 'patterns.md',
     fileHash: 'a'.repeat(64),
+    sourceUrl: null,
     status: 'ready',
     uploadedBy: ADMIN_ID,
     sizeBytes: 1024,

@@ -116,14 +116,14 @@ describe('ProviderForm', () => {
   // ── Flavor selector ────────────────────────────────────────────────────────
 
   describe('flavor selector', () => {
-    it('renders all 5 flavor radio options', () => {
+    it('renders key flavor radio options (Anthropic, OpenAI, Voyage AI, Ollama, Other)', () => {
       render(<ProviderForm mode="create" />);
 
       expect(getFlavorRadio('Anthropic')).toBeInTheDocument();
       expect(getFlavorRadio('OpenAI')).toBeInTheDocument();
       expect(getFlavorRadio('Voyage AI')).toBeInTheDocument();
-      expect(getFlavorRadio('Ollama (Local)')).toBeInTheDocument();
-      expect(getFlavorRadio('OpenAI-Compatible')).toBeInTheDocument();
+      expect(getFlavorRadio('Ollama')).toBeInTheDocument();
+      expect(getFlavorRadio('Other (OpenAI-Compatible)')).toBeInTheDocument();
     });
 
     it('default flavor is Anthropic (baseUrl hidden, apiKeyEnvVar shown)', () => {
@@ -138,7 +138,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'Ollama (Local)');
+      await selectFlavor(user, 'Ollama');
 
       await waitFor(() => {
         expect(screen.queryByRole('textbox', { name: /api key env var/i })).not.toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'OpenAI-Compatible');
+      await selectFlavor(user, 'Other (OpenAI-Compatible)');
 
       await waitFor(() => {
         expect(screen.getByRole('textbox', { name: /base url/i })).toBeInTheDocument();
@@ -253,7 +253,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'Ollama (Local)');
+      await selectFlavor(user, 'Ollama');
 
       await user.click(screen.getByRole('button', { name: /create provider/i }));
 
@@ -304,7 +304,7 @@ describe('ProviderForm', () => {
         />
       );
 
-      const ollamaRadio = getFlavorRadio('Ollama (Local)');
+      const ollamaRadio = getFlavorRadio('Ollama');
       expect(ollamaRadio).toHaveAttribute('aria-checked', 'true');
     });
 

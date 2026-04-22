@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
@@ -49,10 +49,12 @@ describe('DocumentUploadZone', () => {
     setupDefaultMocks();
   });
 
-  it('renders the drop zone', () => {
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+  it('renders the drop zone', async () => {
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
-    expect(screen.getByText(/drop a file here/i)).toBeInTheDocument();
+    expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
   });
 
   it('renders accepted format text', () => {
@@ -254,9 +256,11 @@ describe('DocumentUploadZone', () => {
   });
 
   it('handles drag-and-drop to stage a file', async () => {
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
-    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
     const validFile = new File(['# Dropped'], 'dropped.md', { type: 'text/markdown' });
 
     fireEvent.dragEnter(dropZone, { preventDefault: vi.fn() });
@@ -272,10 +276,12 @@ describe('DocumentUploadZone', () => {
     });
   });
 
-  it('removes drag highlight on drag leave', () => {
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+  it('removes drag highlight on drag leave', async () => {
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
-    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
 
     fireEvent.dragEnter(dropZone, { preventDefault: vi.fn() });
     expect(dropZone.className).toContain('border-primary');
@@ -284,10 +290,12 @@ describe('DocumentUploadZone', () => {
     expect(dropZone.className).not.toContain('border-primary bg-primary/5');
   });
 
-  it('opens file picker on Enter key', () => {
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+  it('opens file picker on Enter key', async () => {
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
-    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
     const input = screen.getByLabelText(/upload document/i);
     const clickSpy = vi.spyOn(input, 'click');
 
@@ -296,10 +304,12 @@ describe('DocumentUploadZone', () => {
     expect(clickSpy).toHaveBeenCalled();
   });
 
-  it('opens file picker on Space key', () => {
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+  it('opens file picker on Space key', async () => {
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
-    const dropZone = screen.getByText(/drop a file here/i).closest('[role="button"]')!;
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
     const input = screen.getByLabelText(/upload document/i);
     const clickSpy = vi.spyOn(input, 'click');
 
@@ -310,7 +320,9 @@ describe('DocumentUploadZone', () => {
 
   it('allows clearing a staged file', async () => {
     const user = userEvent.setup();
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
     const input = screen.getByLabelText(/upload document/i);
     const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
@@ -328,7 +340,7 @@ describe('DocumentUploadZone', () => {
     await user.click(clearButton!);
 
     await waitFor(() => {
-      expect(screen.getByText(/drop a file here/i)).toBeInTheDocument();
+      expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
     });
   });
 
@@ -400,7 +412,9 @@ describe('DocumentUploadZone', () => {
     });
 
     const user = userEvent.setup();
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
 
     const input = screen.getByLabelText(/upload document/i);
     const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
@@ -420,7 +434,7 @@ describe('DocumentUploadZone', () => {
     resolveUpload({ ok: true, json: () => Promise.resolve({ success: true }) });
 
     await waitFor(() => {
-      expect(screen.getByText(/drop a file here/i)).toBeInTheDocument();
+      expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
     });
   });
 

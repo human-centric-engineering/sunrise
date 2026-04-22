@@ -59,6 +59,11 @@ vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
   requiresPreview: vi.fn(() => false),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { GET, POST } from '@/app/api/v1/admin/orchestration/knowledge/documents/route';

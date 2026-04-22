@@ -149,7 +149,7 @@ describe('AgentForm — Model tab', () => {
       const user = await renderAndOpenModelTab();
 
       // Act
-      await user.click(screen.getByRole('button', { name: /test connection/i }));
+      await user.click(screen.getByRole('button', { name: /run check/i }));
 
       // Assert
       await waitFor(() => {
@@ -168,7 +168,7 @@ describe('AgentForm — Model tab', () => {
       const user = await renderAndOpenModelTab();
 
       // Act
-      await user.click(screen.getByRole('button', { name: /test connection/i }));
+      await user.click(screen.getByRole('button', { name: /run check/i }));
 
       // Assert: friendly message
       await waitFor(() => {
@@ -185,14 +185,14 @@ describe('AgentForm — Model tab', () => {
       render(<AgentForm mode="create" providers={[]} models={MODELS} />);
       await user.click(screen.getByRole('tab', { name: /model/i }));
 
-      // Act: test connection - provider fallback renders a text input
-      // The handler checks if providerRow exists and sets an error message
-      const testBtn = screen.getByRole('button', { name: /test connection/i });
+      // Act: test connection - no providerId since providers prop is empty
+      // The handler checks if providerId exists and sets an error message
+      const testBtn = screen.getByRole('button', { name: /run check/i });
       await user.click(testBtn);
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/don't have a stored config/i)).toBeInTheDocument();
+        expect(screen.getByText(/no saved provider config/i)).toBeInTheDocument();
       });
     });
   });

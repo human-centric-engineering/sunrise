@@ -57,7 +57,7 @@ vi.mock('@/lib/api/client', () => ({
   apiClient: {
     post: vi.fn(),
     patch: vi.fn(),
-    get: vi.fn().mockResolvedValue([]),
+    get: vi.fn().mockResolvedValue({ schedules: [] }),
     delete: vi.fn(),
   },
   APIClientError: class APIClientError extends Error {
@@ -139,7 +139,7 @@ const TWO_STEP_WORKFLOW = {
 describe('EditWorkflowPage (server component)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(apiClient.get).mockResolvedValue([]);
+    vi.mocked(apiClient.get).mockResolvedValue({ schedules: [] } as never);
   });
 
   afterEach(() => {

@@ -173,6 +173,7 @@ describe('uploadDocument', () => {
         name: 'hello-world',
         fileName,
         fileHash: expectedHash,
+        sourceUrl: null,
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',

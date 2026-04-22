@@ -672,7 +672,7 @@ describe('ManageTab', () => {
     }
 
     await waitFor(() => {
-      expect(screen.getByText('Delete?')).toBeInTheDocument();
+      expect(screen.getByText(/Delete\?/)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^no$/i })).toBeInTheDocument();
     });

@@ -54,6 +54,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -200,7 +205,9 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ isActive: true }),
-          include: { _count: { select: { capabilities: true, conversations: true } } },
+          include: expect.objectContaining({
+            _count: { select: { capabilities: true, conversations: true } },
+          }),
         })
       );
     });
@@ -215,7 +222,9 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ provider: 'openai' }),
-          include: { _count: { select: { capabilities: true, conversations: true } } },
+          include: expect.objectContaining({
+            _count: { select: { capabilities: true, conversations: true } },
+          }),
         })
       );
     });
@@ -230,7 +239,9 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ OR: expect.any(Array) }),
-          include: { _count: { select: { capabilities: true, conversations: true } } },
+          include: expect.objectContaining({
+            _count: { select: { capabilities: true, conversations: true } },
+          }),
         })
       );
     });
