@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, createEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BackupPanel } from '@/components/admin/orchestration/settings/backup-panel';
 
@@ -257,6 +257,130 @@ describe('BackupPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Import successful')).toBeInTheDocument();
+    });
+  });
+
+  it('ignores drop event when dataTransfer has no files', async () => {
+    render(<BackupPanel />);
+    const dropZone = screen.getByRole('button', { name: /drop a backup/i });
+
+    fireEvent.drop(dropZone, { dataTransfer: { files: [] } });
+
+    // No import attempt — mockPost should not be called
+    expect(mockPost).not.toHaveBeenCalled();
+    // No error shown
+    expect(screen.queryByText('Import successful')).not.toBeInTheDocument();
+  });
+
+  // ── Keyboard accessibility ─────────────────────────────────────────────────
+
+  it('Enter key on drop zone triggers file input click', () => {
+    render(<BackupPanel />);
+    const dropZone = screen.getByRole('button', { name: /drop a backup/i });
+    const clickSpy = vi.fn();
+    // The hidden input is inside the drop zone div
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    input.click = clickSpy;
+
+    fireEvent.keyDown(dropZone, { key: 'Enter' });
+
+    // fileInputRef.current.click() is invoked — we verify via the keydown handler behavior
+    // Since the ref points to a real DOM node, we spy differently
+    // Re-render to get fresh ref access
+    const { container: c2 } = render(<BackupPanel />);
+    const dropZone2 = c2.querySelector('[role="button"]') as HTMLElement;
+    const input2 = c2.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy2 = vi.fn();
+    input2.click = clickSpy2;
+
+    fireEvent.keyDown(dropZone2, { key: 'Enter' });
+    expect(clickSpy2).toHaveBeenCalled();
+  });
+
+  it('Space key on drop zone triggers file input click', () => {
+    const { container } = render(<BackupPanel />);
+    const dropZone = container.querySelector('[role="button"]') as HTMLElement;
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.fn();
+    input.click = clickSpy;
+
+    fireEvent.keyDown(dropZone, { key: ' ' });
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('dragOver calls preventDefault to allow drop', () => {
+    render(<BackupPanel />);
+    const dropZone = screen.getByRole('button', { name: /drop a backup/i });
+
+    const dragOverEvent = createEvent.dragOver(dropZone, { dataTransfer: { files: [] } });
+    // Use fireEvent to dispatch and check the default was prevented
+    fireEvent(dropZone, dragOverEvent);
+    expect(dragOverEvent.defaultPrevented).toBe(true);
+  });
+
+  // ── Export with no Content-Disposition header ─────────────────────────────
+
+  it('uses fallback filename when Content-Disposition header is absent', async () => {
+    const user = userEvent.setup();
+    // Response with no Content-Disposition header
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(new Blob(['{}'], { type: 'application/json' }), {
+        status: 200,
+        // No Content-Disposition header
+      })
+    );
+
+    let anchorDownload = '';
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      anchorDownload = this.download;
+    });
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled());
+    expect(anchorDownload).toBe('orchestration-backup.json');
+    clickSpy.mockRestore();
+  });
+
+  // ── Import result — workflows and webhooks counts ─────────────────────────
+
+  it('shows workflows count in import result', async () => {
+    mockPost.mockResolvedValue(makeImportResult({ workflows: { created: 5, updated: 2 } }));
+
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, makeFile(makeBackupJson()));
+
+    await waitFor(() => {
+      expect(screen.getByText(/workflows: 5 created, 2 updated/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows webhooks skipped count in import result', async () => {
+    mockPost.mockResolvedValue(makeImportResult({ webhooks: { created: 1, skipped: 3 } }));
+
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, makeFile(makeBackupJson()));
+
+    await waitFor(() => {
+      expect(screen.getByText(/webhooks: 1 created, 3 skipped/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows "Settings updated" when settingsUpdated is true', async () => {
+    mockPost.mockResolvedValue(makeImportResult({ settingsUpdated: true }));
+
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, makeFile(makeBackupJson()));
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings updated/i)).toBeInTheDocument();
     });
   });
 });

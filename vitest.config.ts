@@ -15,7 +15,7 @@ export default defineConfig({
     include: ['**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
 
     // Exclude files
-    exclude: ['node_modules', 'dist', '.next', 'coverage', '**/*.config.{js,ts}'],
+    exclude: ['node_modules', 'dist', '.next', 'coverage', '**/*.config.{js,ts}', '.claude/**'],
 
     // Enable global test APIs (describe, it, expect, etc.)
     globals: true,

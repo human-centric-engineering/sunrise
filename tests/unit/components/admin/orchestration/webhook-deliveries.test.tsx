@@ -219,4 +219,100 @@ describe('WebhookDeliveries', () => {
     await waitFor(() => screen.getByText(/page 3 of 3/i));
     expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
   });
+
+  // ── Retry refetches the list ───────────────────────────────────────────────
+
+  it('refetches deliveries after a successful retry', async () => {
+    const user = userEvent.setup();
+    mockFetch([makeDelivery({ id: 'del-10', status: 'failed' })]);
+
+    render(<WebhookDeliveries webhookId="wh-1" />);
+    await waitFor(() => screen.getByRole('button', { name: /retry delivery/i }));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /retry delivery/i }));
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  // ── Page navigation ───────────────────────────────────────────────────────
+
+  it('clicking Next navigates to page 2 and refetches', async () => {
+    const user = userEvent.setup();
+    mockFetch([makeDelivery()], makeMeta({ page: 1, pageSize: 20, total: 50, totalPages: 3 }));
+
+    render(<WebhookDeliveries webhookId="wh-1" />);
+    await waitFor(() => screen.getByText(/page 1 of 3/i));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /next/i }));
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    // Verify page=2 was in the fetch URL
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const lastUrl = calls[calls.length - 1][0] as string;
+    expect(lastUrl).toContain('page=2');
+  });
+
+  it('clicking Prev navigates to previous page and refetches', async () => {
+    const user = userEvent.setup();
+    mockFetch([makeDelivery()], makeMeta({ page: 2, pageSize: 20, total: 50, totalPages: 3 }));
+
+    render(<WebhookDeliveries webhookId="wh-1" />);
+    await waitFor(() => screen.getByText(/page 2 of 3/i));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /prev/i }));
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const lastUrl = calls[calls.length - 1][0] as string;
+    expect(lastUrl).toContain('page=1');
+  });
+
+  // ── Status filter ─────────────────────────────────────────────────────────
+
+  it('changing status filter to "failed" includes status=failed in fetch URL', async () => {
+    const user = userEvent.setup();
+    mockFetch([makeDelivery()]);
+
+    render(<WebhookDeliveries webhookId="wh-1" />);
+    await waitFor(() => screen.getByText('delivered'));
+
+    const statusSelect = screen.getByRole('combobox');
+    await user.click(statusSelect);
+    await user.click(await screen.findByRole('option', { name: /^failed$/i }));
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const lastUrl = calls[calls.length - 1][0] as string;
+      expect(lastUrl).toContain('status=failed');
+    });
+  });
+
+  // ── Timestamp rendering ────────────────────────────────────────────────────
+
+  it('renders a formatted timestamp for each delivery row', async () => {
+    mockFetch([makeDelivery({ createdAt: '2026-03-10T14:30:00.000Z' })]);
+    render(<WebhookDeliveries webhookId="wh-1" />);
+    await waitFor(() => screen.getByText('delivered'));
+
+    // The timestamp cell uses new Date(d.createdAt).toLocaleString()
+    // We just verify it contains something date-like (non-empty, not the ISO string)
+    const cells = screen.getAllByRole('cell');
+    const timestampCell = cells[0]; // First cell in the delivery row is the time
+    expect(timestampCell.textContent).toBeTruthy();
+    expect(timestampCell.textContent).not.toBe('2026-03-10T14:30:00.000Z');
+  });
 });

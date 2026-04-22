@@ -295,4 +295,126 @@ describe('AuditLogView', () => {
       expect(screen.queryByText(/error/i)).not.toBeInTheDocument();
     });
   });
+
+  // ── formatDate ────────────────────────────────────────────────────────────
+
+  it('renders formatted timestamp in a human-readable form', async () => {
+    mockFetchSuccess([makeEntry({ createdAt: '2026-01-15T10:00:00.000Z' })]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    // The formatted date should contain at least the year 2026 and month indication
+    // formatDate uses toLocaleString with day/month/year/hour/minute
+    const timestampCells = screen
+      .getAllByRole('cell')
+      .filter((cell) => cell.textContent?.includes('2026') || cell.textContent?.includes('Jan'));
+    expect(timestampCells.length).toBeGreaterThan(0);
+  });
+
+  // ── Entity type dropdown filter ────────────────────────────────────────────
+
+  it('calls fetch with entityType param when entity type is changed', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // Open the entity type select and choose "Agents"
+    const entityTypeSelect = screen.getByRole('combobox');
+    await user.click(entityTypeSelect);
+    await user.click(await screen.findByRole('option', { name: /^agents$/i }));
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    // Verify entityType=agent was included in the URL
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const lastUrl = calls[calls.length - 1][0] as string;
+    expect(lastUrl).toContain('entityType=agent');
+  });
+
+  it('clears search filter to show all entries when query is erased', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([
+      makeEntry({ id: 'e1', action: 'agent.create', entityName: 'Bot A' }),
+      makeEntry({ id: 'e2', action: 'workflow.delete', entityName: 'Flow X' }),
+    ]);
+
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Bot A'));
+
+    const searchInput = screen.getByPlaceholderText(/filter by action/i);
+    await user.type(searchInput, 'workflow');
+    expect(screen.queryByText('Bot A')).not.toBeInTheDocument();
+
+    // Clear the search — both entries should reappear
+    await user.clear(searchInput);
+    expect(screen.getByText('Bot A')).toBeInTheDocument();
+    expect(screen.getByText('Flow X')).toBeInTheDocument();
+  });
+
+  it('falls back to entityId when entityName is null but entityId is present', async () => {
+    mockFetchSuccess([makeEntry({ entityName: null, entityId: 'agent-fallback-id' })]);
+    render(<AuditLogView />);
+    await waitFor(() => {
+      expect(screen.getByText('agent-fallback-id')).toBeInTheDocument();
+    });
+  });
+
+  // ── Pagination navigation ──────────────────────────────────────────────────
+
+  it('clicking next page button triggers a new fetch with page=2', async () => {
+    const user = userEvent.setup();
+    // Set total to 50 so there are multiple pages (25 per page → 2 pages)
+    mockFetchSuccess([makeEntry()], 50);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText(/1 \/ 2/));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const buttons = screen.getAllByRole('button');
+    const nextButton = buttons[buttons.length - 1];
+    expect(nextButton).not.toBeDisabled();
+    await user.click(nextButton);
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const lastUrl = calls[calls.length - 1][0] as string;
+    expect(lastUrl).toContain('page=2');
+  });
+
+  it('clicking prev page button from page 2 triggers fetch with page=1', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()], 50);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText(/1 \/ 2/));
+
+    // First navigate to page 2
+    const buttons = screen.getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() => screen.getByText(/2 \/ 2/));
+
+    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const updatedButtons = screen.getAllByRole('button');
+    const prevButton = updatedButtons[updatedButtons.length - 2];
+    await user.click(prevButton);
+
+    await waitFor(() => {
+      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const lastUrl = calls[calls.length - 1][0] as string;
+    expect(lastUrl).toContain('page=1');
+  });
 });
