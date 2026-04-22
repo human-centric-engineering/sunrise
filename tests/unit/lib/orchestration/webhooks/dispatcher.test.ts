@@ -212,6 +212,28 @@ describe('dispatchWebhookEvent', () => {
       },
     });
   });
+
+  it('skips dispatch and marks delivery exhausted when subscription has no signing secret', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+      makeSub({ secret: '' }),
+    ] as never);
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'exhausted',
+          lastError: 'Subscription has no signing secret',
+        }),
+      })
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Webhook delivery skipped: subscription has no signing secret',
+      expect.objectContaining({ deliveryId: 'del-1' })
+    );
+  });
 });
 
 describe('retryDelivery', () => {

@@ -3,9 +3,10 @@
  *
  * GET /api/v1/admin/orchestration/conversations/export
  *
- * Exports conversations with messages in JSON or CSV format.
- * Supports the same filters as the list endpoint (agentId, userId,
- * dateFrom, dateTo). Streamed response for large exports.
+ * Exports the calling admin's own conversations with messages in JSON or
+ * CSV format. Results are scoped to `session.user.id`, matching the list
+ * endpoint. Supports the same filters as the list endpoint (agentId,
+ * isActive, title/message search, tag, dateFrom, dateTo).
  *
  * Rate limited to 1 request per minute per admin to prevent abuse.
  *
@@ -23,7 +24,7 @@ import { conversationExportQuerySchema } from '@/lib/validations/orchestration';
 /** Maximum conversations per export to prevent memory issues. */
 const MAX_EXPORT_CONVERSATIONS = 500;
 
-export const GET = withAdminAuth(async (request, _session) => {
+export const GET = withAdminAuth(async (request, session) => {
   // Extra rate limit for exports — 1/min per admin IP
   const ip = getClientIP(request);
   const rl = adminLimiter.check(`export:${ip}`);
@@ -34,7 +35,6 @@ export const GET = withAdminAuth(async (request, _session) => {
   const query = conversationExportQuerySchema.parse({
     format: searchParams.get('format') ?? undefined,
     agentId: searchParams.get('agentId') ?? undefined,
-    userId: searchParams.get('userId') ?? undefined,
     isActive: searchParams.get('isActive') ?? undefined,
     q: searchParams.get('q') ?? undefined,
     messageSearch: searchParams.get('messageSearch') ?? undefined,
@@ -43,8 +43,9 @@ export const GET = withAdminAuth(async (request, _session) => {
     dateTo: searchParams.get('dateTo') ?? undefined,
   });
 
-  const where: Prisma.AiConversationWhereInput = {};
-  if (query.userId) where.userId = query.userId;
+  // Always scope to the caller — matches the list endpoint. Any incoming
+  // `?userId=...` parameter is silently ignored.
+  const where: Prisma.AiConversationWhereInput = { userId: session.user.id };
   if (query.agentId) where.agentId = query.agentId;
   if (query.isActive !== undefined) where.isActive = query.isActive;
   if (query.q) where.title = { contains: query.q, mode: 'insensitive' };

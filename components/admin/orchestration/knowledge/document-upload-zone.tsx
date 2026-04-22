@@ -22,12 +22,29 @@ const errorBodySchema = z
   })
   .nullable();
 
+const pdfPreviewDataSchema = z.object({
+  document: z.object({
+    id: z.string(),
+    name: z.string(),
+    fileName: z.string(),
+    status: z.string(),
+  }),
+  preview: z.object({
+    extractedText: z.string(),
+    title: z.string().nullable(),
+    author: z.string().nullable(),
+    sectionCount: z.number(),
+    warnings: z.array(z.string()),
+    requiresConfirmation: z.boolean(),
+  }),
+});
+
 const uploadResponseSchema = z.object({
   data: z
     .object({
-      preview: z.object({ requiresConfirmation: z.boolean() }).passthrough().optional(),
+      document: pdfPreviewDataSchema.shape.document.optional(),
+      preview: pdfPreviewDataSchema.shape.preview.optional(),
     })
-    .passthrough()
     .optional(),
 });
 
@@ -176,10 +193,17 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 
         const responseBody = uploadResponseSchema.parse(await res.json());
 
-        if (responseBody.data?.preview?.requiresConfirmation && onPdfPreview) {
+        if (
+          responseBody.data?.preview?.requiresConfirmation &&
+          responseBody.data.document &&
+          onPdfPreview
+        ) {
           setStagedFiles([]);
           setCategory('');
-          onPdfPreview(responseBody.data as unknown as PdfPreviewData);
+          onPdfPreview({
+            document: responseBody.data.document,
+            preview: responseBody.data.preview,
+          });
           return;
         }
 

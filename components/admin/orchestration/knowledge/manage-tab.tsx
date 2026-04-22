@@ -12,9 +12,23 @@ import { z } from 'zod';
 import { API } from '@/lib/api/endpoints';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
+const metaTagEntrySchema = z.object({
+  value: z.string(),
+  chunkCount: z.number(),
+  documentCount: z.number(),
+});
+
+const scopedMetaTagsSchema = z.object({
+  categories: z.array(metaTagEntrySchema),
+  keywords: z.array(metaTagEntrySchema),
+});
+
 const metaTagsResponseSchema = z.object({
   data: z
-    .object({ app: z.record(z.string(), z.unknown()), system: z.record(z.string(), z.unknown()) })
+    .object({
+      app: scopedMetaTagsSchema,
+      system: scopedMetaTagsSchema,
+    })
     .optional(),
 });
 
@@ -204,7 +218,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
       if (!res.ok) return;
       const body = metaTagsResponseSchema.parse(await res.json());
-      if (body.data?.app && body.data?.system) setMetaTags(body.data as unknown as MetaTagSummary);
+      if (body.data?.app && body.data?.system) setMetaTags(body.data);
     } catch {
       // Supplementary — ignore failures
     }

@@ -19,7 +19,6 @@ import { Input } from '@/components/ui/input';
 import { z } from 'zod';
 
 import { API } from '@/lib/api/endpoints';
-import type { GraphData, GraphNode } from '@/types/orchestration';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
 
@@ -32,9 +31,40 @@ const CATEGORY_COLOURS = [
   '#94a3b8', // Chunk — slate
 ];
 
+const graphNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(['kb', 'document', 'chunk']),
+  value: z.number(),
+  status: z.string().optional(),
+  category: z.number(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const graphDataSchema = z.object({
+  nodes: z.array(graphNodeSchema),
+  links: z.array(
+    z.object({
+      source: z.string(),
+      target: z.string(),
+      label: z.string().optional(),
+    })
+  ),
+  categories: z.array(z.object({ name: z.string() })),
+  stats: z.object({
+    documentCount: z.number(),
+    completedCount: z.number(),
+    chunkCount: z.number(),
+    totalTokens: z.number(),
+  }),
+});
+
+type GraphData = z.infer<typeof graphDataSchema>;
+type GraphNode = z.infer<typeof graphNodeSchema>;
+
 const graphResponseSchema = z.object({
   success: z.boolean(),
-  data: z.record(z.string(), z.unknown()).optional(),
+  data: graphDataSchema.optional(),
 });
 
 interface VisualizeTabProps {
@@ -62,7 +92,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       if (!res.ok) return;
       const body = graphResponseSchema.parse(await res.json());
       if (body.success && body.data) {
-        setGraphData(body.data as unknown as GraphData);
+        setGraphData(body.data);
       }
     } catch {
       // Silently handle

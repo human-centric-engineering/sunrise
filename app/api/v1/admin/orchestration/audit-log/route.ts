@@ -17,8 +17,8 @@ import { listAuditLogQuerySchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const clientIp = getClientIP(request);
-  const limited = adminLimiter.check(clientIp);
-  if (limited) return createRateLimitResponse(limited);
+  const rateLimit = adminLimiter.check(clientIp);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   const { searchParams } = new URL(request.url);
   const { page, limit, action, entityType, entityId, userId, dateFrom, dateTo } =

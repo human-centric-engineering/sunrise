@@ -1295,11 +1295,15 @@ export const chatStreamRequestSchema = z.object({
   entityContext: z.record(z.string().max(100), z.unknown()).optional(),
 });
 
-/** List conversations query (GET /admin/orchestration/conversations). */
+/**
+ * List conversations query (GET /admin/orchestration/conversations).
+ *
+ * Results are always scoped to the calling admin's `session.user.id`; there
+ * is no cross-user listing endpoint. The export endpoint shares this scope,
+ * so filters accepted here can be forwarded there safely.
+ */
 export const listConversationsQuerySchema = paginationQuerySchema.extend({
   agentId: cuidSchema.optional(),
-  /** Filter by user ID. When omitted, returns all users' conversations (admin audit). */
-  userId: z.string().max(100).optional(),
   isActive: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),
@@ -1321,11 +1325,16 @@ export const updateConversationSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-/** Export format for conversation export endpoint. */
+/**
+ * Export format for conversation export endpoint.
+ *
+ * The route unconditionally scopes results to `session.user.id`, matching
+ * the list endpoint. `userId` is intentionally absent from this schema —
+ * admins can only export their own conversations.
+ */
 export const conversationExportQuerySchema = z.object({
   format: z.enum(['json', 'csv']).default('json'),
   agentId: cuidSchema.optional(),
-  userId: z.string().max(100).optional(),
   isActive: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),

@@ -27,7 +27,9 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
-  adminLimiter: { check: vi.fn(() => null) },
+  adminLimiter: {
+    check: vi.fn(() => ({ success: true, limit: 100, remaining: 99, reset: 0 })),
+  },
   createRateLimitResponse: vi.fn(),
 }));
 
@@ -286,7 +288,12 @@ describe('GET /audit-log', () => {
 
   it('returns 429 when rate limited', async () => {
     const { adminLimiter, createRateLimitResponse } = await import('@/lib/security/rate-limit');
-    vi.mocked(adminLimiter.check).mockReturnValue({ success: false, retryAfter: 60 } as never);
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 100,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
     vi.mocked(createRateLimitResponse).mockReturnValue(
       new Response(null, { status: 429 }) as never
     );
@@ -295,7 +302,20 @@ describe('GET /audit-log', () => {
     const response = await GET(makeRequest());
 
     expect(response.status).toBe(429);
+  });
 
-    vi.mocked(adminLimiter.check).mockReturnValue(null as never);
+  it('allows the request through when rate limiter reports success', async () => {
+    const { adminLimiter } = await import('@/lib/security/rate-limit');
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: true,
+      limit: 100,
+      remaining: 99,
+      reset: Date.now() + 60_000,
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET(makeRequest());
+
+    expect(response.status).toBe(200);
   });
 });

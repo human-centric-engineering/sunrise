@@ -47,6 +47,8 @@ function makeResult(
     documentName: overrides.documentName ?? 'Agentic Patterns Guide',
     chunk: {
       id: overrides.id ?? 'chunk-1',
+      chunkKey: `${overrides.id ?? 'chunk-1'}-key`,
+      documentId: 'doc-1',
       content: overrides.content ?? 'This is the chunk content about fan-out patterns.',
       chunkType: overrides.chunkType ?? 'pattern',
       patternName: overrides.patternName ?? 'Fan-Out Pattern',
@@ -55,6 +57,9 @@ function makeResult(
       section: 'Introduction',
       keywords: 'fan-out, parallel, concurrency',
       estimatedTokens: 120,
+      embeddingModel: null,
+      embeddingProvider: null,
+      embeddedAt: null,
       metadata: { source: 'guide' },
     },
   };

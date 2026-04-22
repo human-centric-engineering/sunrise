@@ -145,7 +145,7 @@ export async function importOrchestrationConfig(
         continue;
       }
       result.warnings.push(
-        `Webhook for ${wh.url} imported without secret — you must set the secret manually`
+        `Webhook for ${wh.url} imported inactive — set the signing secret and re-enable manually`
       );
       await tx.aiWebhookSubscription.create({
         data: {
@@ -153,7 +153,7 @@ export async function importOrchestrationConfig(
           events: wh.events,
           description: wh.description ?? null,
           secret: '', // Secrets are never exported
-          isActive: wh.isActive,
+          isActive: false, // Force inactive: empty secret would sign dispatches with an empty HMAC key
           createdBy: userId,
         },
       });

@@ -158,6 +158,26 @@ async function attemptDelivery(
   let statusCode: number | undefined;
   let error: string | undefined;
 
+  // Refuse to sign with an empty HMAC key: signatures would be forgeable by anyone who knows the URL.
+  // Mark the delivery exhausted so it does not get retried until an admin sets a secret.
+  if (!secret) {
+    await prisma.aiWebhookDelivery.update({
+      where: { id: deliveryId },
+      data: {
+        status: 'exhausted',
+        attempts: { increment: 1 },
+        lastAttemptAt: now,
+        lastError: 'Subscription has no signing secret',
+        nextRetryAt: null,
+      },
+    });
+    logger.warn('Webhook delivery skipped: subscription has no signing secret', {
+      deliveryId,
+      url,
+    });
+    return;
+  }
+
   try {
     const signature = createHmac('sha256', secret).update(body).digest('hex');
 

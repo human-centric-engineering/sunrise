@@ -193,17 +193,21 @@ describe('GET /conversations/export', () => {
     );
   });
 
-  it('filters by userId when provided', async () => {
+  it('ignores userId query param — always scopes to session user', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
 
+    // Attempt to export someone else's conversations
     await ExportConversations(makeRequest({ userId: 'user-42' }));
 
+    // Where clause must be scoped to the admin's own id, not the attacker-chosen one
     expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ userId: 'user-42' }),
+        where: expect.objectContaining({ userId: 'cmjbv4i3x00003wsloputgwul' }),
       })
     );
+    const call = vi.mocked(prisma.aiConversation.findMany).mock.calls[0]?.[0];
+    expect((call?.where as Record<string, unknown>).userId).not.toBe('user-42');
   });
 
   it('filters by title substring (q) when provided', async () => {

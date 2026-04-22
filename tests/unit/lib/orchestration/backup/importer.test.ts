@@ -279,4 +279,23 @@ describe('importOrchestrationConfig', () => {
     expect(result.warnings[0]).toContain('https://example.com/hook');
     expect(result.warnings[0]).toContain('secret');
   });
+
+  it('forces imported webhook to isActive: false even when payload was active', async () => {
+    mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+    mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+
+    // Payload says isActive: true — importer must still create as inactive to
+    // prevent empty-secret HMAC dispatches
+    const webhook = makeWebhook({ isActive: true });
+    const payload = { ...minPayload, data: { ...minPayload.data, webhooks: [webhook] } };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        url: 'https://example.com/hook',
+        secret: '',
+        isActive: false,
+      }),
+    });
+  });
 });

@@ -16,10 +16,26 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { z } from 'zod';
 
 import { API } from '@/lib/api/endpoints';
-import type { EmbeddingModelInfo } from '@/lib/orchestration/llm/embedding-models';
+
+const embeddingModelInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  dimensions: z.number(),
+  schemaCompatible: z.boolean(),
+  costPerMillionTokens: z.number(),
+  hasFreeTier: z.boolean(),
+  local: z.boolean(),
+  quality: z.enum(['high', 'medium', 'budget']),
+  strengths: z.string(),
+  setup: z.string(),
+});
+
+type EmbeddingModelInfo = z.infer<typeof embeddingModelInfoSchema>;
 
 const modelsResponseSchema = z.object({
-  data: z.array(z.record(z.string(), z.unknown())).optional(),
+  data: z.array(embeddingModelInfoSchema).optional(),
 });
 
 interface CompareProvidersModalProps {
@@ -46,7 +62,7 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
       const res = await fetch(url);
       if (!res.ok) return;
       const body = modelsResponseSchema.parse(await res.json());
-      if (body.data) setModels(body.data as unknown as EmbeddingModelInfo[]);
+      if (body.data) setModels(body.data);
     } catch {
       // non-critical
     } finally {
