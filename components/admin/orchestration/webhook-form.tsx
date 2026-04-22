@@ -27,15 +27,29 @@ import { WEBHOOK_EVENT_TYPES } from '@/lib/validations/orchestration';
 
 // ─── Schema ────────────────────────────────────────────────────────────────
 
-const webhookFormSchema = z.object({
+const baseFields = {
   url: z.string().url('Must be a valid URL').max(2000),
-  secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
   events: z.array(z.string()).min(1, 'Select at least one event'),
   description: z.string().max(500).optional(),
   isActive: z.boolean(),
+};
+
+const createWebhookSchema = z.object({
+  ...baseFields,
+  secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
 });
 
-type WebhookFormData = z.infer<typeof webhookFormSchema>;
+// In edit mode an empty secret means "keep the existing one" — onSubmit strips
+// the key before PATCH so the server leaves the stored secret untouched.
+const editWebhookSchema = z.object({
+  ...baseFields,
+  secret: z
+    .string()
+    .max(256)
+    .refine((v) => v === '' || v.length >= 16, 'Secret must be at least 16 characters'),
+});
+
+type WebhookFormData = z.infer<typeof createWebhookSchema>;
 
 // ─── Props ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +103,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
     watch,
     formState: { errors },
   } = useForm<WebhookFormData>({
-    resolver: zodResolver(webhookFormSchema),
+    resolver: zodResolver(isEdit ? editWebhookSchema : createWebhookSchema),
     defaultValues: {
       url: webhook?.url ?? '',
       secret: '',

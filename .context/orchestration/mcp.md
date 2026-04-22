@@ -52,6 +52,11 @@ Audit log (fire-and-forget → McpAuditLog)
 | SSRF prevention    | Resource URIs pattern-matched against registered set; no user URL reaches `fetch()`     |
 | Audit              | Every MCP call logged with IP, duration, method, result code. Manual purge via admin UI |
 | Error sanitization | JSON-RPC errors never leak internals in production                                      |
+| Body size limit    | POST bodies &gt; 1MB (via `content-length`) → 413 before JSON parsing                   |
+
+### Body size limit (413)
+
+`app/api/v1/mcp/route.ts` rejects POST bodies whose `content-length` header exceeds 1 MB with a 413 and a JSON-RPC error envelope, before any JSON parsing runs. This branch is **covered by integration/e2e tests only**: jsdom treats `content-length` as a forbidden request header when it doesn't match the body length and strips it, so a unit test cannot observe the real HTTP server behaviour. The unit test file parks this case as `it.todo` with a `// SOURCE DECISION: Document` marker pointing back here.
 
 ## API Key Lifecycle
 

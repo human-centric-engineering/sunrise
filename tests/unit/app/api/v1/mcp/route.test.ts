@@ -394,6 +394,85 @@ describe('POST /mcp', () => {
 
     expect(response.status).toBe(404);
   });
+
+  // SOURCE DECISION: Document — branch needs integration test coverage.
+  // jsdom strips 'content-length' from NextRequest when the declared size doesn't match
+  // the actual body length (Fetch spec "forbidden header" behaviour). The source at
+  // app/api/v1/mcp/route.ts:72-82 is correct — it reads the header the real HTTP server
+  // populates — but jsdom returns null for this header in unit tests, making the 413
+  // branch unreachable. Covered at the integration/e2e layer instead. See
+  // `.context/orchestration/mcp.md` → "Body size limit (413)".
+  it.todo(
+    'returns 413 when content-length exceeds 1MB — integration-only (see .context/orchestration/mcp.md)'
+  );
+
+  it('returns 400 when initialize is sent with an existing session header', async () => {
+    const response = await POST(
+      makePostRequest(makeRpcRequest('initialize'), {
+        [MCP_SESSION_HEADER]: mockSession.id,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.message).toBe('Cannot send initialize with an existing session header');
+    expect(body.error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+  });
+
+  it('returns 400 when batch contains initialize alongside other requests', async () => {
+    const initRequest = makeRpcRequest('initialize', {}, 42);
+    const response = await POST(
+      makePostRequest([initRequest, makeRpcRequest('tools/list', {}, 2)])
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ id: number | null; error: { code: number; message: string } }>(
+      response
+    );
+    expect(body.error.message).toBe('initialize must be the only request in the batch');
+    expect(body.error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+    // id comes from the initialize request in the batch
+    expect(body.id).toBe(42);
+  });
+
+  it('filters null responses from batch so only non-notification results are returned', async () => {
+    vi.mocked(handleMcpRequest)
+      .mockResolvedValueOnce({ jsonrpc: '2.0', id: 1, result: {} })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ jsonrpc: '2.0', id: 3, result: {} });
+
+    const response = await POST(
+      makePostRequest(
+        [
+          makeRpcRequest('tools/list', {}, 1),
+          makeRpcRequest('notifications/ping', {}, 2),
+          makeRpcRequest('tools/list', {}, 3),
+        ],
+        { [MCP_SESSION_HEADER]: mockSession.id }
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ jsonrpc: string }[]>(response);
+    expect(Array.isArray(body)).toBe(true);
+    expect(body).toHaveLength(2);
+    expect(body[0].jsonrpc).toBe('2.0');
+    expect(body[1].jsonrpc).toBe('2.0');
+  });
+
+  it('logs unhandled error and delegates to handleAPIError when authenticateMcpRequest throws', async () => {
+    const { logger } = await import('@/lib/logging');
+    vi.mocked(authenticateMcpRequest).mockRejectedValue(new Error('boom'));
+
+    const response = await POST(makePostRequest(makeRpcRequest('tools/list')));
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'MCP transport: unhandled error',
+      expect.objectContaining({ error: 'boom' })
+    );
+    // handleAPIError returns 500 for unknown Error instances
+    expect(response.status).toBe(500);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,6 +529,16 @@ describe('GET /mcp', () => {
     const [iterable] = vi.mocked(sseResponse).mock.calls[0];
     expect(iterable).toBeDefined();
     expect(typeof (iterable as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe('function');
+  });
+
+  it('returns error response when getMcpServerConfig throws', async () => {
+    vi.mocked(getMcpServerConfig).mockRejectedValue(new Error('db failure'));
+
+    const response = await GET(makeGetRequest());
+
+    // handleAPIError handles the thrown error — not an SSE stream
+    expect(response.status).not.toBe(200);
+    expect(response.headers.get('Content-Type')).not.toContain('text/event-stream');
   });
 });
 
@@ -537,5 +626,28 @@ describe('DELETE /mcp', () => {
         errorMessage: 'Session not found',
       })
     );
+  });
+
+  it('does not call destroySession when session belongs to a different api key', async () => {
+    mockSessionManager.getSession.mockReturnValue({
+      ...mockSession,
+      apiKeyId: 'different-key',
+    });
+
+    await DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+
+    expect(mockSessionManager.destroySession).not.toHaveBeenCalled();
+  });
+
+  it('returns error response when getMcpSessionManager throws', async () => {
+    vi.mocked(getMcpSessionManager).mockImplementation(() => {
+      throw new Error('session manager failure');
+    });
+
+    const response = await DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+
+    // handleAPIError handles the thrown error — not a success response
+    expect(response.status).not.toBe(200);
+    expect(response.status).not.toBe(204);
   });
 });
