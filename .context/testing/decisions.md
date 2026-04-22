@@ -146,6 +146,21 @@ tests/
 - Simple getters/setters
 - Type definitions and interfaces
 - Third-party library code
+- **Admin RSC pages** (`app/admin/**/page.tsx`) — see "Admin RSC pages" below
+
+### Admin RSC pages
+
+**Decision**: Admin RSC pages (`app/admin/**/page.tsx`) are not unit-tested. Their auth boundary is covered once at the layout level; substantive logic belongs in `lib/`.
+
+**Rationale**: These pages are thin data-loader shells — they call a Prisma query or service function and forward the result to a client component. Unit-testing them means mocking the data source and asserting the mock flowed through, which tests the mock rather than real behaviour. The client components they render have their own dedicated unit tests (`components/admin/**`), which is where the meaningful contracts live.
+
+**What IS covered**:
+
+- **Auth boundary** — tested once in `tests/unit/app/admin/layout.test.tsx`, covering all three branches of `app/admin/layout.tsx` (unauthenticated → redirect `/login`; non-admin → redirect `/dashboard`; admin → render children). That single test guards every route under `app/admin/**`.
+- **Client components** — the `components/admin/**` tree has its own unit tests.
+- **API routes the pages call** — `app/api/v1/admin/**/route.ts` files have their own tests.
+
+**When to add a page-level test anyway**: if a page grows non-trivial server logic (not just a loader), extract the logic to `lib/` (where it's unit-testable) or add an integration test against a real request. Do not add a unit test that mocks Prisma and asserts the mocked result was passed through.
 
 ---
 
