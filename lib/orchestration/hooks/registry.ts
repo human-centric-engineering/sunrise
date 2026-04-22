@@ -2,9 +2,10 @@
  * Event Hook Registry & Dispatcher
  *
  * Loads enabled hooks from the database, caches them by event type,
- * and dispatches events to matching hooks. Webhook hooks send
- * HMAC-signed HTTP POST requests. Internal hooks call registered
- * TypeScript handler functions.
+ * and dispatches events to matching hooks. Webhook hooks send plain
+ * JSON HTTP POST requests with any admin-supplied custom headers —
+ * payloads are not currently HMAC-signed. Internal hooks call
+ * registered TypeScript handler functions.
  *
  * All dispatch is fire-and-forget — failures are logged but never
  * propagate to the caller.

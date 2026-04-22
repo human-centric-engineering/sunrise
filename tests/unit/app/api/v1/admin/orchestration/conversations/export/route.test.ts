@@ -206,6 +206,62 @@ describe('GET /conversations/export', () => {
     );
   });
 
+  it('filters by title substring (q) when provided', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+
+    await ExportConversations(makeRequest({ q: 'onboarding' }));
+
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          title: { contains: 'onboarding', mode: 'insensitive' },
+        }),
+      })
+    );
+  });
+
+  it('filters by messageSearch when provided', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+
+    await ExportConversations(makeRequest({ messageSearch: 'refund' }));
+
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          messages: { some: { content: { contains: 'refund', mode: 'insensitive' } } },
+        }),
+      })
+    );
+  });
+
+  it('filters by tag when provided', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+
+    await ExportConversations(makeRequest({ tag: 'vip' }));
+
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tags: { has: 'vip' } }),
+      })
+    );
+  });
+
+  it('filters by isActive when provided', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+
+    await ExportConversations(makeRequest({ isActive: 'false' }));
+
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ isActive: false }),
+      })
+    );
+  });
+
   it('filters by dateFrom and dateTo when provided', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);

@@ -99,7 +99,8 @@ async function getAgents(): Promise<AgentOption[]> {
     const body = await parseApiResponse<{ agents: Array<{ id: string; name: string }> }>(res);
     if (!body.success) return [];
     return body.data.agents.map((a) => ({ id: a.id, name: a.name }));
-  } catch {
+  } catch (err) {
+    logger.error('analytics page: failed to load agents', err);
     return [];
   }
 }

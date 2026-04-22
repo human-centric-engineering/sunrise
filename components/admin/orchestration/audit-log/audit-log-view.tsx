@@ -43,7 +43,9 @@ const ENTITY_TYPES = [
   { value: 'capability', label: 'Capabilities' },
   { value: 'knowledge_document', label: 'Knowledge' },
   { value: 'settings', label: 'Settings' },
-  { value: 'webhook', label: 'Webhooks' },
+  { value: 'experiment', label: 'Experiments' },
+  { value: 'embed_token', label: 'Embed tokens' },
+  { value: 'backup', label: 'Backups' },
 ];
 
 function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {

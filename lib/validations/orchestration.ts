@@ -1326,6 +1326,15 @@ export const conversationExportQuerySchema = z.object({
   format: z.enum(['json', 'csv']).default('json'),
   agentId: cuidSchema.optional(),
   userId: z.string().max(100).optional(),
+  isActive: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
+    .optional(),
+  /** Title substring search (case-insensitive). */
+  q: z.string().trim().min(1).max(200).optional(),
+  /** Full-text search across message content (case-insensitive). */
+  messageSearch: z.string().trim().min(1).max(500).optional(),
+  /** Filter by tag (exact match on any tag in the array). */
+  tag: z.string().trim().min(1).max(100).optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
 });

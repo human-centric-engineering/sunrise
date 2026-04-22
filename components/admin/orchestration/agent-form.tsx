@@ -3,7 +3,7 @@
 /**
  * AgentForm (Phase 4 Session 4.2)
  *
- * Shared create / edit form for `AiAgent`. One `<form>`, five shadcn tabs,
+ * Shared create / edit form for `AiAgent`. One `<form>`, eight shadcn tabs,
  * one PATCH (or POST). Tabs are layout, not save boundaries.
  *
  * Pattern follows `components/admin/feature-flag-form.tsx`:
@@ -47,6 +47,7 @@ import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-cap
 import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
+import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 /**
@@ -309,6 +310,13 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             title={!isEdit ? 'Save the agent first to test a chat' : undefined}
           >
             Test
+          </TabsTrigger>
+          <TabsTrigger
+            value="embed"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
+          >
+            Embed
           </TabsTrigger>
         </TabsList>
 
@@ -913,6 +921,19 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 {!isEdit
                   ? 'Save the agent first, then manage invite tokens.'
                   : 'Set visibility to "Invite only" to manage tokens.'}
+              </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 8 — EMBED ================= */}
+        <TabsContent value="embed" className="pt-4">
+          {isEdit && agent ? (
+            <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">
+                Save the agent first, then manage embed tokens.
               </p>
             </div>
           )}

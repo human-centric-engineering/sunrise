@@ -35,6 +35,10 @@ export const GET = withAdminAuth(async (request, _session) => {
     format: searchParams.get('format') ?? undefined,
     agentId: searchParams.get('agentId') ?? undefined,
     userId: searchParams.get('userId') ?? undefined,
+    isActive: searchParams.get('isActive') ?? undefined,
+    q: searchParams.get('q') ?? undefined,
+    messageSearch: searchParams.get('messageSearch') ?? undefined,
+    tag: searchParams.get('tag') ?? undefined,
     dateFrom: searchParams.get('dateFrom') ?? undefined,
     dateTo: searchParams.get('dateTo') ?? undefined,
   });
@@ -42,6 +46,14 @@ export const GET = withAdminAuth(async (request, _session) => {
   const where: Prisma.AiConversationWhereInput = {};
   if (query.userId) where.userId = query.userId;
   if (query.agentId) where.agentId = query.agentId;
+  if (query.isActive !== undefined) where.isActive = query.isActive;
+  if (query.q) where.title = { contains: query.q, mode: 'insensitive' };
+  if (query.messageSearch) {
+    where.messages = {
+      some: { content: { contains: query.messageSearch, mode: 'insensitive' } },
+    };
+  }
+  if (query.tag) where.tags = { has: query.tag };
   if (query.dateFrom || query.dateTo) {
     where.updatedAt = {
       ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),

@@ -7,8 +7,8 @@
  *
  * Key assertions:
  * - Admin auth required (401/403 otherwise)
- * - Returns all conversations by default (cross-user admin audit)
- * - Optional userId filter scopes to a specific user
+ * - Always scoped to session.user.id (matches detail/PATCH/DELETE)
+ * - Any userId query param is ignored
  * - Optional filters (agentId, isActive, q, dateFrom, dateTo) work correctly
  */
 
@@ -104,19 +104,22 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
     });
   });
 
-  describe('Cross-user admin audit', () => {
-    it('does not include userId in WHERE by default (shows all users)', async () => {
+  describe('Session scoping', () => {
+    it('always scopes to session.user.id', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
 
       await GET(makeGetRequest());
 
-      const call = vi.mocked(prisma.aiConversation.findMany).mock.calls[0][0];
-      expect(call?.where).not.toHaveProperty('userId');
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: ADMIN_ID }),
+        })
+      );
     });
 
-    it('scopes to specific user when userId param is provided', async () => {
+    it('ignores userId query param — stays scoped to session user', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -125,7 +128,7 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
 
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: USER_ID }),
+          where: expect.objectContaining({ userId: ADMIN_ID }),
         })
       );
     });

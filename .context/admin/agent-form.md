@@ -1,6 +1,6 @@
 # Agent form
 
-Shared create/edit form for `AiAgent`. Seven shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
+Shared create/edit form for `AiAgent`. Eight shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
 
 **File:** `components/admin/orchestration/agent-form.tsx`
 **Pattern:** raw `react-hook-form` + `zodResolver(agentFormSchema)`, no shadcn Form wrapper (mirrors `components/admin/feature-flag-form.tsx`).
@@ -17,8 +17,9 @@ Shared create/edit form for `AiAgent`. Seven shadcn tabs, one underlying `<form>
 | 5   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
 | 6   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
 | 7   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
+| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` — create tokens, copy `<script>` snippet, toggle active, manage origins                          |
 
-Tabs 4, 5, and 7 are `disabled` in create mode — they require a persisted `agent.id`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
+Tabs 4, 5, 7, and 8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
 
 ## Tab 1 — General
 
