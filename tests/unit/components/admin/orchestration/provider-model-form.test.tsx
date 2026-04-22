@@ -129,8 +129,7 @@ describe('ProviderModelForm', () => {
     await user.type(screen.getByPlaceholderText('e.g. GPT-5'), 'GPT 5');
 
     await waitFor(() => {
-      const slugInput = screen.getByPlaceholderText(/e\.g\. openai-gpt-5/i);
-      expect(slugInput.value).toContain('openai');
+      expect(screen.getByPlaceholderText(/e\.g\. openai-gpt-5/i).value).toContain('openai');
     });
   });
 
