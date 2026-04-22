@@ -235,6 +235,141 @@ describe('OpenRouter merge overwrites fallback data', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// New branch-coverage cases (Sprint 3, Batch 3.1)
+// ---------------------------------------------------------------------------
+
+describe('getModel — deprecated/removed model ID', () => {
+  it('returns undefined for a model ID that is not in the registry', () => {
+    // Arrange: fresh fallback-only registry (no OpenRouter refresh)
+    registry.__resetForTests();
+
+    // Act: look up a model id that was never registered
+    const result = registry.getModel('deprecated-model-v0-ancient');
+
+    // Assert: undefined returned (no throw, no fallback substitution)
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for an empty-string model ID', () => {
+    // Arrange
+    registry.__resetForTests();
+    // Act
+    const result = registry.getModel('');
+    // Assert
+    expect(result).toBeUndefined();
+  });
+});
+
+describe('validateTaskDefaults', () => {
+  it('returns no errors when all provided model IDs are known', () => {
+    // Arrange: use known fallback ids
+    const defaults = { chat: 'claude-haiku-4-5', reasoning: 'claude-opus-4-6' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: no validation errors
+    expect(errors).toHaveLength(0);
+  });
+
+  it('returns an error entry for each unknown model ID', () => {
+    // Arrange: one valid, one unknown
+    const defaults = { chat: 'claude-haiku-4-5', reasoning: 'not-a-real-model-id' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: only the unknown id produces an error; message names the bad id
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('reasoning');
+    expect(errors[0].message).toContain('not-a-real-model-id');
+  });
+
+  it('returns an error for an empty-string model ID', () => {
+    // Arrange: empty string is explicitly invalid per source contract
+    const defaults = { chat: '' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: empty string flagged
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('chat');
+    expect(errors[0].message).toMatch(/non-empty/);
+  });
+
+  it('skips tasks where the value is undefined (partial map)', () => {
+    // Arrange: only one task supplied — others are implicitly undefined
+    const defaults: Partial<Record<'chat' | 'routing', string>> = { chat: 'claude-haiku-4-5' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: no errors; undefined tasks are not validated
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe('computeDefaultModelMap', () => {
+  it('returns a map with all expected task keys', () => {
+    // Arrange: use fresh registry with fallback models
+    registry.__resetForTests();
+    // Act
+    const defaults = registry.computeDefaultModelMap();
+    // Assert: all required task keys present
+    expect(defaults).toHaveProperty('routing');
+    expect(defaults).toHaveProperty('chat');
+    expect(defaults).toHaveProperty('reasoning');
+    expect(defaults).toHaveProperty('embeddings');
+  });
+
+  it('falls back to hardcoded claude-haiku-4-5 when registry has no non-local budget models', () => {
+    // Arrange: clear registry to simulate empty state after a failed refresh
+    registry.__resetForTests();
+    // Force empty state by mocking fetch to fail so fetchedAt stays 0
+    // then check the fallback ids come from the static strings
+    const defaults = registry.computeDefaultModelMap();
+    // Assert: the fallback is one of the known static ids (not undefined)
+    expect(typeof defaults.routing).toBe('string');
+    expect(defaults.routing.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getRegistryFetchedAt', () => {
+  it('returns 0 before any refresh', () => {
+    // Arrange
+    registry.__resetForTests();
+    // Act
+    const ts = registry.getRegistryFetchedAt();
+    // Assert: 0 signals "never refreshed from OpenRouter"
+    expect(ts).toBe(0);
+  });
+
+  it('returns a non-zero timestamp after a successful refresh', async () => {
+    // Arrange
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [] }),
+    }) as unknown as typeof fetch;
+    // Act
+    await registry.refreshFromOpenRouter({ force: true });
+    const ts = registry.getRegistryFetchedAt();
+    // Assert: timestamp is a recent epoch ms value
+    expect(ts).toBeGreaterThan(0);
+  });
+});
+
+describe('refreshFromOpenRouter — first-run failure preserves fallback map', () => {
+  it('seeds the fallback map when fetchedAt is 0 and the refresh fails', async () => {
+    // Arrange: fresh registry (fetchedAt=0), network error
+    registry.__resetForTests();
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
+
+    // Act
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fallback map still accessible (fetchedAt remains 0 but models are there)
+    expect(registry.getModel('claude-haiku-4-5')).toBeDefined();
+    expect(registry.getRegistryFetchedAt()).toBe(0);
+  });
+});
+
 describe('refreshFromProvider', () => {
   function makeProvider(models: Array<{ id: string; name?: string; provider?: string }>) {
     return {

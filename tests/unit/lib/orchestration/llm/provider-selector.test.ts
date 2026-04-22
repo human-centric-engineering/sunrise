@@ -278,6 +278,141 @@ describe('recommendModels', () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // New branch-coverage cases (Sprint 3, Batch 3.1)
+  // -------------------------------------------------------------------------
+
+  describe('DB load failure paths', () => {
+    it('returns empty array when DB fails and no stale cache is available', async () => {
+      // Arrange: no prior cache, DB throws
+      __resetModelCacheForTests();
+      vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue(
+        new Error('db connection failed')
+      );
+
+      // Act
+      const results = await recommendModels('thinking');
+
+      // Assert: returns empty array (no throw), warning logged
+      expect(results).toEqual([]);
+    });
+
+    it('logs a warning when DB load fails', async () => {
+      // Arrange
+      const { logger } = await import('@/lib/logging');
+      __resetModelCacheForTests();
+      vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue(new Error('timeout'));
+
+      // Act
+      await recommendModels('thinking');
+
+      // Assert: source logs a warning with the error message
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Provider model cache load failed',
+        expect.objectContaining({ error: 'timeout' })
+      );
+    });
+
+    it('falls back to stale cache when DB fails on second call', async () => {
+      // Arrange: first call succeeds and populates cache
+      const cachedModel = makeModel({ slug: 'stale-model', tierRole: 'thinking' });
+      mockModels([cachedModel]);
+      await recommendModels('thinking');
+
+      // Now clear cache so next call goes to DB, but DB fails
+      __resetModelCacheForTests();
+      // Re-prime the stale cache manually by doing a successful call first
+      mockModels([cachedModel]);
+      await recommendModels('thinking'); // populates cache again
+
+      // Now simulate DB failure with stale cache present
+      vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue(new Error('db down'));
+      // Bypass TTL by advancing time conceptually — we spy on Date.now
+      const realNow = Date.now;
+      const futureMs = realNow() + 120_000; // 2 minutes past TTL
+      vi.spyOn(Date, 'now').mockReturnValue(futureMs);
+
+      // Act
+      const results = await recommendModels('thinking');
+
+      // Assert: stale cache is returned rather than empty array
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].slug).toBe('stale-model');
+
+      // Cleanup
+      vi.spyOn(Date, 'now').mockRestore();
+    });
+  });
+
+  describe('all-providers-unavailable scenario', () => {
+    it('returns empty array when all models are inactive and includeInactive is false', async () => {
+      // Arrange: only inactive models available
+      const inactive1 = makeModel({ slug: 'inactive-a', isActive: false, tierRole: 'thinking' });
+      const inactive2 = makeModel({ slug: 'inactive-b', isActive: false, tierRole: 'worker' });
+      mockModels([inactive1, inactive2]);
+
+      // Act: default options exclude inactive models
+      const results = await recommendModels('thinking');
+
+      // Assert: no results — the "no provider available" scenario returns []
+      expect(results).toEqual([]);
+    });
+
+    it('returns empty array when all models are embedding-only and intent is non-embedding', async () => {
+      // Arrange: all models are embedding-only (single 'embedding' capability)
+      const embed1 = makeModel({ slug: 'embed-a', capabilities: ['embedding'], isActive: true });
+      const embed2 = makeModel({ slug: 'embed-b', capabilities: ['embedding'], isActive: true });
+      mockModels([embed1, embed2]);
+
+      // Act: non-embedding intent sees no candidates
+      const results = await recommendModels('thinking');
+
+      // Assert: empty — embedding-only models filtered out for non-embedding intent
+      expect(results).toEqual([]);
+    });
+  });
+
+  describe('tie-breaking — deterministic sort', () => {
+    it('produces the same ordering on repeated calls with equal-scored models', async () => {
+      // Arrange: multiple models with identical tier and secondary scores
+      const models = [
+        makeModel({ slug: 'x', tierRole: 'thinking', reasoningDepth: 'high' }),
+        makeModel({ slug: 'y', tierRole: 'thinking', reasoningDepth: 'high' }),
+        makeModel({ slug: 'z', tierRole: 'thinking', reasoningDepth: 'high' }),
+      ];
+      mockModels(models);
+
+      // Act: call twice
+      const first = await recommendModels('thinking');
+      __resetModelCacheForTests();
+      mockModels(models);
+      const second = await recommendModels('thinking');
+
+      // Assert: results are in identical order across both calls (sort is stable/deterministic)
+      expect(first.map((r) => r.slug)).toEqual(second.map((r) => r.slug));
+    });
+  });
+
+  describe('cost-budget-like scoring via costEfficiency', () => {
+    it('selects the higher costEfficiency model for "doing" intent', async () => {
+      // Arrange: two worker-tier models with different cost efficiency
+      const expensive = makeModel({ slug: 'pricey', tierRole: 'worker', costEfficiency: 'medium' });
+      const cheap = makeModel({
+        slug: 'cheap',
+        tierRole: 'worker',
+        costEfficiency: 'very_high',
+      });
+      mockModels([expensive, cheap]);
+
+      // Act
+      const results = await recommendModels('doing');
+
+      // Assert: higher cost efficiency ranks first (lower cost = preferred for "doing" intent)
+      expect(results[0].slug).toBe('cheap');
+      expect(results[0].score).toBeGreaterThan(results[1].score);
+    });
+  });
+
   describe('response shape', () => {
     it('includes all expected fields in recommendations', async () => {
       mockModels([
