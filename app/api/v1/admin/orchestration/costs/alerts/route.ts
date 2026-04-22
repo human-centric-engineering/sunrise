@@ -17,8 +17,14 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getBudgetAlerts } from '@/lib/orchestration/llm/cost-reports';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 export const GET = withAdminAuth(async (request) => {
+  const ip = getClientIP(request);
+  const rl = adminLimiter.check(ip);
+  if (!rl.success) return createRateLimitResponse(rl);
+
   const log = await getRouteLogger(request);
   const alerts = await getBudgetAlerts();
   log.info('Budget alerts fetched', {

@@ -32,7 +32,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -94,6 +94,13 @@ const capabilityFormSchema = z.object({
   executionType: z.enum(['internal', 'api', 'webhook']),
   executionHandler: z.string().min(1, 'Execution handler is required').max(500),
   requiresApproval: z.boolean(),
+  approvalTimeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
+    .nullable()
+    .optional(),
   rateLimit: z.number().int().min(1).max(10000).optional(),
   isActive: z.boolean(),
 });
@@ -214,6 +221,7 @@ export function CapabilityForm({
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
@@ -315,6 +323,7 @@ export function CapabilityForm({
       executionType: (capability?.executionType as 'internal' | 'api' | 'webhook') ?? 'internal',
       executionHandler: capability?.executionHandler ?? '',
       requiresApproval: capability?.requiresApproval ?? false,
+      approvalTimeoutMs: capability?.approvalTimeoutMs ?? null,
       rateLimit: capability?.rateLimit ?? undefined,
       isActive: capability?.isActive ?? true,
     },
@@ -451,6 +460,7 @@ export function CapabilityForm({
 
     setSubmitting(true);
     setError(null);
+    setSaved(false);
     try {
       const payload = {
         ...data,
@@ -462,6 +472,8 @@ export function CapabilityForm({
           body: payload,
         });
         reset(data);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiCapability>(API.ADMIN.ORCHESTRATION.CAPABILITIES, {
           body: payload,
@@ -512,11 +524,16 @@ export function CapabilityForm({
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/capabilities">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>
@@ -1039,13 +1056,39 @@ export function CapabilityForm({
             />
           </div>
 
+          {currentRequiresApproval && (
+            <div className="grid gap-2">
+              <Label htmlFor="approvalTimeoutMs">
+                Approval timeout (ms){' '}
+                <FieldHelp title="How long to wait for approval" contentClassName="w-80">
+                  How many milliseconds the system waits for a human to approve or reject this call
+                  before falling back to the global default action (deny or allow). Leave blank to
+                  use the global default timeout from orchestration settings. Maximum is 3,600,000
+                  ms (1 hour).
+                </FieldHelp>
+              </Label>
+              <Input
+                id="approvalTimeoutMs"
+                type="number"
+                {...register('approvalTimeoutMs', {
+                  setValueAs: (v: string | number) =>
+                    v === '' || v === null || v === undefined ? null : Number(v),
+                })}
+                placeholder="Use global default"
+              />
+              {errors.approvalTimeoutMs && (
+                <p className="text-destructive text-xs">{errors.approvalTimeoutMs.message}</p>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-2">
             <Label htmlFor="rateLimit">
               Rate limit (calls per minute){' '}
               <FieldHelp title="Rate limit" contentClassName="w-80">
-                The maximum number of times this capability can be called per minute, across all
-                agents combined. This prevents runaway usage — for example, if an AI enters a loop
-                calling the same tool repeatedly. Leave empty for no limit.
+                The maximum number of times this capability can be called per minute per agent. This
+                prevents runaway usage — for example, if an AI enters a loop calling the same tool
+                repeatedly. Leave empty for no limit.
               </FieldHelp>
             </Label>
             <Input

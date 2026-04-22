@@ -20,6 +20,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import {
   updateWorkflowSchema,
@@ -84,6 +85,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       changedAt: new Date().toISOString(),
       changedBy: session.user.id,
     });
+    // Cap history at 50 entries (keep most recent)
+    if (history.length > 50) {
+      history.splice(0, history.length - 50);
+    }
     data.workflowDefinition = body.workflowDefinition as unknown as Prisma.InputJsonValue;
     data.workflowDefinitionHistory = history as unknown as Prisma.InputJsonValue;
   }
@@ -99,6 +104,20 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       adminId: session.user.id,
       fieldsChanged: Object.keys(data),
     });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'workflow.update',
+      entityType: 'workflow',
+      entityId: id,
+      entityName: workflow.name,
+      changes: computeChanges(
+        current as unknown as Record<string, unknown>,
+        workflow as unknown as Record<string, unknown>
+      ),
+      clientIp: clientIP,
+    });
+
     return successResponse(workflow);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -131,6 +150,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     workflowId: id,
     slug: current.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow.delete',
+    entityType: 'workflow',
+    entityId: id,
+    entityName: current.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ id, isActive: false });

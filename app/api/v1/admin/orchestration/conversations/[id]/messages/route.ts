@@ -3,8 +3,9 @@
  *
  * GET /api/v1/admin/orchestration/conversations/:id/messages
  *
- * Returns messages for a conversation, scoped to the caller. Cross-user
- * access returns 404 — see the DELETE route for rationale.
+ * Returns messages for any conversation (cross-user admin audit).
+ * Includes full metadata (token counts, cost, latency) that the
+ * consumer endpoint strips.
  *
  * Authentication: Admin role required.
  */
@@ -16,7 +17,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const parsed = cuidSchema.safeParse(rawId);
@@ -25,9 +26,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   }
   const id = parsed.data;
 
-  // Ownership check first — 404 if missing or owned by another user.
-  const conversation = await prisma.aiConversation.findFirst({
-    where: { id, userId: session.user.id },
+  const conversation = await prisma.aiConversation.findUnique({
+    where: { id },
+    select: { id: true, userId: true, agentId: true },
   });
   if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
@@ -36,6 +37,17 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     orderBy: { createdAt: 'asc' },
   });
 
-  log.info('Conversation messages fetched', { conversationId: id, count: messages.length });
-  return successResponse({ messages });
+  log.info('Admin conversation messages fetched', {
+    conversationId: id,
+    count: messages.length,
+    userId: conversation.userId,
+  });
+  return successResponse({
+    conversation: {
+      id: conversation.id,
+      userId: conversation.userId,
+      agentId: conversation.agentId,
+    },
+    messages,
+  });
 });

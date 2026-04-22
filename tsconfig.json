@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@mocks/*": ["./__mocks__/*"]
     },
     "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": true,

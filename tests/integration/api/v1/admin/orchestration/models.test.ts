@@ -41,6 +41,7 @@ vi.mock('@/lib/security/rate-limit', () => ({
 
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getAvailableModels: vi.fn(() => []),
+  getRegistryFetchedAt: vi.fn(() => 0),
   refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
 }));
 

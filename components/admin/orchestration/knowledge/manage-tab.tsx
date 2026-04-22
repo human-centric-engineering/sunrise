@@ -1,24 +1,71 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, Cpu, RefreshCw, Sprout, Tag } from 'lucide-react';
+import { ChevronDown, Cpu, Eye, RefreshCw, Sprout, Tag, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { z } from 'zod';
+
 import { API } from '@/lib/api/endpoints';
-import type { AiKnowledgeDocument, OrchestrationSettings } from '@/types/orchestration';
+import type { AiKnowledgeDocument } from '@/types/orchestration';
+
+const metaTagEntrySchema = z.object({
+  value: z.string(),
+  chunkCount: z.number(),
+  documentCount: z.number(),
+});
+
+const scopedMetaTagsSchema = z.object({
+  categories: z.array(metaTagEntrySchema),
+  keywords: z.array(metaTagEntrySchema),
+});
+
+const metaTagsResponseSchema = z.object({
+  data: z
+    .object({
+      app: scopedMetaTagsSchema,
+      system: scopedMetaTagsSchema,
+    })
+    .optional(),
+});
+
+const embeddingStatusResponseSchema = z.object({
+  data: z
+    .object({
+      total: z.number(),
+      embedded: z.number(),
+      pending: z.number(),
+      hasActiveProvider: z.boolean(),
+    })
+    .optional(),
+});
+
+const settingsResponseSchema = z.object({
+  data: z.object({ lastSeededAt: z.string().nullable().optional() }).passthrough().optional(),
+});
+
+const errorBodySchema = z
+  .object({
+    error: z.object({ message: z.string().optional() }).optional(),
+  })
+  .nullable();
 
 import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
-import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
+import { DocumentChunksModal } from '@/components/admin/orchestration/knowledge/document-chunks-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
+import { PdfPreviewModal } from '@/components/admin/orchestration/knowledge/pdf-preview-modal';
 
 const STATUS_STYLES: Record<
   string,
   { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }
 > = {
   pending: { variant: 'outline', label: 'Pending' },
+  pending_review: { variant: 'secondary', label: 'Needs Review' },
   processing: { variant: 'secondary', label: 'Processing' },
   ready: { variant: 'default', label: 'Ready' },
   failed: { variant: 'destructive', label: 'Failed' },
@@ -159,12 +206,18 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
   const [showAllAppKeywords, setShowAllAppKeywords] = useState(false);
   const [showAllSystemKeywords, setShowAllSystemKeywords] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [viewChunksId, setViewChunksId] = useState<string | null>(null);
+  const [viewChunksName, setViewChunksName] = useState<string | null>(null);
 
   const fetchMetaTags = useCallback(async () => {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: MetaTagSummary };
+      const body = metaTagsResponseSchema.parse(await res.json());
       if (body.data?.app && body.data?.system) setMetaTags(body.data);
     } catch {
       // Supplementary — ignore failures
@@ -175,7 +228,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: EmbeddingStatus };
+      const body = embeddingStatusResponseSchema.parse(await res.json());
       if (body.data) setEmbeddingStatus(body.data);
     } catch {
       // Silently ignore — status is supplementary
@@ -186,8 +239,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS);
       if (!res.ok) return;
-      const body = (await res.json()) as { data?: OrchestrationSettings };
-      if (body.data?.lastSeededAt) setLastSeededAt(body.data.lastSeededAt as unknown as string);
+      const body = settingsResponseSchema.parse(await res.json());
+      if (body.data?.lastSeededAt) setLastSeededAt(body.data.lastSeededAt);
     } catch {
       // Silently ignore — supplementary info
     }
@@ -205,10 +258,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEED, { method: 'POST' });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        setSeedError(body?.error?.message ?? `Load failed (${res.status})`);
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        setSeedError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Load failed (${res.status})`
+        );
         return;
       }
       onRefresh();
@@ -227,10 +280,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBED, { method: 'POST' });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        setEmbedError(body?.error?.message ?? `Embedding failed (${res.status})`);
+        const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+        setEmbedError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Embedding failed (${res.status})`
+        );
         return;
       }
       void fetchEmbeddingStatus();
@@ -253,6 +306,31 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     },
     [onRefresh]
   );
+
+  const handleDelete = useCallback(
+    async (docId: string) => {
+      setDeletingId(docId);
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId), {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          onRefresh();
+          void fetchMetaTags();
+          void fetchEmbeddingStatus();
+        }
+      } finally {
+        setDeletingId(null);
+        setDeleteConfirmId(null);
+      }
+    },
+    [onRefresh, fetchMetaTags, fetchEmbeddingStatus]
+  );
+
+  const handlePdfPreview = useCallback((data: PdfPreviewData) => {
+    setPdfPreview(data);
+    setPdfPreviewOpen(true);
+  }, []);
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
@@ -312,6 +390,21 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
               compose an answer grounded in your documents. The LLM itself does not store the
               knowledge — it reads the relevant chunks on every request.
             </p>
+            <p className="text-foreground mt-2 font-medium">Can I undo this?</p>
+            <p>
+              Yes. Deleting a document permanently removes the document, all its chunks, and all
+              associated embeddings from the database. The document will no longer appear in search
+              results and agents will not be able to reference it. Nothing is retained.
+            </p>
+            <p className="text-foreground mt-2 font-medium">How do I update a document?</p>
+            <p>
+              There is no versioning — each upload is treated as a standalone document. To update a
+              document, delete the old version first, then upload the revised file. The old chunks
+              and embeddings are removed on delete, and the new upload will be chunked and embedded
+              from scratch. If you upload a file with identical content to one that already exists,
+              the system will recognise the duplicate and return the existing document instead of
+              creating a new one.
+            </p>
             <p className="text-foreground mt-2 font-medium">Example</p>
             <p>
               You upload a 50-page design-patterns guide. It gets split into ~80 chunks, each chunk
@@ -329,9 +422,9 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         <div>
           <h3 className="text-sm font-medium">Built-in: Agentic Design Patterns</h3>
           <p className="text-muted-foreground mt-1 text-xs">
-            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns. Load them to
-            populate the Learning Patterns page, then optionally generate embeddings to enable
-            vector search for the Advisor, Quiz, and Search.
+            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns.{' '}
+            <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
+            Generate embeddings to enable vector search (requires an embedding provider).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -445,7 +538,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         )}
       </div>
 
-      <DocumentUploadZone onUploadComplete={onRefresh} />
+      <DocumentUploadZone onUploadComplete={onRefresh} onPdfPreview={handlePdfPreview} />
 
       {/* Meta-tags in use */}
       {metaTags && (hasAppTags || hasSystemTags) && (
@@ -560,7 +653,19 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                   const isSeeded = doc.fileName === 'agentic-design-patterns.md';
                   return (
                     <tr key={doc.id}>
-                      <td className="px-4 py-2 font-medium">{doc.name}</td>
+                      <td className="px-4 py-2 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewChunksId(doc.id);
+                            setViewChunksName(doc.name);
+                          }}
+                          className="text-primary text-left hover:underline"
+                          title="View chunks"
+                        >
+                          {doc.name}
+                        </button>
+                      </td>
                       <td className="px-4 py-2">
                         {doc.category ? (
                           <Badge variant="secondary" className="text-xs">
@@ -578,48 +683,91 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                         {new Date(doc.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {isSeeded ? (
-                          <span className="inline-flex items-center gap-1">
-                            <Badge variant="outline" className="text-xs">
-                              Pre-chunked
-                            </Badge>
-                            <FieldHelp title="Pre-chunked" ariaLabel="Why can't this be rechunked?">
-                              <p>
-                                This document was loaded from the built-in Agentic Design Patterns
-                                data, which ships pre-chunked with optimised section boundaries.
-                                Rechunking would use the generic chunker and produce lower-quality
-                                splits.
-                              </p>
-                              <p className="mt-2">
-                                To refresh this data, use the{' '}
-                                <strong>Load Agentic Design Patterns</strong> button above (it will
-                                skip if already loaded).
-                              </p>
-                            </FieldHelp>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={rechunkingId === doc.id}
-                              onClick={() => void handleRechunk(doc.id)}
-                            >
-                              <RefreshCw
-                                className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
-                              />
-                              Rechunk
-                            </Button>
-                            <FieldHelp title="Rechunk" ariaLabel="What does Rechunk do?">
-                              <p>
-                                Re-splits this document into chunks and regenerates all embeddings
-                                from scratch. Useful if the chunking strategy has been updated or if
-                                the embedding model has changed — the new vectors may capture
-                                meaning more accurately, improving search results.
-                              </p>
-                            </FieldHelp>
-                          </span>
-                        )}
+                        <span className="inline-flex items-center gap-1">
+                          {isSeeded ? (
+                            <>
+                              <Badge variant="outline" className="text-xs">
+                                Pre-chunked
+                              </Badge>
+                              <FieldHelp
+                                title="Pre-chunked"
+                                ariaLabel="Why can't this be rechunked?"
+                              >
+                                <p>
+                                  This document was loaded from the built-in Agentic Design Patterns
+                                  data, which ships pre-chunked with optimised section boundaries.
+                                  Rechunking would use the generic chunker and produce lower-quality
+                                  splits.
+                                </p>
+                                <p className="mt-2">
+                                  To refresh this data, use the{' '}
+                                  <strong>Load Agentic Design Patterns</strong> button above (it
+                                  will skip if already loaded).
+                                </p>
+                              </FieldHelp>
+                            </>
+                          ) : (
+                            <>
+                              {doc.status === 'pending_review' ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setViewChunksId(doc.id);
+                                    setViewChunksName(doc.name);
+                                  }}
+                                >
+                                  <Eye className="mr-1 h-3 w-3" />
+                                  Review
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={rechunkingId === doc.id}
+                                  onClick={() => void handleRechunk(doc.id)}
+                                >
+                                  <RefreshCw
+                                    className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
+                                  />
+                                  Rechunk
+                                </Button>
+                              )}
+                              {deleteConfirmId === doc.id ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="text-destructive text-xs">
+                                    Delete? Chunks &amp; embeddings will also be removed.
+                                  </span>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    disabled={deletingId === doc.id}
+                                    onClick={() => void handleDelete(doc.id)}
+                                  >
+                                    {deletingId === doc.id ? 'Deleting...' : 'Yes'}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeleteConfirmId(null)}
+                                  >
+                                    No
+                                  </Button>
+                                </span>
+                              ) : (
+                                <Tip label="Permanently delete this document, all its chunks, and their embeddings">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeleteConfirmId(doc.id)}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </Tip>
+                              )}
+                            </>
+                          )}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -631,6 +779,27 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
       </div>
 
       <CompareProvidersModal open={compareOpen} onOpenChange={setCompareOpen} />
+      <PdfPreviewModal
+        data={pdfPreview}
+        open={pdfPreviewOpen}
+        onOpenChange={setPdfPreviewOpen}
+        onConfirmed={() => {
+          onRefresh();
+          void fetchEmbeddingStatus();
+          void fetchMetaTags();
+        }}
+      />
+      <DocumentChunksModal
+        documentId={viewChunksId}
+        documentName={viewChunksName}
+        open={viewChunksId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewChunksId(null);
+            setViewChunksName(null);
+          }
+        }}
+      />
     </div>
   );
 }

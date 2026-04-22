@@ -20,6 +20,7 @@ import type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  AiProviderModel,
 } from '@/types/prisma';
 
 // ============================================================================
@@ -147,6 +148,8 @@ export const KNOWN_STEP_TYPES = [
   'guard',
   'evaluate',
   'external_call',
+  'agent_call',
+  'send_notification',
 ] as const;
 
 /** A conditional edge connecting workflow steps */
@@ -296,8 +299,13 @@ export type ChatEvent =
   | { type: 'content'; delta: string }
   | { type: 'status'; message: string }
   | { type: 'capability_result'; capabilitySlug: string; result: unknown }
+  | {
+      type: 'capability_results';
+      results: Array<{ capabilitySlug: string; result: unknown }>;
+    }
   | { type: 'warning'; code: string; message: string }
-  | { type: 'done'; tokenUsage: TokenUsage; costUsd: number }
+  | { type: 'content_reset'; reason: string }
+  | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
   | { type: 'error'; code: string; message: string };
 
 /** Token usage breakdown */
@@ -341,6 +349,9 @@ export interface MessageMetadata {
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
+  // Present on error-marker messages (persisted when streaming fails completely)
+  error?: boolean;
+  errorCode?: string;
 }
 
 // ============================================================================
@@ -360,6 +371,7 @@ export interface BudgetSummary {
 export type AiAgentListItem = AiAgent & {
   _count: { capabilities: number; conversations: number };
   _budget: BudgetSummary | null;
+  creator?: { name: string | null };
 };
 
 /** Enriched workflow row returned by the list endpoint. */
@@ -413,8 +425,8 @@ export type EvaluationSessionWithLogs = AiEvaluationSession & {
   agent: Pick<AiAgent, 'id' | 'name' | 'slug'> | null;
 };
 
-/** Cost summary for a time period */
-export interface CostSummary {
+/** Per-agent cost summary for a time period (distinct from the dashboard CostSummary in cost-reports.ts). */
+export interface AgentCostSummary {
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -446,6 +458,16 @@ export type ApprovalDefaultAction = 'deny' | 'allow';
 /** Input guard behaviour for prompt injection detection. */
 export type InputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
 
+/** Output guard behaviour for topic boundary enforcement. */
+export type OutputGuardMode = 'log_only' | 'warn_and_continue' | 'block';
+
+/** Escalation notification configuration stored in settings JSON column. */
+export interface EscalationConfig {
+  emailAddresses: string[];
+  webhookUrl?: string;
+  notifyOnPriority: 'all' | 'high' | 'medium_and_above';
+}
+
 /** Admin-editable defaults for the orchestration layer. */
 export interface OrchestrationSettings {
   id: string;
@@ -464,6 +486,18 @@ export interface OrchestrationSettings {
   approvalDefaultAction: ApprovalDefaultAction | null;
   /** Input guard behaviour for prompt injection detection. */
   inputGuardMode: InputGuardMode;
+  /** Output guard behaviour for topic boundary enforcement. */
+  outputGuardMode: OutputGuardMode;
+  /** Days to retain webhook delivery logs, or `null` for no auto-cleanup. */
+  webhookRetentionDays: number | null;
+  /** Days to retain cost logs, or `null` for no auto-cleanup. */
+  costLogRetentionDays: number | null;
+  /** Max active conversations per user per agent, or `null` for unlimited. */
+  maxConversationsPerUser: number | null;
+  /** Max messages per conversation, or `null` for unlimited. */
+  maxMessagesPerConversation: number | null;
+  /** Escalation notification routing config, or `null` if not configured. */
+  escalationConfig: EscalationConfig | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -517,6 +551,7 @@ export interface GraphNode {
 export interface GraphLink {
   source: string;
   target: string;
+  label?: string;
 }
 
 /** Knowledge graph category */
@@ -603,6 +638,81 @@ export interface WorkflowTemplateMetadata {
   patterns: readonly { number: number; name: string }[];
 }
 
+// ============================================================================
+// Provider Selection Matrix
+// ============================================================================
+
+/** Provider tier roles for the selection matrix decision heuristic. */
+export const TIER_ROLES = [
+  'thinking',
+  'worker',
+  'infrastructure',
+  'control_plane',
+  'local_sovereign',
+  'embedding',
+] as const;
+export type TierRole = (typeof TIER_ROLES)[number];
+
+/** Rating levels used for reasoning depth, cost efficiency, and context length. */
+export const RATING_LEVELS = ['very_high', 'high', 'medium', 'none'] as const;
+export type RatingLevel = (typeof RATING_LEVELS)[number];
+
+/** Context length levels. */
+export const CONTEXT_LENGTH_LEVELS = ['very_high', 'high', 'medium', 'n_a'] as const;
+export type ContextLengthLevel = (typeof CONTEXT_LENGTH_LEVELS)[number];
+
+/** Latency rating levels. */
+export const LATENCY_LEVELS = ['very_fast', 'fast', 'medium'] as const;
+export type LatencyLevel = (typeof LATENCY_LEVELS)[number];
+
+/** Tool-use capability levels. */
+export const TOOL_USE_LEVELS = ['strong', 'moderate', 'none'] as const;
+export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
+
+/** Model capability types. */
+export const MODEL_CAPABILITIES = ['chat', 'embedding'] as const;
+export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+
+/** Embedding quality levels. */
+export const EMBEDDING_QUALITY_LEVELS = ['high', 'medium', 'budget'] as const;
+export type EmbeddingQuality = (typeof EMBEDDING_QUALITY_LEVELS)[number];
+
+/** Task intents for the decision heuristic — maps to tier roles. */
+export const TASK_INTENTS = [
+  'thinking',
+  'doing',
+  'fast_looping',
+  'high_reliability',
+  'private',
+  'embedding',
+] as const;
+export type TaskIntent = (typeof TASK_INTENTS)[number];
+
+/** Human-readable tier metadata for display. */
+export const TIER_ROLE_META: Record<TierRole, { label: string; description: string }> = {
+  thinking: {
+    label: 'Thinking',
+    description: 'Expensive, sparse use — planning, decomposition, critical reasoning',
+  },
+  worker: {
+    label: 'Worker',
+    description: 'Cheap, parallel — tool execution, summarisation, transformations',
+  },
+  infrastructure: { label: 'Infrastructure', description: 'Scaling, latency-sensitive loops' },
+  control_plane: {
+    label: 'Control Plane',
+    description: 'Fallback logic, A/B testing, cost routing',
+  },
+  local_sovereign: {
+    label: 'Local / Sovereign',
+    description: 'Privacy-sensitive workloads, offline capability',
+  },
+  embedding: {
+    label: 'Embedding',
+    description: 'Vector embedding models for semantic search and retrieval',
+  },
+};
+
 // Re-export Prisma model types for convenience
 export type {
   AiAgent,
@@ -617,4 +727,5 @@ export type {
   AiEvaluationLog,
   AiCostLog,
   AiProviderConfig,
+  AiProviderModel,
 };

@@ -3,23 +3,16 @@ import type { AiConversation, AiWorkflowExecution } from '@/types/orchestration'
 
 import { BudgetAlertsBanner } from '@/components/admin/orchestration/budget-alerts-banner';
 import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
-import { ObservabilityStatsCards } from '@/components/admin/orchestration/observability-stats-cards';
-import { OrchestrationStatsCards } from '@/components/admin/orchestration/orchestration-stats-cards';
-import { QuickActions } from '@/components/admin/orchestration/quick-actions';
 import {
-  RecentActivityList,
-  type RecentActivityItem,
-} from '@/components/admin/orchestration/recent-activity-list';
-import {
-  RecentErrorsPanel,
-  type RecentError,
-} from '@/components/admin/orchestration/recent-errors-panel';
+  DashboardActivityFeed,
+  type ActivityFeedItem,
+} from '@/components/admin/orchestration/dashboard-activity-feed';
+import { DashboardStatsCards } from '@/components/admin/orchestration/dashboard-stats-cards';
 import { SetupWizardLauncher } from '@/components/admin/orchestration/setup-wizard-launcher';
 import {
   TopCapabilitiesPanel,
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
-import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -28,28 +21,21 @@ import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
   title: 'AI Orchestration',
-  description: 'Overview of agents, workflows, costs, and recent activity.',
+  description: 'Overview of agents, costs, and recent activity.',
 };
 
 /**
- * Admin Orchestration dashboard (Phase 4 Session 4.1)
+ * Admin Orchestration dashboard.
  *
- * Thin server component that fetches a handful of summary endpoints in
- * parallel and lays them out as four stats cards, a budget-alerts strip,
- * a quick-actions row, and a recent-activity feed. Every fetch is
- * `null`-safe — an API failure renders an empty state instead of
- * throwing, matching `app/admin/overview/page.tsx`.
+ * Simplified three-section layout:
+ *   1. Stats row — 4 clickable operational metric cards
+ *   2. Trends — spend chart + top capabilities (2-col) with activity feed
+ *   3. Budget alerts — conditional banner
  *
- * Any feature that needs client interactivity (the Setup Guide wizard)
- * lives in a small client island; the rest is fully server-rendered.
+ * Every fetch is `null`-safe — a failing API renders an empty state,
+ * never throws.
  */
 
-/**
- * Type guard: is this `meta` object a pagination meta with a numeric `total`?
- *
- * `APIResponse.meta` is typed as `PaginationMeta | Record<string, unknown>`,
- * so we narrow at the read site instead of asserting.
- */
 function hasNumericTotal(meta: unknown): meta is { total: number } {
   return (
     typeof meta === 'object' &&
@@ -96,58 +82,11 @@ async function getPaginatedTotal(path: string): Promise<number | null> {
   }
 }
 
-async function getRecentActivity(): Promise<RecentActivityItem[] | null> {
-  try {
-    const [conversationsRes, executionsRes] = await Promise.all([
-      serverFetch(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
-      serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
-    ]);
-
-    const conversations: AiConversation[] = conversationsRes.ok
-      ? await readPaginatedOrEmpty<AiConversation>(conversationsRes)
-      : [];
-    // Executions endpoint is a 501 stub until Session 5.2 — treat any
-    // non-200 response as an empty list rather than surfacing an error.
-    const executions: AiWorkflowExecution[] = executionsRes.ok
-      ? await readPaginatedOrEmpty<AiWorkflowExecution>(executionsRes)
-      : [];
-
-    const items: RecentActivityItem[] = [
-      ...conversations.map(
-        (c): RecentActivityItem => ({
-          kind: 'conversation',
-          id: c.id,
-          title: c.title ?? 'Untitled conversation',
-          timestamp: (c.updatedAt ?? c.createdAt).toString(),
-          href: `/admin/orchestration/conversations/${c.id}`,
-        })
-      ),
-      ...executions.map(
-        (e): RecentActivityItem => ({
-          kind: 'execution',
-          id: e.id,
-          title: `Execution ${e.id.slice(0, 8)}`,
-          subtitle: e.status,
-          timestamp: (
-            (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
-          ).toString(),
-          href: `/admin/orchestration/executions/${e.id}`,
-        })
-      ),
-    ];
-
-    // Merge + sort newest-first. Invalid timestamps sort to the bottom.
-    items.sort((a, b) => {
-      const ta = new Date(a.timestamp).getTime();
-      const tb = new Date(b.timestamp).getTime();
-      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-    });
-
-    return items;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load recent activity', err);
-    return null;
-  }
+interface RecentError {
+  id: string;
+  errorMessage: string | null;
+  workflowId: string;
+  createdAt: string;
 }
 
 interface DashboardStats {
@@ -191,109 +130,141 @@ async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
   }
 }
 
+/**
+ * Build a unified activity feed from conversations, executions, and errors.
+ * Items are merged and sorted newest-first.
+ */
+async function getActivityFeed(
+  recentErrors: RecentError[] | null
+): Promise<ActivityFeedItem[] | null> {
+  try {
+    const [conversationsRes, executionsRes] = await Promise.all([
+      serverFetch(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
+      serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
+    ]);
+
+    const conversations: AiConversation[] = conversationsRes.ok
+      ? await readPaginatedOrEmpty<AiConversation>(conversationsRes)
+      : [];
+    const executions: AiWorkflowExecution[] = executionsRes.ok
+      ? await readPaginatedOrEmpty<AiWorkflowExecution>(executionsRes)
+      : [];
+
+    const items: ActivityFeedItem[] = [
+      ...conversations.map(
+        (c): ActivityFeedItem => ({
+          kind: 'conversation',
+          id: c.id,
+          title: c.title ?? 'Untitled conversation',
+          timestamp: (c.updatedAt ?? c.createdAt).toString(),
+          href: `/admin/orchestration/conversations/${c.id}`,
+        })
+      ),
+      ...executions.map(
+        (e): ActivityFeedItem => ({
+          kind: 'execution',
+          id: e.id,
+          title: `Execution ${e.id.slice(0, 8)}`,
+          subtitle: e.status,
+          timestamp: (
+            (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
+          ).toString(),
+          href: `/admin/orchestration/executions/${e.id}`,
+        })
+      ),
+      ...(recentErrors ?? []).map(
+        (err): ActivityFeedItem => ({
+          kind: 'error',
+          id: err.id,
+          title: `Error ${err.id.slice(0, 8)}`,
+          subtitle: err.errorMessage ?? 'Unknown error',
+          timestamp: err.createdAt,
+          href: `/admin/orchestration/executions/${err.id}`,
+        })
+      ),
+    ];
+
+    // Deduplicate: an execution error may appear in both executions and
+    // recentErrors. Keep the error variant (more informative).
+    const seen = new Set<string>();
+    const deduped: ActivityFeedItem[] = [];
+    // Process errors first so they win over plain execution entries.
+    const sorted = [...items].sort((a, b) => {
+      if (a.kind === 'error' && b.kind !== 'error') return -1;
+      if (a.kind !== 'error' && b.kind === 'error') return 1;
+      return 0;
+    });
+    for (const item of sorted) {
+      const key = item.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(item);
+      }
+    }
+
+    // Sort newest-first. Invalid timestamps sort to the bottom.
+    deduped.sort((a, b) => {
+      const ta = new Date(a.timestamp).getTime();
+      const tb = new Date(b.timestamp).getTime();
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+
+    return deduped;
+  } catch (err) {
+    logger.error('orchestration dashboard: failed to load activity feed', err);
+    return null;
+  }
+}
+
 export default async function OrchestrationDashboardPage() {
-  const [
-    costSummary,
-    budgetAlerts,
-    agentsCount,
-    workflowsCount,
-    conversationsCount,
-    activity,
-    dashboardStats,
-    models,
-  ] = await Promise.all([
+  const [costSummary, budgetAlerts, agentsCount, dashboardStats, models] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
     getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
-    getPaginatedTotal(API.ADMIN.ORCHESTRATION.WORKFLOWS),
-    getPaginatedTotal(API.ADMIN.ORCHESTRATION.CONVERSATIONS),
-    getRecentActivity(),
     getDashboardStats(),
     getModels(),
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
-
-  // Slice the 30-day trend to last 7 days for the dashboard chart.
   const weekTrend = costSummary?.trend.slice(-7) ?? null;
 
+  // Activity feed merges conversations, executions, and errors.
+  const activity = await getActivityFeed(dashboardStats?.recentErrors ?? null);
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">
-            AI Orchestration{' '}
-            <FieldHelp
-              title="What is AI orchestration?"
-              contentClassName="w-96 max-h-80 overflow-y-auto"
-            >
-              <p>
-                AI Orchestration is the control plane for building and running agentic AI systems.
-                It lets you configure agents (AI personas), wire them to LLM providers, give them
-                capabilities (tools), chain them into workflows, and monitor cost and performance.
-              </p>
-              <p className="text-foreground mt-2 font-medium">Key concepts</p>
-              <p>
-                <strong>Agents</strong> reason and respond. <strong>Capabilities</strong> let agents
-                take actions. <strong>Providers</strong> supply the LLM backends.{' '}
-                <strong>Workflows</strong> chain steps into pipelines. The{' '}
-                <strong>knowledge base</strong> gives agents access to your documents via semantic
-                search.
-              </p>
-              <p className="text-foreground mt-2 font-medium">This page</p>
-              <p>
-                A summary dashboard showing agent count, workflow count, today&apos;s spend, recent
-                activity, and system health. Use the sidebar to navigate to each section.
-              </p>
-            </FieldHelp>
-          </h1>
+          <h1 className="text-2xl font-semibold">AI Orchestration</h1>
           <p className="text-muted-foreground text-sm">
-            Overview of agents, workflows, cost, and recent activity.
+            Operational overview — agents, spend, and activity.
           </p>
         </div>
         <SetupWizardLauncher />
       </header>
 
-      <section aria-label="Summary statistics">
-        <OrchestrationStatsCards
-          agentsCount={agentsCount}
-          workflowsCount={workflowsCount}
-          todayCostUsd={todayCostUsd}
-          conversationsCount={conversationsCount}
-        />
-      </section>
-
       <BudgetAlertsBanner alerts={budgetAlerts} />
 
-      <section aria-label="Observability">
-        <ObservabilityStatsCards
-          activeConversations={dashboardStats?.activeConversations ?? null}
+      <section aria-label="Summary statistics">
+        <DashboardStatsCards
+          agentsCount={agentsCount}
+          todayCostUsd={todayCostUsd}
           todayRequests={dashboardStats?.todayRequests ?? null}
           errorRate={dashboardStats?.errorRate ?? null}
         />
       </section>
 
-      <section aria-label="Trends and capabilities" className="grid gap-4 lg:grid-cols-2">
-        <CostTrendChart
-          title="7-day spend trend"
-          trend={weekTrend}
-          perModel={null}
-          models={models}
-        />
-        <TopCapabilitiesPanel capabilities={dashboardStats?.topCapabilities ?? null} />
-      </section>
-
-      <section aria-label="Recent errors">
-        <RecentErrorsPanel errors={dashboardStats?.recentErrors ?? null} />
-      </section>
-
-      <section aria-label="Quick actions" className="space-y-2">
-        <h2 className="text-lg font-semibold">Quick actions</h2>
-        <QuickActions />
-      </section>
-
-      <section aria-label="Recent activity">
-        <RecentActivityList items={activity} />
+      <section aria-label="Trends and activity" className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          <CostTrendChart
+            title="7-day spend trend"
+            trend={weekTrend}
+            perModel={null}
+            models={models}
+          />
+          <TopCapabilitiesPanel capabilities={dashboardStats?.topCapabilities ?? null} />
+        </div>
+        <DashboardActivityFeed items={activity} />
       </section>
     </div>
   );

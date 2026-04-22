@@ -24,6 +24,7 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Edit,
   MoreHorizontal,
   Plus,
@@ -209,6 +210,45 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
     }
   }, [deleteTarget, fetchWorkflows, meta.page]);
 
+  const handleDuplicate = useCallback(
+    async (workflow: AiWorkflowListItem) => {
+      setIsLoading(true);
+      setListError(null);
+      try {
+        // Fetch the full workflow to get its definition
+        const full = await apiClient.get<{
+          workflowDefinition: unknown;
+          patternsUsed: string[];
+          isTemplate: boolean;
+          metadata: unknown;
+        }>(API.ADMIN.ORCHESTRATION.workflowById(workflow.id));
+
+        const created = await apiClient.post<{ id: string }>(API.ADMIN.ORCHESTRATION.WORKFLOWS, {
+          body: {
+            name: `${workflow.name} (copy)`,
+            slug: `${workflow.slug}-copy-${Date.now()}`,
+            description: workflow.description ?? '',
+            workflowDefinition: full.workflowDefinition,
+            patternsUsed: full.patternsUsed,
+            isActive: false,
+            isTemplate: false,
+            metadata: full.metadata,
+          },
+        });
+        router.push(`/admin/orchestration/workflows/${created.id}`);
+      } catch (err) {
+        setListError(
+          err instanceof APIClientError
+            ? `Couldn't duplicate "${workflow.name}": ${err.message}`
+            : `Couldn't duplicate "${workflow.name}". Try again.`
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [router]
+  );
+
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
     return sortOrder === 'asc' ? (
@@ -374,6 +414,11 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => void handleDuplicate(workflow)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-red-600"
                           onClick={() => setDeleteTarget(workflow)}

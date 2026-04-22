@@ -14,24 +14,44 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { API } from '@/lib/api/endpoints';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import { z } from 'zod';
 
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: { message?: string };
-}
+import { API } from '@/lib/api/endpoints';
+
+const knowledgeDocumentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  fileName: z.string(),
+  fileHash: z.string(),
+  chunkCount: z.number(),
+  status: z.string(),
+  scope: z.string(),
+  category: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  metadata: z.unknown().nullable(),
+  uploadedBy: z.string(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+
+const apiResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.array(knowledgeDocumentSchema).optional(),
+  error: z.object({ message: z.string().optional() }).optional(),
+});
+
+type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;
 
 interface ErrorsTabProps {
   scope?: string;
 }
 
 export function ErrorsTab({ scope }: ErrorsTabProps) {
-  const [documents, setDocuments] = useState<AiKnowledgeDocument[]>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AiKnowledgeDocument | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const fetchFailed = useCallback(async () => {
@@ -43,7 +63,7 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
         `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?${params.toString()}`
       );
       if (!res.ok) return;
-      const body = (await res.json()) as ApiResponse<AiKnowledgeDocument[]>;
+      const body = apiResponseSchema.parse(await res.json());
       if (body.success && body.data) {
         setDocuments(body.data);
       }

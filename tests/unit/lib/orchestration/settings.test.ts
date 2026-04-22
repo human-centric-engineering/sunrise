@@ -56,6 +56,11 @@ function makeRow(
     defaultApprovalTimeoutMs: number | null;
     approvalDefaultAction: string | null;
     inputGuardMode: string | null;
+    outputGuardMode: string | null;
+    webhookRetentionDays: number | null;
+    costLogRetentionDays: number | null;
+    maxConversationsPerUser: number | null;
+    maxMessagesPerConversation: number | null;
   }> = {}
 ) {
   return {
@@ -73,6 +78,11 @@ function makeRow(
     defaultApprovalTimeoutMs: null as number | null,
     approvalDefaultAction: 'deny' as string | null,
     inputGuardMode: 'log_only' as string | null,
+    outputGuardMode: 'log_only' as string | null,
+    webhookRetentionDays: null as number | null,
+    costLogRetentionDays: null as number | null,
+    maxConversationsPerUser: null as number | null,
+    maxMessagesPerConversation: null as number | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

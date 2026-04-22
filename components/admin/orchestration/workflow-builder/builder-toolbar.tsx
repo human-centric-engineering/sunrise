@@ -9,6 +9,8 @@
 
 import Link from 'next/link';
 import {
+  BookmarkPlus,
+  Check,
   ChevronLeft,
   CheckCircle2,
   ClipboardCopy,
@@ -45,6 +47,12 @@ export interface BuilderToolbarProps {
   onSave: () => void;
   /** Called when the Execute button is clicked (edit mode only). */
   onExecute: () => void;
+  /** Called when "Save as template" is clicked (edit mode only). */
+  onSaveAsTemplate: () => void;
+  /** True while save-as-template is in flight. */
+  savingAsTemplate: boolean;
+  /** True briefly after save-as-template succeeds. */
+  savedAsTemplate: boolean;
   /** Called when a template is picked from the dropdown. */
   onTemplateSelect: (template: TemplateItem) => void;
   /** Server-prefetched templates for the dropdown. */
@@ -53,6 +61,8 @@ export interface BuilderToolbarProps {
   templatesDisabled: boolean;
   /** True while a save is in flight — Save shows a spinner. */
   saving: boolean;
+  /** True briefly after a successful save — Save shows a checkmark. */
+  saved: boolean;
   /** True when live validation is reporting at least one error — Save outlines in red. */
   hasErrors: boolean;
 }
@@ -65,10 +75,14 @@ export function BuilderToolbar({
   onValidate,
   onSave,
   onExecute,
+  onSaveAsTemplate,
+  savingAsTemplate,
+  savedAsTemplate,
   onTemplateSelect,
   templates,
   templatesDisabled,
   saving,
+  saved,
   hasErrors,
 }: BuilderToolbarProps) {
   const executeDisabled = mode !== 'edit';
@@ -146,6 +160,25 @@ export function BuilderToolbar({
         Validate
       </Button>
 
+      {mode === 'edit' && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onSaveAsTemplate}
+          disabled={savingAsTemplate || savedAsTemplate}
+          title="Clone this workflow into a reusable template"
+        >
+          {savingAsTemplate ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : savedAsTemplate ? (
+            <Check className="mr-2 h-4 w-4" />
+          ) : (
+            <BookmarkPlus className="mr-2 h-4 w-4" />
+          )}
+          {savedAsTemplate ? 'Template saved' : 'Save as template'}
+        </Button>
+      )}
+
       <Button
         variant="outline"
         size="sm"
@@ -160,18 +193,28 @@ export function BuilderToolbar({
       <Button
         size="sm"
         onClick={onSave}
-        disabled={saving}
+        disabled={saving || saved}
         aria-label={
           hasErrors ? 'Save (validation errors present — click Validate to see details)' : undefined
         }
-        className={cn(hasErrors && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
+        className={cn(hasErrors && !saved && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
       >
         {saving ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Saving…
+          </>
+        ) : saved ? (
+          <>
+            <Check className="mr-2 h-4 w-4" />
+            Saved
+          </>
         ) : (
-          <Save className="mr-2 h-4 w-4" />
+          <>
+            <Save className="mr-2 h-4 w-4" />
+            {mode === 'create' ? 'Create workflow' : 'Save changes'}
+          </>
         )}
-        {mode === 'create' ? 'Create workflow' : 'Save changes'}
       </Button>
     </div>
   );

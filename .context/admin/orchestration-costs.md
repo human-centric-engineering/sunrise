@@ -20,6 +20,10 @@ Admin page at `/admin/orchestration/costs`. Surfaces every spend / budget signal
 ├──────────────────────────────┴──────────────────────────────────┤
 │ Local vs cloud panel  (pie + savings callout)                   │
 ├─────────────────────────────────────────────────────────────────┤
+│ Pricing reference  (collapsible — model rates, source, synced)  │
+├─────────────────────────────────────────────────────────────────┤
+│ How costs are calculated  (measured vs est, tokenomics, guides) │
+├─────────────────────────────────────────────────────────────────┤
 │ Configuration form  (task defaults + global monthly cap)        │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -45,6 +49,10 @@ The server shell fires six parallel null-safe fetches via `serverFetch()`. Any u
 
 This is an approximation (a day with a spike in frontier usage still shows the 30-day-average tier split), but it requires no backend changes and degrades gracefully: if the per-model fetch fails, the chart falls back to a single area built from the raw `trend[]` totals.
 
+### Zero-fill for missing days
+
+The API omits days with no spend from the trend response. The `fillZeroDays()` helper in the chart component generates the full 30-day date range and fills gaps with `totalCostUsd: 0`. This prevents the chart from drawing misleading connecting lines across multi-day gaps. If every day has zero spend, the chart shows the "No spend recorded" empty state.
+
 ## Local savings methodology
 
 `calculateLocalSavings()` in `lib/orchestration/llm/cost-tracker.ts` reads every `isLocal: true` row from the rolling month window and, per row, prices the same token counts against the cheapest non-local model in the same tier — the savings are (what-you-would-have-paid − 0).
@@ -67,11 +75,11 @@ A select for each `TaskType`: `routing` / `chat` / `reasoning` / `embeddings`. S
 
 The values resolve at runtime via `getDefaultModelForTask(task)` in `lib/orchestration/llm/model-registry.ts`, which is called whenever the chat handler needs a model for a task that the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
 
-### Global monthly budget cap
+### Global monthly budget cap (read-only reference)
 
-A single numeric input. Empty = "no cap". Saved via `PATCH /settings { globalMonthlyBudgetUsd }`.
+This section displays the current global cap value (or "No global cap set") as read-only text with a link to `/admin/orchestration/settings` where the cap is managed. The cap is NOT editable on the costs page — it lives on the dedicated Settings page to keep the costs page focused on reporting and the settings page focused on configuration.
 
-When set, `cost-tracker.ts#checkBudget()` additionally computes the month-to-date spend _across all agents_ (`getMonthToDateGlobalSpend()`) and flips `globalCapExceeded: true` when the cumulative total is at or above the cap. The streaming chat handler short-circuits on that flag with the `BUDGET_EXCEEDED_GLOBAL` error code so the SSE `error` frame sanitises distinctly from per-agent overruns.
+**Enforcement:** When set, `cost-tracker.ts#checkBudget()` additionally computes the month-to-date spend _across all agents_ (`getMonthToDateGlobalSpend()`) and flips `globalCapExceeded: true` when the cumulative total is at or above the cap. The streaming chat handler short-circuits on that flag with the `BUDGET_EXCEEDED_GLOBAL` error code so the SSE `error` frame sanitises distinctly from per-agent overruns.
 
 The global cap enforcement is wrapped in try/catch so a transient settings fetch failure degrades gracefully to the per-agent path — it never blocks chat globally because Prisma hiccuped.
 
@@ -93,10 +101,78 @@ Every non-trivial field is wrapped in `<FieldHelp>`. Reference copy (mirror the 
 1. **Adjust budget** — `<Link>` to `/admin/orchestration/agents/:id`.
 2. **Pause agent** — `apiClient.patch('/agents/:id', { isActive: false })` with optimistic update. The row is marked paused immediately; on failure the state reverts and an inline error banner surfaces the reason. No new endpoint is introduced — the existing admin `PATCH /agents/:id` handles this and is already admin-guarded and rate-limited.
 
+## Type naming
+
+Two `CostSummary`-like types exist, deliberately named differently:
+
+| Type               | Module                                  | Usage                                                                  |
+| ------------------ | --------------------------------------- | ---------------------------------------------------------------------- |
+| `CostSummary`      | `lib/orchestration/llm/cost-reports.ts` | Dashboard-level totals/byAgent/byModel/trend/localSavings              |
+| `AgentCostSummary` | `types/orchestration.ts`                | Per-agent breakdown with raw entries array (used by `getAgentCosts()`) |
+
+## Pricing reference panel
+
+`PricingReference` — collapsible card (starts collapsed) showing the per-model token rates used to calculate spend figures.
+
+**Data source:** `/models` endpoint now returns `fetchedAt` (epoch ms) alongside the model list. The server shell passes both `models` and `registryFetchedAt` to the client island.
+
+**Content when expanded:**
+
+- Per-model table: name, provider, tier, input rate, output rate, source badge
+- Source badge: "Live" (OpenRouter feed active, refreshed every 24h) or "Fallback" (static hardcoded rates, used when OpenRouter is unreachable)
+- "Last synced" relative timestamp in the header (e.g. "2h ago", "Never (using static fallback)")
+- Explainer text on rate meaning and typical token consumption
+
+**Pricing source pipeline:** Static fallback map (compiled in) → OpenRouter `/api/v1/models` (24h cache, Zod-validated) → per-provider discovery (marks `available: true`). The cost tracker multiplies actual token counts by these rates.
+
+### Per-model price history chart
+
+Model rows in the pricing table that have historical data show a clock icon and are clickable. Clicking expands a step chart (`ModelPriceHistoryChart`) showing input and output token rates over time.
+
+**Data source:** `https://www.llm-prices.com/historical-v1.json` (Simon Willison's [llm-prices](https://github.com/simonw/llm-prices) project). Free, no auth, Cloudflare Pages hosted.
+
+**Fetcher:** `lib/orchestration/llm/pricing-history.ts`
+
+- 24h in-memory cache (matches OpenRouter cadence)
+- Deduplicates concurrent fetches via inflight promise
+- On failure (network error, timeout, non-200, malformed JSON): returns empty data, never throws
+- Server shell calls `getPricingHistory()` in parallel with other fetches
+- Data is serialised (Map → array) for server→client transfer
+
+**Chart features:**
+
+- Step line chart (input = blue, output = pink) — `type="stepAfter"`
+- Price change summary badges (e.g. "Input: -50%", "Output: -33%") in green/red
+- Date range and period count in footer
+- Attribution link to llm-prices.com
+- "No pricing history available" fallback for models not in the dataset
+
+**Coverage:** ~14 vendors (Anthropic, OpenAI, Google, DeepSeek, Mistral, xAI, etc.), 129 entries, data from early 2025 onwards.
+
+**OpenRouter refresh on page load:** The costs page calls `refreshFromOpenRouter()` before rendering, ensuring current-rate data is never more than 24h stale (no-op when cache is warm).
+
+## Cost methodology panel
+
+`CostMethodology` — always-visible educational section explaining how costs are calculated and what the numbers mean.
+
+**Sections:**
+
+1. **Measured vs Estimated** — two-column card distinguishing exact data (token counts, model attribution, timestamps) from approximations (per-token rates, tier breakdown, projections).
+2. **Tokenomics education** — explains tokens, input vs output pricing asymmetry, industry trends (falling prices, output-heavy costs, context length impact, local models).
+3. **Quick cost guide** — table of common use cases (classification, chat, RAG, reasoning, summarization) with recommended tier and typical cost-per-request range.
+4. **Workflow cost estimation** — simple/complex workflow cost ranges with the tip to use budget-tier for structured tasks.
+
+## Workflow template cost indicator
+
+The `TemplateBanner` in the workflow builder now shows an estimated cost-per-run badge when `workflowDefinition` is provided. The estimate counts LLM-consuming step types (`llm_call`, `chain`, `reflect`, `evaluate`, `plan`, `route`, `agent_call`) and multiplies by a per-step cost range from budget-tier ($0.002/step) to frontier-tier ($0.05/step).
+
+The badge format is `$low–$high/run` and includes a tooltip explaining the methodology. Workflows with no LLM steps show no badge.
+
 ## Cross-references
 
 - [`.context/admin/agent-form.md`](./agent-form.md) — per-agent budget field
 - [`.context/admin/provider-form.md`](./provider-form.md) — where API keys live
+- [`.context/admin/workflow-builder.md`](./workflow-builder.md) — template banner, cost indicator
 - [`.context/orchestration/admin-api.md`](../orchestration/admin-api.md) — `/settings`, `/costs`, `/costs/summary`, `/costs/alerts`
 - [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md) — `getDefaultModelForTask` resolver
 - [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md) — consumer HTTP reference

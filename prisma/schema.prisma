@@ -43,11 +43,21 @@ model User {
   aiAgents             AiAgent[]             @relation("AiAgentCreator")
   aiWorkflows          AiWorkflow[]          @relation("AiWorkflowCreator")
   aiWorkflowExecutions AiWorkflowExecution[] @relation("AiWorkflowExecutionUser")
+  aiWorkflowSchedules  AiWorkflowSchedule[]  @relation("AiWorkflowScheduleCreator")
   aiConversations      AiConversation[]      @relation("AiConversationUser")
+  aiUserMemories       AiUserMemory[]        @relation("AiUserMemoryUser")
   aiKnowledgeDocuments AiKnowledgeDocument[] @relation("AiKnowledgeDocumentUploader")
   aiEvaluationSessions AiEvaluationSession[] @relation("AiEvaluationSessionUser")
   aiProviderConfigs    AiProviderConfig[]    @relation("AiProviderConfigCreator")
   aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
+  aiInviteTokens         AiAgentInviteToken[]    @relation("InviteTokenCreator")
+  aiAgentVersions        AiAgentVersion[]        @relation("AgentVersionCreator")
+  aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
+  aiEventHooks           AiEventHook[]           @relation("AiEventHookCreator")
+  aiProviderModels       AiProviderModel[]       @relation("AiProviderModelCreator")
+  aiAdminAuditLogs       AiAdminAuditLog[]       @relation("AiAdminAuditLogUser")
+  aiEmbedTokens          AiAgentEmbedToken[]     @relation("EmbedTokenCreator")
+  aiExperiments          AiExperiment[]          @relation("AiExperimentCreator")
 
   // MCP Server relations
   mcpApiKeys McpApiKey[] @relation("McpApiKeyCreator")
@@ -163,6 +173,14 @@ model AiAgent {
   monthlyBudgetUsd          Float?
   metadata                  Json?
   knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
+  topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
+  brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
+  rateLimitRpm              Int?     // per-agent rate limit (requests per minute); null = use global default
+  inputGuardMode            String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
+  outputGuardMode           String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
+  maxHistoryTokens          Int?     // override token-aware history truncation; null = use model context window
+  retentionDays             Int?     // auto-delete conversations older than N days; null = keep forever
+  visibility                String   @default("internal") // "internal" | "public" | "invite_only"
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
   createdBy                 String
@@ -173,13 +191,78 @@ model AiAgent {
   creator       User                  @relation("AiAgentCreator", fields: [createdBy], references: [id])
   capabilities  AiAgentCapability[]
   conversations AiConversation[]
+  userMemories  AiUserMemory[]
   evaluations   AiEvaluationSession[]
   costLogs      AiCostLog[]
+  inviteTokens  AiAgentInviteToken[]
+  versions      AiAgentVersion[]
+  embedTokens   AiAgentEmbedToken[]
+  experiments   AiExperiment[]
 
   @@index([createdBy])
   @@index([provider])
   @@index([isActive])
+  @@index([visibility])
   @@map("ai_agent")
+}
+
+// Invite token for invite_only agent access
+model AiAgentInviteToken {
+  id        String    @id @default(cuid())
+  agentId   String
+  token     String    @unique @default(cuid()) // opaque token shared with invitees
+  label     String?   // admin-friendly label (e.g. "Beta testers", "Partner X")
+  maxUses   Int?      // null = unlimited
+  useCount  Int       @default(0)
+  expiresAt DateTime? // null = never expires
+  revokedAt DateTime? // non-null = revoked
+  createdBy String
+  createdAt DateTime  @default(now())
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("InviteTokenCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([token])
+  @@map("ai_agent_invite_token")
+}
+
+// Version snapshot of agent configuration for audit and rollback
+model AiAgentVersion {
+  id            String   @id @default(cuid())
+  agentId       String
+  version       Int // monotonically increasing per agent
+  snapshot      Json // full agent config at this point in time
+  changeSummary String?  @db.Text // auto-generated description of what changed
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("AgentVersionCreator", fields: [createdBy], references: [id])
+
+  @@unique([agentId, version])
+  @@index([agentId])
+  @@map("ai_agent_version")
+}
+
+// Embeddable widget token for an agent — allows unauthenticated chat via embed
+model AiAgentEmbedToken {
+  id             String   @id @default(cuid())
+  agentId        String
+  token          String   @unique @default(cuid()) // opaque token for X-Embed-Token header
+  label          String?  // admin label (e.g. "Marketing site", "Help center")
+  allowedOrigins String[] @default([]) // CORS origins; empty = allow all
+  isActive       Boolean  @default(true)
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator User    @relation("EmbedTokenCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([token])
+  @@map("ai_agent_embed_token")
 }
 
 // A discrete tool/function an agent can call
@@ -240,6 +323,7 @@ model AiWorkflow {
   patternsUsed              Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
+  templateSource     String?  // null = regular workflow, "builtin" = seed template, "custom" = admin-created
   metadata           Json?
   createdBy          String
   createdAt          DateTime @default(now())
@@ -248,11 +332,35 @@ model AiWorkflow {
   // Relations
   creator    User                  @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
   executions AiWorkflowExecution[]
+  schedules  AiWorkflowSchedule[]
 
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
   @@map("ai_workflow")
+}
+
+// Cron-based workflow scheduling
+model AiWorkflowSchedule {
+  id            String    @id @default(cuid())
+  workflowId    String
+  name          String
+  cronExpression String   @db.VarChar(100)
+  inputTemplate Json      @default("{}")
+  isEnabled     Boolean   @default(true)
+  lastRunAt     DateTime?
+  nextRunAt     DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  creator  User       @relation("AiWorkflowScheduleCreator", fields: [createdBy], references: [id])
+
+  @@index([workflowId])
+  @@index([isEnabled, nextRunAt])
+  @@map("ai_workflow_schedule")
 }
 
 // Runtime workflow instances
@@ -297,6 +405,7 @@ model AiConversation {
   metadata              Json?
   summary               String?   @db.Text
   summaryUpToMessageId  String?
+  tags                  String[]  @default([])
   isActive              Boolean   @default(true)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -311,6 +420,7 @@ model AiConversation {
   @@index([agentId])
   @@index([contextType, contextId])
   @@index([isActive])
+  @@index([updatedAt])
   @@map("ai_conversation")
 }
 
@@ -323,16 +433,74 @@ model AiMessage {
   metadata       Json? // {tokenUsage, modelUsed, latencyMs, costUsd}
   capabilitySlug String?
   toolCallId     String?
+  rating         Int? // -1 = thumbs down, 1 = thumbs up, null = unrated
+  ratedAt        DateTime?
   createdAt      DateTime @default(now())
 
   // Relations
-  conversation   AiConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  evaluationLogs AiEvaluationLog[]
+  conversation     AiConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  evaluationLogs   AiEvaluationLog[]
+  messageEmbedding AiMessageEmbedding?
 
   @@index([conversationId])
+  @@index([conversationId, createdAt])
   @@index([role])
   @@index([createdAt])
+  @@index([rating])
   @@map("ai_message")
+}
+
+// Embedding vector for semantic search over conversation messages
+model AiMessageEmbedding {
+  id        String                       @id @default(cuid())
+  messageId String                       @unique
+  embedding Unsupported("vector(1024)")
+
+  message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("ai_message_embedding")
+}
+
+// Configurable event hooks for orchestration events
+// Fires on events like conversation.started, message.created,
+// workflow.completed, etc. Supports webhook and internal action types.
+model AiEventHook {
+  id        String   @id @default(cuid())
+  name      String
+  eventType String   @db.VarChar(100) // e.g. "conversation.started", "workflow.completed"
+  action    Json     // { type: 'webhook', url, headers } or { type: 'internal', handler }
+  filter    Json?    // optional event filtering e.g. { agentSlug: 'support-bot' }
+  isEnabled Boolean  @default(true)
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  creator User @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+
+  @@index([eventType])
+  @@index([isEnabled])
+  @@map("ai_event_hook")
+}
+
+// Per-user-per-agent key-value memory (preferences, prior topics, facts)
+model AiUserMemory {
+  id        String   @id @default(cuid())
+  userId    String
+  agentId   String
+  key       String   @db.VarChar(255)
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user  User    @relation("AiUserMemoryUser", fields: [userId], references: [id])
+  agent AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentId, key])
+  @@index([userId, agentId])
+  @@map("ai_user_memory")
 }
 
 // Source documents uploaded to the knowledge base
@@ -345,7 +513,9 @@ model AiKnowledgeDocument {
   status       String // "processing", "ready", "failed"
   scope        String   @default("app") // "system" | "app"
   category     String? // user-assigned or extracted from document metadata
+  sourceUrl    String? // URL the document was fetched from (null = manual upload)
   errorMessage String?  @db.Text
+  metadata     Json? // format-specific metadata, preview data for pending_review docs
   uploadedBy   String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -374,9 +544,12 @@ model AiKnowledgeChunk {
   patternName     String?
   category        String?
   section         String?
-  keywords        String?                      @db.Text
-  estimatedTokens Int?
-  metadata        Json?
+  keywords          String?                      @db.Text
+  estimatedTokens   Int?
+  embeddingModel    String? // e.g. "voyage-3", "text-embedding-3-small"
+  embeddingProvider String? // e.g. "voyage", "openai-compatible", "ollama"
+  embeddedAt        DateTime? // when the embedding was generated
+  metadata          Json?
 
   // Relations
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -470,6 +643,7 @@ model AiCostLog {
   @@index([provider])
   @@index([operation])
   @@index([createdAt])
+  @@index([agentId, createdAt])
   @@map("ai_cost_log")
 }
 
@@ -485,10 +659,33 @@ model AiWebhookSubscription {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation("AiWebhookUser", fields: [createdBy], references: [id])
+  user       User                 @relation("AiWebhookUser", fields: [createdBy], references: [id])
+  deliveries AiWebhookDelivery[]
 
   @@index([isActive])
   @@map("ai_webhook_subscription")
+}
+
+// Webhook delivery tracking — records each delivery attempt for audit + retry
+model AiWebhookDelivery {
+  id               String    @id @default(cuid())
+  subscriptionId   String
+  eventType        String
+  payload          Json
+  status           String    @default("pending") // pending, delivered, failed, exhausted
+  attempts         Int       @default(0)
+  lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  lastResponseCode Int?
+  lastError        String?   @db.Text
+  createdAt        DateTime  @default(now())
+
+  subscription AiWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("ai_webhook_delivery")
 }
 
 // Configured LLM providers
@@ -517,6 +714,77 @@ model AiProviderConfig {
   @@map("ai_provider_config")
 }
 
+// Provider model matrix — per-model landscape analysis
+model AiProviderModel {
+  id           String @id @default(cuid())
+  slug         String @unique // "openai-gpt-5", "voyage-voyage-3"
+  providerSlug String // groups models: "openai", "anthropic", "voyage"
+  modelId      String // API model id: "gpt-5", "voyage-3"
+  name         String // display name: "GPT-5", "Voyage 3"
+  description  String @db.Text
+
+  // Classification
+  capabilities String[] @default(["chat"]) // ["chat"], ["embedding"], ["chat","embedding"]
+  tierRole     String // 'thinking' | 'worker' | 'infrastructure' | 'control_plane' | 'local_sovereign' | 'embedding'
+
+  // Selection matrix dimensions
+  reasoningDepth String // 'very_high' | 'high' | 'medium' | 'none'
+  latency        String // 'very_fast' | 'fast' | 'medium'
+  costEfficiency String // 'very_high' | 'high' | 'medium'
+  contextLength  String // 'very_high' | 'high' | 'medium' | 'n_a'
+  toolUse        String // 'strong' | 'moderate' | 'none'
+  bestRole       String // free-text, e.g. "Planner / orchestrator"
+
+  // Embedding-specific (nullable for chat-only models)
+  dimensions           Int?
+  schemaCompatible     Boolean?
+  costPerMillionTokens Float?
+  hasFreeTier          Boolean?
+  local                Boolean  @default(false)
+  quality              String? // 'high' | 'medium' | 'budget'
+  strengths            String? @db.Text
+  setup                String? @db.Text
+
+  // Lifecycle
+  isDefault Boolean  @default(false) // true = seed-managed, re-seedable
+  isActive  Boolean  @default(true)
+  metadata  Json?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  creator User @relation("AiProviderModelCreator", fields: [createdBy], references: [id])
+
+  @@unique([providerSlug, modelId])
+  @@index([createdBy])
+  @@index([isActive])
+  @@index([tierRole])
+  @@index([providerSlug])
+  @@map("ai_provider_model")
+}
+
+// Per-user API key for programmatic access (alternative to session auth)
+model AiApiKey {
+  id           String    @id @default(cuid())
+  userId       String
+  name         String    // admin-friendly label (e.g. "My CI Key")
+  keyHash      String    @unique // SHA-256 hash of the API key (key itself never stored)
+  keyPrefix    String    // first 8 chars for display (e.g. "sk_abc12...")
+  scopes       String[]  @default(["chat"]) // "chat", "analytics", "knowledge", "admin"
+  rateLimitRpm Int?      // per-key rate limit (requests per minute); null = use global default
+  lastUsedAt   DateTime?
+  expiresAt    DateTime? // null = never expires
+  revokedAt    DateTime? // non-null = revoked
+  createdAt    DateTime  @default(now())
+
+  user User @relation("AiApiKeyUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([keyHash])
+  @@map("ai_api_key")
+}
+
 /// Singleton settings row for agent orchestration, keyed by `slug = "global"`.
 ///
 /// Holds admin-editable defaults that cross-cut the orchestration layer:
@@ -537,10 +805,76 @@ model AiOrchestrationSettings {
   defaultApprovalTimeoutMs Int? // ms before auto-action on approval gates; null = no timeout
   approvalDefaultAction  String?   @default("deny") // "deny" or "allow"
   inputGuardMode         String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  webhookRetentionDays       Int?
+  costLogRetentionDays       Int?
+  maxConversationsPerUser    Int?
+  maxMessagesPerConversation Int?
+  escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
   @@map("ai_orchestration_settings")
+}
+
+/// Immutable audit trail for admin configuration changes.
+///
+/// Fire-and-forget writes — never blocks the request. Tracks agent edits,
+/// workflow changes, knowledge uploads, settings changes, and deletions.
+model AiAdminAuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String // e.g. "agent.create", "agent.update", "workflow.delete"
+  entityType String // "agent", "workflow", "capability", "knowledge_document", "settings", "webhook"
+  entityId   String?
+  entityName String? // human-readable name at time of action
+  changes    Json? // { field: { from, to } } diff for updates
+  metadata   Json? // extra context
+  clientIp   String?
+  createdAt  DateTime @default(now())
+
+  user User @relation("AiAdminAuditLogUser", fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("ai_admin_audit_log")
+}
+
+// A/B prompt experiment — compares agent version variants
+model AiExperiment {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  status      String   @default("draft") // "draft" | "running" | "completed"
+  agentId     String
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agent    AiAgent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  creator  User                  @relation("AiExperimentCreator", fields: [createdBy], references: [id])
+  variants AiExperimentVariant[]
+
+  @@index([agentId])
+  @@index([status])
+  @@map("ai_experiment")
+}
+
+// A variant (arm) in an A/B experiment — points to an agent version snapshot
+model AiExperimentVariant {
+  id                  String  @id @default(cuid())
+  experimentId        String
+  agentVersionId      String? // references AiAgentVersion.id (null if using live agent)
+  evaluationSessionId String? // filled after experiment run
+  label               String  // e.g. "Control", "Variant A"
+  score               Float?  // aggregated evaluation score after run
+
+  experiment AiExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+  @@map("ai_experiment_variant")
 }
 
 /// Tracks which seed units have been applied, keyed by unit name.

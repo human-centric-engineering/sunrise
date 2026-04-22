@@ -18,6 +18,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
 import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
 
@@ -48,7 +49,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { capabilities: true, conversations: true } } },
+      include: {
+        _count: { select: { capabilities: true, conversations: true } },
+        creator: { select: { name: true } },
+      },
     }),
     prisma.aiAgent.count({ where }),
   ]);
@@ -137,6 +141,16 @@ export const POST = withAdminAuth(async (request, session) => {
         monthlyBudgetUsd: body.monthlyBudgetUsd ?? null,
         metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isActive: body.isActive,
+        inputGuardMode: body.inputGuardMode ?? null,
+        outputGuardMode: body.outputGuardMode ?? null,
+        maxHistoryTokens: body.maxHistoryTokens ?? null,
+        retentionDays: body.retentionDays ?? null,
+        visibility: body.visibility ?? 'internal',
+        rateLimitRpm: body.rateLimitRpm ?? null,
+        fallbackProviders: body.fallbackProviders ?? [],
+        knowledgeCategories: body.knowledgeCategories ?? [],
+        topicBoundaries: body.topicBoundaries ?? [],
+        brandVoiceInstructions: body.brandVoiceInstructions ?? null,
         createdBy: session.user.id,
       },
     });
@@ -145,6 +159,15 @@ export const POST = withAdminAuth(async (request, session) => {
       agentId: agent.id,
       slug: agent.slug,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.create',
+      entityType: 'agent',
+      entityId: agent.id,
+      entityName: agent.name,
+      clientIp: clientIP,
     });
 
     return successResponse(agent, undefined, { status: 201 });

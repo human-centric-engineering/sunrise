@@ -74,25 +74,46 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/instructions-history`,
       agentInstructionsRevert: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/instructions-revert`,
+      agentInviteTokens: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/invite-tokens`,
+      agentInviteTokenById: (id: string, tokenId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/invite-tokens/${tokenId}`,
+      agentVersions: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/versions`,
+      agentVersionRestore: (id: string, versionId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}/restore`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       capabilityAgents: (id: string): string =>
         `/api/v1/admin/orchestration/capabilities/${id}/agents`,
       capabilityStats: (id: string): string =>
         `/api/v1/admin/orchestration/capabilities/${id}/stats`,
+      PROVIDER_MODELS: '/api/v1/admin/orchestration/provider-models',
+      providerModelById: (id: string): string =>
+        `/api/v1/admin/orchestration/provider-models/${id}`,
+      PROVIDER_MODEL_RECOMMEND: '/api/v1/admin/orchestration/provider-models/recommend',
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
       providerTestModel: (id: string): string =>
         `/api/v1/admin/orchestration/providers/${id}/test-model`,
       providerModels: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/models`,
+      providerHealth: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/health`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
       workflowById: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}`,
+      workflowSchedules: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/schedules`,
+      workflowScheduleById: (workflowId: string, scheduleId: string): string =>
+        `/api/v1/admin/orchestration/workflows/${workflowId}/schedules/${scheduleId}`,
       workflowValidate: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/validate`,
+      workflowDryRun: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}/dry-run`,
       workflowExecute: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/execute`,
+      workflowExecuteStream: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/execute-stream`,
+      workflowSaveAsTemplate: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/save-as-template`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionApprove: (id: string): string =>
@@ -111,6 +132,7 @@ export const API = {
       conversationMessages: (id: string): string =>
         `/api/v1/admin/orchestration/conversations/${id}/messages`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
+      CONVERSATIONS_EXPORT: '/api/v1/admin/orchestration/conversations/export',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
       knowledgeDocumentById: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,
@@ -118,6 +140,10 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
       knowledgeDocumentRetry: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/retry`,
+      knowledgeDocumentConfirm: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/confirm`,
+      knowledgeDocumentChunks: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/chunks`,
       KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
       KNOWLEDGE_GRAPH: '/api/v1/admin/orchestration/knowledge/graph',
       KNOWLEDGE_PATTERNS: '/api/v1/admin/orchestration/knowledge/patterns',
@@ -130,9 +156,20 @@ export const API = {
       KNOWLEDGE_META_TAGS: '/api/v1/admin/orchestration/knowledge/meta-tags',
       WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
+      webhookDeliveries: (id: string): string =>
+        `/api/v1/admin/orchestration/webhooks/${id}/deliveries`,
+      webhookTest: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}/test`,
+      retryDelivery: (id: string): string =>
+        `/api/v1/admin/orchestration/webhooks/deliveries/${id}/retry`,
       COSTS: '/api/v1/admin/orchestration/costs',
       COSTS_SUMMARY: '/api/v1/admin/orchestration/costs/summary',
       COSTS_ALERTS: '/api/v1/admin/orchestration/costs/alerts',
+      ANALYTICS_TOPICS: '/api/v1/admin/orchestration/analytics/topics',
+      ANALYTICS_UNANSWERED: '/api/v1/admin/orchestration/analytics/unanswered',
+      ANALYTICS_ENGAGEMENT: '/api/v1/admin/orchestration/analytics/engagement',
+      ANALYTICS_CONTENT_GAPS: '/api/v1/admin/orchestration/analytics/content-gaps',
+      ANALYTICS_FEEDBACK: '/api/v1/admin/orchestration/analytics/feedback',
+      MAINTENANCE_TICK: '/api/v1/admin/orchestration/maintenance/tick',
       SETTINGS: '/api/v1/admin/orchestration/settings',
       EVALUATIONS: '/api/v1/admin/orchestration/evaluations',
       evaluationById: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}`,
@@ -150,10 +187,30 @@ export const API = {
       mcpResourceById: (id: string): string => `/api/v1/admin/orchestration/mcp/resources/${id}`,
       MCP_KEYS: '/api/v1/admin/orchestration/mcp/keys',
       mcpKeyById: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}`,
+      mcpKeyRotate: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}/rotate`,
       MCP_AUDIT: '/api/v1/admin/orchestration/mcp/audit',
       MCP_SESSIONS: '/api/v1/admin/orchestration/mcp/sessions',
       mcpSessionById: (id: string): string => `/api/v1/admin/orchestration/mcp/sessions/${id}`,
+
+      /** Admin audit log */
+      AUDIT_LOG: '/api/v1/admin/orchestration/audit-log',
     },
+  },
+
+  /** Consumer chat endpoints */
+  CHAT: {
+    AGENTS: '/api/v1/chat/agents',
+    STREAM: '/api/v1/chat/stream',
+    CONVERSATIONS: '/api/v1/chat/conversations',
+    CONVERSATIONS_SEARCH: '/api/v1/chat/conversations/search',
+    conversationById: (id: string): string => `/api/v1/chat/conversations/${id}`,
+    conversationMessages: (id: string): string => `/api/v1/chat/conversations/${id}/messages`,
+    validateToken: (slug: string): string => `/api/v1/chat/agents/${slug}/validate-token`,
+  },
+
+  /** Webhook trigger (API-key authenticated, not admin) */
+  WEBHOOKS: {
+    trigger: (slug: string): string => `/api/v1/webhooks/trigger/${slug}`,
   },
 
   /** Public endpoints */

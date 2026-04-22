@@ -12,6 +12,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiProviderConfig: { findMany: vi.fn() },
     aiCapability: { findMany: vi.fn() },
+    aiAgent: { findMany: vi.fn() },
   },
 }));
 
@@ -55,6 +56,16 @@ function toolStep(id: string, capabilitySlug: string) {
   };
 }
 
+function agentStep(id: string, agentSlug: string) {
+  return {
+    id,
+    name: id,
+    type: 'agent_call',
+    config: { agentSlug },
+    nextSteps: [],
+  };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('semanticValidateWorkflow', () => {
@@ -62,6 +73,7 @@ describe('semanticValidateWorkflow', () => {
     vi.clearAllMocks();
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
     vi.mocked(getModel).mockReturnValue(undefined);
   });
 
@@ -186,5 +198,58 @@ describe('semanticValidateWorkflow', () => {
     // All 4 steps should report UNKNOWN_MODEL_OVERRIDE
     expect(result.errors).toHaveLength(4);
     expect(result.errors.every((e) => e.code === 'UNKNOWN_MODEL_OVERRIDE')).toBe(true);
+  });
+
+  // ─── agent_call steps ───────────────────────────────────────────────────────
+
+  it('returns INACTIVE_AGENT when agent slug is not found or inactive', async () => {
+    // Arrange — aiAgent.findMany returns an empty list (agent not active).
+    // aiAgent mock is already set to return [] in beforeEach.
+    const result = await semanticValidateWorkflow(makeDef([agentStep('s1', 'missing-agent')]));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].code).toBe('INACTIVE_AGENT');
+    expect(result.errors[0].stepId).toBe('s1');
+  });
+
+  it('returns no error when agent slug is active', async () => {
+    // Arrange — aiAgent.findMany returns the slug we reference.
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([{ slug: 'my-agent' }] as never);
+
+    const result = await semanticValidateWorkflow(makeDef([agentStep('s1', 'my-agent')]));
+
+    expect(result.ok).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('batches multiple agent_call steps with the same slug into one DB query', async () => {
+    // Arrange — two steps reference the same agent; DB query should fire only once.
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([{ slug: 'shared-agent' }] as never);
+
+    const def = makeDef([agentStep('s1', 'shared-agent'), agentStep('s2', 'shared-agent')]);
+    const result = await semanticValidateWorkflow(def);
+
+    expect(result.ok).toBe(true);
+    // The validator batches by unique slug — only one DB call regardless of step count.
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('fast-path returns ok immediately when no step has any reference to check', async () => {
+    // Arrange — workflow with zero steps (degenerate but valid edge case).
+    const def: WorkflowDefinition = {
+      steps: [],
+      entryStepId: 'nonexistent',
+      errorStrategy: 'fail',
+    };
+
+    const result = await semanticValidateWorkflow(def);
+
+    // Fast path — no DB queries fired.
+    expect(result.ok).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
+    expect(prisma.aiCapability.findMany).not.toHaveBeenCalled();
+    expect(prisma.aiAgent.findMany).not.toHaveBeenCalled();
   });
 });

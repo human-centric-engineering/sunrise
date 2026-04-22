@@ -29,7 +29,6 @@ import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -55,9 +54,6 @@ const settingsFormSchema = z.object({
   chat: z.string().min(1),
   reasoning: z.string().min(1),
   embeddings: z.string().min(1),
-  globalMonthlyBudgetUsd: z
-    .union([z.literal(''), z.coerce.number().nonnegative().max(1_000_000)])
-    .transform((v) => (v === '' ? null : v)),
 });
 
 type SettingsFormData = z.input<typeof settingsFormSchema>;
@@ -138,17 +134,12 @@ export function OrchestrationSettingsForm({ settings, models }: OrchestrationSet
       chat: settings?.defaultModels.chat ?? '',
       reasoning: settings?.defaultModels.reasoning ?? '',
       embeddings: settings?.defaultModels.embeddings ?? '',
-      globalMonthlyBudgetUsd:
-        settings?.globalMonthlyBudgetUsd === null || settings?.globalMonthlyBudgetUsd === undefined
-          ? ''
-          : String(settings.globalMonthlyBudgetUsd),
     }),
     [settings]
   );
 
   const {
     control,
-    register,
     handleSubmit,
     reset,
     formState: { errors, isDirty },
@@ -175,7 +166,6 @@ export function OrchestrationSettingsForm({ settings, models }: OrchestrationSet
           reasoning: parsed.reasoning,
           embeddings: parsed.embeddings,
         },
-        globalMonthlyBudgetUsd: parsed.globalMonthlyBudgetUsd,
       };
       await apiClient.patch<OrchestrationSettings>(API.ADMIN.ORCHESTRATION.SETTINGS, {
         body: payload,
@@ -277,38 +267,16 @@ export function OrchestrationSettingsForm({ settings, models }: OrchestrationSet
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold">Global monthly budget cap</h3>
-            <div className="space-y-1.5">
-              <Label htmlFor="globalMonthlyBudgetUsd" className="flex items-center gap-1">
-                Cap (USD)
-                <FieldHelp title="Cross-agent monthly cap">
-                  <p>
-                    A single spending limit that covers <b>all agents combined</b>. When
-                    month-to-date spend reaches this value, every agent responds with a friendly
-                    &ldquo;budget exhausted&rdquo; message instead of completing the request.
-                  </p>
-                  <p>Leave blank for no cross-agent cap — individual per-agent caps still apply.</p>
-                  <p>
-                    The cap resets on the first of each month (UTC), matching the rest of the cost
-                    dashboard.
-                  </p>
-                </FieldHelp>
-              </Label>
-              <Input
-                id="globalMonthlyBudgetUsd"
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min={0}
-                placeholder="No cap"
-                className="max-w-xs"
-                {...register('globalMonthlyBudgetUsd')}
-              />
-              {errors.globalMonthlyBudgetUsd && (
-                <p className="text-xs text-red-600">
-                  {errors.globalMonthlyBudgetUsd.message as string}
-                </p>
-              )}
-            </div>
+            <p className="text-muted-foreground text-xs">
+              {settings?.globalMonthlyBudgetUsd !== null &&
+              settings?.globalMonthlyBudgetUsd !== undefined
+                ? `Current cap: $${settings.globalMonthlyBudgetUsd.toLocaleString()}/month`
+                : 'No global cap set'}{' '}
+              &mdash;{' '}
+              <a href="/admin/orchestration/settings" className="text-primary underline">
+                manage in Settings
+              </a>
+            </p>
           </section>
         </CardContent>
       </Card>

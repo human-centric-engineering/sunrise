@@ -14,6 +14,7 @@
  *   - `guard` steps carry a `rules` config
  *   - `evaluate` steps carry a `rubric` config
  *   - `external_call` steps carry a `url` config
+ *   - `agent_call` steps carry an `agentSlug` config
  *
  * Platform-agnostic: no DB, no I/O, no Next.js imports. Consumed by:
  *
@@ -46,7 +47,8 @@ export interface WorkflowValidationError {
     | 'MISSING_CAPABILITY_SLUG'
     | 'MISSING_GUARD_RULES'
     | 'MISSING_EVALUATE_RUBRIC'
-    | 'MISSING_EXTERNAL_URL';
+    | 'MISSING_EXTERNAL_URL'
+    | 'MISSING_AGENT_SLUG';
   message: string;
   stepId?: string;
   path?: string[];
@@ -155,6 +157,16 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidationRes
         errors.push({
           code: 'MISSING_EXTERNAL_URL',
           message: `external_call step "${step.id}" is missing a non-empty config.url`,
+          stepId: step.id,
+        });
+      }
+    }
+    if (step.type === 'agent_call') {
+      const slug = step.config?.agentSlug;
+      if (typeof slug !== 'string' || slug.trim().length === 0) {
+        errors.push({
+          code: 'MISSING_AGENT_SLUG',
+          message: `agent_call step "${step.id}" is missing a non-empty config.agentSlug`,
           stepId: step.id,
         });
       }

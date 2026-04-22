@@ -56,6 +56,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
 
 vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -75,6 +80,7 @@ function makeDocument(overrides: Record<string, unknown> = {}) {
     name: 'Agentic Design Patterns',
     fileName: 'patterns.md',
     fileHash: 'a'.repeat(64),
+    sourceUrl: null,
     status: 'ready',
     uploadedBy: ADMIN_ID,
     sizeBytes: 2048,

@@ -1,0 +1,249 @@
+/**
+ * Unit Tests: PDF Parser (parsePdf)
+ *
+ * Tests the PDF document parser that uses pdf-parse (PDFParse class) to
+ * extract text from digital-native PDF files. Scanned/image-only PDFs are
+ * flagged with a warning.
+ *
+ * Test Coverage:
+ * - Happy path: multi-page PDF with form-feed page separators
+ * - Single-page PDF (no form-feed) → one untitled section
+ * - Scanned PDF (no extractable text) → low-text warning
+ * - Metadata extraction: title, author, page count
+ * - Title falls back to filename when PDF info.Title is absent
+ * - Empty sections are filtered out
+ *
+ * Key Behaviors:
+ * - pdf-parse PDFParse class is mocked via vi.mock
+ * - Form-feed characters (\f) separate pages; each non-empty page is a section
+ * - Text shorter than 50 chars triggers the scanned-PDF warning
+ * - metadata always includes format: "pdf"
+ *
+ * @see lib/orchestration/knowledge/parsers/pdf-parser.ts
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+/**
+ * Mock pdf-parse so tests don't require real PDF files or the pdf.js engine.
+ *
+ * PDFParse is mocked as a class whose instances expose getText() and getInfo()
+ * methods. Tests configure return values via mockGetText / mockGetInfo.
+ */
+
+const mockGetText = vi.fn();
+const mockGetInfo = vi.fn();
+
+// PDFParse must be a proper constructor function (not an arrow function) so
+// that `new PDFParse(...)` works at runtime.
+function MockPDFParse() {
+  // no-op — methods are on the prototype
+}
+MockPDFParse.prototype.getText = mockGetText;
+MockPDFParse.prototype.getInfo = mockGetInfo;
+
+vi.mock('pdf-parse', () => ({
+  PDFParse: MockPDFParse,
+}));
+
+import { parsePdf } from '@/lib/orchestration/knowledge/parsers/pdf-parser';
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/** Build a TextResult-like object that parsePdf expects from getText() */
+function textResult(text: string) {
+  return { text, pages: [] };
+}
+
+/** Build an InfoResult-like object that parsePdf expects from getInfo() */
+function infoResult(total = 1, info: Record<string, unknown> = {}) {
+  return { total, info };
+}
+
+/** Create a minimal buffer (content is irrelevant — PDFParse is mocked) */
+function fakeBuffer(): Buffer {
+  return Buffer.from('fake pdf content');
+}
+
+// =============================================================================
+// Test Suite
+// =============================================================================
+
+describe('parsePdf', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Default mock implementations — return minimal valid results
+    mockGetText.mockResolvedValue(textResult(''));
+    mockGetInfo.mockResolvedValue(infoResult());
+  });
+
+  // ---------------------------------------------------------------------------
+  // Multi-page PDFs
+  // ---------------------------------------------------------------------------
+
+  describe('Multi-page PDFs', () => {
+    it('should create one section per page separated by form-feed characters', async () => {
+      mockGetText.mockResolvedValue(
+        textResult('Page one content.\fPage two content.\fPage three content.')
+      );
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'multipage.pdf');
+
+      expect(result.sections).toHaveLength(3);
+      expect(result.sections[0].title).toBe('Page 1');
+      expect(result.sections[0].content).toContain('Page one content.');
+      expect(result.sections[1].title).toBe('Page 2');
+      expect(result.sections[1].content).toContain('Page two content.');
+      expect(result.sections[2].title).toBe('Page 3');
+      expect(result.sections[2].content).toContain('Page three content.');
+    });
+
+    it('should assign ascending order values to page sections', async () => {
+      mockGetText.mockResolvedValue(textResult('Page one.\fPage two.'));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+
+      const result = await parsePdf(fakeBuffer(), 'pages.pdf');
+
+      const orders = result.sections.map((s) => s.order);
+      expect(orders).toEqual([0, 1]);
+    });
+
+    it('should filter out blank pages (form-feed followed by whitespace)', async () => {
+      mockGetText.mockResolvedValue(textResult('Page one.\f   \fPage three.'));
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'blankpage.pdf');
+
+      expect(result.sections).toHaveLength(2);
+      expect(result.sections.some((s) => s.content.trim() === '')).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Single-page PDFs
+  // ---------------------------------------------------------------------------
+
+  describe('Single-page PDF', () => {
+    it('should produce one untitled section when there are no form-feed characters', async () => {
+      const text = 'A long enough text on a single page for extraction purposes.';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(1));
+
+      const result = await parsePdf(fakeBuffer(), 'single.pdf');
+
+      expect(result.sections).toHaveLength(1);
+      expect(result.sections[0].title).toBe('');
+      expect(result.sections[0].content).toContain(text);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scanned / image-only PDFs
+  // ---------------------------------------------------------------------------
+
+  describe('Scanned PDF detection', () => {
+    it('should add a warning when extracted text is under the minimum viable length', async () => {
+      mockGetText.mockResolvedValue(textResult('Short.'));
+
+      const result = await parsePdf(fakeBuffer(), 'scanned.pdf');
+
+      expect(result.warnings.some((w) => w.includes('scanned'))).toBe(true);
+    });
+
+    it('should not add the scanned warning when text is at or above 50 chars', async () => {
+      const text = 'This sentence is long enough to pass the threshold.';
+      mockGetText.mockResolvedValue(textResult(text));
+
+      const result = await parsePdf(fakeBuffer(), 'ok.pdf');
+
+      expect(result.warnings.some((w) => w.includes('scanned'))).toBe(false);
+    });
+
+    it('should add a warning for completely empty text', async () => {
+      mockGetText.mockResolvedValue(textResult(''));
+
+      const result = await parsePdf(fakeBuffer(), 'empty.pdf');
+
+      expect(result.warnings.length).toBeGreaterThan(0);
+      expect(result.sections).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Metadata extraction
+  // ---------------------------------------------------------------------------
+
+  describe('Metadata extraction', () => {
+    it('should extract title from PDF info.Title', async () => {
+      const text = 'Enough content to exceed the minimum viable text threshold here.';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(1, { Title: 'My PDF Title' }));
+
+      const result = await parsePdf(fakeBuffer(), 'meta.pdf');
+
+      expect(result.title).toBe('My PDF Title');
+      expect(result.metadata.title).toBe('My PDF Title');
+    });
+
+    it('should extract author from PDF info.Author', async () => {
+      const text = 'Enough content to exceed the minimum viable text threshold here.';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(1, { Author: 'Jane Smith' }));
+
+      const result = await parsePdf(fakeBuffer(), 'authored.pdf');
+
+      expect(result.author).toBe('Jane Smith');
+      expect(result.metadata.author).toBe('Jane Smith');
+    });
+
+    it('should include page count in metadata when total is set', async () => {
+      const text = 'Enough content to exceed the minimum viable text threshold here.';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(42, {}));
+
+      const result = await parsePdf(fakeBuffer(), 'pages.pdf');
+
+      expect(result.metadata.pages).toBe('42');
+    });
+
+    it('should always include format: pdf in metadata', async () => {
+      const text = 'Some text to exceed minimum threshold and avoid warning flags here.';
+      mockGetText.mockResolvedValue(textResult(text));
+
+      const result = await parsePdf(fakeBuffer(), 'format.pdf');
+
+      expect(result.metadata.format).toBe('pdf');
+    });
+
+    it('should fall back to filename (without extension) when PDF has no title', async () => {
+      const text = 'Enough content to exceed the minimum viable text threshold here.';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(1, {}));
+
+      const result = await parsePdf(fakeBuffer(), 'annual-report.pdf');
+
+      expect(result.title).toBe('annual-report');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // fullText
+  // ---------------------------------------------------------------------------
+
+  describe('fullText', () => {
+    it('should set fullText to the trimmed raw text from PDFParse', async () => {
+      const text = '  Page one text.\fPage two text.  ';
+      mockGetText.mockResolvedValue(textResult(text));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+
+      const result = await parsePdf(fakeBuffer(), 'rawtext.pdf');
+
+      // fullText should be the trimmed version of the raw text
+      expect(result.fullText).toBe(text.trim());
+    });
+  });
+});

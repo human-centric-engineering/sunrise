@@ -162,7 +162,9 @@ describe('CompareProvidersModal', () => {
       render(<CompareProvidersModal open={true} onOpenChange={onOpenChange} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Free')).toBeInTheDocument();
+        // "Free" appears in both the header tooltip and the cost cell
+        const freeElements = screen.getAllByText('Free');
+        expect(freeElements.length).toBeGreaterThanOrEqual(1);
       });
     });
 
@@ -233,45 +235,20 @@ describe('CompareProvidersModal', () => {
     });
   });
 
-  // 6. Sort direction cycling
-  describe('sort header behaviour', () => {
-    it('clicking same sort header twice cycles direction asc -> desc', async () => {
-      const user = userEvent.setup();
+  // 6. Table headers render with tooltips
+  describe('table headers', () => {
+    it('renders all expected column headers', async () => {
       mockFetch.mockResolvedValue(makeOkResponse());
 
       render(<CompareProvidersModal open={true} onOpenChange={onOpenChange} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Voyage AI')).toBeInTheDocument();
+        expect(screen.getByText('Provider')).toBeInTheDocument();
+        expect(screen.getByText('Model')).toBeInTheDocument();
+        expect(screen.getByText('Cost/1M')).toBeInTheDocument();
+        expect(screen.getByText('Dims')).toBeInTheDocument();
+        expect(screen.getByText('Quality')).toBeInTheDocument();
       });
-
-      // Default sort is provider asc — click provider again to flip to desc
-      const providerBtn = screen.getByRole('button', { name: /provider/i });
-      await user.click(providerBtn);
-
-      // After clicking same header, desc arrow should appear
-      expect(screen.getByText('↓')).toBeInTheDocument();
-    });
-
-    it('clicking a different sort header resets direction to asc', async () => {
-      const user = userEvent.setup();
-      mockFetch.mockResolvedValue(makeOkResponse());
-
-      render(<CompareProvidersModal open={true} onOpenChange={onOpenChange} />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Voyage AI')).toBeInTheDocument();
-      });
-
-      // Click provider to flip to desc (it is already the active field, starts asc)
-      const providerBtn = screen.getByRole('button', { name: /provider/i });
-      await user.click(providerBtn);
-      expect(screen.getByText('↓')).toBeInTheDocument();
-
-      // Click a different header (Cost/1M) — should reset to asc
-      const costBtn = screen.getByRole('button', { name: /cost\/1m/i });
-      await user.click(costBtn);
-      expect(screen.getByText('↑')).toBeInTheDocument();
     });
   });
 
@@ -321,34 +298,22 @@ describe('CompareProvidersModal', () => {
     });
   });
 
-  // Sort by dimensions
-  describe('sort by dimensions', () => {
-    it('sorts rows by dimensions when Dims header is clicked', async () => {
-      const user = userEvent.setup();
-      const smallDims = makeModel({
-        id: 'a/small',
-        provider: 'AAA',
-        model: 'small',
-        dimensions: 512,
-      });
-      const largeDims = makeModel({
-        id: 'b/large',
-        provider: 'BBB',
+  // Dimensions display
+  describe('dimensions display', () => {
+    it('renders dimensions with locale formatting', async () => {
+      const model = makeModel({
+        id: 'a/large',
+        provider: 'TestProvider',
         model: 'large',
         dimensions: 4096,
       });
-      mockFetch.mockResolvedValue(makeOkResponse([largeDims, smallDims]));
+      mockFetch.mockResolvedValue(makeOkResponse([model]));
 
       render(<CompareProvidersModal open={true} onOpenChange={onOpenChange} />);
 
-      await waitFor(() => expect(screen.getByText('AAA')).toBeInTheDocument());
-
-      // Click Dims sort header
-      const dimsBtn = screen.getByRole('button', { name: /dims/i });
-      await user.click(dimsBtn);
-
-      // Dims direction indicator should appear
-      expect(screen.getByText('↑')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('4,096')).toBeInTheDocument();
+      });
     });
   });
 

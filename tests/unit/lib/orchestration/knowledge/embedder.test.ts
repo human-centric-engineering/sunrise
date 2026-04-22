@@ -482,7 +482,7 @@ describe('embedBatch', () => {
 
     const result = await embedBatch([]);
 
-    expect(result).toEqual([]);
+    expect(result.embeddings).toEqual([]);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -504,7 +504,7 @@ describe('embedBatch', () => {
     const result = await embedBatch(texts);
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
-    expect(result).toHaveLength(250);
+    expect(result.embeddings).toHaveLength(250);
 
     // Verify batch sizes from the call bodies
     const calls = mockFetch.mock.calls as Array<[string, { body: string }]>;
@@ -533,7 +533,7 @@ describe('embedBatch', () => {
 
     const result = await promise;
 
-    expect(result).toHaveLength(3);
+    expect(result.embeddings).toHaveLength(3);
     // fetch called 3 times
     expect(mockFetch).toHaveBeenCalledTimes(3);
 
@@ -558,9 +558,12 @@ describe('embedBatch', () => {
 
     const result = await embedBatch(['a', 'b', 'c'], 10);
 
-    expect(result[0]).toEqual(vec0);
-    expect(result[1]).toEqual(vec1);
-    expect(result[2]).toEqual(vec2);
+    expect(result.embeddings[0]).toEqual(vec0);
+    expect(result.embeddings[1]).toEqual(vec1);
+    expect(result.embeddings[2]).toEqual(vec2);
+    expect(result.provenance.model).toBe('text-embedding-3-small');
+    expect(result.provenance.provider).toBe('openai-compatible');
+    expect(result.provenance.embeddedAt).toBeInstanceOf(Date);
   });
 
   it('should reject when a mid-batch fetch call fails', async () => {

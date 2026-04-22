@@ -4,12 +4,14 @@
  * Test Coverage:
  * - Changing flavor from Anthropic → Ollama swaps visible fields
  * - Changing to OpenAI-Compatible shows BOTH baseUrl and apiKeyEnvVar
- * - Submit body shape per flavor (anthropic, openai, ollama, openai-compatible)
+ * - Submit body shape per flavor (anthropic, openai, ollama, openai-compatible, voyage)
  * - Edit mode reverse-map: provider row → correct flavor radio
  * - apiKeyPresent=false renders red "missing" indicator
  * - apiKeyPresent=true renders green "set" indicator
  * - Server-side 400 (APIClientError) rendered inline via error banner
  * - Slug input disabled in edit mode
+ * - Advanced settings collapsible with timeoutMs and maxRetries
+ * - Voyage AI flavor: radio, submit payload, reverse mapping
  *
  * @see components/admin/orchestration/provider-form.tsx
  */
@@ -114,13 +116,14 @@ describe('ProviderForm', () => {
   // ── Flavor selector ────────────────────────────────────────────────────────
 
   describe('flavor selector', () => {
-    it('renders all 4 flavor radio options', () => {
+    it('renders key flavor radio options (Anthropic, OpenAI, Voyage AI, Ollama, Other)', () => {
       render(<ProviderForm mode="create" />);
 
       expect(getFlavorRadio('Anthropic')).toBeInTheDocument();
       expect(getFlavorRadio('OpenAI')).toBeInTheDocument();
-      expect(getFlavorRadio('Ollama (Local)')).toBeInTheDocument();
-      expect(getFlavorRadio('OpenAI-Compatible')).toBeInTheDocument();
+      expect(getFlavorRadio('Voyage AI')).toBeInTheDocument();
+      expect(getFlavorRadio('Ollama')).toBeInTheDocument();
+      expect(getFlavorRadio('Other (OpenAI-Compatible)')).toBeInTheDocument();
     });
 
     it('default flavor is Anthropic (baseUrl hidden, apiKeyEnvVar shown)', () => {
@@ -135,7 +138,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'Ollama (Local)');
+      await selectFlavor(user, 'Ollama');
 
       await waitFor(() => {
         expect(screen.queryByRole('textbox', { name: /api key env var/i })).not.toBeInTheDocument();
@@ -150,7 +153,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'OpenAI-Compatible');
+      await selectFlavor(user, 'Other (OpenAI-Compatible)');
 
       await waitFor(() => {
         expect(screen.getByRole('textbox', { name: /base url/i })).toBeInTheDocument();
@@ -250,7 +253,7 @@ describe('ProviderForm', () => {
       const user = userEvent.setup();
       render(<ProviderForm mode="create" />);
 
-      await selectFlavor(user, 'Ollama (Local)');
+      await selectFlavor(user, 'Ollama');
 
       await user.click(screen.getByRole('button', { name: /create provider/i }));
 
@@ -301,7 +304,7 @@ describe('ProviderForm', () => {
         />
       );
 
-      const ollamaRadio = getFlavorRadio('Ollama (Local)');
+      const ollamaRadio = getFlavorRadio('Ollama');
       expect(ollamaRadio).toHaveAttribute('aria-checked', 'true');
     });
 
@@ -334,7 +337,7 @@ describe('ProviderForm', () => {
     it('apiKeyPresent=true renders green "set" indicator', () => {
       render(<ProviderForm mode="edit" provider={makeProvider({ apiKeyPresent: true })} />);
 
-      expect(screen.getByText(/set/i)).toBeInTheDocument();
+      expect(screen.getByText(/^set$/i)).toBeInTheDocument();
     });
   });
 
@@ -380,6 +383,328 @@ describe('ProviderForm', () => {
       render(<ProviderForm mode="edit" provider={makeProvider()} />);
 
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+  });
+
+  // ── Voyage AI flavor ──────────────────────────────────────────────────────
+
+  describe('Voyage AI flavor', () => {
+    it('voyage flavor submits { providerType: "voyage", isLocal: false, apiKeyEnvVar }', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        id: 'prov-new',
+        name: 'Voyage AI',
+        slug: 'voyage-ai',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      await selectFlavor(user, 'Voyage AI');
+      await user.click(screen.getByRole('button', { name: /create provider/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/providers'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              providerType: 'voyage',
+              isLocal: false,
+              apiKeyEnvVar: 'VOYAGE_API_KEY',
+            }),
+          })
+        );
+      });
+    });
+
+    it('voyage providerType → radio "Voyage AI" checked on edit', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'voyage',
+            isLocal: false,
+            baseUrl: 'https://api.voyageai.com/v1',
+            apiKeyEnvVar: 'VOYAGE_API_KEY',
+          })}
+        />
+      );
+
+      const voyageRadio = getFlavorRadio('Voyage AI');
+      expect(voyageRadio).toHaveAttribute('aria-checked', 'true');
+    });
+  });
+
+  // ── Edit mode flavor change ────────────────────────────────────────────────
+
+  describe('edit mode flavor change', () => {
+    it('handles flavor change in edit mode — keeps existing name/slug, updates fields', async () => {
+      // Arrange: edit mode with existing anthropic provider
+      const user = userEvent.setup();
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({ name: 'My Anthropic', slug: 'my-anthropic' })}
+        />
+      );
+
+      // Act: switch flavor to OpenAI in edit mode
+      await selectFlavor(user, 'OpenAI');
+
+      // Assert: slug field still shows original value (disabled in edit mode)
+      const slugInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^slug/i });
+      expect(slugInput.value).toBe('my-anthropic');
+    });
+
+    it('navigates to provider list after successful edit save', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Anthropic',
+        slug: 'anthropic',
+        apiKeyPresent: true,
+        baseUrl: null,
+        apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="edit" provider={makeProvider()} />);
+
+      // Act: click save
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      // Assert: "Saved" button state appears after successful save
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /saved/i })).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic error for non-APIClientError on edit save', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new Error('Network timeout'));
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="edit" provider={makeProvider()} />);
+
+      // Act
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(screen.getByText(/could not save provider/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── flavorFromProvider URL/slug matching ──────────────────────────────────
+
+  describe('flavorFromProvider reverse-map (URL and slug matching)', () => {
+    it('groq provider by URL → radio "Groq" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.groq.com/openai/v1',
+            slug: 'groq',
+          })}
+        />
+      );
+
+      const groqRadio = getFlavorRadio('Groq');
+      expect(groqRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('together by URL → radio "Together AI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.together.xyz/v1',
+            slug: 'together',
+          })}
+        />
+      );
+
+      const togetherRadio = getFlavorRadio('Together AI');
+      expect(togetherRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('google by URL → radio "Google AI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            slug: 'google',
+          })}
+        />
+      );
+
+      const googleRadio = getFlavorRadio('Google AI');
+      expect(googleRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('xai by URL → radio "xAI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.x.ai/v1',
+            slug: 'xai',
+          })}
+        />
+      );
+
+      const xaiRadio = getFlavorRadio('xAI');
+      expect(xaiRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('deepseek by URL → radio "DeepSeek" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.deepseek.com/v1',
+            slug: 'deepseek',
+          })}
+        />
+      );
+
+      const deepseekRadio = getFlavorRadio('DeepSeek');
+      expect(deepseekRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('unknown URL + non-local → radio "Other (OpenAI-Compatible)" checked as fallback', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://custom-endpoint.example.com/v1',
+            slug: 'custom',
+          })}
+        />
+      );
+
+      const customRadio = getFlavorRadio('Other (OpenAI-Compatible)');
+      expect(customRadio).toHaveAttribute('aria-checked', 'true');
+    });
+  });
+
+  // ── isActive toggle ────────────────────────────────────────────────────────
+
+  describe('isActive toggle', () => {
+    it('active switch is on by default in create mode', () => {
+      render(<ProviderForm mode="create" />);
+
+      // The switch should be checked (active=true default)
+      const switchEl = screen.getByRole('switch', { name: /active/i });
+      expect(switchEl).toHaveAttribute('data-state', 'checked');
+    });
+
+    it('active switch reflects provider isActive=false in edit mode', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ isActive: false })} />);
+
+      const switchEl = screen.getByRole('switch', { name: /active/i });
+      expect(switchEl).toHaveAttribute('data-state', 'unchecked');
+    });
+  });
+
+  // ── Slug input manual edit sets slugTouched ───────────────────────────────
+
+  describe('slug input manual edit (create mode)', () => {
+    it('user can manually type in slug field in create mode', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      // Act: type directly in slug field
+      const slugInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^slug/i });
+      await user.clear(slugInput);
+      await user.type(slugInput, 'my-custom-slug');
+
+      // Assert: slug field updated with typed value
+      expect(slugInput.value).toBe('my-custom-slug');
+    });
+  });
+
+  // ── Advanced settings ─────────────────────────────────────────────────────
+
+  describe('advanced settings', () => {
+    it('Advanced settings section is collapsed by default in create mode', () => {
+      render(<ProviderForm mode="create" />);
+
+      expect(screen.getByText(/advanced settings/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/timeout/i)).not.toBeInTheDocument();
+    });
+
+    it('clicking Advanced settings reveals timeoutMs and maxRetries fields', async () => {
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      await user.click(screen.getByText(/advanced settings/i));
+
+      await waitFor(() => {
+        expect(document.getElementById('timeoutMs')).toBeInTheDocument();
+        expect(document.getElementById('maxRetries')).toBeInTheDocument();
+      });
+    });
+
+    it('Advanced settings auto-opens when provider has timeoutMs', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ timeoutMs: 30000 })} />);
+
+      // Should be expanded — fields visible
+      expect(document.getElementById('timeoutMs')).toBeInTheDocument();
+    });
+
+    it('Advanced settings auto-opens when provider has maxRetries', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ maxRetries: 3 })} />);
+
+      expect(document.getElementById('maxRetries')).toBeInTheDocument();
+    });
+
+    it('timeoutMs and maxRetries are included in submit payload', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Anthropic',
+        slug: 'anthropic',
+        apiKeyPresent: true,
+        baseUrl: null,
+        apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+      });
+
+      const user = userEvent.setup();
+      render(
+        <ProviderForm mode="edit" provider={makeProvider({ timeoutMs: 30000, maxRetries: 3 })} />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/providers/prov-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              timeoutMs: 30000,
+              maxRetries: 3,
+            }),
+          })
+        );
+      });
     });
   });
 });

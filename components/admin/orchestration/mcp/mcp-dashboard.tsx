@@ -8,29 +8,22 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Wrench, Database, Key, FileText, Settings, Activity } from 'lucide-react';
+import { Wrench, Database, Key, FileText, Settings, Activity, Monitor } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface McpSettings {
-  isEnabled: boolean;
-  serverName: string;
-  serverVersion: string;
-  maxSessionsPerKey: number;
-  globalRateLimit: number;
-  auditRetentionDays: number;
-}
+import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
 interface McpDashboardProps {
-  initialSettings: McpSettings | null;
+  initialSettings: McpSettingsResponse | null;
   stats: { tools: number; resources: number; keys: number };
 }
 
-const DEFAULT_SETTINGS: McpSettings = {
+const DEFAULT_SETTINGS: McpSettingsResponse = {
   isEnabled: false,
   serverName: 'Sunrise MCP Server',
   serverVersion: '1.0.0',
@@ -40,7 +33,9 @@ const DEFAULT_SETTINGS: McpSettings = {
 };
 
 export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
-  const [settings, setSettings] = useState<McpSettings>(initialSettings ?? DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<McpSettingsResponse>(
+    initialSettings ?? DEFAULT_SETTINGS
+  );
   const [toggling, setToggling] = useState(false);
 
   async function handleToggle(enabled: boolean) {
@@ -48,27 +43,10 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
     setSettings((s) => ({ ...s, isEnabled: enabled }));
     setToggling(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: enabled }),
+      const raw = await apiClient.patch<unknown>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
+        body: { isEnabled: enabled },
       });
-      if (res.ok) {
-        const raw: unknown = await res.json();
-        if (
-          typeof raw === 'object' &&
-          raw !== null &&
-          'success' in raw &&
-          (raw as Record<string, unknown>).success === true &&
-          'data' in raw
-        ) {
-          setSettings((raw as Record<string, unknown>).data as McpSettings);
-        } else {
-          setSettings(prev);
-        }
-      } else {
-        setSettings(prev);
-      }
+      setSettings(mcpSettingsResponseSchema.parse(raw));
     } catch {
       setSettings(prev);
     } finally {
@@ -100,6 +78,13 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       count: stats.keys,
       description:
         'Create bearer tokens that clients use to authenticate. Each key has scoped permissions',
+    },
+    {
+      href: '/admin/orchestration/mcp/sessions',
+      label: 'Sessions',
+      icon: Monitor,
+      count: null,
+      description: 'View active MCP client connections — which keys are connected and since when',
     },
     {
       href: '/admin/orchestration/mcp/audit',

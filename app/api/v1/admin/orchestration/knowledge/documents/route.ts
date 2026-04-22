@@ -21,17 +21,30 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { uploadDocument } from '@/lib/orchestration/knowledge/document-manager';
+import {
+  uploadDocument,
+  uploadDocumentFromBuffer,
+  previewDocument,
+} from '@/lib/orchestration/knowledge/document-manager';
+import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB (EPUBs can be large)
 const MAX_LINE_COUNT = 100_000;
 const MAX_LINE_LENGTH = 10_000;
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt'] as const;
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'] as const;
+/** Extensions where the upload is a text file — line-length guards apply. */
+const TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 
 function hasAllowedExtension(name: string): boolean {
   const lower = name.toLowerCase();
   return ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function getExtension(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot).toLowerCase() : '';
 }
 
 export const GET = withAdminAuth(async (request, _session) => {
@@ -103,42 +116,104 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  // Advisory MIME check: must start with `text/` or be empty (browsers
-  // often omit the content-type for .md). Extension is the real gate.
-  if (file.type && !file.type.startsWith('text/')) {
-    throw new ValidationError('Unsupported file type', {
-      file: ['Only text files are accepted'],
-    });
-  }
-
-  const content = await file.text();
-
-  // Guard against pathological documents that could exhaust memory during chunking
-  const lines = content.split('\n');
-  if (lines.length > MAX_LINE_COUNT) {
-    throw new ValidationError('Document has too many lines', {
-      file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
-    });
-  }
-  if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
-    throw new ValidationError('Document contains excessively long lines', {
-      file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
-    });
-  }
-
   // Optional category from form field
   const categoryField = formData.get('category');
   const category =
     typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
 
-  const document = await uploadDocument(content, file.name, session.user.id, category);
+  const ext = getExtension(file.name);
 
-  log.info('Document uploaded', {
+  // Text-based formats: read as string, apply line-length guards
+  if (TEXT_EXTENSIONS.has(ext)) {
+    const content = await file.text();
+
+    const lines = content.split('\n');
+    if (lines.length > MAX_LINE_COUNT) {
+      throw new ValidationError('Document has too many lines', {
+        file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
+      });
+    }
+    if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
+      throw new ValidationError('Document contains excessively long lines', {
+        file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
+      });
+    }
+
+    const document = await uploadDocument(content, file.name, session.user.id, category);
+
+    log.info('Document uploaded (text)', {
+      documentId: document.id,
+      fileName: file.name,
+      sizeBytes: file.size,
+      category: document.category ?? 'none',
+      adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_document.create',
+      entityType: 'knowledge_document',
+      entityId: document.id,
+      entityName: file.name,
+      clientIp: clientIP,
+    });
+
+    return successResponse({ document }, undefined, { status: 201 });
+  }
+
+  // Binary formats: read as buffer, route through parser pipeline
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  // PDF requires preview step
+  if (requiresPreview(file.name)) {
+    const preview = await previewDocument(buffer, file.name, session.user.id);
+
+    log.info('Document preview created (PDF)', {
+      documentId: preview.document.id,
+      fileName: file.name,
+      sizeBytes: file.size,
+      extractedTextLength: preview.extractedText.length,
+      warnings: preview.warnings.length,
+      adminId: session.user.id,
+    });
+
+    return successResponse(
+      {
+        document: preview.document,
+        preview: {
+          extractedText: preview.extractedText,
+          title: preview.title,
+          author: preview.author,
+          sectionCount: preview.sectionCount,
+          warnings: preview.warnings,
+          requiresConfirmation: true,
+        },
+      },
+      undefined,
+      { status: 201 }
+    );
+  }
+
+  // EPUB, DOCX: direct buffer upload
+  const document = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, category);
+
+  log.info('Document uploaded (binary)', {
     documentId: document.id,
     fileName: file.name,
+    format: ext,
     sizeBytes: file.size,
     category: document.category ?? 'none',
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_document.create',
+    entityType: 'knowledge_document',
+    entityId: document.id,
+    entityName: file.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ document }, undefined, { status: 201 });

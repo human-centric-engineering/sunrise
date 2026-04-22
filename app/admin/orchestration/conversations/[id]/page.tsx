@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { ConversationTags } from '@/components/admin/orchestration/conversation-tags';
 import { ConversationTraceViewer } from '@/components/admin/orchestration/conversation-trace-viewer';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
@@ -18,6 +19,7 @@ interface ConversationDetail {
   title: string | null;
   agentId: string | null;
   isActive: boolean;
+  tags: string[];
   createdAt: string;
   updatedAt: string;
   agent?: { id: string; name: string; slug: string } | null;
@@ -109,6 +111,11 @@ export default async function ConversationDetailPage({
           <span>{conversation._count?.messages ?? messages.length} messages</span>
         </div>
       </header>
+
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground text-sm">Tags:</span>
+        <ConversationTags conversationId={conversation.id} initialTags={conversation.tags ?? []} />
+      </div>
 
       <ConversationTraceViewer conversation={conversation} messages={messages} />
     </div>

@@ -473,6 +473,56 @@ it('skips welcome when verification is enabled', async () => {
 
 ---
 
+### 16. `/test-plan` Says UPDATE But Canonical Test File Does Not Exist
+
+**Problem**: `/test-plan` (in `from-coverage` mode) classifies a plan item as UPDATE whenever the scoped coverage report shows non-zero coverage for a source file. But coverage attribution can come from a _sibling_ or _shared_ test file at a different path — e.g. `tests/unit/app/api/v1/admin/orchestration/schedules/schedules.route.test.ts` covering handlers in both `schedules/route.ts` AND `schedules/[scheduleId]/route.ts`. The canonical-path test file (`tests/unit/<source path>.test.ts`) may not exist at all. The test-engineer agent opens the plan expecting to `Add` to an existing file, finds nothing at the canonical location, and has to decide on the spot whether to CREATE a new file or mix tests into the shared sibling.
+
+**Solution**: test-engineer agents should ALWAYS check for the canonical test-file location before assuming UPDATE means "file exists". If the canonical file is missing:
+
+1. Check for sibling/shared test files that might already cover this source (grep for `import ... from '{source path}'` across `tests/`).
+2. If a shared file covers the source, prefer CREATE at the canonical path (do not mix into the shared file — that's what caused the confusion in the first place).
+3. Note the deviation in the final "Deviations from the plan" output: `Plan said UPDATE but test file did not exist at canonical location; created new file. Existing coverage came from {shared test path}, which was not modified.`
+
+**Signal for the planner**: when `/test-plan` is written, add a pre-write check: for each UPDATE item, verify the canonical test file exists via `Glob`. If it doesn't, downgrade the action to CREATE and list the alternate coverage source in the plan. Cheap at plan-write time; expensive to surprise multiple agents downstream.
+
+```
+// Plan said:
+// | `app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.ts` | UPDATE |
+//
+// Agent check:
+// Glob: tests/unit/app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route.test.ts
+// → no match
+//
+// Grep: `schedules/[scheduleId]/route` in tests/
+// → tests/unit/app/api/v1/admin/orchestration/schedules/schedules.route.test.ts (shared file)
+//
+// Action: CREATE at canonical path; do not modify shared file.
+// Deviation: note in output.
+```
+
+**Status**: ✅ DOCUMENTED — Discovered while executing `/test-write plan sprint 2` and `/test-write plan sprint 3` (2026-04-22) against the `feature/completeness-and-robustness` branch. Three of four Sprint 2 batches and one Sprint 3 batch hit the same pattern: plan said UPDATE based on scoped coverage %, but the canonical test file did not exist because coverage came from shared sibling test files.
+
+---
+
+### 17. React Flow (`@xyflow/react`) Inner Callbacks Can't Be Invoked Under a Static Mock
+
+**Problem**: Workflow-builder-style components that depend on `@xyflow/react` typically wire up inner callbacks — `onConnect`, `handleNodeAdd`, `handleNodeDelete`, `handleLabelChange`, `handleConfigChange`, etc. — that are only invoked by real canvas interactions (drag-drop, edge connections, node selection). When the library is mocked as a static stub (e.g. `vi.mock('@xyflow/react')` returning `useNodesState → [frozenArray, vi.fn(), vi.fn()]`), these callbacks become unreachable from tests. Function coverage for the file hits an architectural ceiling (often 50–60%) no matter how many handler-level tests you write. Agents that aggressively chase function coverage will either (a) invent contrived tests that don't exercise real behaviour, or (b) try to replace the mock architecture, which balloons scope.
+
+**Solution**: accept the ceiling as an architectural trade-off. The plan's "assert at event-handler level, not canvas rendering" constraint is the honest boundary. Focus tests on:
+
+- Effects and state derived from React Flow props (initial state, edit vs create mode, `initialDefinition` branch).
+- Save / publish / cancel handlers that wrap or replace canvas state.
+- Dialog-driven side effects (template save, history revert, dry-run, copy JSON).
+- Conditional renders around the canvas (`TemplateBanner`, `WorkflowDefinitionHistoryPanel`, versions tab gate).
+
+Set function-coverage targets for Flow-based components accordingly. The typical ceiling is `(total_functions - inner_canvas_callbacks) / total_functions`, which in practice lands at 55–65% for medium-size builders. `/test-plan` should not set function-coverage targets above that ceiling for files that import `@xyflow/react`.
+
+**Signal for the planner**: when `/test-plan` sees a file importing `@xyflow/react` (or similar canvas libraries), clamp the function-coverage target in the plan to "branch ≥70%, functions best-effort with documented ceiling". Do not set a hard function-coverage threshold that only a real canvas harness could satisfy.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing `/test-write plan sprint 3` Batch 3.3 (2026-04-22) on `components/admin/orchestration/workflow-builder/workflow-builder.tsx`. Plan asked for function coverage ≥70%; actual ceiling under the static `@xyflow/react` mock was 58.82%. Branch coverage hit the 70% target exactly; inner callback functions remained unreachable. Applies to any component that uses `useNodesState` / `useEdgesState` / `useReactFlow` with a mocked Flow runtime.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:

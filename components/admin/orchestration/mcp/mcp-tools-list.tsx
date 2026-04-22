@@ -4,10 +4,12 @@
  * MCP Tools List Component
  *
  * Table of capabilities with MCP enable/disable toggle per row.
- * Allows adding capabilities as MCP tools and toggling their exposure.
+ * Allows adding capabilities as MCP tools, toggling exposure,
+ * and inline editing of custom name, description, rate limit, and required scope.
  */
 
 import { useState } from 'react';
+import { Pencil } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -19,6 +21,9 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -26,24 +31,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-
-interface ExposedToolRow {
-  id: string;
-  capabilityId: string;
-  isEnabled: boolean;
-  customName: string | null;
-  customDescription: string | null;
-  rateLimitPerKey: number | null;
-  capability: {
-    id: string;
-    name: string;
-    slug: string;
-    description: string;
-    category: string;
-  };
-}
+import { exposedToolRowSchema, type ExposedToolRow } from '@/lib/validations/mcp';
 
 interface CapabilityRow {
   id: string;
@@ -58,22 +57,37 @@ interface McpToolsListProps {
   capabilities: CapabilityRow[];
 }
 
+interface EditForm {
+  customName: string;
+  customDescription: string;
+  rateLimitPerKey: string;
+  requiresScope: string;
+}
+
 export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) {
   const [tools, setTools] = useState(initialTools);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string>('');
   const [adding, setAdding] = useState(false);
+  const [editingTool, setEditingTool] = useState<ExposedToolRow | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({
+    customName: '',
+    customDescription: '',
+    rateLimitPerKey: '',
+    requiresScope: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
 
   const exposedCapabilityIds = new Set(tools.map((t) => t.capabilityId));
   const availableCapabilities = capabilities.filter((c) => !exposedCapabilityIds.has(c.id));
 
   async function handleToggle(toolId: string, isEnabled: boolean) {
-    const res = await fetch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isEnabled }),
-    });
-    if (res.ok) {
+    try {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
+        body: { isEnabled },
+      });
       setTools((prev) => prev.map((t) => (t.id === toolId ? { ...t, isEnabled } : t)));
+    } catch {
+      // silent
     }
   }
 
@@ -81,35 +95,164 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     if (!selectedCapabilityId) return;
     setAdding(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ capabilityId: selectedCapabilityId, isEnabled: false }),
+      const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
+        body: { capabilityId: selectedCapabilityId, isEnabled: false },
       });
-      if (res.ok) {
-        const raw: unknown = await res.json();
-        const body = raw as Record<string, unknown>;
-        if (body?.success === true && typeof body.data === 'object' && body.data !== null) {
-          setTools((prev) => [...prev, body.data as ExposedToolRow]);
-          setSelectedCapabilityId('');
-        }
-      }
+      const data = exposedToolRowSchema.parse(raw);
+      setTools((prev) => [...prev, data]);
+      setSelectedCapabilityId('');
+    } catch {
+      // silent
     } finally {
       setAdding(false);
     }
   }
 
   async function handleRemove(toolId: string) {
-    const res = await fetch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
-      method: 'DELETE',
-    });
-    if (res.ok) {
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpToolById(toolId));
       setTools((prev) => prev.filter((t) => t.id !== toolId));
+    } catch {
+      // silent
+    }
+  }
+
+  function openEdit(tool: ExposedToolRow) {
+    setEditingTool(tool);
+    setEditForm({
+      customName: tool.customName ?? '',
+      customDescription: tool.customDescription ?? '',
+      rateLimitPerKey: tool.rateLimitPerKey?.toString() ?? '',
+      requiresScope: tool.requiresScope ?? '',
+    });
+  }
+
+  async function handleEditSave() {
+    if (!editingTool) return;
+    setEditSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      const name = editForm.customName.trim();
+      const desc = editForm.customDescription.trim();
+      const rate = editForm.rateLimitPerKey.trim();
+      const scope = editForm.requiresScope.trim();
+
+      body.customName = name || null;
+      body.customDescription = desc || null;
+      body.rateLimitPerKey = rate ? parseInt(rate, 10) : null;
+      body.requiresScope = scope || null;
+
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpToolById(editingTool.id), { body });
+      setTools((prev) =>
+        prev.map((t) =>
+          t.id === editingTool.id
+            ? {
+                ...t,
+                customName: name || null,
+                customDescription: desc || null,
+                rateLimitPerKey: rate ? parseInt(rate, 10) : null,
+                requiresScope: scope || null,
+              }
+            : t
+        )
+      );
+      setEditingTool(null);
+    } catch {
+      // silent
+    } finally {
+      setEditSaving(false);
     }
   }
 
   return (
     <div className="space-y-4">
+      {/* Edit Tool Dialog */}
+      <Dialog
+        open={editingTool !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingTool(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Tool: {editingTool?.capability.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-custom-name">
+                Custom Name
+                <FieldHelp title="Custom Tool Name">
+                  Override the capability name shown to MCP clients. Must be lowercase with
+                  underscores (e.g. <code className="text-xs">search_knowledge</code>). Leave blank
+                  to use the default capability slug.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="edit-custom-name"
+                value={editForm.customName}
+                onChange={(e) => setEditForm((f) => ({ ...f, customName: e.target.value }))}
+                placeholder={editingTool?.capability.slug ?? ''}
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-custom-desc">
+                Custom Description
+                <FieldHelp title="Custom Description">
+                  Override the tool description shown to MCP clients. Clients use this to decide
+                  when to call the tool. Leave blank to use the default capability description.
+                </FieldHelp>
+              </Label>
+              <Textarea
+                id="edit-custom-desc"
+                value={editForm.customDescription}
+                onChange={(e) => setEditForm((f) => ({ ...f, customDescription: e.target.value }))}
+                placeholder={editingTool?.capability.description ?? ''}
+                rows={3}
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-rate-limit">
+                Rate Limit Per Key
+                <FieldHelp title="Per-Tool Rate Limit">
+                  Maximum calls per minute per API key for this specific tool. Leave blank to use
+                  the global server rate limit.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="edit-rate-limit"
+                type="number"
+                min={1}
+                max={10000}
+                value={editForm.rateLimitPerKey}
+                onChange={(e) => setEditForm((f) => ({ ...f, rateLimitPerKey: e.target.value }))}
+                placeholder="default"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-requires-scope">
+                Required Scope
+                <FieldHelp title="Required Scope">
+                  An additional scope the API key must have to call this tool, beyond the standard
+                  <code className="text-xs">tools:execute</code> scope. Use for sensitive tools that
+                  need extra permission (e.g. <code className="text-xs">admin:write</code>).
+                </FieldHelp>
+              </Label>
+              <Input
+                id="edit-requires-scope"
+                value={editForm.requiresScope}
+                onChange={(e) => setEditForm((f) => ({ ...f, requiresScope: e.target.value }))}
+                placeholder="none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => void handleEditSave()} disabled={editSaving}>
+              {editSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add capability */}
       {availableCapabilities.length > 0 && (
         <div className="flex items-center gap-3">
@@ -170,7 +313,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                   <span>Enabled</span>
                 </Tip>
               </TableHead>
-              <TableHead className="w-[80px]" />
+              <TableHead className="w-[120px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -217,14 +360,26 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleRemove(tool.id)}
-                      className="text-destructive text-xs"
-                    >
-                      Remove
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEdit(tool)}
+                        className="text-xs"
+                        aria-label={`Edit ${tool.capability.name}`}
+                      >
+                        <Pencil className="mr-1 h-3 w-3" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleRemove(tool.id)}
+                        className="text-destructive text-xs"
+                      >
+                        Remove
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

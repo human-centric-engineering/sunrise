@@ -30,13 +30,13 @@ describe('PatternPalette', () => {
     }
   });
 
-  it('renders exactly 12 palette blocks (one per step type)', () => {
+  it('renders exactly 14 palette blocks (one per step type)', () => {
     render(<PatternPalette />);
 
-    // STEP_REGISTRY has 12 entries
-    expect(STEP_REGISTRY.length).toBe(12);
+    // STEP_REGISTRY has 14 entries
+    expect(STEP_REGISTRY.length).toBe(14);
     const blocks = document.querySelectorAll('[data-testid^="palette-block-"]');
-    expect(blocks.length).toBe(12);
+    expect(blocks.length).toBe(14);
   });
 
   it('all palette blocks have draggable attribute', () => {
@@ -160,6 +160,7 @@ describe('PatternPalette', () => {
         guard: 18, // Guardrails & Safety
         evaluate: 19, // Evaluation & Monitoring
         external_call: 15, // Inter-Agent Communication (A2A)
+        agent_call: 8, // Orchestrator-Workers
       };
 
       for (const entry of STEP_REGISTRY) {

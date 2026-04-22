@@ -102,12 +102,12 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act: render server component (async)
-    render(await EvaluationsListPage());
+    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
 
     // Assert: headings present
-    expect(screen.getByRole('heading', { name: /^evaluations$/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
     expect(
-      screen.getByText(/run agent evaluation sessions, annotate responses/i)
+      screen.getByText(/evaluate agent quality and run a\/b experiments/i)
     ).toBeInTheDocument();
   });
 
@@ -123,7 +123,7 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act
-    render(await EvaluationsListPage());
+    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
 
     // Assert: evaluation titles appear (via EvaluationsTable)
     await waitFor(() => {
@@ -141,10 +141,10 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act: should not throw
-    render(await EvaluationsListPage());
+    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
 
     // Assert: page renders (empty state in table)
-    expect(screen.getByRole('heading', { name: /^evaluations$/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
     expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
   });
 
@@ -159,13 +159,13 @@ describe('EvaluationsListPage (server component)', () => {
     // Act: should not throw
     let thrown = false;
     try {
-      render(await EvaluationsListPage());
+      render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
     } catch {
       thrown = true;
     }
 
     // Assert
     expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^evaluations$/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
   });
 });

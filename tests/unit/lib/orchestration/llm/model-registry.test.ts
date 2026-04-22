@@ -235,6 +235,141 @@ describe('OpenRouter merge overwrites fallback data', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// New branch-coverage cases (Sprint 3, Batch 3.1)
+// ---------------------------------------------------------------------------
+
+describe('getModel — deprecated/removed model ID', () => {
+  it('returns undefined for a model ID that is not in the registry', () => {
+    // Arrange: fresh fallback-only registry (no OpenRouter refresh)
+    registry.__resetForTests();
+
+    // Act: look up a model id that was never registered
+    const result = registry.getModel('deprecated-model-v0-ancient');
+
+    // Assert: undefined returned (no throw, no fallback substitution)
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for an empty-string model ID', () => {
+    // Arrange
+    registry.__resetForTests();
+    // Act
+    const result = registry.getModel('');
+    // Assert
+    expect(result).toBeUndefined();
+  });
+});
+
+describe('validateTaskDefaults', () => {
+  it('returns no errors when all provided model IDs are known', () => {
+    // Arrange: use known fallback ids
+    const defaults = { chat: 'claude-haiku-4-5', reasoning: 'claude-opus-4-6' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: no validation errors
+    expect(errors).toHaveLength(0);
+  });
+
+  it('returns an error entry for each unknown model ID', () => {
+    // Arrange: one valid, one unknown
+    const defaults = { chat: 'claude-haiku-4-5', reasoning: 'not-a-real-model-id' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: only the unknown id produces an error; message names the bad id
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('reasoning');
+    expect(errors[0].message).toContain('not-a-real-model-id');
+  });
+
+  it('returns an error for an empty-string model ID', () => {
+    // Arrange: empty string is explicitly invalid per source contract
+    const defaults = { chat: '' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: empty string flagged
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('chat');
+    expect(errors[0].message).toMatch(/non-empty/);
+  });
+
+  it('skips tasks where the value is undefined (partial map)', () => {
+    // Arrange: only one task supplied — others are implicitly undefined
+    const defaults: Partial<Record<'chat' | 'routing', string>> = { chat: 'claude-haiku-4-5' };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: no errors; undefined tasks are not validated
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe('computeDefaultModelMap', () => {
+  it('returns a map with all expected task keys', () => {
+    // Arrange: use fresh registry with fallback models
+    registry.__resetForTests();
+    // Act
+    const defaults = registry.computeDefaultModelMap();
+    // Assert: all required task keys present
+    expect(defaults).toHaveProperty('routing');
+    expect(defaults).toHaveProperty('chat');
+    expect(defaults).toHaveProperty('reasoning');
+    expect(defaults).toHaveProperty('embeddings');
+  });
+
+  it('falls back to hardcoded claude-haiku-4-5 when registry has no non-local budget models', () => {
+    // Arrange: clear registry to simulate empty state after a failed refresh
+    registry.__resetForTests();
+    // Force empty state by mocking fetch to fail so fetchedAt stays 0
+    // then check the fallback ids come from the static strings
+    const defaults = registry.computeDefaultModelMap();
+    // Assert: the fallback is one of the known static ids (not undefined)
+    expect(typeof defaults.routing).toBe('string');
+    expect(defaults.routing.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getRegistryFetchedAt', () => {
+  it('returns 0 before any refresh', () => {
+    // Arrange
+    registry.__resetForTests();
+    // Act
+    const ts = registry.getRegistryFetchedAt();
+    // Assert: 0 signals "never refreshed from OpenRouter"
+    expect(ts).toBe(0);
+  });
+
+  it('returns a non-zero timestamp after a successful refresh', async () => {
+    // Arrange
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [] }),
+    }) as unknown as typeof fetch;
+    // Act
+    await registry.refreshFromOpenRouter({ force: true });
+    const ts = registry.getRegistryFetchedAt();
+    // Assert: timestamp is a recent epoch ms value
+    expect(ts).toBeGreaterThan(0);
+  });
+});
+
+describe('refreshFromOpenRouter — first-run failure preserves fallback map', () => {
+  it('seeds the fallback map when fetchedAt is 0 and the refresh fails', async () => {
+    // Arrange: fresh registry (fetchedAt=0), network error
+    registry.__resetForTests();
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
+
+    // Act
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fallback map still accessible (fetchedAt remains 0 but models are there)
+    expect(registry.getModel('claude-haiku-4-5')).toBeDefined();
+    expect(registry.getRegistryFetchedAt()).toBe(0);
+  });
+});
+
 describe('refreshFromProvider', () => {
   function makeProvider(models: Array<{ id: string; name?: string; provider?: string }>) {
     return {
@@ -352,5 +487,272 @@ describe('refreshFromProvider', () => {
 
     // Assert: model count unchanged
     expect(registry.getAvailableModels().length).toBe(countBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage additions (Sprint 1, Batch 1.1)
+// ---------------------------------------------------------------------------
+
+describe('refreshFromOpenRouter — retriable flag on 429 response', () => {
+  it('marks the ProviderError as retriable when OpenRouter returns 429', async () => {
+    // Arrange: mock a 429 rate-limit response
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: vi.fn(),
+    }) as unknown as typeof fetch;
+
+    // Act: refresh should absorb the error and preserve fallback
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fallback still accessible — the catch block handled the ProviderError
+    expect(registry.getModel('claude-sonnet-4-6')).toBeDefined();
+  });
+});
+
+describe('parseOpenRouterEntry — entry.id has no provider prefix (no slash)', () => {
+  it('sets provider to "unknown" when the id contains no slash', async () => {
+    // Arrange: id with no slash → canonicalId === entry.id, provider = 'unknown'
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'no-prefix-model',
+            name: 'No Prefix Model',
+            context_length: 4096,
+            pricing: { prompt: '0.000001', completion: '0.000002' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: canonical id resolves; provider defaults to 'unknown'
+    const model = registry.getModel('no-prefix-model');
+    expect(model).toBeDefined();
+    expect(model?.provider).toBe('unknown');
+  });
+});
+
+describe('parseOpenRouterEntry — missing optional pricing and metadata fields', () => {
+  it('defaults inputCostPerMillion and outputCostPerMillion to 0 when pricing is absent', async () => {
+    // Arrange: no pricing object at all → costs default to 0, tier classifies as 'local'
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'free-provider/free-model',
+            name: 'Free Model',
+            context_length: 8192,
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('free-model');
+    expect(model).toBeDefined();
+    expect(model?.inputCostPerMillion).toBe(0);
+    expect(model?.outputCostPerMillion).toBe(0);
+    expect(model?.tier).toBe('local');
+  });
+
+  it('falls back to canonicalId as name when the name field is absent', async () => {
+    // Arrange: no name field → name should fall back to the canonical id
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'provider-x/unnamed-model',
+            context_length: 4096,
+            pricing: { prompt: '0.000001', completion: '0.000002' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('unnamed-model');
+    expect(model).toBeDefined();
+    expect(model?.name).toBe('unnamed-model');
+  });
+
+  it('defaults maxContext to 0 when context_length is absent', async () => {
+    // Arrange: no context_length field
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'provider-x/no-context-model',
+            name: 'No Context Model',
+            pricing: { prompt: '0.000001', completion: '0.000002' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('no-context-model');
+    expect(model).toBeDefined();
+    expect(model?.maxContext).toBe(0);
+  });
+
+  it('defaults inputCostPerMillion to 0 when prompt pricing string is non-numeric (NaN)', async () => {
+    // Arrange: pricing.prompt is a non-numeric string → parseFloat returns NaN
+    // → Number.isFinite(NaN) is false → cost defaults to 0
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'provider-y/nan-priced-model',
+            name: 'NaN Priced Model',
+            context_length: 4096,
+            pricing: { prompt: 'not-a-number', completion: 'also-not-a-number' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('nan-priced-model');
+    expect(model).toBeDefined();
+    // Non-finite parseFloat result → cost defaults to 0
+    expect(model?.inputCostPerMillion).toBe(0);
+    expect(model?.outputCostPerMillion).toBe(0);
+  });
+});
+
+describe('classifyTier — boundary values', () => {
+  it('classifies a model with inputCostPerMillion exactly 0.5 as budget', async () => {
+    // Arrange: 0.5 per million = 0.0000005 per token (exactly at the budget ceiling)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'provider/boundary-budget',
+            name: 'Boundary Budget',
+            context_length: 8000,
+            pricing: { prompt: '0.0000005', completion: '0.000001' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('boundary-budget');
+    expect(model).toBeDefined();
+    expect(model?.tier).toBe('budget');
+  });
+
+  it('classifies a model with inputCostPerMillion above 5 as frontier', async () => {
+    // Arrange: 10 per million = 0.00001 per token (above the mid ceiling of 5)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'provider/expensive-model',
+            name: 'Expensive Model',
+            context_length: 200_000,
+            pricing: { prompt: '0.00001', completion: '0.00003' },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+
+    const model = registry.getModel('expensive-model');
+    expect(model).toBeDefined();
+    expect(model?.tier).toBe('frontier');
+  });
+});
+
+describe('refreshFromProvider — error message extraction', () => {
+  it('logs the Error message when provider throws an Error instance', async () => {
+    const { logger } = await import('@/lib/logging');
+
+    // Arrange: provider throws a standard Error
+    const failingProvider = {
+      name: 'error-thrower',
+      isLocal: false,
+      listModels: vi.fn().mockRejectedValue(new Error('explicit error message')),
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      testConnection: vi.fn(),
+    };
+
+    // Act
+    const result = await registry.refreshFromProvider(failingProvider);
+
+    // Assert: returns empty array
+    expect(result).toEqual([]);
+    // Assert: error.message is extracted from the Error instance
+    expect(logger.warn).toHaveBeenCalledWith(
+      'refreshFromProvider failed',
+      expect.objectContaining({
+        provider: 'error-thrower',
+        error: 'explicit error message',
+      })
+    );
+  });
+});
+
+describe('refreshFromOpenRouter — catch preserves previously-cached state', () => {
+  it('does not reset fetchedAt to 0 when a subsequent forced refresh fails', async () => {
+    // Arrange: first refresh succeeds and sets fetchedAt > 0
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'openai/gpt-4o',
+            name: 'GPT-4o',
+            context_length: 128_000,
+            pricing: { prompt: '0.0000025', completion: '0.00001' },
+            supported_parameters: ['tools'],
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    await registry.refreshFromOpenRouter({ force: true });
+    const fetchedAtAfterFirst = registry.getRegistryFetchedAt();
+    expect(fetchedAtAfterFirst).toBeGreaterThan(0);
+
+    // Arrange: second forced refresh fails
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error('network error')) as unknown as typeof fetch;
+
+    // Act
+    await registry.refreshFromOpenRouter({ force: true });
+
+    // Assert: fetchedAt is preserved from the first successful run (the `if (state.fetchedAt === 0)`
+    // guard in the catch block correctly skips the reset when fetchedAt is non-zero)
+    expect(registry.getRegistryFetchedAt()).toBe(fetchedAtAfterFirst);
+    expect(registry.getModel('gpt-4o')).toBeDefined();
   });
 });

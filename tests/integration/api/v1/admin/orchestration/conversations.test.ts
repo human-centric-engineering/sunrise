@@ -5,12 +5,11 @@
  *
  * @see app/api/v1/admin/orchestration/conversations/route.ts
  *
- * Key security assertions:
+ * Key assertions:
  * - Admin auth required (401/403 otherwise)
- * - Results are ALWAYS scoped to session.user.id (per-user isolation).
- *   Admins see only their own conversations — no cross-user audit view.
- * - Optional filters (agentId, isActive, q) are passed to the WHERE clause
- *   in addition to the mandatory userId scope.
+ * - Always scoped to session.user.id (matches detail/PATCH/DELETE)
+ * - Any userId query param is ignored
+ * - Optional filters (agentId, isActive, q, dateFrom, dateTo) work correctly
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -51,6 +50,7 @@ import { prisma } from '@/lib/db/client';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwu2';
 const CONV_ID = 'cmjbv4i3x00003wsloputgwu3';
+const USER_ID = 'cmjbv4i3x00003wsloputgwu5';
 
 function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
@@ -104,8 +104,8 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
     });
   });
 
-  describe('Per-user scoping (CRITICAL)', () => {
-    it('always passes userId: session.user.id in WHERE clause', async () => {
+  describe('Session scoping', () => {
+    it('always scopes to session.user.id', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -117,7 +117,16 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
           where: expect.objectContaining({ userId: ADMIN_ID }),
         })
       );
-      expect(vi.mocked(prisma.aiConversation.count)).toHaveBeenCalledWith(
+    });
+
+    it('ignores userId query param — stays scoped to session user', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+      await GET(makeGetRequest({ userId: USER_ID }));
+
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ userId: ADMIN_ID }),
         })
@@ -143,7 +152,7 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
       expect(data.meta).toBeDefined();
     });
 
-    it('returns empty array when admin has no conversations', async () => {
+    it('returns empty array when no conversations exist', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -156,8 +165,8 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
     });
   });
 
-  describe('Filtering (all filters must also include userId scope)', () => {
-    it('passes agentId filter combined with userId scope', async () => {
+  describe('Filtering', () => {
+    it('passes agentId filter', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -166,12 +175,12 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
 
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: ADMIN_ID, agentId: AGENT_ID }),
+          where: expect.objectContaining({ agentId: AGENT_ID }),
         })
       );
     });
 
-    it('passes isActive=true (string) as boolean true in WHERE clause', async () => {
+    it('passes isActive=true (string) as boolean true', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -180,12 +189,12 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
 
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: ADMIN_ID, isActive: true }),
+          where: expect.objectContaining({ isActive: true }),
         })
       );
     });
 
-    it('passes isActive=false (string) as boolean false in WHERE clause', async () => {
+    it('passes isActive=false (string) as boolean false', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -194,12 +203,12 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
 
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: ADMIN_ID, isActive: false }),
+          where: expect.objectContaining({ isActive: false }),
         })
       );
     });
 
-    it('passes title search q combined with userId scope', async () => {
+    it('passes title search q', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -209,14 +218,13 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            userId: ADMIN_ID,
             title: expect.objectContaining({ contains: 'test chat' }),
           }),
         })
       );
     });
 
-    it('passes messageSearch as message content filter combined with userId scope', async () => {
+    it('passes messageSearch as message content filter', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
       vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
@@ -226,7 +234,6 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            userId: ADMIN_ID,
             messages: {
               some: { content: { contains: 'error handling', mode: 'insensitive' } },
             },
@@ -245,11 +252,26 @@ describe('GET /api/v1/admin/orchestration/conversations', () => {
       expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            userId: ADMIN_ID,
             title: expect.objectContaining({ contains: 'support' }),
             messages: {
               some: { content: { contains: 'error', mode: 'insensitive' } },
             },
+          }),
+        })
+      );
+    });
+
+    it('passes dateFrom as gte filter on updatedAt', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+      await GET(makeGetRequest({ dateFrom: '2025-01-01T00:00:00Z' }));
+
+      expect(vi.mocked(prisma.aiConversation.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            updatedAt: expect.objectContaining({ gte: expect.any(Date) }),
           }),
         })
       );

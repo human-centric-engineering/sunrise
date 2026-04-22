@@ -20,6 +20,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/:id/instructions-history`  | GET                | Read the full `systemInstructions` audit trail            |
 | `/api/v1/admin/orchestration/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions` version         |
 | `/api/v1/admin/orchestration/agents/:id/clone`                 | POST               | Deep-clone agent with capability bindings                 |
+| `/api/v1/admin/orchestration/agents/:id/versions`              | GET                | List agent version snapshots                              |
+| `/api/v1/admin/orchestration/agents/:id/versions/:vId/restore` | POST               | Restore agent from a version snapshot                     |
 | `/api/v1/admin/orchestration/agents/bulk`                      | POST               | Bulk activate/deactivate/delete agents                    |
 | `/api/v1/admin/orchestration/agents/compare`                   | GET                | Compare two agents side-by-side                           |
 | `/api/v1/admin/orchestration/agents/export`                    | POST               | Export selected agents as a versioned bundle              |
@@ -54,10 +56,16 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/knowledge/documents/:id/retry`    | POST               | Retry failed document ingestion                           |
 | `/api/v1/admin/orchestration/knowledge/graph`                  | GET                | Knowledge graph data (nodes + links)                      |
 | `/api/v1/admin/orchestration/knowledge/seed`                   | POST               | Seed the canonical "Agentic Design Patterns" doc          |
-| `/api/v1/admin/orchestration/conversations`                    | GET                | List the caller's own conversations                       |
-| `/api/v1/admin/orchestration/conversations/:id`                | DELETE             | Delete one of the caller's conversations                  |
+| `/api/v1/admin/orchestration/conversations`                    | GET                | List conversations (supports `tag` filter)                |
+| `/api/v1/admin/orchestration/conversations/:id`                | GET, PATCH, DELETE | Get, update (title/tags/isActive), or delete conversation |
 | `/api/v1/admin/orchestration/conversations/:id/messages`       | GET                | Read messages for one of the caller's conversations       |
 | `/api/v1/admin/orchestration/conversations/clear`              | POST               | Bulk-delete the caller's conversations by filter          |
+| `/api/v1/admin/orchestration/maintenance/tick`                 | POST               | Unified maintenance: schedules, retries, reaper, backfill |
+| `/api/v1/admin/orchestration/analytics/topics`                 | GET                | Popular topics by frequency                               |
+| `/api/v1/admin/orchestration/analytics/unanswered`             | GET                | Unanswered questions (hedging detection)                  |
+| `/api/v1/admin/orchestration/analytics/engagement`             | GET                | Engagement metrics (conversations, users, depth, trend)   |
+| `/api/v1/admin/orchestration/analytics/content-gaps`           | GET                | Content gap analysis (high unanswered ratio topics)       |
+| `/api/v1/admin/orchestration/analytics/feedback`               | GET                | Feedback summary (thumbs up/down by agent)                |
 | `/api/v1/admin/orchestration/costs`                            | GET                | Cost breakdown by day / agent / model                     |
 | `/api/v1/admin/orchestration/costs/summary`                    | GET                | Today / week / month totals, per-agent, per-model         |
 | `/api/v1/admin/orchestration/costs/alerts`                     | GET                | Agents at or above 80% of their monthly budget            |
@@ -68,8 +76,19 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/evaluations/:id/logs`             | GET                | Read log events for one of the caller's sessions          |
 | `/api/v1/admin/orchestration/evaluations/:id/complete`         | POST               | Run the AI analysis pass and flip to `completed`          |
 | `/api/v1/admin/orchestration/quiz-scores`                      | GET, POST          | List / save quiz scores                                   |
+| `/api/v1/admin/orchestration/agents/:id/versions`              | GET                | List agent config version history                         |
+| `/api/v1/admin/orchestration/agents/:id/versions/:versionId`   | GET, POST          | Get version / restore to this version                     |
 | `/api/v1/admin/orchestration/webhooks`                         | GET, POST          | List / create webhook subscriptions                       |
 | `/api/v1/admin/orchestration/webhooks/:id`                     | GET, PATCH, DELETE | Get / update / delete a webhook subscription              |
+| `/api/v1/admin/orchestration/webhooks/:id/deliveries`          | GET                | Delivery log for a webhook subscription                   |
+| `/api/v1/admin/orchestration/webhooks/deliveries/:id/retry`    | POST               | Retry a failed webhook delivery                           |
+| `/api/v1/admin/orchestration/workflows/:id/execute-stream`     | GET                | SSE stream for workflow execution (EventSource-friendly)  |
+| `/api/v1/admin/orchestration/workflows/:id/save-as-template`   | POST               | Save workflow as a reusable template                      |
+| `/api/v1/admin/orchestration/workflows/templates`              | GET                | List workflow templates (builtin + custom)                |
+| `/api/v1/admin/orchestration/conversations/export`             | GET                | Export conversations as JSON or CSV                       |
+| `/api/v1/admin/orchestration/conversations/search`             | POST               | Semantic search across conversation messages              |
+| `/api/v1/admin/orchestration/hooks`                            | GET, POST          | List / create event hooks                                 |
+| `/api/v1/admin/orchestration/hooks/:id`                        | GET, PATCH, DELETE | Get / update / delete an event hook                       |
 | `/api/v1/admin/orchestration/observability/dashboard-stats`    | GET                | Aggregated observability metrics                          |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
@@ -99,7 +118,7 @@ curl -X POST /api/v1/admin/orchestration/agents \
   }'
 ```
 
-Validated by `createAgentSchema`. New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
+Validated by `createAgentSchema`. Optional fields include `rateLimitRpm` (Int, per-agent rate limit in requests/minute — null uses global default). New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
 
 ### Update agent — `systemInstructions` audit push
 
@@ -237,6 +256,33 @@ Deep-clones an agent including capability bindings in a single transaction. The 
 Slug collision: if the slug is taken, retries with `-copy-2`, `-copy-3`, up to 5 attempts. Returns **201** with the new agent on success, **409** if all slug variants are taken.
 
 Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
+
+### Agent version restore
+
+```
+POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restore
+```
+
+Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields (systemInstructions, model, provider, fallbackProviders, temperature, maxTokens, topicBoundaries, brandVoiceInstructions, knowledgeCategories, rateLimitRpm, visibility, metadata) to the agent, and creates a new version entry recording the restore action.
+
+**Response (200):**
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "agent": {
+      /* updated agent */
+    },
+    "restoredFromVersion": 3,
+    "newVersion": 6,
+  },
+}
+```
+
+Returns **404** if the agent or version doesn't exist.
+
+**Key file:** `app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route.ts`
 
 ## Export / import
 
@@ -877,8 +923,8 @@ curl -X POST /api/v1/admin/orchestration/knowledge/documents \
 **Multipart upload contract (load-bearing):**
 
 - **Field name:** `file` (form field)
-- **Max size:** 10 MB (`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in the route)
-- **Allowed extensions:** `.md`, `.markdown`, `.txt` — text only this session. PDF / HTML are future work
+- **Max size:** 50 MB (`MAX_UPLOAD_BYTES = 50 * 1024 * 1024` in the route)
+- **Allowed extensions:** `.md`, `.markdown`, `.txt`, `.epub`, `.docx`, `.pdf` — see [`document-ingestion.md`](./document-ingestion.md) for parser details and the `.pdf` preview/confirm flow
 - **MIME type:** advisory only. The extension check is the source of truth — browsers frequently omit `Content-Type` for `.md` files
 - **Unknown file field / missing file / wrong type** → 400 `ValidationError`
 - **Returns** 201 with `{ document: { id, title, status, ... } }`

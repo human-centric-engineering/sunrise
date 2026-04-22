@@ -74,6 +74,16 @@ Pre-check via `checkBudget(agentId)` in `streaming-handler.ts`:
 - **80% warning**: if `spent / limit >= 0.8`, yields `{ type: 'warning', code: 'budget_warning', message: '...' }` and logs. Stream continues.
 - **Exceeded**: yields `{ type: 'error', code: 'budget_exceeded' }` with user-friendly message. Stream terminates.
 
+### Budget Check Atomicity
+
+`checkBudget()` reads a SUM aggregate; `logCost()` writes a new row after the LLM call completes. Without protection, concurrent requests for the same agent could all pass the budget check before any cost is logged.
+
+**Solution:** `withAgentBudgetLock(agentId, fn)` in `lib/orchestration/llm/budget-mutex.ts` — an in-memory per-agent promise-chain mutex. Calls for the same `agentId` are serialised; calls for different agents proceed in parallel.
+
+**Accepted over-run tolerance:** `logCost()` is fire-and-forget after streaming (not wrapped by the mutex, which would block the stream). The worst case is one LLM turn per concurrent in-flight request for the same agent — typically < $0.01.
+
+**Multi-instance note:** This mutex is in-process only. If horizontal scaling is needed in future, replace with `SELECT pg_try_advisory_xact_lock(hashtext(agentId))` or a Redis-based lock.
+
 ## Input Sanitisation
 
 `scanForInjection(message)` detects three pattern categories:
@@ -117,6 +127,50 @@ Dual rate limiting on `POST /chat/stream`:
 2. `chatLimiter` — 20/min per user ID (new, catches runaway admin usage)
 
 Both configured in `lib/security/rate-limit.ts` via `SECURITY_CONSTANTS.RATE_LIMIT.LIMITS`.
+
+### Per-Agent Rate Limiting
+
+Agents can have a custom `rateLimitRpm` (nullable Int on `AiAgent`). When set, the chat stream applies a per-agent limit keyed by `${agentId}:${userId}` instead of the global default. When null, the global `chatLimiter` applies.
+
+Created via `createDynamicLimiter(namespace, defaultRpm)` in `lib/security/rate-limit.ts`. The dynamic limiter supports per-key custom RPM overrides.
+
+API keys (`AiApiKey`) also support an optional `rateLimitRpm` field for per-key rate limiting on webhook triggers.
+
+## Per-Agent Guard Mode Override
+
+Both input and output guards support per-agent mode overrides via `AiAgent.inputGuardMode` and `AiAgent.outputGuardMode` (nullable strings). When set, the agent-level mode takes precedence over the global `AiOrchestrationSettings` default. When null, the global setting applies.
+
+Valid modes: `log_only`, `warn_and_continue`, `block`.
+
+Use case: A customer-facing FAQ bot may use `block` mode to prevent any flagged content, while an internal reasoning agent uses `log_only` to avoid false-positive interruptions.
+
+## Mid-Stream Retry
+
+If the LLM stream fails after starting (network error, provider crash), the streaming handler automatically retries with the next fallback provider:
+
+1. Record a circuit breaker failure for the current provider
+2. Emit `{ type: 'warning', code: 'provider_retry' }` SSE event
+3. Reset accumulated content and tool calls
+4. Resolve the next provider from `agent.fallbackProviders`
+5. Restart the stream from the new provider
+
+Maximum retries: 2 (`MAX_STREAM_RETRIES`). `AbortError` (client disconnect) bypasses retry — no point retrying if nobody's listening. See [Streaming Chat Handler](./chat.md#mid-stream-retry--recovery) for details.
+
+## Guard Mode Fallback Logging
+
+When the streaming handler fails to load `OrchestrationSettings` (e.g. DB outage) for either input or output guard mode resolution, it falls back to `log_only` and logs a `logger.warn` with a message like `'Failed to load orchestration settings for input guard mode, falling back to log_only'`. This ensures admins are alerted that their configured `block` or `warn_and_continue` mode isn't being enforced, rather than silently degrading.
+
+## Tool Error Backoff
+
+The streaming handler tracks per-tool consecutive failure counts. After a tool fails **2 consecutive times** (`TOOL_FAILURE_THRESHOLD`), the handler skips subsequent dispatch calls for that tool and returns a `{ success: false, error: { code: 'tool_unavailable' } }` result to the LLM. This prevents a broken tool from burning through all `MAX_TOOL_ITERATIONS` iterations. A successful dispatch resets the counter.
+
+Applies to both single and parallel tool dispatch paths.
+
+## Maintenance Tick Overlap Protection
+
+The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions. The flag is cleared in a `finally` block to guarantee reset even on errors.
+
+This is sufficient for single-server deployments. Multi-instance deployments would need a distributed lock (e.g. Postgres advisory lock or Redis).
 
 ## SSE Resilience
 

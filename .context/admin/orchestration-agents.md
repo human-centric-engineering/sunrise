@@ -18,24 +18,27 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column    | Source                              | Notes                                                      |
-| --------- | ----------------------------------- | ---------------------------------------------------------- |
-| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                            |
-| Name      | `agent.name`                        | Sort header. Links to edit page                            |
-| Slug      | `agent.slug`                        | Monospace, muted                                           |
-| Caps      | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0          |
-| Convs     | `agent._count.conversations`        | Inline from list API                                       |
-| Provider  | `agent.provider`                    |                                                            |
-| Model     | `agent.model`                       |                                                            |
-| Temp      | `agent.temperature.toFixed(2)`      | Right-aligned, tabular                                     |
-| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                            |
-| Spend MTD | `agent._budget.spent`               | Inline from list API (batch `groupBy`). `—` when no budget |
-| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure          |
-| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                            |
+| Column    | Source                              | Notes                                                                       |
+| --------- | ----------------------------------- | --------------------------------------------------------------------------- |
+| ☐ select  | Local `Set<string>` state           | Clears on page change / refetch                                             |
+| Name      | `agent.name`                        | Sort header. Links to edit page. Visibility badge inline. Description below |
+| Tools     | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0                           |
+| Chats     | `agent._count.conversations`        | Inline from list API                                                        |
+| Model     | `agent.provider` + `agent.model`    | Combined: `provider / model`                                                |
+| Budget    | `agent.monthlyBudgetUsd`            | `—` when `null`                                                             |
+| Spend MTD | `agent._budget.spent`               | Inline from list API (batch `groupBy`). `—` when no budget                  |
+| Created   | `agent.createdAt`                   | Relative time (`3d ago`). Creator name in tooltip via `agent.creator`       |
+| Status    | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure                           |
+| ⋯ Actions | Dropdown: Edit · Duplicate · Delete |                                                                             |
+
+### Name cell enrichments
+
+- **Visibility badge** — `public` and `invite_only` agents show an outline badge (`Public` with Eye icon, `Invite` with Link2 icon) next to the name. `internal` agents show no badge (default).
+- **Description subtitle** — when `agent.description` is set, a truncated muted line appears below the name.
 
 ### Bulk export
 
-Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent). There is intentionally **no bulk delete** — deletes are row-only to keep the blast radius of a mistaken selection tiny.
+Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent).
 
 ### Import
 
@@ -55,6 +58,33 @@ Row Delete sends `DELETE /agents/:id`, which sets `isActive=false` server-side. 
 - Sort is **client-side** over the current page, limited to `name` and `createdAt`, because Phase 3's `listAgentsQuerySchema` has no `sortBy` / `sortOrder` params.
 - Pagination delegates to the server (`?page=&limit=`) and mirrors `UserTable`'s prev/next buttons.
 
+## Compare agents
+
+`/admin/orchestration/agents/compare?a=<idA>&b=<idB>` — side-by-side comparison view for two agents.
+
+**Entry points:**
+
+- From the list page, select exactly two rows and click the **Compare** header button (enabled only when `selected.size === 2`).
+- Direct URL with both `a` and `b` query params.
+
+**Missing or partial query params** render a short explainer with a link back to the list. No `notFound()` — the page exists for any logged-in admin.
+
+**Shell:** `app/admin/orchestration/agents/compare/page.tsx` is an async server component that only parses the query params and mounts `<AgentComparisonView agentIdA={a} agentIdB={b} />` (the comparison itself is a client island).
+
+**Data:** `AgentComparisonView` fetches `GET /agents/compare?agentIds=<idA>,<idB>` on mount and expects `{ agents: [AgentStats, AgentStats] }`. The comma-separated `agentIds` form is required — single-param `?a=&b=` is the URL contract, `?agentIds=` is the API contract.
+
+**Layout:** three Cards rendered in a `grid-cols-[1fr_1fr_1fr]` row (label column, agent A column, agent B column):
+
+| Card                   | Rows                                                                  | Highlighting (`better`)     |
+| ---------------------- | --------------------------------------------------------------------- | --------------------------- |
+| **Configuration**      | Model, Provider, Capabilities                                         | Capabilities → higher       |
+| **Performance**        | Total Cost ($), LLM Calls, Input Tokens, Output Tokens, Conversations | Cost + Input Tokens → lower |
+| **Evaluation Results** | Total Evaluations, Completed                                          | Completed → higher          |
+
+Values that "win" on the `better` direction render in green. Ties and missing numbers are uncoloured. The `ComparisonRow` helper renders `—` for `null` values so rows stay aligned when an agent has no telemetry yet.
+
+**Back button:** top-left "Back to agents" link returns to the list without preserving selection state.
+
 ## Create & edit pages
 
 Both are thin server shells that parallel-fetch the provider list and the aggregated model registry so the form's Model tab hydrates without a loading flicker. Missing providers/models → the form falls back to free-text inputs with an amber warning banner (see [`agent-form.md`](./agent-form.md)).
@@ -63,7 +93,7 @@ The edit page additionally fetches the agent itself via `GET /agents/:id`. A `nu
 
 ## Related
 
-- [Agent form](./agent-form.md) — 5-tab form walkthrough, every FieldHelp copy, test-connection, capabilities tab
+- [Agent form](./agent-form.md) — 7-tab form walkthrough, every FieldHelp copy, test-connection, capabilities tab, version history
 - [Orchestration dashboard](./orchestration-dashboard.md)
 - [Admin API reference](../orchestration/admin-api.md)
 - [Setup wizard](./setup-wizard.md) — shares `<AgentTestChat>` with the agent edit page

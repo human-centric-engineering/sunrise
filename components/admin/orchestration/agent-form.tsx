@@ -3,7 +3,7 @@
 /**
  * AgentForm (Phase 4 Session 4.2)
  *
- * Shared create / edit form for `AiAgent`. One `<form>`, five shadcn tabs,
+ * Shared create / edit form for `AiAgent`. One `<form>`, eight shadcn tabs,
  * one PATCH (or POST). Tabs are layout, not save boundaries.
  *
  * Pattern follows `components/admin/feature-flag-form.tsx`:
@@ -20,7 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Save, Shield } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Save, Shield } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,8 +44,10 @@ import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat'
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
-import { ModelTestButton } from '@/components/admin/orchestration/model-test-button';
-import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
+import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
+import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
+import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 /**
@@ -69,6 +71,16 @@ const agentFormSchema = z.object({
   maxTokens: z.number().int().min(1).max(200000),
   monthlyBudgetUsd: z.number().positive().max(10000).optional(),
   isActive: z.boolean(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  visibility: z.enum(['internal', 'public', 'invite_only']),
+  rateLimitRpm: z.number().int().min(1).max(100000).nullable().optional(),
+  fallbackProviders: z.array(z.string()),
+  knowledgeCategories: z.string().optional(),
+  topicBoundaries: z.string().optional(),
+  brandVoiceInstructions: z.string().max(10000).nullable().optional(),
 });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
@@ -104,6 +116,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
@@ -130,6 +143,16 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       maxTokens: agent?.maxTokens ?? 4096,
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
       isActive: agent?.isActive ?? true,
+      inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
+      outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+      maxHistoryTokens: agent?.maxHistoryTokens ?? null,
+      retentionDays: agent?.retentionDays ?? null,
+      visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
+      rateLimitRpm: agent?.rateLimitRpm ?? null,
+      fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
+      knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
+      topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
+      brandVoiceInstructions: agent?.brandVoiceInstructions ?? null,
     },
   });
 
@@ -139,6 +162,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const currentName = watch('name');
   const currentInstructions = watch('systemInstructions');
   const currentIsActive = watch('isActive');
+  const currentInputGuard = watch('inputGuardMode');
+  const currentOutputGuard = watch('outputGuardMode');
+  const currentVisibility = watch('visibility');
 
   // Auto-generate slug from name in create mode until the user edits the slug.
   useEffect(() => {
@@ -151,16 +177,37 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
     setError(null);
+    setSaved(false);
+
+    // Transform comma-separated strings into arrays for the API
+    const payload = {
+      ...data,
+      knowledgeCategories: data.knowledgeCategories
+        ? data.knowledgeCategories
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+      topicBoundaries: data.topicBoundaries
+        ? data.topicBoundaries
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+    };
+
     try {
       if (isEdit && agent) {
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
-          body: data,
+          body: payload,
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.AGENTS, {
-          body: data,
+          body: payload,
         });
         router.push(`/admin/orchestration/agents/${created.id}`);
       }
@@ -195,11 +242,16 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/agents">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>
@@ -233,25 +285,59 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             Capabilities
           </TabsTrigger>
           <TabsTrigger
+            value="invite-tokens"
+            disabled={!isEdit || currentVisibility !== 'invite_only'}
+            title={
+              !isEdit
+                ? 'Save the agent first to manage invite tokens'
+                : currentVisibility !== 'invite_only'
+                  ? 'Set visibility to "Invite only" to manage tokens'
+                  : undefined
+            }
+          >
+            Invite tokens
+          </TabsTrigger>
+          <TabsTrigger
+            value="versions"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to view version history' : undefined}
+          >
+            Versions
+          </TabsTrigger>
+          <TabsTrigger
             value="test"
             disabled={!isEdit}
             title={!isEdit ? 'Save the agent first to test a chat' : undefined}
           >
             Test
           </TabsTrigger>
+          <TabsTrigger
+            value="embed"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
+          >
+            Embed
+          </TabsTrigger>
         </TabsList>
 
         {/* ================= TAB 1 — GENERAL ================= */}
         <TabsContent value="general" className="space-y-4 pt-4">
+          {isEdit && agent?.isSystem && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+              <Shield className="h-4 w-4 shrink-0" />
+              <span>
+                This is a system agent used internally by the platform. It cannot be deleted or
+                deactivated. You can update its description but most fields are not relevant — check
+                the agent&apos;s description for how it is used.
+              </span>
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="name">
               Name{' '}
               <FieldHelp title="Agent name">
                 A human-readable label. This is what admins and end-users see in lists and in the
-                chat UI. Defaults to empty.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                chat UI. Defaults to empty.
               </FieldHelp>
             </Label>
             <Input id="name" {...register('name')} placeholder="Research Assistant" />
@@ -264,10 +350,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               <FieldHelp title="URL-safe identifier">
                 The stable identifier used in URLs and the chat stream endpoint. Auto-generated from
                 the name on first type, but you can edit it. Lowercase letters, numbers, and hyphens
-                only.{' '}
-                <Link href="/admin/orchestration/learning" className="underline">
-                  Learn more
-                </Link>
+                only.
               </FieldHelp>
             </Label>
             <Input
@@ -331,6 +414,63 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               disabled={isEdit && agent?.isSystem}
             />
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="visibility">
+              Visibility{' '}
+              <FieldHelp title="Who can access this agent">
+                <strong>Internal</strong> — Admins only, via the dashboard. For internal tools,
+                testing, or sensitive data.
+                <br />
+                <br />
+                <strong>Public</strong> — Anyone with the chat URL. For support bots, Q&amp;A, or
+                open demos.
+                <br />
+                <br />
+                <strong>Invite only</strong> — Requires an invite token. For beta programs, partner
+                access, or gated agents. Use the Invite tokens tab above to create and manage
+                tokens.
+              </FieldHelp>
+            </Label>
+            <Select
+              value={currentVisibility}
+              onValueChange={(v) =>
+                setValue('visibility', v as AgentFormData['visibility'], { shouldValidate: true })
+              }
+            >
+              <SelectTrigger id="visibility">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="internal">Internal</SelectItem>
+                <SelectItem value="public">Public</SelectItem>
+                <SelectItem value="invite_only">Invite only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="retentionDays">
+              Conversation retention (days){' '}
+              <FieldHelp title="Auto-delete old conversations">
+                Conversations with no activity for this many days are automatically deleted,
+                including their messages and embeddings. Cleanup runs as part of the scheduled
+                maintenance job. Leave blank to keep conversations forever.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="retentionDays"
+              type="number"
+              placeholder="Keep forever"
+              {...register('retentionDays', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.retentionDays && (
+              <p className="text-destructive text-xs">{errors.retentionDays.message}</p>
+            )}
+          </div>
         </TabsContent>
 
         {/* ================= TAB 2 — MODEL ================= */}
@@ -383,6 +523,46 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               </Select>
             )}
           </div>
+
+          {!providerFallback && providers.length > 1 && (
+            <div className="grid gap-2">
+              <Label>
+                Fallback providers{' '}
+                <FieldHelp title="Automatic provider failover">
+                  If the primary provider is experiencing errors, the agent will try these providers
+                  in order. Failover kicks in after repeated failures within a short window. Only
+                  providers other than the primary are shown. Leave unchecked to disable failover.
+                </FieldHelp>
+              </Label>
+              <div className="space-y-2 rounded-md border p-3">
+                {providers
+                  .filter((p) => p.slug !== currentProvider)
+                  .map((p) => {
+                    const checked = watch('fallbackProviders').includes(p.slug);
+                    return (
+                      <label key={p.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300"
+                          checked={checked}
+                          onChange={(e) => {
+                            const current = watch('fallbackProviders');
+                            setValue(
+                              'fallbackProviders',
+                              e.target.checked
+                                ? [...current, p.slug]
+                                : current.filter((s: string) => s !== p.slug)
+                            );
+                          }}
+                        />
+                        {p.name}
+                        <span className="text-muted-foreground font-mono text-xs">{p.slug}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-2">
             <Label htmlFor="model">
@@ -475,13 +655,122 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             />
           </div>
 
-          <div className="space-y-2 pt-2">
-            <ProviderTestButton
-              providerId={currentProviderId}
-              disabledMessage="We don't have a stored config for this provider yet — save it first."
+          <div className="grid gap-2">
+            <Label htmlFor="rateLimitRpm">
+              Rate limit (RPM){' '}
+              <FieldHelp title="Per-user request throttle">
+                Maximum requests per minute each user can send to this agent. Each user has their
+                own limit. Leave blank to use the global default.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="rateLimitRpm"
+              type="number"
+              placeholder="Use global default"
+              {...register('rateLimitRpm', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
             />
-            <ModelTestButton providerId={currentProviderId} model={currentModel || null} />
+            {errors.rateLimitRpm && (
+              <p className="text-destructive text-xs">{errors.rateLimitRpm.message}</p>
+            )}
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="maxHistoryTokens">
+              Max history tokens{' '}
+              <FieldHelp title="Context window override">
+                Override the context window budget used when building the prompt. The system fits as
+                much conversation history as possible after reserving space for instructions and the
+                current message. Lower values reduce cost; higher values let the agent remember
+                more. Leave blank to use the model&apos;s full context window.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="maxHistoryTokens"
+              type="number"
+              placeholder="Use model default"
+              {...register('maxHistoryTokens', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.maxHistoryTokens && (
+              <p className="text-destructive text-xs">{errors.maxHistoryTokens.message}</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="inputGuardMode">
+                Input guard{' '}
+                <FieldHelp title="Prompt injection protection">
+                  Controls how the agent handles suspected prompt injection in user messages.
+                  &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a warning in the
+                  chat, &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global
+                  default&rdquo; to inherit the platform-wide setting.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentInputGuard ?? '__global__'}
+                onValueChange={(v) =>
+                  setValue(
+                    'inputGuardMode',
+                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                    {
+                      shouldValidate: true,
+                    }
+                  )
+                }
+              >
+                <SelectTrigger id="inputGuardMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use global default</SelectItem>
+                  <SelectItem value="log_only">Log only</SelectItem>
+                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                  <SelectItem value="block">Block</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="outputGuardMode">
+                Output guard{' '}
+                <FieldHelp title="Response content filtering">
+                  Controls how the agent handles flagged content in its own responses (off-topic,
+                  PII, brand-voice violations). Same modes as the input guard. Leave on &ldquo;Use
+                  global default&rdquo; to inherit the platform-wide setting.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentOutputGuard ?? '__global__'}
+                onValueChange={(v) =>
+                  setValue(
+                    'outputGuardMode',
+                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                    {
+                      shouldValidate: true,
+                    }
+                  )
+                }
+              >
+                <SelectTrigger id="outputGuardMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use global default</SelectItem>
+                  <SelectItem value="log_only">Log only</SelectItem>
+                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                  <SelectItem value="block">Block</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
         </TabsContent>
 
         {/* ================= TAB 3 — INSTRUCTIONS ================= */}
@@ -520,6 +809,59 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               </span>
               <span>{currentInstructions.length.toLocaleString()} characters</span>
             </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="brandVoiceInstructions">
+              Brand voice instructions{' '}
+              <FieldHelp title="Tone and style rules">
+                Additional instructions appended to the system prompt that define the agent&apos;s
+                tone, vocabulary, and style. For example: &ldquo;Use a friendly, professional tone.
+                Avoid jargon. Address the user by first name.&rdquo; Leave blank if no specific
+                brand voice is needed.
+              </FieldHelp>
+            </Label>
+            <Textarea
+              id="brandVoiceInstructions"
+              rows={4}
+              placeholder="e.g. Use a friendly, professional tone. Avoid jargon."
+              {...register('brandVoiceInstructions', {
+                setValueAs: (v: string) => (v === '' ? null : v),
+              })}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="knowledgeCategories">
+              Knowledge categories{' '}
+              <FieldHelp title="Knowledge base categories">
+                Comma-separated list of categories to associate with this agent. This value is saved
+                for future use but category-based filtering during retrieval is not yet active.
+                Leave blank for no restriction.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="knowledgeCategories"
+              placeholder="e.g. billing, support, faq"
+              {...register('knowledgeCategories')}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="topicBoundaries">
+              Topic boundaries{' '}
+              <FieldHelp title="Forbidden topics for output guard">
+                Comma-separated list of topics the agent should not discuss. The output guard checks
+                responses against these boundaries and takes action based on the guard mode (log,
+                warn, or block). For example: &ldquo;competitor pricing, legal advice,
+                medical&rdquo;.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="topicBoundaries"
+              placeholder="e.g. competitor pricing, legal advice, medical"
+              {...register('topicBoundaries')}
+            />
           </div>
 
           {isEdit && agent && (
@@ -565,6 +907,83 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">
               <p className="text-muted-foreground">Save the agent first to test a chat.</p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 6 — INVITE TOKENS ================= */}
+        <TabsContent value="invite-tokens" className="pt-4">
+          {isEdit && agent && currentVisibility === 'invite_only' ? (
+            <AgentInviteTokensTab agentId={agent.id} />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">
+                {!isEdit
+                  ? 'Save the agent first, then manage invite tokens.'
+                  : 'Set visibility to "Invite only" to manage tokens.'}
+              </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 8 — EMBED ================= */}
+        <TabsContent value="embed" className="pt-4">
+          {isEdit && agent ? (
+            <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">
+                Save the agent first, then manage embed tokens.
+              </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 7 — VERSIONS ================= */}
+        <TabsContent value="versions" className="pt-4">
+          {isEdit && agent ? (
+            <AgentVersionHistoryTab
+              agentId={agent.id}
+              onRestored={() => {
+                // Re-pull the fresh agent into the form after a version restore.
+                void (async () => {
+                  try {
+                    const fresh = await apiClient.get<AiAgent>(
+                      API.ADMIN.ORCHESTRATION.agentById(agent.id)
+                    );
+                    reset({
+                      name: fresh.name,
+                      slug: fresh.slug,
+                      description: fresh.description,
+                      systemInstructions: fresh.systemInstructions,
+                      provider: fresh.provider,
+                      model: fresh.model,
+                      temperature: fresh.temperature,
+                      maxTokens: fresh.maxTokens,
+                      monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
+                      isActive: fresh.isActive,
+                      inputGuardMode:
+                        (fresh.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
+                      outputGuardMode:
+                        (fresh.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+                      maxHistoryTokens: fresh.maxHistoryTokens ?? null,
+                      retentionDays: fresh.retentionDays ?? null,
+                      visibility: (fresh.visibility as AgentFormData['visibility']) ?? 'internal',
+                      rateLimitRpm: fresh.rateLimitRpm ?? null,
+                      fallbackProviders: fresh.fallbackProviders ?? [],
+                      knowledgeCategories: fresh.knowledgeCategories?.join(', ') ?? '',
+                      topicBoundaries: fresh.topicBoundaries?.join(', ') ?? '',
+                      brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
+                    });
+                  } catch {
+                    // Silent — the version tab already shows its own error state.
+                  }
+                })();
+              }}
+            />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">Save the agent first to view version history.</p>
             </div>
           )}
         </TabsContent>

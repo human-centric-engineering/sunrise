@@ -60,9 +60,13 @@ export type MockSession = {
   };
   user: {
     id: string;
+    createdAt: Date;
+    updatedAt: Date;
     email: string;
-    name?: string | null;
-    role?: string;
+    emailVerified: boolean;
+    name: string;
+    image?: string | null;
+    role: string | null | undefined;
   };
 };
 
@@ -89,8 +93,12 @@ export function createMockSession(overrides?: {
     },
     user: {
       id: 'test-user-id',
+      createdAt: new Date('2025-01-01'),
+      updatedAt: new Date('2025-01-01'),
       email: 'test@example.com',
+      emailVerified: true,
       name: 'Test User',
+      image: null,
       role: 'USER',
       ...overrides?.user,
     },

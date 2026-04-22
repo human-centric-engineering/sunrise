@@ -71,9 +71,21 @@ vi.mock('@/lib/logging', () => ({
 import { readFile } from 'fs/promises';
 import { prisma } from '@/lib/db/client';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
+import type { EmbedBatchResult } from '@/lib/orchestration/knowledge/embedder';
 import { seedChunks, embedChunks } from '@/lib/orchestration/knowledge/seeder';
 
 // --- Helpers ---
+
+function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
+  return {
+    embeddings,
+    provenance: {
+      model: 'test-model',
+      provider: 'test-provider',
+      embeddedAt: new Date('2026-01-01'),
+    },
+  };
+}
 
 function makeSeedChunk(overrides: Record<string, unknown> = {}) {
   return {
@@ -360,10 +372,12 @@ describe('embedChunks', () => {
 
     vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(5 as never);
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue(pending as never);
-    vi.mocked(embedBatch).mockResolvedValue([
-      [0.1, 0.2],
-      [0.3, 0.4],
-    ]);
+    vi.mocked(embedBatch).mockResolvedValue(
+      mockEmbedResult([
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ])
+    );
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
     const result = await embedChunks();

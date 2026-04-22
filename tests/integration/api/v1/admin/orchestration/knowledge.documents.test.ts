@@ -30,6 +30,11 @@ vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
@@ -74,6 +79,7 @@ function makeDocument(overrides: Record<string, unknown> = {}) {
     name: 'Agentic Design Patterns',
     fileName: 'patterns.md',
     fileHash: 'a'.repeat(64),
+    sourceUrl: null,
     status: 'ready',
     uploadedBy: ADMIN_ID,
     sizeBytes: 1024,
@@ -314,21 +320,26 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 when file has unsupported extension (.pdf)', async () => {
+    it('returns 400 when file has unsupported extension (.exe)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const formData = new FormData();
-      formData.append('file', new File(['%PDF-1.4'], 'doc.pdf', { type: 'application/pdf' }));
+      formData.append(
+        'file',
+        new File(['binary'], 'malware.exe', { type: 'application/octet-stream' })
+      );
 
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 when file MIME type is non-text (application/zip)', async () => {
+    it('returns 400 when file has unsupported extension (.xls)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      // .md extension but explicit non-text MIME
       const formData = new FormData();
-      formData.append('file', new File(['PK...'], 'archive.md', { type: 'application/zip' }));
+      formData.append(
+        'file',
+        new File(['data'], 'report.xls', { type: 'application/vnd.ms-excel' })
+      );
 
       const response = await POST(makePostRequestWithFormData(formData));
 

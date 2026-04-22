@@ -41,6 +41,8 @@ export interface SseResponseOptions {
   keepaliveIntervalMs?: number;
   /** External abort signal — closes the stream when fired. */
   signal?: AbortSignal;
+  /** Extra headers merged into the SSE response (e.g. CORS headers). */
+  headers?: Record<string, string>;
 }
 
 export function sseResponse<T extends { type: string }>(
@@ -130,7 +132,7 @@ export function sseResponse<T extends { type: string }>(
     },
   });
 
-  return new Response(stream, { headers: SSE_HEADERS });
+  return new Response(stream, { headers: { ...SSE_HEADERS, ...options.headers } });
 }
 
 function formatFrame<T extends { type: string }>(event: T): string {

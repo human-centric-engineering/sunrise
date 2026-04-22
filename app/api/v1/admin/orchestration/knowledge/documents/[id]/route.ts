@@ -19,6 +19,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { deleteDocument } from '@/lib/orchestration/knowledge/document-manager';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseDocumentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -60,5 +61,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   await deleteDocument(id);
 
   log.info('Document deleted', { documentId: id, adminId: session.user.id });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_document.delete',
+    entityType: 'knowledge_document',
+    entityId: id,
+    entityName: existing.fileName,
+    clientIp: clientIP,
+  });
+
   return successResponse({ deleted: true });
 });

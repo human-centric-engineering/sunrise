@@ -62,6 +62,7 @@ export interface SearchFilters {
   chunkType?: string;
   patternNumber?: number;
   category?: string;
+  categories?: string[];
   section?: string;
   documentId?: string;
   scope?: string;
@@ -113,6 +114,14 @@ export async function searchKnowledge(
     conditions.push(`c.category = $${paramIdx}`);
     params.push(filters.category);
     paramIdx++;
+  }
+  if (filters?.categories && filters.categories.length > 0) {
+    const placeholders = filters.categories.map((_, i) => `$${paramIdx + i}`).join(', ');
+    conditions.push(`c.category IN (${placeholders})`);
+    for (const cat of filters.categories) {
+      params.push(cat);
+      paramIdx++;
+    }
   }
   if (filters?.section) {
     conditions.push(`c.section = $${paramIdx}`);
@@ -213,6 +222,9 @@ export async function searchKnowledge(
       section: row.section,
       keywords: row.keywords,
       estimatedTokens: row.estimatedTokens,
+      embeddingModel: null,
+      embeddingProvider: null,
+      embeddedAt: null,
       metadata: row.metadata,
     };
     return {
@@ -232,6 +244,20 @@ function stripLeadingHeadings(content: string | null | undefined): string | null
   if (!content) return null;
   const stripped = content.replace(/^(?:#+ .*\n?)+/, '').trim();
   return stripped || null;
+}
+
+/**
+ * Extract the first paragraph from markdown content.
+ * A paragraph is a block of non-empty lines separated by blank lines.
+ * Returns the full first paragraph (no character truncation).
+ */
+function firstParagraph(content: string | null | undefined): string | null {
+  if (!content) return null;
+  const stripped = stripLeadingHeadings(content);
+  if (!stripped) return null;
+  // Split on blank lines, take the first non-empty block
+  const paragraph = stripped.split(/\n\s*\n/)[0]?.trim() ?? null;
+  return paragraph || null;
 }
 
 /**
@@ -287,9 +313,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     const complexity = typeof metadata?.complexity === 'string' ? metadata.complexity : null;
 
     const description =
-      stripLeadingHeadings(tldrChunk?.content)?.slice(0, 300) ??
-      stripLeadingHeadings(overviewChunk?.content)?.slice(0, 200) ??
-      null;
+      firstParagraph(tldrChunk?.content) ?? firstParagraph(overviewChunk?.content) ?? null;
 
     summaries.push({
       patternNumber: group.patternNumber,

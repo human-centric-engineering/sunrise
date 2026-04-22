@@ -21,7 +21,7 @@ Defined in `types/orchestration.ts`:
 ```typescript
 interface WorkflowDefinition {
   entryStepId: string;
-  errorStrategy: 'retry' | 'fallback' | 'fail';
+  errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
   steps: WorkflowStep[];
 }
 
@@ -74,6 +74,7 @@ All errors are typed — the `code` field is the contract, **never** assert on `
 | `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
 | `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
 | `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
+| `MISSING_AGENT_SLUG`      | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                 |
 
 ### Example error payload
 
@@ -124,6 +125,7 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 | `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                   |
 | `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider         |
 | `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability |
+| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent     |
 
 The `/validate` and `/dry-run` endpoints run both structural and semantic validation. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
 
@@ -144,7 +146,7 @@ Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflo
 
 **What it defers:** Chain sub-step editor and inline edge-condition editing are future work.
 
-**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 5 built-in composition recipes from `prisma/seeds/data/templates/` — pure TS, no network call. Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning). `prisma/seed.ts` also upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
+**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 8 built-in composition recipes seeded from `prisma/seeds/data/templates/` and served to the UI via the workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning, Data Pipeline, Outreach Safety, Code Review). `prisma/seeds/004-builtin-templates.ts` upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
 
 **UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON and are honoured opportunistically by the runtime executors (see [`engine.md`](./engine.md)). The same goes for `step.config._layout` — UI metadata, ignored by the validator and the engine.
 

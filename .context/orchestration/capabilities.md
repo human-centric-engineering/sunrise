@@ -23,9 +23,12 @@ const result = await capabilityDispatcher.dispatch(
 );
 
 if (result.success) {
-  console.log(result.data);
+  logger.info('capability result', { data: result.data });
 } else {
-  console.error(result.error?.code, result.error?.message);
+  logger.error('capability error', {
+    code: result.error?.code,
+    message: result.error?.message,
+  });
 }
 ```
 
@@ -38,7 +41,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | Export                         | Kind      | Purpose                                                                                  |
 | ------------------------------ | --------- | ---------------------------------------------------------------------------------------- |
 | `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`      |
-| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the three built-in handlers                                         |
+| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the six built-in handlers                                           |
 | `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list) |
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                              |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                      |
@@ -48,7 +51,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                           |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                          |
 
-Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`) are **not** re-exported — callers go through the dispatcher.
+Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`) are **not** re-exported — callers go through the dispatcher.
 
 ## The `BaseCapability` Contract
 
@@ -117,7 +120,8 @@ Semantic search over the agentic patterns knowledge base. Delegates to `searchKn
     "type": "object",
     "properties": {
       "query": { "type": "string", "minLength": 1, "maxLength": 500 },
-      "pattern_number": { "type": "integer", "minimum": 1, "maximum": 999 }
+      "pattern_number": { "type": "integer", "minimum": 1, "maximum": 999 },
+      "document_id": { "type": "string", "format": "uuid" }
     },
     "required": ["query"]
   }
@@ -165,6 +169,66 @@ Planning-grade USD cost estimate for a multi-step workflow. Picks the first mode
 ```
 
 Returns `{ model, tier, totalSteps, assumptions, cost }` with `skipFollowup: true` — the cost _is_ the final answer, so the chat handler should not feed it back for another LLM turn.
+
+### `read_user_memory`
+
+Retrieves stored memories for the current user+agent pair. Delegates to `prisma.aiUserMemory.findMany`. Scoped to `(userId, agentId)` from the capability context.
+
+```json
+{
+  "name": "read_user_memory",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "key": { "type": "string", "minLength": 1, "maxLength": 255 }
+    },
+    "required": []
+  }
+}
+```
+
+Returns `{ memories: [{ key, value, updatedAt }] }`. When `key` is omitted, returns all memories (up to 50) for the user+agent pair. Empty array is a valid success.
+
+### `write_user_memory`
+
+Stores or updates a memory for the current user+agent pair. Uses `prisma.aiUserMemory.upsert` with compound unique `(userId, agentId, key)`.
+
+```json
+{
+  "name": "write_user_memory",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "key": { "type": "string", "minLength": 1, "maxLength": 255 },
+      "value": { "type": "string", "minLength": 1, "maxLength": 5000 }
+    },
+    "required": ["key", "value"]
+  }
+}
+```
+
+Returns `{ key, action }` where `action` is `'created'` or `'updated'`.
+
+### `escalate_to_human`
+
+Signals that the current conversation needs human attention. Dispatches a `conversation_escalated` webhook event so external systems (helpdesks, ticketing, Slack) can pick up the escalation, and calls `notifyEscalation` (`lib/orchestration/capabilities/built-in/escalation-notifier.ts`) which reads `OrchestrationSettings.escalationConfig` and sends email notifications (plus an optional secondary webhook POST to a config-driven URL). Both side effects are fire-and-forget. The agent remains in the conversation — it should inform the user that a human will follow up.
+
+```json
+{
+  "name": "escalate_to_human",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+      "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+      "metadata": { "type": "object" }
+    },
+    "required": ["reason"]
+  }
+}
+```
+
+Returns `{ escalated: true, reason, priority }`. The webhook payload includes `agentId`, `userId`, `conversationId`, `reason`, `priority`, and `metadata`.
 
 ## Consumer Contract (Chat Handler)
 

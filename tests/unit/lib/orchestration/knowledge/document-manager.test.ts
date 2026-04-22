@@ -3,9 +3,13 @@
  *
  * Tests for all document lifecycle operations:
  * - uploadDocument: create → chunk → embed → store → update status
+ * - uploadDocumentFromBuffer: multi-format upload via buffer
+ * - previewDocument: parse-only preview for PDF/etc.
+ * - confirmPreview: chunk + embed from previewed content
  * - deleteDocument: cascade-delete via Prisma relation
  * - rechunkDocument: load existing chunks, reconstruct content, re-process
  * - listDocuments: ordered list of all knowledge base documents
+ * - listMetaTags: category/keyword aggregations grouped by scope
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -47,6 +51,11 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
+  parseDocument: vi.fn(),
+  requiresPreview: vi.fn(() => false),
+}));
+
 // --- Imports after mocks ---
 
 import { prisma } from '@/lib/db/client';
@@ -55,8 +64,13 @@ import {
   parseMetadataComments,
 } from '@/lib/orchestration/knowledge/chunker';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
+import type { EmbedBatchResult } from '@/lib/orchestration/knowledge/embedder';
+import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import {
   uploadDocument,
+  uploadDocumentFromBuffer,
+  previewDocument,
+  confirmPreview,
   deleteDocument,
   rechunkDocument,
   listDocuments,
@@ -64,6 +78,18 @@ import {
 } from '@/lib/orchestration/knowledge/document-manager';
 
 // --- Helpers ---
+
+/** Wrap raw embeddings in the EmbedBatchResult shape expected by the new API */
+function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
+  return {
+    embeddings,
+    provenance: {
+      model: 'test-model',
+      provider: 'test-provider',
+      embeddedAt: new Date('2026-01-01'),
+    },
+  };
+}
 
 interface ChunkShape {
   id: string;
@@ -136,7 +162,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
-    vi.mocked(embedBatch).mockResolvedValue([embedding]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([embedding]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -147,6 +173,7 @@ describe('uploadDocument', () => {
         name: 'hello-world',
         fileName,
         fileHash: expectedHash,
+        sourceUrl: null,
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',
@@ -162,7 +189,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1, 0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -182,7 +209,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1], [0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -198,10 +225,12 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
-    vi.mocked(embedBatch).mockResolvedValue([
-      [0.1, 0.2],
-      [0.3, 0.4],
-    ]);
+    vi.mocked(embedBatch).mockResolvedValue(
+      mockEmbedResult([
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ])
+    );
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -220,7 +249,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1], [0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -276,7 +305,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1], [0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     // First insert succeeds, second fails
     vi.mocked(prisma.$executeRawUnsafe)
       .mockResolvedValueOnce(1 as never)
@@ -343,7 +372,7 @@ describe('uploadDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1, 0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -384,7 +413,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 2 } as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1, 0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
     await rechunkDocument('doc-rechunk');
@@ -418,7 +447,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
     await rechunkDocument('doc-rechunk');
@@ -649,6 +678,26 @@ describe('uploadDocument with category', () => {
     );
   });
 
+  it('does not override existing chunk category when document category is set', async () => {
+    const content = '# Hello';
+    const createdDoc = makeDocument({ id: 'doc-cat2', status: 'processing' });
+    const updatedDoc = makeDocument({ id: 'doc-cat2', status: 'ready', chunkCount: 1 });
+    // Chunk already has its own category
+    const chunk = makeChunk({ category: 'existing-category' });
+
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    await uploadDocument(content, 'test.md', 'user-1', 'override-cat');
+
+    // chunk.category was 'existing-category' — it should NOT be overwritten
+    const rawInsertCall = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
+    expect(rawInsertCall[8]).toBe('existing-category');
+  });
+
   it('propagates document-level category to chunks that have no category', async () => {
     const content = '# Hello';
     const createdDoc = makeDocument({ id: 'doc-cat', status: 'processing' });
@@ -657,7 +706,7 @@ describe('uploadDocument with category', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
     vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
-    vi.mocked(embedBatch).mockResolvedValue([[0.1, 0.2]]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
@@ -667,5 +716,249 @@ describe('uploadDocument with category', () => {
     const rawInsertCall = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
     // category is the 8th parameter (index 8) in the raw SQL
     expect(rawInsertCall[8]).toBe('sales');
+  });
+});
+
+// ─── uploadDocumentFromBuffer ─────────────────────────────────────────────────
+
+describe('uploadDocumentFromBuffer', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('throws when the format requires a preview step (PDF)', async () => {
+    vi.mocked(requiresPreview).mockReturnValue(true);
+    const buffer = Buffer.from('fake pdf');
+
+    await expect(uploadDocumentFromBuffer(buffer, 'report.pdf', 'user-1')).rejects.toThrow(
+      'requires a preview step'
+    );
+    expect(parseDocument).not.toHaveBeenCalled();
+  });
+
+  it('calls parseDocument and pipes through uploadDocument for non-preview formats', async () => {
+    vi.mocked(requiresPreview).mockReturnValue(false);
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: '# Parsed text',
+      title: 'My Doc',
+      author: undefined,
+      sections: [],
+      warnings: [],
+    });
+
+    // Mock the DB / chunker / embedder chain for uploadDocument
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    const buffer = Buffer.from('# Parsed text', 'utf-8');
+    await uploadDocumentFromBuffer(buffer, 'notes.txt', 'user-1');
+
+    expect(parseDocument).toHaveBeenCalledWith(buffer, 'notes.txt');
+    // Document was created — the upload pipeline ran
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalled();
+  });
+
+  it('logs warnings when parseDocument returns them', async () => {
+    vi.mocked(requiresPreview).mockReturnValue(false);
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'some text',
+      title: 'Doc',
+      author: undefined,
+      sections: [],
+      warnings: ['Page 3 garbled'],
+    });
+
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    const { logger } = await import('@/lib/logging');
+    await uploadDocumentFromBuffer(Buffer.from('text'), 'doc.txt', 'user-1');
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Document parsed with warnings',
+      expect.objectContaining({ warnings: ['Page 3 garbled'] })
+    );
+  });
+
+  it('passes raw buffer content (not parsed text) for .md files', async () => {
+    vi.mocked(requiresPreview).mockReturnValue(false);
+    const rawMarkdown = '# Raw Markdown\n\nContent here.';
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'Parsed version (should be ignored for .md)',
+      title: 'Doc',
+      author: undefined,
+      sections: [],
+      warnings: [],
+    });
+
+    const createdDoc = makeDocument({ status: 'processing' });
+    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+
+    const buffer = Buffer.from(rawMarkdown, 'utf-8');
+    await uploadDocumentFromBuffer(buffer, 'doc.md', 'user-1');
+
+    // chunkMarkdownDocument should receive the raw markdown, not the parsed text
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'doc');
+  });
+});
+
+// ─── previewDocument ──────────────────────────────────────────────────────────
+
+describe('previewDocument', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('creates a pending_review document record and returns extracted text + metadata', async () => {
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'Extracted PDF text',
+      title: 'Annual Report',
+      author: 'Finance Team',
+      sections: [{ title: 'Summary', content: 'text' }],
+      warnings: [],
+    });
+    const createdDoc = makeDocument({ id: 'doc-preview', status: 'pending_review' });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
+
+    const buffer = Buffer.from('fake pdf');
+    const result = await previewDocument(buffer, 'annual-report.pdf', 'user-1');
+
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'pending_review' }),
+      })
+    );
+    expect(result.extractedText).toBe('Extracted PDF text');
+    expect(result.title).toBe('Annual Report');
+    expect(result.author).toBe('Finance Team');
+    expect(result.sectionCount).toBe(1);
+    expect(result.warnings).toEqual([]);
+    expect(result.document.id).toBe('doc-preview');
+  });
+
+  it('includes warnings in the preview result', async () => {
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'text',
+      title: 'Doc',
+      author: undefined,
+      sections: [],
+      warnings: ['Could not parse page 4'],
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
+
+    const result = await previewDocument(Buffer.from('pdf'), 'doc.pdf', 'user-1');
+
+    expect(result.warnings).toEqual(['Could not parse page 4']);
+  });
+});
+
+// ─── confirmPreview ───────────────────────────────────────────────────────────
+
+describe('confirmPreview', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('throws when document is not found or not in pending_review status', async () => {
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
+
+    await expect(confirmPreview('doc-missing', 'user-1')).rejects.toThrow('not found');
+  });
+
+  it('throws when content is empty and no correctedContent provided', async () => {
+    const doc = makeDocument({
+      id: 'doc-empty',
+      status: 'pending_review',
+      metadata: { extractedText: '   ' }, // whitespace only
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+
+    await expect(confirmPreview('doc-empty', 'user-1')).rejects.toThrow('No content available');
+  });
+
+  it('uses extractedText from metadata when no correctedContent is provided', async () => {
+    const doc = makeDocument({
+      id: 'doc-confirm',
+      name: 'my-doc',
+      fileName: 'my-doc.pdf',
+      status: 'pending_review',
+      metadata: { extractedText: 'The extracted content here.' },
+    });
+    const updatedDoc = makeDocument({ id: 'doc-confirm', status: 'ready', chunkCount: 1 });
+
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+
+    const result = await confirmPreview('doc-confirm', 'user-1');
+
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith('The extracted content here.', 'my-doc');
+    expect(result.status).toBe('ready');
+  });
+
+  it('uses correctedContent when provided, overriding extractedText', async () => {
+    const doc = makeDocument({
+      id: 'doc-corrected',
+      name: 'report',
+      fileName: 'report.pdf',
+      status: 'pending_review',
+      metadata: { extractedText: 'Raw OCR garbage text.' },
+    });
+    const updatedDoc = makeDocument({ id: 'doc-corrected', status: 'ready', chunkCount: 0 });
+
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+
+    await confirmPreview('doc-corrected', 'user-1', 'The corrected clean text.');
+
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith('The corrected clean text.', 'report');
+  });
+
+  it('marks document failed and re-throws when embedding fails during confirm', async () => {
+    const doc = makeDocument({
+      id: 'doc-fail-confirm',
+      name: 'doc',
+      fileName: 'doc.pdf',
+      status: 'pending_review',
+      metadata: { extractedText: 'Some content to chunk.' },
+    });
+
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(embedBatch).mockRejectedValue(new Error('Embed failed'));
+
+    await expect(confirmPreview('doc-fail-confirm', 'user-1')).rejects.toThrow('Embed failed');
+
+    // Last update should set status to failed
+    const updateCalls = vi.mocked(prisma.aiKnowledgeDocument.update).mock.calls;
+    const lastUpdate = updateCalls[updateCalls.length - 1][0];
+    expect(lastUpdate.data).toMatchObject({ status: 'failed', errorMessage: 'Embed failed' });
+  });
+
+  it('handles empty chunks during confirm (updates to ready with chunkCount 0)', async () => {
+    const doc = makeDocument({
+      id: 'doc-empty-confirm',
+      name: 'empty',
+      fileName: 'empty.pdf',
+      status: 'pending_review',
+      metadata: { extractedText: 'Some content.' },
+    });
+    const updatedDoc = makeDocument({ id: 'doc-empty-confirm', status: 'ready', chunkCount: 0 });
+
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+
+    const result = await confirmPreview('doc-empty-confirm', 'user-1');
+
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(result.chunkCount).toBe(0);
   });
 });

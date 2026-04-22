@@ -40,6 +40,10 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
+    aiAgentVersion: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
@@ -52,6 +56,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
 
 vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
 }));
 
 // ─── Imports after mocks ──────────────────────────────────────────────────────

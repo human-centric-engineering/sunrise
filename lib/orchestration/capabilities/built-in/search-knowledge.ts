@@ -8,7 +8,8 @@
  */
 
 import { z } from 'zod';
-import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
+import { prisma } from '@/lib/db/client';
+import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type {
   CapabilityContext,
@@ -22,6 +23,7 @@ const DEFAULT_THRESHOLD = 0.7;
 const schema = z.object({
   query: z.string().min(1).max(500),
   pattern_number: z.number().int().min(1).max(999).optional(),
+  document_id: z.string().uuid().optional(),
 });
 
 type Args = z.infer<typeof schema>;
@@ -61,6 +63,12 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
           minimum: 1,
           maximum: 999,
         },
+        document_id: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            'Optional filter to search within a single uploaded document. Use when the user wants results scoped to a specific file they uploaded.',
+        },
       },
       required: ['query'],
     },
@@ -68,10 +76,32 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
 
   protected readonly schema = schema;
 
-  async execute(args: Args, _context: CapabilityContext): Promise<CapabilityResult<Data>> {
-    const filters =
-      args.pattern_number !== undefined ? { patternNumber: args.pattern_number } : undefined;
-    const results = await searchKnowledge(args.query, filters, DEFAULT_LIMIT, DEFAULT_THRESHOLD);
+  async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // Load agent's knowledge category restrictions
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: context.agentId },
+      select: { knowledgeCategories: true },
+    });
+    const agentCategories = agent?.knowledgeCategories ?? [];
+
+    // Build filters combining user args and agent-level category scoping
+    const filters: SearchFilters = {};
+    if (args.pattern_number !== undefined) {
+      filters.patternNumber = args.pattern_number;
+    }
+    if (args.document_id !== undefined) {
+      filters.documentId = args.document_id;
+    }
+    if (agentCategories.length > 0) {
+      filters.categories = agentCategories;
+    }
+
+    const results = await searchKnowledge(
+      args.query,
+      Object.keys(filters).length > 0 ? filters : undefined,
+      DEFAULT_LIMIT,
+      DEFAULT_THRESHOLD
+    );
 
     return this.success({
       results: results.map((r) => ({

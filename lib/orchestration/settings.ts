@@ -9,11 +9,17 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
-import { searchConfigSchema, storedDefaultModelsSchema } from '@/lib/validations/orchestration';
+import {
+  searchConfigSchema,
+  storedDefaultModelsSchema,
+  escalationConfigSchema,
+} from '@/lib/validations/orchestration';
 import {
   TASK_TYPES,
   type ApprovalDefaultAction,
+  type EscalationConfig,
   type InputGuardMode,
+  type OutputGuardMode,
   type OrchestrationSettings,
   type SearchConfig,
   type TaskType,
@@ -42,11 +48,27 @@ export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): Sea
 }
 
 /**
+ * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.escalationConfig`
+ * into a typed `EscalationConfig` via Zod. Returns `null` if absent or invalid.
+ */
+export function parseEscalationConfig(
+  raw: Prisma.JsonValue | null | undefined
+): EscalationConfig | null {
+  const parsed = escalationConfigSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
  * filling in any task keys the stored JSON is missing from the registry defaults.
  */
 const VALID_APPROVAL_ACTIONS = new Set<ApprovalDefaultAction>(['deny', 'allow']);
 const VALID_GUARD_MODES = new Set<InputGuardMode>(['log_only', 'warn_and_continue', 'block']);
+const VALID_OUTPUT_GUARD_MODES = new Set<OutputGuardMode>([
+  'log_only',
+  'warn_and_continue',
+  'block',
+]);
 
 export function hydrateSettings(row: {
   id: string;
@@ -58,6 +80,12 @@ export function hydrateSettings(row: {
   defaultApprovalTimeoutMs: number | null;
   approvalDefaultAction: string | null;
   inputGuardMode: string | null;
+  outputGuardMode: string | null;
+  webhookRetentionDays: number | null;
+  costLogRetentionDays: number | null;
+  maxConversationsPerUser: number | null;
+  maxMessagesPerConversation: number | null;
+  escalationConfig?: Prisma.JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -71,6 +99,7 @@ export function hydrateSettings(row: {
 
   const approvalAction = row.approvalDefaultAction as ApprovalDefaultAction | null;
   const guardMode = row.inputGuardMode as InputGuardMode | null;
+  const outputMode = row.outputGuardMode as OutputGuardMode | null;
 
   return {
     id: row.id,
@@ -83,6 +112,13 @@ export function hydrateSettings(row: {
     approvalDefaultAction:
       approvalAction && VALID_APPROVAL_ACTIONS.has(approvalAction) ? approvalAction : null,
     inputGuardMode: guardMode && VALID_GUARD_MODES.has(guardMode) ? guardMode : 'log_only',
+    outputGuardMode:
+      outputMode && VALID_OUTPUT_GUARD_MODES.has(outputMode) ? outputMode : 'log_only',
+    webhookRetentionDays: row.webhookRetentionDays,
+    costLogRetentionDays: row.costLogRetentionDays,
+    maxConversationsPerUser: row.maxConversationsPerUser,
+    maxMessagesPerConversation: row.maxMessagesPerConversation,
+    escalationConfig: parseEscalationConfig(row.escalationConfig),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -105,6 +141,7 @@ export async function getOrchestrationSettings(): Promise<OrchestrationSettings>
       defaultApprovalTimeoutMs: null,
       approvalDefaultAction: 'deny',
       inputGuardMode: 'log_only',
+      outputGuardMode: 'log_only',
     },
     update: {},
   });

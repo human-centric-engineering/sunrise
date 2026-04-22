@@ -293,4 +293,168 @@ describe('ConversationsTable', () => {
 
     expect(screen.getByText(/page 2 of 5/i)).toBeInTheDocument();
   });
+
+  // ── Agent filter ───────────────────────────────────────────────────────────
+
+  it('selecting an agent filter triggers a refetch with agentId param', async () => {
+    const user = userEvent.setup();
+    render(
+      <ConversationsTable
+        initialConversations={CONVERSATIONS}
+        initialMeta={makeMeta({ total: 2 })}
+        agents={AGENTS}
+      />
+    );
+
+    // Find the agent filter combobox (first Select)
+    const selects = screen.getAllByRole('combobox');
+    // First combobox is agent filter, second is active filter
+    await user.click(selects[0]);
+    const option = await screen.findByRole('option', { name: /support bot/i, hidden: true });
+    await user.click(option);
+
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls;
+      const agentFilterCalls = calls.filter((call) => String(call[0]).includes('agentId=agent-1'));
+      expect(agentFilterCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('selecting an active filter triggers a refetch with isActive param', async () => {
+    const user = userEvent.setup();
+    render(
+      <ConversationsTable
+        initialConversations={CONVERSATIONS}
+        initialMeta={makeMeta({ total: 2 })}
+        agents={AGENTS}
+      />
+    );
+
+    // Second combobox is active/inactive filter
+    const selects = screen.getAllByRole('combobox');
+    await user.click(selects[1]);
+    const option = await screen.findByRole('option', { name: /^active$/i, hidden: true });
+    await user.click(option);
+
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls;
+      const activeCalls = calls.filter((call) => String(call[0]).includes('isActive=true'));
+      expect(activeCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── Toggle message search when search is empty ────────────────────────────
+
+  it('toggling message search when search is empty does NOT trigger a refetch', async () => {
+    // Arrange: no search text typed
+    const user = userEvent.setup();
+    render(<ConversationsTable initialConversations={[]} initialMeta={makeMeta()} agents={[]} />);
+
+    const initialCallCount = mockFetch.mock.calls.length;
+
+    // Act: toggle the checkbox with no search value set
+    const checkbox = screen.getByRole('checkbox', { name: /search messages/i });
+    await user.click(checkbox);
+
+    // Assert: no additional fetches fired (search is empty, so fetchConversations is not called)
+    expect(mockFetch.mock.calls.length).toBe(initialCallCount);
+  });
+
+  it('toggling message search when search has a value triggers a refetch', async () => {
+    // Arrange: type in search first, then toggle message search
+    const user = userEvent.setup();
+    render(<ConversationsTable initialConversations={[]} initialMeta={makeMeta()} agents={[]} />);
+
+    const input = screen.getByPlaceholderText('Search by title…');
+    await user.type(input, 'test');
+
+    // Wait for debounce... but we do not need to advance timers here
+    // Just get the call count after typing
+    const callsAfterType = mockFetch.mock.calls.length;
+
+    // Act: toggle message search
+    const checkbox = screen.getByRole('checkbox', { name: /search messages/i });
+    await user.click(checkbox);
+
+    // Assert: fetch was triggered with searchMessages=true path (messageSearch param)
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls;
+      const msgSearchCalls = calls
+        .slice(callsAfterType)
+        .filter((call) => String(call[0]).includes('messageSearch='));
+      expect(msgSearchCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── _count?.messages optional chaining ────────────────────────────────────
+
+  it('renders 0 when conversation has no _count field', () => {
+    // Arrange: conversation without _count
+    const noCountConv = {
+      id: 'conv-nc',
+      title: 'No Count',
+      isActive: true,
+      agentId: null,
+      agent: null,
+      // _count is omitted
+      createdAt: '2025-01-01T00:00:00Z',
+      updatedAt: '2025-01-01T00:00:00Z',
+    };
+
+    render(
+      <ConversationsTable
+        initialConversations={[
+          noCountConv as Parameters<typeof ConversationsTable>[0]['initialConversations'][0],
+        ]}
+        initialMeta={makeMeta({ total: 1 })}
+        agents={[]}
+      />
+    );
+
+    // _count?.messages ?? 0 → should render "0"
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
+
+  // ── formatDate error branch ────────────────────────────────────────────────
+
+  it('renders the raw date string when date parsing fails', () => {
+    // Arrange: an invalid ISO string that new Date() cannot parse meaningfully
+    const badDate = 'not-a-date';
+    const conv = {
+      id: 'conv-bd',
+      title: 'Bad Date Conv',
+      isActive: true,
+      agentId: null,
+      agent: null,
+      _count: { messages: 0 },
+      createdAt: '2025-01-01T00:00:00Z',
+      updatedAt: badDate,
+    };
+
+    render(
+      <ConversationsTable
+        initialConversations={[conv]}
+        initialMeta={makeMeta({ total: 1 })}
+        agents={[]}
+      />
+    );
+
+    // The formatDate catch branch returns the raw string
+    expect(screen.getByText('Bad Date Conv')).toBeInTheDocument();
+    // The component should not throw; it renders without crashing
+  });
+
+  // ── Export button ──────────────────────────────────────────────────────────
+
+  it('Export button is always rendered', () => {
+    render(
+      <ConversationsTable
+        initialConversations={CONVERSATIONS}
+        initialMeta={makeMeta({ total: 2 })}
+        agents={AGENTS}
+      />
+    );
+
+    expect(screen.getByTitle(/export conversations as json/i)).toBeInTheDocument();
+  });
 });

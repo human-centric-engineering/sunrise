@@ -61,10 +61,14 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     onValidate: vi.fn(),
     onSave: vi.fn(),
     onExecute: vi.fn(),
+    onSaveAsTemplate: vi.fn(),
+    savingAsTemplate: false,
+    savedAsTemplate: false,
     onTemplateSelect: vi.fn(),
     templates: MOCK_TEMPLATES,
     templatesDisabled: false,
     saving: false,
+    saved: false,
     hasErrors: false,
     ...overrides,
   };
@@ -129,17 +133,16 @@ describe('BuilderToolbar', () => {
 
     it('is disabled when saving=true', () => {
       renderToolbar({ saving: true });
-      const saveBtn = screen.getByRole('button', { name: /create workflow/i });
+      const saveBtn = screen.getByRole('button', { name: /saving/i });
       expect(saveBtn).toBeDisabled();
     });
 
     it('renders a spinner when saving=true', () => {
       // The Loader2 icon is rendered as an SVG inside the button when saving
       renderToolbar({ saving: true });
-      // The button text should still be visible
-      expect(screen.getByRole('button', { name: /create workflow/i })).toBeInTheDocument();
+      const saveBtn = screen.getByRole('button', { name: /saving/i });
+      expect(saveBtn).toBeInTheDocument();
       // There should be an svg for the spinner
-      const saveBtn = screen.getByRole('button', { name: /create workflow/i });
       expect(saveBtn.querySelector('svg')).toBeInTheDocument();
     });
 

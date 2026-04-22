@@ -149,7 +149,7 @@ describe('AgentForm — Model tab', () => {
       const user = await renderAndOpenModelTab();
 
       // Act
-      await user.click(screen.getByRole('button', { name: /test connection/i }));
+      await user.click(screen.getByRole('button', { name: /run check/i }));
 
       // Assert
       await waitFor(() => {
@@ -168,7 +168,7 @@ describe('AgentForm — Model tab', () => {
       const user = await renderAndOpenModelTab();
 
       // Act
-      await user.click(screen.getByRole('button', { name: /test connection/i }));
+      await user.click(screen.getByRole('button', { name: /run check/i }));
 
       // Assert: friendly message
       await waitFor(() => {
@@ -185,15 +185,47 @@ describe('AgentForm — Model tab', () => {
       render(<AgentForm mode="create" providers={[]} models={MODELS} />);
       await user.click(screen.getByRole('tab', { name: /model/i }));
 
-      // Act: test connection - provider fallback renders a text input
-      // The handler checks if providerRow exists and sets an error message
-      const testBtn = screen.getByRole('button', { name: /test connection/i });
+      // Act: test connection - no providerId since providers prop is empty
+      // The handler checks if providerId exists and sets an error message
+      const testBtn = screen.getByRole('button', { name: /run check/i });
       await user.click(testBtn);
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText(/don't have a stored config/i)).toBeInTheDocument();
+        expect(screen.getByText(/no saved provider config/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Rate limit RPM ─────────────────────────────────────────────────────────
+
+  describe('rate limit RPM', () => {
+    it('renders rate limit RPM input with placeholder', async () => {
+      await renderAndOpenModelTab();
+      const input = screen.getByRole('spinbutton', { name: /rate limit/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Use global default');
+    });
+  });
+
+  // ── Guard mode and history token fields ───────────────────────────────────
+
+  describe('guard mode and history token fields', () => {
+    it('renders max history tokens input with placeholder', async () => {
+      await renderAndOpenModelTab();
+      const input = screen.getByRole('spinbutton', { name: /max history tokens/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Use model default');
+    });
+
+    it('renders input guard mode select', async () => {
+      await renderAndOpenModelTab();
+      expect(screen.getByRole('combobox', { name: /input guard/i })).toBeInTheDocument();
+    });
+
+    it('renders output guard mode select defaulting to global default', async () => {
+      await renderAndOpenModelTab();
+      expect(screen.getByRole('combobox', { name: /output guard/i })).toBeInTheDocument();
     });
   });
 

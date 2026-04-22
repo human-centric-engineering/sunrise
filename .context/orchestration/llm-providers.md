@@ -62,7 +62,39 @@ interface LlmProvider {
 }
 ```
 
-`LlmMessage` supports roles `system | user | assistant | tool` and assistant messages can carry `toolCalls`. `StreamChunk` is a discriminated union: `{ type: 'text' }`, `{ type: 'tool_call' }`, or `{ type: 'done', usage, finishReason }`.
+`LlmMessage` supports roles `system | user | assistant | tool` with content as `string | ContentPart[]` for multimodal input. Assistant messages can carry `toolCalls`. `StreamChunk` is a discriminated union: `{ type: 'text' }`, `{ type: 'tool_call' }`, or `{ type: 'done', usage, finishReason }`.
+
+### `LlmOptions`
+
+Key options passed to `chat()` and `chatStream()`:
+
+| Field            | Type                | Description                                  |
+| ---------------- | ------------------- | -------------------------------------------- |
+| `model`          | `string`            | Model identifier (e.g., `claude-sonnet-4-6`) |
+| `temperature`    | `number`            | Sampling temperature                         |
+| `maxTokens`      | `number`            | Max output tokens                            |
+| `tools`          | `LlmToolDef[]`      | Tool definitions for function calling        |
+| `responseFormat` | `LlmResponseFormat` | Request structured output (see below)        |
+| `signal`         | `AbortSignal`       | Cancellation signal                          |
+
+### Structured Output / JSON Mode
+
+The `responseFormat` option requests structured JSON responses from LLMs:
+
+```typescript
+type LlmResponseFormat =
+  | { type: 'json_object' } // any valid JSON
+  | { type: 'json_schema'; name: string; schema: Record<string, unknown>; strict?: boolean }; // constrained
+```
+
+**Provider implementations:**
+
+- **OpenAI-compatible**: passes `response_format` directly to the API (native support)
+- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments
+
+**Usage in agents:** Set `responseFormat` on `AiAgent` config for agents that always return structured data. In workflows, the `llm_call` step config supports `responseFormat` for structured extraction steps.
+
+**Validation:** When `json_schema` is used, the response is parsed and validated against the schema before returning. Invalid responses emit an `error` event.
 
 ## Concrete Providers
 
@@ -92,12 +124,12 @@ Local servers get a `'not-needed'` sentinel API key (the OpenAI SDK rejects empt
 
 `providerManager.getProvider(slug)` is the single entry point. It:
 
-1. Checks the in-memory `Map` cache.
+1. Checks the in-memory cache. Each entry stores `{ provider, cachedAt }` and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
 2. Loads the matching `AiProviderConfig` row (`findFirst` against slug or name).
 3. Throws `ProviderError` with `code: 'provider_not_found'` / `'provider_disabled'` if missing or inactive.
 4. Resolves the API key from `process.env[config.apiKeyEnvVar]` (or skips for local providers).
 5. Instantiates `AnthropicProvider` or `OpenAiCompatibleProvider` based on `providerType`.
-6. Caches and returns.
+6. Caches with timestamp and returns.
 
 **Do:**
 
@@ -115,7 +147,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 For tests or scripts that bypass the database, use `providerManager.registerProvider(config)` which accepts a plain `ProviderConfig` object.
 
-`clearCache()` evicts one or all cached instances — call it after updating `AiProviderConfig` rows in the admin API.
+`clearCache()` evicts one or all cached instances — call it for immediate invalidation (e.g. after an admin updates a provider config). Without manual invalidation, stale entries expire naturally after 5 minutes.
 
 ## Model Registry
 
@@ -236,9 +268,30 @@ Run just this module:
 npx vitest run tests/unit/lib/orchestration/llm
 ```
 
+## Provider Models & Decision Heuristic
+
+Beyond runtime provider config, the platform maintains a **Provider Selection Matrix** — a DB-managed registry of individual model entries (`AiProviderModel`) with tier classification, capability ratings, and chat/embedding distinction.
+
+The decision heuristic in `lib/orchestration/llm/provider-selector.ts` scores models against a task intent and returns ranked recommendations:
+
+```typescript
+import { recommendModels } from '@/lib/orchestration/llm';
+
+const recs = await recommendModels('thinking', { limit: 3 });
+// → [{ slug: 'anthropic-claude-opus-4', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
+
+// Embedding-specific recommendations
+const embedRecs = await recommendModels('embedding', { limit: 3 });
+```
+
+Models are cached with a 60-second TTL (same pattern as `settings-resolver.ts`). Cache is invalidated by the CRUD API routes.
+
+See [Provider Selection Matrix](./provider-selection-matrix.md) for the full 6-tier classification, scoring algorithm, and API reference.
+
 ## Related Documentation
 
 - [Orchestration Overview](./overview.md) — domain entry point
+- [Provider Selection Matrix](./provider-selection-matrix.md) — tier classification, decision heuristic, model CRUD
 - `.claude/docs/agent-orchestration.md` — architectural brief
 - `types/orchestration.ts` — shared types (`CostSummary`, `CostOperation`, `ChatEvent`, ...)
-- `prisma/schema.prisma` — `AiProviderConfig`, `AiAgent`, `AiCostLog`
+- `prisma/schema.prisma` — `AiProviderConfig`, `AiAgent`, `AiCostLog`, `AiProviderModel`

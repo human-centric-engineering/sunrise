@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -25,30 +26,47 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { API } from '@/lib/api/endpoints';
+import { apiClient } from '@/lib/api/client';
+
+interface DryRunResult {
+  valid: boolean;
+  errors?: string[];
+  warnings?: string[];
+}
 
 export interface ExecutionInputDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (input: { inputData: Record<string, unknown>; budgetLimitUsd?: number }) => void;
+  /** Workflow ID — required for dry-run validation. */
+  workflowId: string;
 }
 
-export function ExecutionInputDialog({ open, onOpenChange, onConfirm }: ExecutionInputDialogProps) {
+export function ExecutionInputDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  workflowId,
+}: ExecutionInputDialogProps) {
   const [raw, setRaw] = useState('{\n  "query": ""\n}');
   const [budget, setBudget] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
 
-  const handleRun = (): void => {
+  function parseInput(): { inputData: Record<string, unknown>; budgetLimitUsd?: number } | null {
     let parsed: Record<string, unknown>;
     try {
       const result: unknown = JSON.parse(raw);
       if (typeof result !== 'object' || result === null || Array.isArray(result)) {
         setError('Input must be a JSON object.');
-        return;
+        return null;
       }
       parsed = result as Record<string, unknown>;
     } catch {
       setError('Input is not valid JSON.');
-      return;
+      return null;
     }
 
     let budgetLimitUsd: number | undefined;
@@ -56,13 +74,36 @@ export function ExecutionInputDialog({ open, onOpenChange, onConfirm }: Executio
       const num = Number(budget);
       if (!Number.isFinite(num) || num <= 0) {
         setError('Budget must be a positive number.');
-        return;
+        return null;
       }
       budgetLimitUsd = num;
     }
 
     setError(null);
-    onConfirm({ inputData: parsed, budgetLimitUsd });
+    return { inputData: parsed, budgetLimitUsd };
+  }
+
+  const handleRun = (): void => {
+    const input = parseInput();
+    if (input) onConfirm(input);
+  };
+
+  const handleDryRun = async (): Promise<void> => {
+    const input = parseInput();
+    if (!input) return;
+    setDryRunning(true);
+    setDryRunResult(null);
+    try {
+      const result = await apiClient.post<DryRunResult>(
+        API.ADMIN.ORCHESTRATION.workflowDryRun(workflowId),
+        { body: { inputData: input.inputData, budgetLimitUsd: input.budgetLimitUsd } }
+      );
+      setDryRunResult(result);
+    } catch {
+      setError('Dry-run request failed.');
+    } finally {
+      setDryRunning(false);
+    }
   };
 
   return (
@@ -106,11 +147,59 @@ export function ExecutionInputDialog({ open, onOpenChange, onConfirm }: Executio
               {error}
             </p>
           )}
+
+          {dryRunResult && (
+            <div
+              className={`rounded-md border px-3 py-2 text-sm ${
+                dryRunResult.valid
+                  ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950'
+                  : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-medium">
+                {dryRunResult.valid ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-green-700 dark:text-green-300">Dry run passed</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-4 w-4 text-red-600" />
+                    <span className="text-red-700 dark:text-red-300">Dry run failed</span>
+                  </>
+                )}
+              </div>
+              {dryRunResult.errors && dryRunResult.errors.length > 0 && (
+                <ul className="mt-1 list-inside list-disc text-xs text-red-600 dark:text-red-400">
+                  {dryRunResult.errors.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+              {dryRunResult.warnings && dryRunResult.warnings.length > 0 && (
+                <ul className="mt-1 list-inside list-disc text-xs text-yellow-700 dark:text-yellow-400">
+                  {dryRunResult.warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
+          </Button>
+          <Button variant="outline" onClick={() => void handleDryRun()} disabled={dryRunning}>
+            {dryRunning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Validating…
+              </>
+            ) : (
+              'Dry run'
+            )}
           </Button>
           <Button onClick={handleRun}>Run</Button>
         </DialogFooter>

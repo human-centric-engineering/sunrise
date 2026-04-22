@@ -16,13 +16,22 @@
  *   - **Grey** — not tested yet this session.
  *
  * Test results are held in local state only; we never persist them.
- * The model count is lazy-fetched per card after first paint to
- * avoid blocking the list render on N upstream round trips.
+ * The model count is lazy-fetched per card after first paint with a
+ * 60-second client-side cache to avoid redundant N+1 fetches.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Cpu, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Cpu,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Power,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +57,11 @@ import { ProviderTestButton } from '@/components/admin/orchestration/provider-te
 
 export interface ProviderRow extends AiProviderConfig {
   apiKeyPresent: boolean;
+  circuitBreaker?: {
+    state: 'closed' | 'open' | 'half-open';
+    failureCount: number;
+    openedAt: string | null;
+  };
 }
 
 export interface ProvidersListProps {
@@ -55,6 +69,25 @@ export interface ProvidersListProps {
 }
 
 type StatusDot = 'green' | 'red' | 'grey';
+
+interface ModelCountCache {
+  count: number | null;
+  fetchedAt: number;
+}
+
+// Module-level model count cache with 60s TTL
+const modelCountCache = new Map<string, ModelCountCache>();
+const MODEL_CACHE_TTL_MS = 60_000;
+
+function getCachedModelCount(providerId: string): number | null | undefined {
+  const cached = modelCountCache.get(providerId);
+  if (!cached) return undefined;
+  if (Date.now() - cached.fetchedAt > MODEL_CACHE_TTL_MS) {
+    modelCountCache.delete(providerId);
+    return undefined;
+  }
+  return cached.count;
+}
 
 interface ModelCountState {
   count: number | null;
@@ -69,25 +102,38 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
+  const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
 
   // Lazy-fetch model counts for every visible provider after mount.
+  // Uses module-level cache to avoid N+1 on every page navigation.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       for (const p of providers) {
         if (modelCounts[p.id]) continue;
+
+        // Check cache first
+        const cached = getCachedModelCount(p.id);
+        if (cached !== undefined) {
+          setModelCounts((prev) => ({ ...prev, [p.id]: { count: cached, loading: false } }));
+          continue;
+        }
+
         setModelCounts((prev) => ({ ...prev, [p.id]: { count: null, loading: true } }));
         try {
           const response = await apiClient.get<{ models: ProviderModelInfo[] }>(
             API.ADMIN.ORCHESTRATION.providerModels(p.id)
           );
           if (cancelled) return;
+          const count = response.models?.length ?? 0;
+          modelCountCache.set(p.id, { count, fetchedAt: Date.now() });
           setModelCounts((prev) => ({
             ...prev,
-            [p.id]: { count: response.models?.length ?? 0, loading: false },
+            [p.id]: { count, loading: false },
           }));
         } catch {
           if (cancelled) return;
+          modelCountCache.set(p.id, { count: null, fetchedAt: Date.now() });
           setModelCounts((prev) => ({ ...prev, [p.id]: { count: null, loading: false } }));
         }
       }
@@ -127,6 +173,35 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       setDeleting(false);
     }
   }, [deleteTarget]);
+
+  const handleReactivate = useCallback(async (providerId: string) => {
+    try {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
+        body: { isActive: true },
+      });
+      setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
+    } catch {
+      // Silently fail — admin can retry or edit the provider directly
+    }
+  }, []);
+
+  const handleResetBreaker = useCallback(async (providerId: string) => {
+    setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
+      setProviders((prev) =>
+        prev.map((p) =>
+          p.id === providerId
+            ? { ...p, circuitBreaker: { state: 'closed', failureCount: 0, openedAt: null } }
+            : p
+        )
+      );
+    } catch {
+      // Silently fail — breaker may have already recovered
+    } finally {
+      setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
+    }
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -171,6 +246,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                     : 'Test failed'
                   : 'Not tested';
             const mc = modelCounts[p.id];
+            const breakerState = p.circuitBreaker?.state ?? 'closed';
 
             return (
               <div key={p.id} className="bg-card flex flex-col rounded-lg border shadow-sm">
@@ -207,6 +283,11 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                           <Pencil className="mr-2 h-4 w-4" /> Edit
                         </Link>
                       </DropdownMenuItem>
+                      {!p.isActive && (
+                        <DropdownMenuItem onSelect={() => void handleReactivate(p.id)}>
+                          <Power className="mr-2 h-4 w-4" /> Reactivate
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem onSelect={() => setModelsDialogFor(p)}>
                         <Cpu className="mr-2 h-4 w-4" /> View models
                       </DropdownMenuItem>
@@ -232,6 +313,33 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                         : '—'}
                   </p>
                 </div>
+
+                {/* ── Circuit breaker warning ── */}
+                {breakerState !== 'closed' && (
+                  <div
+                    className={`mx-4 mb-3 flex items-center justify-between rounded-md border px-3 py-2 text-xs ${
+                      breakerState === 'open'
+                        ? 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900 dark:bg-orange-950/40 dark:text-orange-200'
+                        : 'border-yellow-200 bg-yellow-50 text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {breakerState === 'open' ? 'Circuit open' : 'Circuit half-open'}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={resettingBreaker[p.id]}
+                      onClick={() => void handleResetBreaker(p.id)}
+                    >
+                      <RotateCcw className="mr-1 h-3 w-3" />
+                      Reset
+                    </Button>
+                  </div>
+                )}
 
                 {/* ── Warning: missing API key ── */}
                 {!p.apiKeyPresent && !p.isLocal && (

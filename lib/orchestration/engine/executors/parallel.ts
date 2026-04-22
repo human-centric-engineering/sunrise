@@ -2,8 +2,9 @@
  * `parallel` — fan-out marker.
  *
  * Like `chain`, this is primarily a DAG-layout node. The engine's
- * walker schedules every target of `step.nextSteps` as runnable in
- * parallel; this executor simply records the fan-out and returns.
+ * walker detects when a parallel node's `nextSteps` produce multiple
+ * ready branches and executes them concurrently via Promise.allSettled.
+ * This executor records the fan-out and returns immediately.
  *
  * Config:
  *   - `branches?: string[]` — informational; the real fan-out is
@@ -11,8 +12,9 @@
  *   - `timeoutMs?: number` — informational (enforced per-step by the
  *     underlying executors, not at the parallel node).
  *   - `stragglerStrategy?: 'wait-all' | 'first-success'` —
- *     informational in 5.2; `wait-all` is the only mode currently
- *     implemented by the walker.
+ *     `wait-all` is the implemented mode: all branches run concurrently
+ *     and the engine waits for every branch to settle before proceeding.
+ *     `first-success` is not yet implemented.
  *
  * Output: `{ parallel: true, branches: string[] }`.
  */

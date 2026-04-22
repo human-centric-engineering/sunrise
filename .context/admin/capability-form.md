@@ -105,13 +105,19 @@ Single text input. The FieldHelp copy **changes with the selected type**:
 
 ## Tab 4 — Safety
 
-Fields: `requiresApproval`, `rateLimit`.
+Fields: `requiresApproval`, `approvalTimeoutMs`, `rateLimit`.
 
 ### Requires approval
 
 Shadcn `<Switch>`. When enabled, the dispatcher pauses on first invocation and writes an `AiCapabilityExecution` row with `status: 'pending_approval'` — a human has to approve before the handler runs.
 
 Help: **"When enabled, the agent will pause and ask a human to approve before running this capability. Use for irreversible actions like sending email, charging cards, or writing to production systems. Default: off."**
+
+### Approval timeout (ms)
+
+Number input, 1–3,600,000 (max 1 hour). **Only visible when "Requires approval" is toggled on.** Overrides the global default timeout from orchestration settings. Leave blank to use the global default.
+
+Help: **"How many milliseconds the system waits for a human to approve or reject this call before falling back to the global default action (deny or allow). Leave blank to use the global default timeout from orchestration settings. Maximum is 3,600,000 ms (1 hour)."**
 
 ### Rate limit
 
@@ -144,6 +150,16 @@ reset(formData); // clears dirty state
 ```
 
 Errors from `apiClient` are caught and rendered as a banner at the top of the form — raw server error text is passed through only after it's already been sanitized by the API layer.
+
+## Execution Metrics panel (edit page only)
+
+`components/admin/orchestration/capability-stats-panel.tsx` — a card rendered **above** `<CapabilityForm>` on `/admin/orchestration/capabilities/[id]` (never on `/new`).
+
+- **Data source:** `GET /capabilities/:id/stats?period=<7d|30d|90d>`. The period selector in the card header re-fetches on change; default is `30d`.
+- **Metrics rendered:** Invocations, Success Rate, Avg Latency (with `p50` / `p95` subline), Total Cost (USD, 4dp).
+- **Colour rules:** Success rate badges green ≥ 95%, amber ≥ 80%, red otherwise. Cost, latency, and invocations use fixed brand colours.
+- **Empty state:** when `invocations === 0`, the description reads "No invocations recorded yet" but all metric cards still render (with zeroes).
+- **Error state:** fetch failures render a generic "Failed to load metrics" inline — the form below still mounts.
 
 ## Related
 

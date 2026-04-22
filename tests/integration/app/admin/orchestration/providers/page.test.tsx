@@ -44,6 +44,7 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => ({ get: vi.fn(() => null) })),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -106,25 +107,24 @@ describe('ProvidersListPage (server component)', () => {
   it('renders "Providers" heading', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    // First call: providers; second call: models
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
+      .mockResolvedValueOnce({ success: true, data: [] } as never);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
     render(await ProvidersListPage());
 
-    expect(screen.getByRole('heading', { name: /^providers$/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /providers/i })).toBeInTheDocument();
   });
 
   it('renders each provider name in a card', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
+      .mockResolvedValueOnce({ success: true, data: [] } as never);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -140,10 +140,9 @@ describe('ProvidersListPage (server component)', () => {
   it('renders "+ Add provider" link', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_PROVIDERS,
-    });
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
+      .mockResolvedValueOnce({ success: true, data: [] } as never);
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 

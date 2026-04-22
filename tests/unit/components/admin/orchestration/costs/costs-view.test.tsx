@@ -85,6 +85,20 @@ vi.mock('@/components/admin/orchestration/costs/orchestration-settings-form', ()
   ),
 }));
 
+vi.mock('@/components/admin/orchestration/costs/pricing-reference', () => ({
+  PricingReference: ({ models, fetchedAt }: { models: unknown; fetchedAt: unknown }) => (
+    <div
+      data-testid="pricing-reference"
+      data-has-models={models !== null ? 'true' : 'false'}
+      data-has-fetched-at={fetchedAt !== null ? 'true' : 'false'}
+    />
+  ),
+}));
+
+vi.mock('@/components/admin/orchestration/costs/cost-methodology', () => ({
+  CostMethodology: () => <div data-testid="cost-methodology" />,
+}));
+
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
@@ -142,6 +156,12 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   defaultApprovalTimeoutMs: null,
   approvalDefaultAction: 'deny',
   inputGuardMode: 'log_only',
+  outputGuardMode: 'log_only',
+  webhookRetentionDays: null,
+  costLogRetentionDays: null,
+  maxConversationsPerUser: null,
+  maxMessagesPerConversation: null,
+  escalationConfig: null,
   createdAt: NOW,
   updatedAt: NOW,
 };
@@ -270,6 +290,38 @@ describe('CostsView', () => {
         <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
       );
       expect(screen.getByTestId('per-agent-cost-table')).toHaveAttribute('data-has-rows', 'false');
+    });
+  });
+
+  describe('pricing reference and methodology sections', () => {
+    it('renders PricingReference component', () => {
+      render(
+        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+      );
+      expect(screen.getByTestId('pricing-reference')).toBeInTheDocument();
+    });
+
+    it('renders CostMethodology component', () => {
+      render(
+        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+      );
+      expect(screen.getByTestId('cost-methodology')).toBeInTheDocument();
+    });
+
+    it('passes registryFetchedAt to PricingReference', () => {
+      render(
+        <CostsView
+          summary={null}
+          alerts={null}
+          perModel={null}
+          models={MOCK_MODELS}
+          settings={null}
+          registryFetchedAt={1713139200000}
+        />
+      );
+      const el = screen.getByTestId('pricing-reference');
+      expect(el).toHaveAttribute('data-has-fetched-at', 'true');
+      expect(el).toHaveAttribute('data-has-models', 'true');
     });
   });
 });

@@ -7,6 +7,7 @@
  */
 
 import { createHash } from 'crypto';
+import { extname } from 'path';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
@@ -14,6 +15,7 @@ import {
   parseMetadataComments,
 } from '@/lib/orchestration/knowledge/chunker';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
+import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
 /**
@@ -41,7 +43,8 @@ export async function uploadDocument(
   content: string,
   fileName: string,
   userId: string,
-  category?: string
+  category?: string,
+  sourceUrl?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(content).digest('hex');
   const name = fileName.replace(/\.[^.]+$/, '');
@@ -72,6 +75,7 @@ export async function uploadDocument(
       fileHash,
       scope: 'app',
       category: resolvedCategory,
+      sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
     },
@@ -100,7 +104,7 @@ export async function uploadDocument(
 
     // Generate embeddings for all chunks
     const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts);
 
     // Store chunks with embeddings using raw SQL for pgvector
     for (let i = 0; i < chunks.length; i++) {
@@ -111,10 +115,12 @@ export async function uploadDocument(
         `INSERT INTO ai_knowledge_chunk (
           id, "chunkKey", "documentId", content, embedding,
           "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
         ) VALUES (
           gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
         )`,
         chunk.id,
         document.id,
@@ -127,7 +133,10 @@ export async function uploadDocument(
         chunk.section,
         chunk.keywords,
         chunk.estimatedTokens,
-        JSON.stringify(null)
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
       );
     }
 
@@ -149,6 +158,258 @@ export async function uploadDocument(
 
     await prisma.aiKnowledgeDocument.update({
       where: { id: document.id },
+      data: { status: 'failed', errorMessage: message },
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Upload a document from a raw file buffer (multi-format).
+ *
+ * Detects the format from the file extension, parses the content, then
+ * routes through the standard chunk → embed → store pipeline.
+ *
+ * For formats that require preview (PDF), use `previewDocument` +
+ * `confirmPreview` instead.
+ *
+ * @param buffer - Raw file content
+ * @param fileName - Original file name (extension determines parser)
+ * @param userId - ID of the uploading user
+ * @param category - Optional category override
+ * @returns The created document record
+ * @throws Error if the format requires preview (use previewDocument instead)
+ */
+export async function uploadDocumentFromBuffer(
+  buffer: Buffer,
+  fileName: string,
+  userId: string,
+  category?: string,
+  sourceUrl?: string
+): Promise<AiKnowledgeDocument> {
+  if (requiresPreview(fileName)) {
+    throw new Error(
+      `Format "${extname(fileName)}" requires a preview step. Use previewDocument() + confirmPreview() instead.`
+    );
+  }
+
+  const parsed = await parseDocument(buffer, fileName);
+
+  if (parsed.warnings.length > 0) {
+    logger.warn('Document parsed with warnings', {
+      fileName,
+      warnings: parsed.warnings,
+    });
+  }
+
+  // For markdown files, use the raw text directly (the markdown chunker
+  // handles structural splitting). For other formats, use the full text
+  // which has been normalized to plain text.
+  const ext = extname(fileName).toLowerCase();
+  const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
+
+  return uploadDocument(content, fileName, userId, category, sourceUrl);
+}
+
+/** Result of a document preview (parse-only, no chunking/embedding). */
+export interface DocumentPreview {
+  /** The document record (status = 'pending_review'). */
+  document: AiKnowledgeDocument;
+  /** Extracted text content for admin review. */
+  extractedText: string;
+  /** Document title from metadata. */
+  title: string;
+  /** Author if available. */
+  author?: string;
+  /** Number of sections detected. */
+  sectionCount: number;
+  /** Parsing warnings. */
+  warnings: string[];
+}
+
+/**
+ * Parse a document for preview without chunking or embedding.
+ *
+ * Creates a document record with status 'pending_review' and returns
+ * the extracted text for the admin to review. Call `confirmPreview()`
+ * with the document ID to proceed with chunking + embedding.
+ *
+ * Primarily used for PDF uploads where parsing is unreliable.
+ *
+ * @param buffer - Raw file content
+ * @param fileName - Original file name
+ * @param userId - ID of the uploading user
+ * @returns Preview result with extracted text and metadata
+ */
+export async function previewDocument(
+  buffer: Buffer,
+  fileName: string,
+  userId: string
+): Promise<DocumentPreview> {
+  const fileHash = createHash('sha256').update(buffer).digest('hex');
+  const name = fileName.replace(/\.[^.]+$/, '');
+
+  const parsed = await parseDocument(buffer, fileName);
+
+  // Create document record in pending_review status
+  const document = await prisma.aiKnowledgeDocument.create({
+    data: {
+      name,
+      fileName,
+      fileHash,
+      scope: 'app',
+      status: 'pending_review',
+      uploadedBy: userId,
+      metadata: {
+        extractedText: parsed.fullText,
+        parsedTitle: parsed.title,
+        parsedAuthor: parsed.author ?? null,
+        sectionCount: parsed.sections.length,
+        warnings: parsed.warnings,
+      },
+    },
+  });
+
+  logger.info('Document preview created', {
+    documentId: document.id,
+    fileName,
+    textLength: parsed.fullText.length,
+    sections: parsed.sections.length,
+    warnings: parsed.warnings.length,
+  });
+
+  return {
+    document,
+    extractedText: parsed.fullText,
+    title: parsed.title,
+    author: parsed.author,
+    sectionCount: parsed.sections.length,
+    warnings: parsed.warnings,
+  };
+}
+
+/**
+ * Confirm a previewed document and proceed with chunking + embedding.
+ *
+ * @param documentId - ID of the document in 'pending_review' status
+ * @param userId - ID of the confirming user (must match the uploader)
+ * @param correctedContent - Optional corrected text to replace the parsed content
+ * @param category - Optional category override
+ * @returns The updated document record (status = 'ready')
+ */
+export async function confirmPreview(
+  documentId: string,
+  userId: string,
+  correctedContent?: string,
+  category?: string
+): Promise<AiKnowledgeDocument> {
+  const document = await prisma.aiKnowledgeDocument.findFirst({
+    where: { id: documentId, uploadedBy: userId, status: 'pending_review' },
+  });
+
+  if (!document) {
+    throw new Error(
+      `Document ${documentId} not found, not owned by this user, or not in pending_review status`
+    );
+  }
+
+  const metadata = document.metadata as Record<string, unknown> | null;
+  const extractedText = metadata?.extractedText as string | undefined;
+  const content = correctedContent || extractedText || '';
+
+  if (!content.trim()) {
+    throw new Error('No content available to chunk. Provide correctedContent or re-upload.');
+  }
+
+  logger.info('Confirming document preview', {
+    documentId,
+    usedCorrectedContent: !!correctedContent,
+    contentLength: content.length,
+  });
+
+  // Use the standard upload pipeline from here
+  // First update status to processing
+  await prisma.aiKnowledgeDocument.update({
+    where: { id: documentId },
+    data: { status: 'processing', category: category ?? document.category },
+  });
+
+  try {
+    const chunks = chunkMarkdownDocument(content, document.name);
+
+    if (category) {
+      for (const chunk of chunks) {
+        if (!chunk.category) {
+          chunk.category = category;
+        }
+      }
+    }
+
+    if (chunks.length === 0) {
+      return await prisma.aiKnowledgeDocument.update({
+        where: { id: documentId },
+        data: { status: 'ready', chunkCount: 0 },
+      });
+    }
+
+    const texts = chunks.map((c) => c.content);
+    const { embeddings, provenance } = await embedBatch(texts);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const embeddingStr = `[${embeddings[i].join(',')}]`;
+
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO ai_knowledge_chunk (
+          id, "chunkKey", "documentId", content, embedding,
+          "chunkType", "patternNumber", "patternName", category,
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
+        ) VALUES (
+          gen_random_uuid()::text, $1, $2, $3, $4::vector,
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
+        )`,
+        chunk.id,
+        documentId,
+        chunk.content,
+        embeddingStr,
+        chunk.chunkType,
+        chunk.patternNumber,
+        chunk.patternName,
+        chunk.category,
+        chunk.section,
+        chunk.keywords,
+        chunk.estimatedTokens,
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
+      );
+    }
+
+    const updated = await prisma.aiKnowledgeDocument.update({
+      where: { id: documentId },
+      data: {
+        status: 'ready',
+        chunkCount: chunks.length,
+        metadata: { format: extname(document.fileName).toLowerCase() },
+      },
+    });
+
+    logger.info('Document preview confirmed and processed', {
+      documentId,
+      chunkCount: chunks.length,
+    });
+
+    return updated;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Document confirm failed', { documentId, error: message });
+
+    await prisma.aiKnowledgeDocument.update({
+      where: { id: documentId },
       data: { status: 'failed', errorMessage: message },
     });
 
@@ -225,7 +486,7 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
 
     // Re-embed
     const texts = chunks.map((c) => c.content);
-    const embeddings = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts);
 
     // Store new chunks
     for (let i = 0; i < chunks.length; i++) {
@@ -236,10 +497,12 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
         `INSERT INTO ai_knowledge_chunk (
           id, "chunkKey", "documentId", content, embedding,
           "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
+          section, keywords, "estimatedTokens", metadata,
+          "embeddingModel", "embeddingProvider", "embeddedAt"
         ) VALUES (
           gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb
+          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15
         )`,
         chunk.id,
         documentId,
@@ -252,7 +515,10 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
         chunk.section,
         chunk.keywords,
         chunk.estimatedTokens,
-        JSON.stringify(null)
+        JSON.stringify(null),
+        provenance.model,
+        provenance.provider,
+        provenance.embeddedAt
       );
     }
 

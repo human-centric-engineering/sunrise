@@ -19,12 +19,14 @@
  */
 
 import { BudgetAlertsList } from '@/components/admin/orchestration/costs/budget-alerts-list';
+import { CostMethodology } from '@/components/admin/orchestration/costs/cost-methodology';
 import { CostSummaryCards } from '@/components/admin/orchestration/costs/cost-summary-cards';
 import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
 import { LocalVsCloudPanel } from '@/components/admin/orchestration/costs/local-vs-cloud-panel';
 import { OrchestrationSettingsForm } from '@/components/admin/orchestration/costs/orchestration-settings-form';
 import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-agent-cost-table';
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
+import { PricingReference } from '@/components/admin/orchestration/costs/pricing-reference';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
@@ -40,9 +42,18 @@ export interface CostsViewProps {
   perModel: PerModelDaily[] | null;
   models: ModelInfo[] | null;
   settings: OrchestrationSettings | null;
+  /** Epoch ms when OpenRouter pricing was last fetched. null/0 = static fallback. */
+  registryFetchedAt?: number | null;
 }
 
-export function CostsView({ summary, alerts, perModel, models, settings }: CostsViewProps) {
+export function CostsView({
+  summary,
+  alerts,
+  perModel,
+  models,
+  settings,
+  registryFetchedAt,
+}: CostsViewProps) {
   return (
     <div className="space-y-8">
       <CostSummaryCards summary={summary} />
@@ -57,6 +68,10 @@ export function CostsView({ summary, alerts, perModel, models, settings }: Costs
       </div>
 
       <LocalVsCloudPanel summary={summary} models={models} />
+
+      <PricingReference models={models} fetchedAt={registryFetchedAt ?? null} />
+
+      <CostMethodology />
 
       <OrchestrationSettingsForm settings={settings} models={models} />
     </div>

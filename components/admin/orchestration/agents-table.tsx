@@ -33,7 +33,9 @@ import {
   Copy,
   Download,
   Edit,
+  Eye,
   FileUp,
+  Link2,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -320,6 +322,27 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
 
   const allSelected = agents.length > 0 && selected.size === agents.length;
 
+  function formatRelativeTime(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60_000);
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHrs = Math.floor(diffMin / 60);
+    if (diffHrs < 24) return `${diffHrs}h ago`;
+    const diffDays = Math.floor(diffHrs / 24);
+    if (diffDays < 30) return `${diffDays}d ago`;
+    const diffMonths = Math.floor(diffDays / 30);
+    return `${diffMonths}mo ago`;
+  }
+
+  const VISIBILITY_BADGE: Record<string, { label: string; icon: React.ReactNode } | null> = {
+    internal: null,
+    public: { label: 'Public', icon: <Eye className="h-3 w-3" /> },
+    invite_only: { label: 'Invite', icon: <Link2 className="h-3 w-3" /> },
+  };
+
   return (
     <div className="space-y-4">
       {/* Header / toolbar */}
@@ -444,34 +467,19 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                   </Button>
                 </Tip>
               </TableHead>
-              <TableHead>
-                <Tip label="URL-safe identifier used in API calls and URLs">
-                  <span>Slug</span>
+              <TableHead className="text-right">
+                <Tip label="Number of tools (capabilities) attached to this agent">
+                  <span>Tools</span>
                 </Tip>
               </TableHead>
               <TableHead className="text-right">
-                <Tip label="Number of capabilities (tools) attached to this agent">
-                  <span>Caps</span>
-                </Tip>
-              </TableHead>
-              <TableHead className="text-right">
-                <Tip label="Total conversations this agent has participated in">
-                  <span>Convs</span>
+                <Tip label="Total chat conversations this agent has participated in">
+                  <span>Chats</span>
                 </Tip>
               </TableHead>
               <TableHead>
-                <Tip label="The LLM service powering this agent (e.g. Anthropic, OpenAI, Ollama)">
-                  <span>Provider</span>
-                </Tip>
-              </TableHead>
-              <TableHead>
-                <Tip label="The specific model this agent uses for chat responses">
+                <Tip label="Provider and model powering this agent's responses">
                   <span>Model</span>
-                </Tip>
-              </TableHead>
-              <TableHead className="text-right">
-                <Tip label="Temperature — controls response creativity (0 = deterministic, 2 = most creative)">
-                  <span>Temp</span>
                 </Tip>
               </TableHead>
               <TableHead className="text-right">
@@ -482,6 +490,11 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               <TableHead className="text-right">
                 <Tip label="Spend month-to-date — total LLM cost this calendar month (UTC)">
                   <span>Spend MTD</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="When this agent was created">
+                  <span>Created</span>
                 </Tip>
               </TableHead>
               <TableHead className="text-center">
@@ -495,120 +508,148 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           <TableBody>
             {isLoading && agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-24 text-center">
+                <TableCell colSpan={10} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-24 text-center">
+                <TableCell colSpan={10} className="h-24 text-center">
                   No agents found.
                 </TableCell>
               </TableRow>
             ) : (
-              agents.map((agent) => (
-                <TableRow key={agent.id}>
-                  <TableCell>
-                    <Checkbox
-                      checked={selected.has(agent.id)}
-                      onCheckedChange={() => toggleRow(agent.id)}
-                      aria-label={`Select ${agent.name}`}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/admin/orchestration/agents/${agent.id}`}
-                        className="hover:underline"
-                      >
-                        {agent.name}
-                      </Link>
-                      {agent.isSystem && (
-                        <Tip label="System agent — cannot be deleted or deactivated">
-                          <Badge
-                            variant="secondary"
-                            className="gap-1 px-1.5 py-0 text-[10px] font-medium"
-                          >
-                            <Shield className="h-3 w-3" />
-                            System
-                          </Badge>
-                        </Tip>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">
-                    {agent.slug}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {agent._count.capabilities === 0 ? (
-                      <span className="text-muted-foreground">0</span>
-                    ) : (
-                      <Link
-                        href={`/admin/orchestration/agents/${agent.id}`}
-                        className="hover:underline"
-                        title="View agent capabilities"
-                      >
-                        {agent._count.capabilities}
-                      </Link>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {agent._count.conversations}
-                  </TableCell>
-                  <TableCell>{agent.provider}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{agent.model}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {agent.temperature.toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {agent._budget ? `$${agent._budget.spent.toFixed(2)}` : '—'}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Switch
-                      checked={agent.isActive}
-                      onCheckedChange={(v) => void handleToggleStatus(agent, v)}
-                      disabled={agent.isSystem}
-                      aria-label={`Toggle ${agent.name} active`}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
-                          <span className="sr-only">Row actions</span>
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
+              agents.map((agent) => {
+                const visBadge = VISIBILITY_BADGE[agent.visibility] ?? null;
+                return (
+                  <TableRow key={agent.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(agent.id)}
+                        onCheckedChange={() => toggleRow(agent.id)}
+                        aria-label={`Select ${agent.name}`}
+                      />
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/admin/orchestration/agents/${agent.id}`}
+                          className="font-medium hover:underline"
                         >
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </DropdownMenuItem>
-                        {!agent.isSystem && (
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => setDeleteTarget(agent)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
+                          {agent.name}
+                        </Link>
+                        {agent.isSystem && (
+                          <Tip label="System agent — used internally by the platform. Cannot be deleted or deactivated.">
+                            <Badge
+                              variant="secondary"
+                              className="gap-1 px-1.5 py-0 text-[10px] font-medium"
+                            >
+                              <Shield className="h-3 w-3" />
+                              System
+                            </Badge>
+                          </Tip>
                         )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                        {visBadge && (
+                          <Tip label={`Visibility: ${agent.visibility.replace('_', ' ')}`}>
+                            <Badge
+                              variant="outline"
+                              className="gap-1 px-1.5 py-0 text-[10px] font-medium"
+                            >
+                              {visBadge.icon}
+                              {visBadge.label}
+                            </Badge>
+                          </Tip>
+                        )}
+                      </div>
+                      {agent.description && (
+                        <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                          {agent.description}
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {agent._count.capabilities === 0 ? (
+                        <span className="text-muted-foreground">0</span>
+                      ) : (
+                        <Link
+                          href={`/admin/orchestration/agents/${agent.id}`}
+                          className="hover:underline"
+                          title="View agent tools"
+                        >
+                          {agent._count.capabilities}
+                        </Link>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {agent._count.conversations}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <span className="text-muted-foreground">{agent.provider} /</span>{' '}
+                      {agent.model}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {agent._budget ? `$${agent._budget.spent.toFixed(2)}` : '—'}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <Tip
+                        label={
+                          agent.creator?.name
+                            ? `Created by ${agent.creator.name}`
+                            : 'Creator unknown'
+                        }
+                      >
+                        <span className="text-muted-foreground">
+                          {formatRelativeTime(agent.createdAt)}
+                        </span>
+                      </Tip>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Switch
+                        checked={agent.isActive}
+                        onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+                        disabled={agent.isSystem}
+                        aria-label={`Toggle ${agent.name} active`}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Row actions</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
+                          >
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          {!agent.isSystem && (
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => setDeleteTarget(agent)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>

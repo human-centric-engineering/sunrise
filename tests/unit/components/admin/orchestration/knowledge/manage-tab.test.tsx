@@ -45,7 +45,9 @@ function makeDocument(
     status: overrides.status ?? 'ready',
     scope: 'app',
     category: null,
+    sourceUrl: null,
     errorMessage: null,
+    metadata: null,
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -652,5 +654,114 @@ describe('ManageTab', () => {
     render(<ManageTab documents={[docWithCategory]} onRefresh={vi.fn()} />);
 
     expect(screen.getByText('sales')).toBeInTheDocument();
+  });
+
+  // ── Delete action ─────────────────────────────────────────────────────────
+
+  it('shows delete confirmation when trash button is clicked', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    // Find the trash button via its SVG icon class
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) {
+      await user.click(deleteBtn);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByText(/Delete\?/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^no$/i })).toBeInTheDocument();
+    });
+  });
+
+  it('calls DELETE endpoint when confirmed', async () => {
+    const user = userEvent.setup();
+    const onRefresh = vi.fn();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={onRefresh} />);
+
+    // Find and click the delete button
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) {
+      await user.click(deleteBtn);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^yes$/i }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/documents/doc-user'),
+        expect.objectContaining({ method: 'DELETE' })
+      );
+      expect(onRefresh).toHaveBeenCalled();
+    });
+  });
+
+  it('cancels delete on "No" click', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) {
+      await user.click(deleteBtn);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^no$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^no$/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Delete?')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── pending_review status ─────────────────────────────────────────────────
+
+  it('shows "Needs Review" badge for pending_review documents', () => {
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'PDF Document',
+      status: 'pending_review',
+    });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByText('Needs Review')).toBeInTheDocument();
+  });
+
+  it('shows Review button instead of Rechunk for pending_review documents', () => {
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'PDF Document',
+      status: 'pending_review',
+    });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /review/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /rechunk/i })).not.toBeInTheDocument();
+  });
+
+  // ── Document name click → chunks viewer ───────────────────────────────────
+
+  it('makes document names clickable', () => {
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const nameLink = screen.getByRole('button', { name: 'My Custom Doc' });
+    expect(nameLink).toBeInTheDocument();
+    expect(nameLink.tagName.toLowerCase()).toBe('button');
   });
 });

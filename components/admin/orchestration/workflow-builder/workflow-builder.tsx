@@ -157,6 +157,7 @@ function WorkflowBuilderInner({
   // Save flow state.
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Capabilities for the Tool Call editor — server-prefetched via props,
@@ -356,7 +357,7 @@ function WorkflowBuilderInner({
       setSaving(true);
       setSaveError(null);
       try {
-        const saved = await saveWorkflow({
+        const savedWorkflow = await saveWorkflow({
           mode,
           workflowId: workflow?.id,
           name: workflowName.trim() || 'Untitled workflow',
@@ -366,8 +367,10 @@ function WorkflowBuilderInner({
         });
         setDetails(resolvedDetails);
         if (mode === 'create') {
-          router.push(`/admin/orchestration/workflows/${saved.id}`);
+          router.push(`/admin/orchestration/workflows/${savedWorkflow.id}`);
         } else {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2500);
           router.refresh();
         }
       } catch (err) {
@@ -398,6 +401,29 @@ function WorkflowBuilderInner({
   // ------------------------------------------------------------------
   // Execution flow
   // ------------------------------------------------------------------
+
+  // Save-as-template state.
+  const [savingAsTemplate, setSavingAsTemplate] = useState(false);
+  const [savedAsTemplate, setSavedAsTemplate] = useState(false);
+
+  const handleSaveAsTemplate = useCallback(async () => {
+    if (!workflow) return;
+    setSavingAsTemplate(true);
+    setSavedAsTemplate(false);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowSaveAsTemplate(workflow.id), {});
+      setSavedAsTemplate(true);
+      setTimeout(() => setSavedAsTemplate(false), 2500);
+    } catch (err) {
+      setSaveError(
+        err instanceof APIClientError
+          ? err.message
+          : 'Could not save as template. Try again in a moment.'
+      );
+    } finally {
+      setSavingAsTemplate(false);
+    }
+  }, [workflow]);
 
   const handleExecute = useCallback(() => {
     setExecutionDialogOpen(true);
@@ -456,10 +482,14 @@ function WorkflowBuilderInner({
         onValidate={handleValidate}
         onSave={handleSave}
         onExecute={handleExecute}
+        onSaveAsTemplate={() => void handleSaveAsTemplate()}
+        savingAsTemplate={savingAsTemplate}
+        savedAsTemplate={savedAsTemplate}
         onTemplateSelect={handleTemplateSelect}
         templates={templates}
         templatesDisabled={mode === 'edit'}
         saving={saving}
+        saved={saved}
         hasErrors={validationErrors.length > 0}
       />
 
@@ -477,6 +507,11 @@ function WorkflowBuilderInner({
           metadata={
             (templateMetadataSchema.safeParse(workflow.metadata).data as
               | WorkflowTemplateMetadata
+              | undefined) ?? null
+          }
+          workflowDefinition={
+            (workflowDefinitionSchema.safeParse(workflow.workflowDefinition).data as
+              | WorkflowDefinition
               | undefined) ?? null
           }
         />
@@ -540,6 +575,7 @@ function WorkflowBuilderInner({
         open={executionDialogOpen}
         onOpenChange={setExecutionDialogOpen}
         onConfirm={handleExecutionConfirm}
+        workflowId={workflow?.id ?? ''}
       />
 
       <WorkflowDetailsDialog

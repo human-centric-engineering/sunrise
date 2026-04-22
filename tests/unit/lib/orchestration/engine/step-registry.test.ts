@@ -34,7 +34,7 @@ describe('STEP_REGISTRY', () => {
     }
   });
 
-  it('has 12 entries matching the known step types count', () => {
+  it('has 13 entries matching the known step types count', () => {
     expect(STEP_REGISTRY.length).toBe(KNOWN_STEP_TYPES.length);
   });
 

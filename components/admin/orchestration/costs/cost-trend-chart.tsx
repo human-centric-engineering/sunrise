@@ -61,12 +61,33 @@ const TIER_COLOURS: Record<'budget' | 'mid' | 'frontier' | 'local', string> = {
   local: '#a78bfa', // violet-400
 };
 
+/**
+ * Generate the full 30-day date range, filling in zero-spend days that
+ * the API omits. This prevents the chart from drawing misleading lines
+ * across gaps where no spend occurred.
+ */
+function fillZeroDays(trend: CostSummaryTrendPoint[]): CostSummaryTrendPoint[] {
+  if (trend.length === 0) return [];
+
+  const byDate = new Map(trend.map((pt) => [pt.date, pt.totalCostUsd]));
+
+  // Build full 30-day range ending today (UTC)
+  const now = new Date();
+  const result: CostSummaryTrendPoint[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const date = d.toISOString().slice(0, 10);
+    result.push({ date, totalCostUsd: byDate.get(date) ?? 0 });
+  }
+  return result;
+}
+
 function buildPlotRows(
   trend: CostSummaryTrendPoint[] | null,
   perModel: PerModelRow[] | null,
   models: ModelInfo[] | null
 ): PlotRow[] {
-  const trendList = trend ?? [];
+  const trendList = fillZeroDays(trend ?? []);
   if (trendList.length === 0) return [];
 
   const tierByModel = new Map<string, 'budget' | 'mid' | 'frontier' | 'local'>();
@@ -86,7 +107,7 @@ function buildPlotRows(
 
   return trendList.map((pt) => {
     const total = pt.totalCostUsd;
-    if (tierSum > 0) {
+    if (tierSum > 0 && total > 0) {
       return {
         date: pt.date,
         budget: (total * tierTotals.budget) / tierSum,
@@ -95,6 +116,10 @@ function buildPlotRows(
         local: (total * tierTotals.local) / tierSum,
         total,
       };
+    }
+    // Zero-spend day or no tier data: all zeros
+    if (total === 0) {
+      return { date: pt.date, budget: 0, mid: 0, frontier: 0, local: 0, total: 0 };
     }
     // Fallback: attribute all spend to a single "total" bucket via `mid`.
     return {
@@ -125,7 +150,7 @@ export function CostTrendChart({
         <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        {data.length === 0 ? (
+        {data.length === 0 || data.every((d) => d.total === 0) ? (
           <p className="text-muted-foreground py-12 text-center text-sm">
             No spend recorded in the last 30 days.
           </p>

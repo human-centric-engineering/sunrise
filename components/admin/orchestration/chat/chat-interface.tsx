@@ -187,6 +187,8 @@ export function ChatInterface({
                 if (typeof slug === 'string') {
                   onCapabilityResult?.(slug, parsed.data.result);
                 }
+              } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
+                setWarning(parsed.data.message);
               } else if (parsed.type === 'error') {
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';

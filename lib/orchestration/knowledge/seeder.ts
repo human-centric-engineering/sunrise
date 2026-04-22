@@ -192,14 +192,22 @@ export async function embedChunks(): Promise<{
   });
 
   const texts = pending.map((c) => c.content);
-  const embeddings = await embedBatch(texts);
+  const { embeddings, provenance } = await embedBatch(texts);
 
   for (let i = 0; i < pending.length; i++) {
     const embeddingStr = `[${embeddings[i].join(',')}]`;
     await prisma.$executeRawUnsafe(
-      `UPDATE ai_knowledge_chunk SET embedding = $1::vector WHERE id = $2`,
+      `UPDATE ai_knowledge_chunk
+       SET embedding = $1::vector,
+           "embeddingModel" = $3,
+           "embeddingProvider" = $4,
+           "embeddedAt" = $5
+       WHERE id = $2`,
       embeddingStr,
-      pending[i].id
+      pending[i].id,
+      provenance.model,
+      provenance.provider,
+      provenance.embeddedAt
     );
   }
 

@@ -54,7 +54,6 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
 | `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
 | `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
-| `summarizeMessages`    | function | Budget-tier LLM summary of messages older than the truncation window        |
 | `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
 | `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
 | `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
@@ -95,10 +94,10 @@ Concretely:
 
 1. **`start`** — always emitted first, once the user message has been persisted and the conversation resolved. Carries `conversationId` and the persisted user `messageId`.
 2. **`content`** — zero or more. One per `text` chunk from the provider. The `delta` is the incremental text; concatenate for the full assistant message.
-3. **`status`** — emitted before dispatching a tool call. Carries a human-readable `message` such as `Executing search_knowledge_base`.
+3. **`status`** — emitted before each LLM turn (`Thinking...` for the first, `Processing tool results...` for follow-ups) and before dispatching a tool call (e.g. `Executing search_knowledge_base`).
 4. **`capability_result`** — emitted after the dispatcher resolves. Carries `capabilitySlug` and the raw `CapabilityResult` object (including any `success: false` gates like `requires_approval`).
 5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
-6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn) and `costUsd` (final turn cost only — the chat handler logs per-turn `CostOperation.CHAT` rows fire-and-forget).
+6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
 7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
 
 ## Tool Loop Semantics
@@ -106,15 +105,26 @@ Concretely:
 The tool loop is a bounded while-loop (`MAX_TOOL_ITERATIONS = 5`). Each iteration:
 
 1. Calls `provider.chatStream(messages, options)` with `tools` populated from `getCapabilityDefinitions(agentId)`.
-2. Drains the entire stream, capturing `assistantText`, the first `tool_call` (if any), and the trailing `usage` from the `done` chunk.
+2. Drains the entire stream, capturing `assistantText`, all `tool_call` chunks, and the trailing `usage` from the `done` chunk.
 3. Persists the assistant row (skipped when the turn was pure tool-use with no text).
-4. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
-5. If no tool call: yields `done` and returns.
-6. If a tool call: yields `status`, dispatches via `capabilityDispatcher.dispatch`, yields `capability_result`, persists a `role: 'tool'` row with `capabilitySlug` and `toolCallId`, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
+4. **Output guard** — if no tool calls, scans the assistant text via `scanOutput()` before logging cost. If the guard blocks (mode = `block`), the cost is never logged and the stream terminates. See [Output Guard](./output-guard.md).
+5. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
+6. If no tool call: yields `done` and returns.
+7. If tool calls: **re-checks budget** via `checkBudget(agentId)` before dispatching — prevents multi-tool conversations from exceeding budget mid-stream. Then dispatches via `capabilityDispatcher.dispatch` (wrapped in a 30-second timeout — see below), yields `capability_result`, persists `role: 'tool'` rows, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
 
 Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
 
-Multiple tool calls in a single turn are not yet supported — the handler captures the first `tool_call` and suppresses any further text/tool chunks for that turn. Multi-tool fan-out is a later slice.
+### Tool dispatch timeout
+
+Every `capabilityDispatcher.dispatch()` call is wrapped in `withToolTimeout()` (default `TOOL_DISPATCH_TIMEOUT_MS = 30_000`). If a tool hangs beyond 30 seconds, the promise rejects with a timeout error, and the LLM receives a `{ success: false, error: 'Tool execution timed out' }` result.
+
+### Tool error backoff
+
+The handler tracks per-tool consecutive failure counts in a `Map<string, number>`. After a tool fails **2 consecutive times** (`TOOL_FAILURE_THRESHOLD`), subsequent requests for that tool are **skipped** — the LLM receives a `{ success: false, error: { code: 'tool_unavailable', message: '...' } }` result without dispatching. This prevents a broken tool from burning through all iterations. Success resets the counter.
+
+### Multiple tool calls
+
+Multiple tool calls in a single LLM turn are dispatched in parallel via `Promise.allSettled`. Each result is persisted individually. The backoff threshold applies per-tool — a failing tool in a multi-call turn doesn't block other tools.
 
 ## Context Builder
 
@@ -158,6 +168,25 @@ When conversation history exceeds `MAX_HISTORY_MESSAGES` (20), the streaming han
 
 **Staleness:** A summary is considered stale when `summaryUpToMessageId` is null or messages exist beyond that point in the dropped window. Once generated, the summary is reused until new messages push past the window again.
 
+## User Memory
+
+Per-user-per-agent persistent memory that survives across conversations. Stored in the `AiUserMemory` model as key-value pairs scoped to `(userId, agentId)`.
+
+**How it works:**
+
+1. Before building the message array, the handler loads all memories for `(request.userId, agent.id)` from `AiUserMemory`, ordered by `updatedAt DESC`, capped at 50 entries.
+2. If memories exist, they're injected as a `[User memories]` system message after the context block but before conversation history. Format: `- key: value` per entry.
+3. Agents read/write memories via two built-in capabilities: `read_user_memory` and `write_user_memory`.
+
+**Capabilities:**
+
+| Capability          | Parameters                     | Behavior                                                           |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| `read_user_memory`  | `key?: string`                 | Returns all memories (or single by key) for the current user+agent |
+| `write_user_memory` | `key: string`, `value: string` | Upserts a memory — creates if new, updates if existing             |
+
+**Schema:** `AiUserMemory` has a compound unique `(userId, agentId, key)`. Keys are limited to 255 chars, values to 5000 chars.
+
 ## Input Guard Modes
 
 The input guard (`scanForInjection`) behavior is now configurable via `OrchestrationSettings.inputGuardMode`:
@@ -174,16 +203,44 @@ In all modes, unflagged input proceeds normally. The mode is read from the cache
 
 Every terminal `error` event carries one of these stable `code` values:
 
-| Code                     | Source                                                          | Meaning                                                                                                                  |
-| ------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                | Resolve the slug or activate the agent                                                                                   |
-| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive | Caller sent a stale or cross-user conversation id                                                                        |
-| `budget_exceeded`        | `checkBudget` returns `withinBudget: false`                     | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
-| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                       | A confused model or broken capability is spinning                                                                        |
-| `input_blocked`          | Input guard in `block` mode flagged the message                 | Admin has configured strict input filtering — message rejected by security policy                                        |
-| `internal_error`         | Any other thrown exception                                      | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
+| Code                     | Source                                                            | Meaning                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `agent_not_found`        | `loadAgent` — no active `AiAgent` with that slug                  | Resolve the slug or activate the agent                                                                                   |
+| `conversation_not_found` | Supplied `conversationId` doesn't match userId/agentId/isActive   | Caller sent a stale or cross-user conversation id                                                                        |
+| `budget_exceeded`        | `checkBudget` returns `withinBudget: false` (initial or mid-loop) | Agent has spent more than `monthlyBudgetUsd` this calendar month                                                         |
+| `output_blocked`         | Output guard in `block` mode flagged the response                 | Admin has configured strict output filtering — response rejected by content policy                                       |
+| `tool_loop_cap`          | Tool loop exhausted `MAX_TOOL_ITERATIONS`                         | A confused model or broken capability is spinning                                                                        |
+| `input_blocked`          | Input guard in `block` mode flagged the message                   | Admin has configured strict input filtering — message rejected by security policy                                        |
+| `internal_error`         | Any other thrown exception                                        | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
+
+## Supporting modules
+
+Three internal modules under `lib/orchestration/chat/` are not exported from the barrel but are core to the handler. Documented here so they aren't invisible to future readers.
+
+### `summarizer.ts` — rolling history summary
+
+- Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs)` returning a string.
+- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > MAX_HISTORY_MESSAGES`.
+- Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
+- Logs cost as a `CostOperation.CHAT` row with `agentId: 'system'` and `conversationId: 'summary'`.
+- **Never throws.** Any failure (provider down, LLM error, empty response) returns `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` so the chat turn keeps moving.
+- Prompt is a fixed system message telling the model to produce a third-person summary covering the original problem, key decisions, facts/constraints, and current state.
+
+### `token-estimator.ts` — context window heuristic
+
+- `estimateTokens(text)` — character-based approximation: `ceil(len / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS` where `CHARS_PER_TOKEN = 3.5` and the per-message overhead is 4 tokens for role markers and delimiters.
+- `estimateMessagesTokens(messages)` — sum of `estimateTokens` across every message's extracted text content.
+- `truncateToTokenBudget(history, maxTokens)` — drops messages from the **front** of the array (oldest first) until the remainder fits. Always keeps at least one entry. Returns `{ messages, droppedCount }`.
+- The heuristic is deliberately **over-estimating** — better to truncate early than blow past the provider's context window. Not a real tokenizer; no tiktoken/sentencepiece dependency.
+
+### `message-embedder.ts` — async embedding for semantic search
+
+- `queueMessageEmbedding(messageId, content)` — fire-and-forget. Called after writing an assistant `AiMessage` row; returns immediately and runs the actual embed on a detached promise. Failures are logged but never surfaced to the chat stream. Messages shorter than 20 chars are skipped.
+- `backfillMissingEmbeddings(batchSize = 25)` — called from the unified maintenance tick (see [`scheduling.md`](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)). Finds assistant messages without a matching `AiMessageEmbedding` row (via `LEFT JOIN`) and re-embeds up to `batchSize` entries per invocation.
+- Internally `generateAndStoreEmbedding` truncates content above 8000 chars (cost control) and upserts through a raw `INSERT ... ON CONFLICT` so double-invocations are idempotent.
+- Powers `POST /conversations/search` (pgvector semantic search) — without the embedder those endpoints return empty results. See [`orchestration-conversations.md`](../admin/orchestration-conversations.md).
 
 ## HTTP Surface
 
@@ -302,11 +359,65 @@ npm run smoke:chat
 
 Run this whenever you touch `streaming-handler.ts`, `provider-manager.ts`, or the `AiConversation`/`AiMessage`/`AiCostLog` schema — unit tests mock Prisma, so a broken FK chain or import binding can slip through vitest but not the smoke script. See [`scripts/smoke/README.md`](../../scripts/smoke/README.md) for safety rules and the template to follow when adding more smoke scripts.
 
+## Context Window Management
+
+The message builder supports token-aware truncation to prevent exceeding model context limits. Configured via `contextWindowTokens` and `reserveTokens` on `BuildMessagesArgs`.
+
+**How it works:**
+
+1. System prompt, user message, and history are assembled
+2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens`
+3. `truncateToTokenBudget()` drops the oldest history messages until the remaining messages fit the budget
+4. At least one history message is always kept
+
+Token estimation uses a character-based heuristic (`1 token ≈ 3.5 chars` + 4 tokens overhead per message) from `lib/orchestration/chat/token-estimator.ts`. This is intentionally conservative — it slightly over-estimates, truncating earlier rather than exceeding the context window.
+
+When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 20` limit.
+
+**Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
+
+## Mid-Stream Retry & Recovery
+
+If the LLM stream fails mid-response (network error, provider outage), the handler automatically retries with the next fallback provider:
+
+1. On stream failure, the handler records a circuit breaker failure for the current provider
+2. If the error is an `AbortError` (client disconnect), it throws immediately — no retry
+3. Otherwise, it shifts the next slug from `remainingFallbacks` and emits a `{ type: 'warning', code: 'provider_retry' }` SSE event
+4. A `{ type: 'content_reset', reason: 'provider_fallback' }` event is yielded — **clients must discard any buffered `content` deltas** received before this event
+5. Accumulated content and tool calls are reset, and the stream restarts from the new provider
+6. After `MAX_STREAM_RETRIES` (2) attempts or no more fallbacks, the error propagates
+
+This differs from the initial provider fallback (`getProviderWithFallbacks`) which only selects the starting provider based on circuit breaker state. Mid-stream retry handles failures that occur after the stream has started producing chunks.
+
+### Orphaned Message Prevention
+
+When all providers fail (error propagates to the outer catch), an **error-marker assistant message** is persisted to prevent an orphaned user message in the conversation:
+
+- `role: 'assistant'`, `content: '[An error occurred and the response could not be completed.]'`
+- `metadata: { error: true, errorCode: 'internal_error' }`
+- Only persisted when `conversationId` is set (i.e. the conversation was created before the failure)
+- Persist failure is caught and logged — it never masks the original error
+
+## Conversation and Message Caps
+
+Configurable limits prevent unbounded storage growth. Both are read from `AiOrchestrationSettings` (singleton, `slug = 'global'`):
+
+| Setting                      | Enforced where                     | Error code                        |
+| ---------------------------- | ---------------------------------- | --------------------------------- |
+| `maxConversationsPerUser`    | Before creating a new conversation | `conversation_cap_reached`        |
+| `maxMessagesPerConversation` | After loading history, before send | `conversation_length_cap_reached` |
+
+- `null` (default) means unlimited — no cap is enforced.
+- Conversation cap counts active conversations for the same user + agent pair.
+- Message cap compares `history.length` against the limit.
+- Both throw `ChatError` so the client receives a typed `{ type: 'error', code, message }` SSE event.
+
 ## Error Handling & Resilience
 
 See [Resilience](./resilience.md) for full details. Key points for the chat handler:
 
 - **Provider fallback**: `getProviderWithFallbacks()` checks circuit breakers and falls back through `agent.fallbackProviders` before throwing `all_providers_exhausted`.
+- **Mid-stream retry**: if a stream fails after starting, automatically retries with the next fallback provider (up to 2 retries). Emits `provider_retry` warning event.
 - **Circuit breaker**: `getBreaker(slug).recordSuccess()` / `.recordFailure()` called after each LLM turn.
 - **Budget warning**: at 80% usage, yields `{ type: 'warning', code: 'budget_warning' }` before continuing.
 - **Input guard**: `scanForInjection(message)` runs on every user message — log-only, never blocks.

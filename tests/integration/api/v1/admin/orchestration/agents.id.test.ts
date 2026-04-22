@@ -36,6 +36,10 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    aiAgentVersion: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
@@ -44,6 +48,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
   createRateLimitResponse: vi.fn(() =>
     Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
   ),
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────

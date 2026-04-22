@@ -166,6 +166,14 @@ describe('AgentForm — General tab', () => {
         systemInstructionsHistory: [],
         metadata: {},
         knowledgeCategories: [],
+        topicBoundaries: [],
+        brandVoiceInstructions: null,
+        rateLimitRpm: null,
+        inputGuardMode: null,
+        outputGuardMode: null,
+        maxHistoryTokens: null,
+        retentionDays: null,
+        visibility: 'internal',
         deletedAt: null,
         fallbackProviders: [],
       };
@@ -178,6 +186,37 @@ describe('AgentForm — General tab', () => {
       // Assert
       const slugInput = screen.getByRole('textbox', { name: /^slug/i });
       expect(slugInput).toBeDisabled();
+    });
+  });
+
+  // ── Visibility field ────────────────────────────────────────────────────────
+
+  describe('visibility', () => {
+    it('renders visibility select with 3 options', async () => {
+      const user = userEvent.setup();
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+
+      const select = screen.getByRole('combobox', { name: /visibility/i });
+      expect(select).toBeInTheDocument();
+
+      // Open the select and verify options
+      await user.click(select);
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /internal/i })).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /public/i })).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /invite only/i })).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Retention days field ────────────────────────────────────────────────────
+
+  describe('retention days', () => {
+    it('renders retention days input with placeholder', () => {
+      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      const input = screen.getByRole('spinbutton', { name: /conversation retention/i });
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Keep forever');
     });
   });
 

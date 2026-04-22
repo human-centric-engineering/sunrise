@@ -319,7 +319,7 @@ export function CapabilitiesTable({
               </TableHead>
               <TableHead>
                 <Tip label="How the capability runs: internal (TypeScript handler), api (HTTP POST), or webhook (fire-and-forget)">
-                  <span>Exec type</span>
+                  <span>Type</span>
                 </Tip>
               </TableHead>
               <TableHead>

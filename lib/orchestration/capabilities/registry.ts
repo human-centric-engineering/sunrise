@@ -20,11 +20,16 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
-import { capabilityDispatcher } from './dispatcher';
-import { SearchKnowledgeCapability } from './built-in/search-knowledge';
-import { GetPatternDetailCapability } from './built-in/get-pattern-detail';
-import { EstimateCostCapability } from './built-in/estimate-cost';
-import type { CapabilityFunctionDefinition } from './types';
+import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import { SearchKnowledgeCapability } from '@/lib/orchestration/capabilities/built-in/search-knowledge';
+import { GetPatternDetailCapability } from '@/lib/orchestration/capabilities/built-in/get-pattern-detail';
+import { EstimateCostCapability } from '@/lib/orchestration/capabilities/built-in/estimate-cost';
+import {
+  ReadUserMemoryCapability,
+  WriteUserMemoryCapability,
+} from '@/lib/orchestration/capabilities/built-in/user-memory';
+import { EscalateToHumanCapability } from '@/lib/orchestration/capabilities/built-in/escalate-to-human';
+import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
 
@@ -37,6 +42,9 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new SearchKnowledgeCapability());
   capabilityDispatcher.register(new GetPatternDetailCapability());
   capabilityDispatcher.register(new EstimateCostCapability());
+  capabilityDispatcher.register(new ReadUserMemoryCapability());
+  capabilityDispatcher.register(new WriteUserMemoryCapability());
+  capabilityDispatcher.register(new EscalateToHumanCapability());
   registered = true;
 }
 

@@ -14,14 +14,40 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { API } from '@/lib/api/endpoints';
-import type { KnowledgeSearchResult } from '@/types/orchestration';
+import { z } from 'zod';
 
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: { message?: string };
-}
+import { API } from '@/lib/api/endpoints';
+
+const knowledgeChunkSchema = z.object({
+  id: z.string(),
+  chunkKey: z.string(),
+  documentId: z.string(),
+  content: z.string(),
+  chunkType: z.string(),
+  patternNumber: z.number().nullable(),
+  patternName: z.string().nullable(),
+  category: z.string().nullable(),
+  section: z.string().nullable(),
+  keywords: z.string().nullable(),
+  estimatedTokens: z.number().nullable(),
+  embeddingModel: z.string().nullable(),
+  embeddingProvider: z.string().nullable(),
+  embeddedAt: z.coerce.date().nullable(),
+  metadata: z.unknown().nullable(),
+});
+
+const searchResultSchema = z.object({
+  chunk: knowledgeChunkSchema,
+  similarity: z.number(),
+  documentName: z.string().optional(),
+});
+
+type KnowledgeSearchResult = z.infer<typeof searchResultSchema>;
+
+const searchResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({ results: z.array(searchResultSchema) }).optional(),
+});
 
 /** Returns similarity badge colour classes based on score tier */
 function similarityClasses(score: number): string {
@@ -57,7 +83,7 @@ export function ExploreTab({ scope }: ExploreTabProps) {
           body: JSON.stringify({ query: q, limit: 20, ...(scope ? { scope } : {}) }),
         });
         if (!res.ok) return;
-        const body = (await res.json()) as ApiResponse<{ results: KnowledgeSearchResult[] }>;
+        const body = searchResponseSchema.parse(await res.json());
         if (body.success && body.data) {
           setResults(body.data.results);
         }
@@ -275,18 +301,20 @@ export function ExploreTab({ scope }: ExploreTabProps) {
                   )}
                   <span className="text-muted-foreground">Similarity Score</span>
                   <span>{selected.similarity.toFixed(4)}</span>
-                  {selected.chunk.metadata &&
-                    typeof selected.chunk.metadata === 'object' &&
-                    Object.entries(selected.chunk.metadata as Record<string, unknown>).map(
-                      ([key, value]) => (
-                        <div key={key} className="col-span-2 grid grid-cols-2">
-                          <span className="text-muted-foreground">{key}</span>
-                          <span className="text-xs break-all">
-                            {typeof value === 'string' ? value : JSON.stringify(value)}
-                          </span>
-                        </div>
+                  {selected.chunk.metadata !== null &&
+                  typeof selected.chunk.metadata === 'object' &&
+                  !Array.isArray(selected.chunk.metadata)
+                    ? Object.entries(selected.chunk.metadata as Record<string, unknown>).map(
+                        ([key, value]) => (
+                          <div key={key} className="col-span-2 grid grid-cols-2">
+                            <span className="text-muted-foreground">{key}</span>
+                            <span className="text-xs break-all">
+                              {typeof value === 'string' ? value : JSON.stringify(value)}
+                            </span>
+                          </div>
+                        )
                       )
-                    )}
+                    : null}
                 </div>
               </div>
 

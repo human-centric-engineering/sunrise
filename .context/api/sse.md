@@ -29,6 +29,10 @@ interface SseResponseOptions {
 
 Each yielded event must have a `type: string` — it becomes the SSE `event:` line and the whole object (including `type`) is JSON-encoded as the `data:` payload.
 
+## Event Type Sanitization
+
+The `event.type` is validated against `/^[a-z0-9_]+$/i` before being written to the SSE `event:` line. If it contains characters outside this set (e.g. newlines, colons, or other injection vectors), it is replaced with `unknown`. This prevents SSE frame injection via crafted event types — a malicious `type` containing `\nevent: spoofed\ndata: ...` would be caught and neutralized.
+
 ## Framing Contract
 
 One SSE frame per event:
@@ -126,6 +130,20 @@ Unit tests at `tests/unit/lib/api/sse.test.ts` cover framing, keepalive (with `v
 **Don't** forward `err.message` in a custom error frame. If a caller needs richer error taxonomy, yield a typed error event from the source iterable (the chat handler does this with its `{ type: 'error', code, message }` events) — those pass through verbatim. The catch-all in `sseResponse` is a last-resort safety net, not a channel for domain errors.
 
 **Don't** add SSE helpers to `lib/orchestration/`. Orchestration stays platform-agnostic; `Response` / `ReadableStream` are web-platform concerns and live in `lib/api/`.
+
+## Chat SSE Event Types
+
+| `type`               | Fields                        | Description                                                           |
+| -------------------- | ----------------------------- | --------------------------------------------------------------------- |
+| `start`              | `conversationId`, `messageId` | Emitted once after user message is persisted                          |
+| `content`            | `delta`                       | Incremental text from the LLM                                         |
+| `status`             | `message`                     | Status update (e.g. "Thinking...", "Executing tool...")               |
+| `warning`            | `code`, `message`             | Non-fatal warning (budget_warning, provider_retry, etc.)              |
+| `content_reset`      | `reason`                      | Client must discard buffered content deltas; follows `provider_retry` |
+| `capability_result`  | `capabilitySlug`, `result`    | Single tool call result                                               |
+| `capability_results` | `results[]`                   | Multiple parallel tool call results                                   |
+| `done`               | `tokenUsage`, `costUsd`, etc. | Normal completion                                                     |
+| `error`              | `code`, `message`             | Terminal error — stream ends after this                               |
 
 ## Related Documentation
 

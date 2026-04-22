@@ -13,10 +13,26 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, MoreHorizontal, Plus, Search } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Tip } from '@/components/ui/tooltip';
 import {
@@ -102,6 +118,7 @@ export function EvaluationsTable({
   const [statusFilter, setStatusFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -173,6 +190,25 @@ export function EvaluationsTable({
     },
     [fetchEvaluations]
   );
+
+  const handleArchive = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationById(id), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'archived' }),
+      });
+      if (res.ok) {
+        // Remove from list or refresh
+        setEvaluations((prev) => prev.filter((ev) => ev.id !== id));
+      }
+    } catch {
+      setListError('Failed to archive evaluation.');
+    } finally {
+      setArchiveTarget(null);
+    }
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -259,12 +295,13 @@ export function EvaluationsTable({
                   <span>Created</span>
                 </Tip>
               </TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {evaluations.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground h-24 text-center">
+                <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
                   {isLoading ? 'Loading…' : 'No evaluations found.'}
                 </TableCell>
               </TableRow>
@@ -286,6 +323,24 @@ export function EvaluationsTable({
                   <TableCell className="text-right">{ev._count?.logs ?? 0}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(ev.createdAt).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    {ev.status !== 'archived' && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                            <span className="sr-only">Actions</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setArchiveTarget(ev.id)}>
+                            <Archive className="mr-2 h-4 w-4" />
+                            Archive
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -320,6 +375,25 @@ export function EvaluationsTable({
           </Button>
         </div>
       </div>
+
+      {/* Archive confirmation dialog */}
+      <AlertDialog open={!!archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive evaluation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Archiving hides this evaluation from the default list view. You can still find it
+              using the &ldquo;Archived&rdquo; status filter.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => archiveTarget && void handleArchive(archiveTarget)}>
+              Archive
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

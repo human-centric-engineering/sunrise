@@ -1,0 +1,238 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { API } from '@/lib/api/endpoints';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+
+interface AuditEntry {
+  id: string;
+  userId: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  entityName: string | null;
+  changes: Record<string, { from: unknown; to: unknown }> | null;
+  metadata: Record<string, unknown> | null;
+  clientIp: string | null;
+  createdAt: string;
+  user: { id: string; name: string; email: string };
+}
+
+const ENTITY_TYPES = [
+  { value: 'all', label: 'All types' },
+  { value: 'agent', label: 'Agents' },
+  { value: 'workflow', label: 'Workflows' },
+  { value: 'capability', label: 'Capabilities' },
+  { value: 'knowledge_document', label: 'Knowledge' },
+  { value: 'settings', label: 'Settings' },
+  { value: 'experiment', label: 'Experiments' },
+  { value: 'embed_token', label: 'Embed tokens' },
+  { value: 'backup', label: 'Backups' },
+];
+
+function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (action.endsWith('.create')) return 'default';
+  if (action.endsWith('.update')) return 'secondary';
+  if (action.endsWith('.delete')) return 'destructive';
+  return 'outline';
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function AuditLogView() {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [entityType, setEntityType] = useState('all');
+  const [search, setSearch] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const limit = 25;
+
+  const fetchEntries = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (entityType !== 'all') params.set('entityType', entityType);
+      const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        success: boolean;
+        data: AuditEntry[];
+        meta: { total: number };
+      };
+      if (json.success) {
+        setEntries(json.data);
+        setTotal(json.meta.total);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [page, entityType]);
+
+  useEffect(() => {
+    void fetchEntries();
+  }, [fetchEntries]);
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  const filtered = search
+    ? entries.filter(
+        (e) =>
+          e.action.toLowerCase().includes(search.toLowerCase()) ||
+          (e.entityName ?? '').toLowerCase().includes(search.toLowerCase()) ||
+          e.user.name.toLowerCase().includes(search.toLowerCase())
+      )
+    : entries;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Audit Log</h1>
+          <p className="text-muted-foreground text-sm">
+            Track admin configuration changes across all orchestration resources.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void fetchEntries()} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Input
+          placeholder="Filter by action, name, or user..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+        />
+        <Select
+          value={entityType}
+          onValueChange={(v) => {
+            setEntityType(v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[160px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ENTITY_TYPES.map((t) => (
+              <SelectItem key={t.value} value={t.value}>
+                {t.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[180px]">Timestamp</TableHead>
+              <TableHead className="w-[140px]">Action</TableHead>
+              <TableHead>Entity</TableHead>
+              <TableHead className="w-[140px]">User</TableHead>
+              <TableHead className="w-[110px]">IP</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
+                  {loading ? 'Loading...' : 'No audit entries found.'}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((entry) => (
+                <TableRow
+                  key={entry.id}
+                  className="cursor-pointer"
+                  onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                >
+                  <TableCell className="text-muted-foreground text-xs">
+                    {formatDate(entry.createdAt)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={actionBadgeVariant(entry.action)}>{entry.action}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{entry.entityName ?? entry.entityId ?? '—'}</span>
+                    <span className="text-muted-foreground ml-2 text-xs">{entry.entityType}</span>
+                    {expandedId === entry.id && entry.changes && (
+                      <div className="bg-muted mt-2 rounded p-2 text-xs">
+                        <pre className="overflow-x-auto whitespace-pre-wrap">
+                          {JSON.stringify(entry.changes, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">{entry.user.name}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
+                    {entry.clientIp ?? '—'}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <p className="text-muted-foreground text-sm">
+          {total} {total === 1 ? 'entry' : 'entries'}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-sm">
+            {page} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

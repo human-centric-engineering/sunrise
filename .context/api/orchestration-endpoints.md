@@ -43,6 +43,9 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/providers/:id/health`             | GET, POST          | Read / reset circuit breaker state                      | 5.1     |
 | `/providers/:id/models`             | GET                | Provider-reported models                                | 3.2     |
 | `/models`                           | GET                | Aggregated model registry                               | 3.2     |
+| `/provider-models`                  | GET, POST          | List / create provider model entries (selection matrix) | 5.2     |
+| `/provider-models/:id`              | GET, PATCH, DELETE | Read / update / soft-delete provider model              | 5.2     |
+| `/provider-models/recommend`        | GET                | Scored model recommendations by task intent             | 5.2     |
 | `/workflows`                        | GET, POST          | List / create workflows                                 | 3.2     |
 | `/workflows/:id`                    | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.2     |
 | `/workflows/:id/validate`           | POST               | DAG validation                                          | 3.2     |
@@ -84,8 +87,44 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks`                         | GET, POST          | List / create webhook subscriptions                     | 5.1     |
 | `/webhooks/:id`                     | GET, PATCH, DELETE | Get / update / delete webhook subscription              | 5.1     |
 | `/observability/dashboard-stats`    | GET                | Aggregated observability metrics                        | 5.1     |
+| `/webhooks/:id/test`                | POST               | Send a test delivery to verify webhook endpoint         | 5.1     |
+| `/webhooks/:id/deliveries`          | GET                | List delivery history for a subscription                | 5.1     |
+| `/webhooks/deliveries/:id/retry`    | POST               | Retry a failed delivery                                 | 5.1     |
+| `/analytics/engagement`             | GET                | Conversation volume, avg length, retention              | 6       |
+| `/analytics/topics`                 | GET                | Popular topics grouped by frequency                     | 6       |
+| `/analytics/unanswered`             | GET                | Messages with hedging phrases / low confidence          | 6       |
+| `/analytics/content-gaps`           | GET                | Frequently asked topics with poor coverage              | 6       |
+| `/analytics/feedback`               | GET                | Thumbs up/down aggregation and trend                    | 6       |
+| `/agents/:id/invite-tokens`         | GET, POST          | List / create invite tokens for invite_only agents      | 5.1     |
+| `/agents/:id/invite-tokens/:tid`    | PATCH, DELETE      | Update / revoke an invite token                         | 5.1     |
+| `/agents/:id/versions`              | GET                | Version history (paginated snapshots)                   | 5.1     |
+| `/workflows/templates`              | GET                | List workflow templates (builtin + custom)              | 5.1     |
+| `/workflows/:id/save-as-template`   | POST               | Save a workflow as a reusable template                  | 5.1     |
+| `/workflows/:id/schedules`          | GET, POST          | List / create cron schedules for a workflow             | 5.1     |
+| `/workflows/:id/schedules/:sid`     | GET, PATCH, DELETE | Read / update / delete a workflow schedule              | 5.1     |
+| `/executions`                       | GET                | List workflow executions (paginated)                    | 5.1     |
+| `/conversations/export`             | POST               | Export conversations as JSON                            | 5.1     |
+| `/conversations/:id/messages/:mid`  | GET                | Read a single message                                   | 5.1     |
+| `/conversations/search`             | GET                | Full-text search across conversations                   | 5.1     |
+| `/knowledge/patterns`               | GET                | List all design patterns                                | 3.3     |
+| `/knowledge/documents/:id/confirm`  | POST               | Confirm a PDF preview and proceed with chunking         | 5.1     |
+| `/hooks`                            | GET, POST          | List / create event hooks                               | 5.1     |
+| `/hooks/:id`                        | GET, PATCH, DELETE | Read / update / delete an event hook                    | 5.1     |
+| `/maintenance/tick`                 | POST               | Trigger maintenance (retention, retries, schedules)     | 5.1     |
+| `/mcp/settings`                     | GET, PATCH         | MCP server configuration                                | 6       |
+| `/mcp/tools`                        | GET                | List MCP-exposed tools                                  | 6       |
+| `/mcp/tools/:id`                    | PATCH              | Toggle / configure MCP tool exposure                    | 6       |
+| `/mcp/resources`                    | GET                | List MCP-exposed resources                              | 6       |
+| `/mcp/resources/:id`                | PATCH              | Toggle / configure MCP resource exposure                | 6       |
+| `/mcp/keys`                         | GET, POST          | List / create MCP API keys                              | 6       |
+| `/mcp/keys/:id`                     | GET, PATCH, DELETE | Read / update / revoke MCP API key                      | 6       |
+| `/mcp/keys/:id/rotate`              | POST               | Rotate an MCP API key                                   | 6       |
+| `/mcp/audit`                        | GET                | Query MCP audit log                                     | 6       |
+| `/mcp/sessions`                     | GET                | List MCP sessions                                       | 6       |
+| `/mcp/sessions/:id`                 | GET                | Read a single MCP session                               | 6       |
+| `/audit-log`                        | GET                | Admin action audit trail (paginated, filterable)        | 8       |
 
-65 route files. For architecture detail see `.context/orchestration/admin-api.md`.
+107 admin route files, 8 consumer chat route files, 1 webhook trigger route file (116 total). For architecture detail see `.context/orchestration/admin-api.md`.
 
 ---
 
@@ -227,6 +266,26 @@ Asks the provider directly. Same error-sanitization guarantee as `/test`.
 ### `GET /models`
 
 Aggregated registry across all configured providers. Query: `?refresh=true` to bypass the in-process cache.
+
+---
+
+## Provider Models (Selection Matrix)
+
+### `GET /provider-models`
+
+Paginated list of `AiProviderModel` entries enriched with `configured: boolean` and `configuredActive: boolean` (from matching `AiProviderConfig` by `providerSlug`). Filters: `capability` (`chat` | `embedding`), `providerSlug`, `tierRole`, `isActive`, `q` (text search across name, slug, providerSlug, modelId, description).
+
+### `POST /provider-models`
+
+Create a model entry. Body validated by `createProviderModelSchema`. Sets `isDefault: false`. Rate-limited by `adminLimiter`. Returns 409 on slug conflict.
+
+### `GET / PATCH / DELETE /provider-models/:id`
+
+Standard CRUD. `PATCH` sets `isDefault: false` on seed-managed rows (opt-out from future seed updates). `DELETE` is a soft delete (`isActive = false`). Both are rate-limited.
+
+### `GET /provider-models/recommend?intent=thinking`
+
+Scored model recommendations for a task intent. Query params: `intent` (required — `thinking`, `doing`, `fast_looping`, `high_reliability`, `private`, `embedding`), `limit` (optional, default 5, max 20). Response includes `recommendations[]` sorted by score and a `heuristic` object with human-readable rules.
 
 ---
 
@@ -446,13 +505,13 @@ Paginated document list. Query: `page`, `limit`, `status`, `category`, `q` (`lis
 | Content-Type | `multipart/form-data`                                                               |
 | Form field   | `file` (required)                                                                   |
 | Form field   | `category` (optional — overrides any in-document `<!-- metadata: category=... -->`) |
-| Max size     | **10 MB** (`MAX_UPLOAD_BYTES` in the route)                                         |
-| Extensions   | **`.md`, `.markdown`, `.txt` only** (case-insensitive)                              |
+| Max size     | **50 MB** (`MAX_UPLOAD_BYTES` in the route)                                         |
+| Extensions   | **`.md`, `.markdown`, `.txt`, `.pdf`, `.docx`, `.epub`** (case-insensitive)         |
 | MIME type    | Advisory only — the extension is the load-bearing check                             |
 
-PDF and HTML are **future work** — they'd need `pdf-parse` / `sanitize-html` and new chunker branches, and adding parsers without updating the extension whitelist leaves dormant code paths. Do not `POST` with `application/json`; the route only accepts multipart.
+PDF uploads go through a preview flow (`requiresConfirmation: true`) where extracted text is returned for user confirmation before chunking. EPUB and DOCX are parsed via dedicated parsers. Do not `POST` with `application/json`; the route only accepts multipart.
 
-Returns `201` with the created `AiKnowledgeDocument`. Files over 10 MB → `413 FILE_TOO_LARGE`. Disallowed extension → `400 INVALID_FILE_TYPE`.
+Returns `201` with the created `AiKnowledgeDocument`. Files over 50 MB → `413 FILE_TOO_LARGE`. Disallowed extension → `400 INVALID_FILE_TYPE`.
 
 ### `GET / DELETE /knowledge/documents/:id`
 

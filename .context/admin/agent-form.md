@@ -1,6 +1,6 @@
 # Agent form
 
-Shared create/edit form for `AiAgent`. Five shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
+Shared create/edit form for `AiAgent`. Eight shadcn tabs, one underlying `<form>`, one POST (create) or PATCH (edit). Landed in Phase 4 Session 4.2; this is the **reference implementation** of the `<FieldHelp>` contextual-help directive — later sessions copy the voice, not just the structure.
 
 **File:** `components/admin/orchestration/agent-form.tsx`
 **Pattern:** raw `react-hook-form` + `zodResolver(agentFormSchema)`, no shadcn Form wrapper (mirrors `components/admin/feature-flag-form.tsx`).
@@ -8,19 +8,26 @@ Shared create/edit form for `AiAgent`. Five shadcn tabs, one underlying `<form>`
 
 ## Tab structure
 
-| #   | Tab          | Create | Edit | Notes                                                       |
-| --- | ------------ | ------ | ---- | ----------------------------------------------------------- |
-| 1   | General      | ✅     | ✅   | Name, slug, description, active                             |
-| 2   | Model        | ✅     | ✅   | Provider, model, temperature, max tokens, budget, test conn |
-| 3   | Instructions | ✅     | ✅   | Textarea, character count, history panel (edit only)        |
-| 4   | Capabilities | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                      |
-| 5   | Test         | 🚫     | ✅   | Embeds `<AgentTestChat>`                                    |
+| #   | Tab           | Create | Edit | Notes                                                                                                                 |
+| --- | ------------- | ------ | ---- | --------------------------------------------------------------------------------------------------------------------- |
+| 1   | General       | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                       |
+| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
+| 3   | Instructions  | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
+| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
+| 5   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
+| 6   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
+| 7   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
+| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` — create tokens, copy `<script>` snippet, toggle active, manage origins                          |
 
-Tabs 4 and 5 are `disabled` in create mode — attaching capabilities and streaming a test chat both require a persisted `agent.id` / `agent.slug`.
+Tabs 4, 5, 7, and 8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
 
 ## Tab 1 — General
 
-Fields: `name`, `slug`, `description`, `isActive`.
+Fields: `name`, `slug`, `description`, `isActive`, `visibility`.
+
+### Visibility select
+
+Select with three options: `internal` (default), `public`, `invite_only`. Controls who can access the agent via the consumer chat API. Placed after the Active toggle.
 
 **Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode the slug input is disabled — changing slugs breaks existing deep links.
 
@@ -53,17 +60,26 @@ Number input. Default 4096. Validation min 1, max 200_000.
 
 Optional number input. When set, the chat handler rejects new turns once MTD spend exceeds the cap. Leave blank to disable.
 
-### Test connection
+### Fallback providers
 
-Button that POSTs `/providers/:id/test` (where `:id` is the selected provider's row id, resolved via the hydrated provider list). On success: green check + `{modelCount} models available`. On failure: red × + **"Couldn't reach this provider. Check the server logs for details."** — the server route already sanitizes the upstream error, and the client layers on a friendly fallback regardless. Raw SDK error text never reaches the DOM.
+Multi-checkbox list populated from the provider list. When the primary provider's circuit breaker is open, the chat handler falls back through these in order. Maximum 5 entries.
 
-**Shared extract (Phase 4 Session 4.3):** This button is now the `<ProviderTestButton>` at `components/admin/orchestration/provider-test-button.tsx`, shared with `<ProviderForm>`. Behaviour is unchanged; when the selected provider slug doesn't yet correspond to a saved row, the button shows a "save it first" disabled message instead of firing the request. See [`orchestration-providers.md`](./orchestration-providers.md#providertestbutton--shared-extract).
+### Rate limit RPM
 
-### Test model
+Optional number input. Per-agent rate limit in requests per minute. When set, overrides the global `chatLimiter` default for this agent. Leave blank for the global default.
 
-Button below "Test connection" that sends a trivial prompt (`"Say hello."`, maxTokens: 10) to the selected provider + model combination and reports round-trip latency. POSTs `/providers/:id/test-model` with `{ model }`. On success: green check + latency in ms. On failure: red × + generic message. Disabled when no provider or model is selected.
+### Connectivity check card
 
-**Component:** `<ModelTestButton>` at `components/admin/orchestration/model-test-button.tsx`.
+**Component:** `<AgentTestCard>` at `components/admin/orchestration/agent-test-card.tsx`.
+
+A card with a `<FieldHelp>` explainer and a single **Run check** button that runs two steps in sequence:
+
+1. **Provider connection** — POSTs `/providers/:id/test`. On success: green check + `{modelCount} models available`. On failure: red × + friendly message. If this step fails the model step is skipped.
+2. **Model response** — POSTs `/providers/:id/test-model` with `{ model }`. On success: green check + round-trip latency in ms. On failure: red × + generic message.
+
+Each step shows an idle dot, spinner, green check, or red × to the left of its label. When no provider config is saved, step 1 fails immediately with a "save it first" message. When no model is selected, step 2 fails with "No model selected."
+
+The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain available for use in `<ProviderForm>` and elsewhere.
 
 ### Help copy
 
@@ -75,7 +91,21 @@ Button below "Test connection" that sends a trivial prompt (`"Say hello."`, maxT
 
 ## Tab 3 — Instructions
 
-Single `<Textarea rows={16}>` bound to `systemInstructions`, with a character count in the footer. Below the textarea, in edit mode only, `<InstructionsHistoryPanel>` renders a collapsible audit log.
+Single `<Textarea rows={16}>` bound to `systemInstructions`, with a character count in the footer.
+
+### Brand voice instructions
+
+Textarea (4 rows) for brand-voice guidance. Injected into the system prompt as a separate section so the LLM follows tone/style rules consistently. Example: "Always respond in a professional, concise tone. Avoid slang."
+
+### Knowledge categories
+
+Comma-separated text input. Tags that scope the agent to specific knowledge base categories. Transformed to `string[]` on submit.
+
+### Topic boundaries
+
+Comma-separated text input. Topics the output guard checks against. If the LLM response touches these topics, the output guard fires. Transformed to `string[]` on submit.
+
+Below the textarea, in edit mode only, `<InstructionsHistoryPanel>` renders a collapsible audit log.
 
 ### History panel
 
@@ -123,6 +153,66 @@ File: `components/admin/orchestration/agent-test-chat.tsx`.
 - Renders `content` deltas into a growing reply; stops on `done`.
 - `error` frame → **"The agent ran into a problem. Check the server logs for details."** The raw `data.message` is never forwarded to the DOM. The wizard test pins this behaviour; any regression is caught by two unit tests (wizard + direct chat component).
 - Holds an `AbortController` and calls `.abort()` on unmount or on a new send.
+
+## Tab 6 — Invite tokens
+
+**Component:** `components/admin/orchestration/agent-invite-tokens-tab.tsx`
+
+Edit mode only, and only enabled when the agent's `visibility` is `invite_only`. For other visibility modes the tab trigger is disabled.
+
+### Token table
+
+Columns: label, truncated token (with copy-to-clipboard), status badge, usage / limit, expiry date, created date.
+
+**Status badges** are derived, not stored:
+
+| Badge       | Condition                                     |
+| ----------- | --------------------------------------------- |
+| `active`    | Not revoked, not expired, not exhausted       |
+| `revoked`   | `revokedAt` is set                            |
+| `expired`   | `expiresAt` is in the past                    |
+| `exhausted` | `useCount >= maxUses` (when `maxUses` is set) |
+
+### Create dialog
+
+Opens from a "Create token" button above the table. Fields: **label** (optional text), **max uses** (optional number), **expiry** (optional date picker). POSTs to `agentInviteTokens(id)`. On success the table refetches and the new token is shown — the full token value is only visible at creation time.
+
+### Revoke action
+
+Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedAt` server-side; the row's badge updates to `revoked` on refetch.
+
+### API endpoints
+
+| Action | Call                                       |
+| ------ | ------------------------------------------ |
+| List   | `GET agentInviteTokens(id)`                |
+| Create | `POST agentInviteTokens(id)`               |
+| Revoke | `DELETE agentInviteTokenById(id, tokenId)` |
+
+### Help copy
+
+- **Invite tokens** — "Invite tokens control access to invite-only agents. Common use cases: restricting access to specific clients, gating beta features, managing partner integrations, and creating paid tiers with separate tokens per customer."
+
+## Tab 6 — Versions
+
+**File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
+
+Displays the `AiAgentVersion` timeline — every save creates a full config snapshot. Each row shows version number (badge), change summary, and formatted date. Expanding a row shows the creator tooltip.
+
+### Restore
+
+All rows except the latest version show a **Restore** button. Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which creates a _new_ version entry so the action is auditable. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
+
+### API endpoints
+
+| Action  | Call                                      |
+| ------- | ----------------------------------------- |
+| List    | `GET agentVersions(id)?limit=50`          |
+| Restore | `POST agentVersionRestore(id, versionId)` |
+
+### Help copy
+
+- **Version history** — "Every time you save changes to this agent, a snapshot of the full configuration is stored. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
 
 ## Submit flow
 

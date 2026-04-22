@@ -178,6 +178,91 @@ describe('CapabilityForm — Safety tab', () => {
     });
   });
 
+  // ── approvalTimeoutMs ──────────────────────────────────────────────────────
+
+  describe('approvalTimeoutMs input', () => {
+    it('approval timeout field is hidden when requiresApproval is off', async () => {
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+      await openSafetyTab(user);
+
+      expect(
+        screen.queryByRole('spinbutton', { name: /approval timeout/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it('approval timeout field appears when requiresApproval is toggled on', async () => {
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+      await openSafetyTab(user);
+
+      const approvalSwitch = document.getElementById('requiresApproval') as HTMLElement;
+      await user.click(approvalSwitch);
+
+      expect(screen.getByRole('spinbutton', { name: /approval timeout/i })).toBeInTheDocument();
+    });
+
+    it('approvalTimeoutMs value round-trips in submit payload', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'cap-1', name: 'Cap', slug: 'cap' });
+
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      await openSafetyTab(user);
+
+      // Toggle approval on to reveal the timeout field
+      const approvalSwitch = document.getElementById('requiresApproval') as HTMLElement;
+      await user.click(approvalSwitch);
+
+      await user.type(screen.getByRole('spinbutton', { name: /approval timeout/i }), '30000');
+
+      await fillRequiredFieldsForSubmit(user);
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      await user.click(screen.getByRole('button', { name: /create capability/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              approvalTimeoutMs: 30000,
+            }),
+          })
+        );
+      });
+    });
+
+    it('empty approvalTimeoutMs → null in submit payload', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'cap-1', name: 'Cap', slug: 'cap' });
+
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      await openSafetyTab(user);
+
+      const approvalSwitch = document.getElementById('requiresApproval') as HTMLElement;
+      await user.click(approvalSwitch);
+
+      // Leave timeout empty
+      await fillRequiredFieldsForSubmit(user);
+      await user.click(screen.getByRole('tab', { name: /safety/i }));
+      await user.click(screen.getByRole('button', { name: /create capability/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              approvalTimeoutMs: null,
+            }),
+          })
+        );
+      });
+    });
+  });
+
   // ── rateLimit ─────────────────────────────────────────────────────────────
 
   describe('rateLimit input', () => {

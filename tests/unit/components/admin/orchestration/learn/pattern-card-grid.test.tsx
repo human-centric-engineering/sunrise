@@ -60,19 +60,20 @@ describe('PatternCardGrid', () => {
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
-  it('shows complexity badges with correct text', () => {
+  it('renders category labels when present', () => {
     render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
 
-    expect(screen.getByText('beginner')).toBeInTheDocument();
-    expect(screen.getByText('advanced')).toBeInTheDocument();
+    // Two patterns share the Reasoning category
+    expect(screen.getAllByText('Reasoning')).toHaveLength(2);
+    expect(screen.getByText('Action')).toBeInTheDocument();
   });
 
-  it('omits complexity badge when null', () => {
+  it('renders pattern number badges', () => {
     render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
 
-    // ReAct has no complexity — should only have 2 badges total
-    const badges = screen.getAllByText(/beginner|intermediate|advanced/i);
-    expect(badges).toHaveLength(2);
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
   });
 
   it('renders empty state when no patterns', () => {

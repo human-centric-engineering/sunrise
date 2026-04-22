@@ -65,7 +65,9 @@ export function FieldHelp({
       </PopoverTrigger>
       <PopoverContent className={cn('text-sm', contentClassName)} align="start">
         {title && <div className="mb-1 font-semibold">{title}</div>}
-        <div className="text-muted-foreground space-y-1 leading-relaxed">{children}</div>
+        <div className="text-muted-foreground max-h-60 space-y-1 overflow-y-auto leading-relaxed">
+          {children}
+        </div>
       </PopoverContent>
     </Popover>
   );

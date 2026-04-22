@@ -10,16 +10,17 @@ For authentication-specific security (password hashing, sessions, OAuth), see [A
 
 All security utilities are located in `lib/security/`:
 
-| File            | Purpose                                       |
-| --------------- | --------------------------------------------- |
-| `constants.ts`  | Security constants (rate limits, CORS config) |
-| `rate-limit.ts` | LRU cache-based sliding window rate limiter   |
-| `headers.ts`    | CSP and security headers utilities            |
-| `sanitize.ts`   | XSS prevention and input sanitization         |
-| `cors.ts`       | CORS configuration and utilities              |
-| `ip.ts`         | Client IP extraction with validation          |
-| `safe-url.ts`   | SSRF guard for admin-settable outbound URLs   |
-| `index.ts`      | Module exports                                |
+| File                 | Purpose                                       |
+| -------------------- | --------------------------------------------- |
+| `constants.ts`       | Security constants (rate limits, CORS config) |
+| `rate-limit.ts`      | Sliding window rate limiter (pluggable store) |
+| `rate-limit-stores/` | Backing stores: memory (LRU) and Redis        |
+| `headers.ts`         | CSP and security headers utilities            |
+| `sanitize.ts`        | XSS prevention and input sanitization         |
+| `cors.ts`            | CORS configuration and utilities              |
+| `ip.ts`              | Client IP extraction with validation          |
+| `safe-url.ts`        | SSRF guard for admin-settable outbound URLs   |
+| `index.ts`           | Module exports                                |
 
 ## Security Headers
 
@@ -153,9 +154,9 @@ export async function POST(request: Request) {
 
 ## Rate Limiting
 
-**Implementation**: `lib/security/rate-limit.ts`
+**Implementation**: `lib/security/rate-limit.ts`, `lib/security/rate-limit-stores/`
 
-LRU cache-based sliding window rate limiter. No Redis required for single-server deployment.
+Sliding window rate limiter with a pluggable backing store. Defaults to in-memory LRU (no Redis required) for single-server deployments, with an optional Redis adapter for multi-server coordination.
 
 ### Pre-configured Limiters
 
@@ -208,9 +209,11 @@ All rate-limited responses include:
 ### Features
 
 - **Sliding window**: Accurate tracking across time boundaries
-- **LRU eviction**: Automatic cleanup (max 500 unique tokens)
+- **LRU eviction**: Automatic cleanup (max 500 unique tokens, memory store)
 - **Peek without consume**: Check limits without incrementing
 - **Manual reset**: Clear limits for specific tokens
+- **Per-agent limits**: Agents can override global rate limits via `rateLimitRpm` field
+- **Dynamic limiters**: `createDynamicLimiter(namespace, defaultRpm)` supports per-key custom RPM
 
 ```typescript
 // Check limit without consuming a request
@@ -477,16 +480,43 @@ export async function POST(request: Request) {
 
 ## Decision History
 
-### Rate Limiting: In-Memory LRU vs Redis
+### Rate Limiting: Pluggable Store Architecture
 
-**Decision**: In-memory LRU cache
-**Rationale**:
+**Decision**: Pluggable `RateLimitStore` interface with memory (default) and Redis adapters
+**Implementation**: `lib/security/rate-limit-stores/`
 
-- Simpler deployment (no Redis dependency)
-- Sufficient for single-server deployment
-- Upgrade to Redis when horizontal scaling needed
+```
+lib/security/rate-limit-stores/
+├── types.ts    # RateLimitStore interface
+├── memory.ts   # MemoryRateLimitStore — LRU cache (default)
+├── redis.ts    # RedisRateLimitStore — Redis sorted sets (optional)
+└── index.ts    # Factory: getStore(), reads RATE_LIMIT_STORE env var
+```
 
-**Trade-offs**: Limits reset on server restart, not shared across instances
+**Configuration:**
+
+| Env var            | Values            | Default  | Description                            |
+| ------------------ | ----------------- | -------- | -------------------------------------- |
+| `RATE_LIMIT_STORE` | `memory`, `redis` | `memory` | Which backing store to use             |
+| `REDIS_URL`        | Redis connection  | —        | Required when `RATE_LIMIT_STORE=redis` |
+
+**`RateLimitStore` interface:**
+
+```typescript
+interface RateLimitStore {
+  increment(key: string, windowMs: number): Promise<{ count: number; resetAt: number }>;
+  reset(key: string): Promise<void>;
+  peek(key: string, windowMs: number): Promise<{ count: number; resetAt: number } | null>;
+}
+```
+
+**Memory store** — `MemoryRateLimitStore`: uses `lru-cache` with per-key timestamp arrays. Suitable for single-server deployments. Limits reset on server restart.
+
+**Redis store** — `RedisRateLimitStore`: uses Redis sorted sets with Lua scripts for atomic increment-and-expire. Each request gets a unique member (`timestamp:pid-counter`) to prevent dedup under concurrency. Requires `ioredis` (optional peer dependency). Connection is initialized asynchronously with an awaitable promise to avoid startup races.
+
+If `RATE_LIMIT_STORE=redis` but `REDIS_URL` is unset, falls back to memory with a warning log.
+
+All existing limiter instances automatically use whichever store is configured — no code changes needed in route handlers.
 
 ### CSP: unsafe-inline for Styles
 

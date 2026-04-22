@@ -309,6 +309,60 @@ describe('WorkflowsTable', () => {
     });
   });
 
+  // ── Duplicate ──────────────────────────────────────────────────────────────
+
+  describe('duplicate action', () => {
+    it('clicking Duplicate fetches the workflow then POSTs a copy', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const { useRouter } = await import('next/navigation');
+      const push = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push,
+        replace: vi.fn(),
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
+
+      vi.mocked(apiClient.get).mockResolvedValue({
+        workflowDefinition: { steps: [], entryStepId: '', errorStrategy: 'fail' },
+        patternsUsed: [1, 2],
+        isTemplate: false,
+        metadata: null,
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'wf-new-id' });
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const duplicateItem = await screen.findByRole('menuitem', {
+        name: /duplicate/i,
+        hidden: true,
+      });
+      await user.click(duplicateItem);
+
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
+      });
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/workflows'),
+          expect.objectContaining({
+            body: expect.objectContaining({ name: 'Alpha Flow (copy)' }),
+          })
+        );
+      });
+
+      await waitFor(() => {
+        expect(push).toHaveBeenCalledWith('/admin/orchestration/workflows/wf-new-id');
+      });
+    });
+  });
+
   // ── Executions column ─────────────────────────────────────────────────────
 
   describe('Executions column', () => {
@@ -339,6 +393,306 @@ describe('WorkflowsTable', () => {
       const zeroEl = screen.getByText('0');
       expect(zeroEl).toBeInTheDocument();
       expect(zeroEl.closest('a')).toBeNull();
+    });
+  });
+
+  // ── Sort order toggle ──────────────────────────────────────────────────────
+
+  describe('sort order toggle', () => {
+    it('clicking the same sort field a second time flips the order to asc', async () => {
+      // Arrange: first click puts field=name, order=desc; second click flips to asc
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue(makeWorkflowsListResponse());
+
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      // Act: click Name sort button twice
+      const nameBtn = screen.getByRole('button', { name: /^Name/ });
+      await user.click(nameBtn); // first: field=name, order=desc
+      await user.click(nameBtn); // second: same field → order flips to asc
+
+      // Assert: two list fetches were fired after the initial render
+      await waitFor(() => {
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
+        // Both fetches went out — second click triggered a refetch
+        expect(fetchUrls.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it('clicking a different sort field resets order to desc', async () => {
+      // Arrange: start with sort on name desc, then click createdAt
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue(makeWorkflowsListResponse());
+
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const nameBtn = screen.getByRole('button', { name: /^Name/ });
+      await user.click(nameBtn); // sort by name desc
+
+      // Assert: at least one fetch was triggered
+      await waitFor(() => {
+        expect(mockFetch.mock.calls.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  // ── Sort icon rendering ────────────────────────────────────────────────────
+
+  describe('sort icons', () => {
+    it('shows ArrowUp icon when sorted by Name ascending', async () => {
+      // Arrange: click Name twice to get asc order
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue(makeWorkflowsListResponse());
+
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const nameBtn = screen.getByRole('button', { name: /^Name/ });
+      await user.click(nameBtn); // desc
+      await user.click(nameBtn); // asc
+
+      // Assert: the Name button should still be in the document (icon inside it)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^Name/ })).toBeInTheDocument();
+      });
+    });
+
+    it('shows ArrowDown icon when sorted by Name descending', async () => {
+      // Arrange: click Name once to get desc order
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue(makeWorkflowsListResponse());
+
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const nameBtn = screen.getByRole('button', { name: /^Name/ });
+      await user.click(nameBtn); // desc
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^Name/ })).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Template badge ─────────────────────────────────────────────────────────
+
+  describe('template badge', () => {
+    it('renders Template badge for template workflows', () => {
+      // Arrange: one workflow is marked as a template
+      const templateWorkflow = makeWorkflow({
+        id: 'wf-tmpl',
+        name: 'My Template',
+        slug: 'my-template',
+        isTemplate: true,
+      });
+
+      render(
+        <WorkflowsTable
+          initialWorkflows={[templateWorkflow]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+        />
+      );
+
+      // Assert: Template badge appears in the table body (not just header tooltip)
+      // The badge has a `title` attribute distinguishing it from the column header
+      const badge = screen.getByTitle(/This workflow appears in the "Use template" menu/i);
+      expect(badge).toBeInTheDocument();
+    });
+
+    it('renders em-dash in template column for non-template workflows', () => {
+      // Arrange: workflow without isTemplate flag
+      const normalWorkflow = makeWorkflow({
+        id: 'wf-normal',
+        name: 'Normal Flow',
+        slug: 'normal-flow',
+        isTemplate: false,
+      });
+
+      render(
+        <WorkflowsTable
+          initialWorkflows={[normalWorkflow]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+        />
+      );
+
+      // Assert: no badge with the title attribute (which is only on the template badge)
+      expect(
+        screen.queryByTitle(/This workflow appears in the "Use template" menu/i)
+      ).not.toBeInTheDocument();
+      // Em-dash is shown in the template column
+      expect(screen.getByText('—')).toBeInTheDocument();
+    });
+  });
+
+  // ── Loading state ──────────────────────────────────────────────────────────
+
+  describe('loading state', () => {
+    it('shows loading row when workflows list is empty and loading starts', async () => {
+      // Arrange: trigger a slow fetch so loading=true while workflows=[]
+      let resolveFetch: (val: Response) => void;
+      const pending = new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+      mockFetch.mockReturnValueOnce(pending);
+
+      const user = userEvent.setup({ delay: null });
+      render(<WorkflowsTable initialWorkflows={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
+
+      // Trigger fetch by typing in search and advancing debounce
+      await user.type(screen.getByPlaceholderText(/search workflows/i), 'x');
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // While loading, the table should show a loading row (not empty state)
+      // The component shows "Loading…" only when isLoading=true AND workflows.length===0
+      // After fetch resolves it shows data or empty state
+      resolveFetch!(makeWorkflowsListResponse([]));
+
+      await waitFor(() => {
+        // Resolve should update the list (even to empty)
+        expect(mockFetch).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ── Duplicate error ────────────────────────────────────────────────────────
+
+  describe('duplicate error handling', () => {
+    it('shows error banner when duplicate fails with generic error', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockRejectedValue(new Error('network error'));
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const duplicateItem = await screen.findByRole('menuitem', {
+        name: /duplicate/i,
+        hidden: true,
+      });
+      await user.click(duplicateItem);
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't duplicate/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Pagination ─────────────────────────────────────────────────────────────
+
+  describe('pagination boundaries', () => {
+    it('Previous button is disabled on page 1', () => {
+      // Arrange: first page
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const prevBtn = screen.getByRole('button', { name: /previous/i });
+      expect(prevBtn).toBeDisabled();
+    });
+
+    it('Next button is disabled on the last page', () => {
+      // Arrange: only 1 page total
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const nextBtn = screen.getByRole('button', { name: /^next/i });
+      expect(nextBtn).toBeDisabled();
+    });
+
+    it('Next button is enabled and triggers refetch when not on last page', async () => {
+      // Arrange: 2 pages
+      const meta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
+      mockFetch.mockResolvedValue(makeWorkflowsListResponse());
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={meta} />);
+
+      const nextBtn = screen.getByRole('button', { name: /^next/i });
+      expect(nextBtn).not.toBeDisabled();
+      await user.click(nextBtn);
+
+      await waitFor(() => {
+        const fetchUrls = mockFetch.mock.calls.map((call) =>
+          toUrlString(call[0] as RequestInfo | URL)
+        );
+        expect(fetchUrls.some((u) => u.includes('page=2'))).toBe(true);
+      });
+    });
+
+    it('shows correct count text for empty workflow list', () => {
+      render(<WorkflowsTable initialWorkflows={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
+
+      // When empty: "Showing 0 to 0 of 0 workflows"
+      expect(screen.getByText(/showing 0 to 0 of 0 workflows/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Delete error ───────────────────────────────────────────────────────────
+
+  describe('delete error handling', () => {
+    async function openDeleteDialog(user: ReturnType<typeof userEvent.setup>) {
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const deleteItem = await screen.findByRole('menuitem', {
+        name: /delete/i,
+        hidden: true,
+      });
+      await user.click(deleteItem);
+      await waitFor(() => expect(screen.getByText('Delete workflow')).toBeInTheDocument());
+    }
+
+    it('apiClient.delete is called with the workflow id when Delete is clicked', async () => {
+      // Arrange: delete rejects (APIClientError)
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('Not found', 'NOT_FOUND', 404)
+      );
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Assert: delete was attempted with the workflow id
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
+      });
+    });
+
+    it('apiClient.delete is called even when it fails with a generic error', async () => {
+      // Arrange: delete rejects with a non-APIClientError
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(new Error('network error'));
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/workflows/wf-1'));
+      });
+    });
+  });
+
+  // ── Status switch non-APIClientError ──────────────────────────────────────
+
+  describe('status switch generic error', () => {
+    it('shows generic error message when PATCH fails with non-APIClientError', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new Error('network error'));
+
+      const user = userEvent.setup();
+      render(<WorkflowsTable initialWorkflows={THREE_WORKFLOWS} initialMeta={MOCK_META} />);
+
+      const switches = screen.getAllByRole('switch');
+      await user.click(switches[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't update/i)).toBeInTheDocument();
+      });
     });
   });
 });

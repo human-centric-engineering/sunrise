@@ -6,21 +6,22 @@
  * Shared create / edit form for `AiProviderConfig`. Raw RHF + Zod,
  * sticky action bar, every non-trivial field wrapped in `<FieldHelp>`.
  *
- * **Flavor selector.** The backend only knows two `providerType`
- * values (`anthropic`, `openai-compatible`) but the UI shows four
+ * **Flavor selector.** The backend knows three `providerType` values
+ * (`anthropic`, `openai-compatible`, `voyage`) but the UI shows five
  * flavors:
  *
- *   - Anthropic        — `providerType: 'anthropic'`
- *   - OpenAI           — `providerType: 'openai-compatible'`, base URL
- *                        pinned to `https://api.openai.com/v1`
- *   - Ollama (Local)   — `providerType: 'openai-compatible'`,
- *                        `isLocal: true`, loopback base URL
+ *   - Anthropic         — `providerType: 'anthropic'`
+ *   - OpenAI            — `providerType: 'openai-compatible'`, base URL
+ *                         pinned to `https://api.openai.com/v1`
+ *   - Voyage AI         — `providerType: 'voyage'`, embedding-focused
+ *   - Ollama (Local)    — `providerType: 'openai-compatible'`,
+ *                         `isLocal: true`, loopback base URL
  *   - OpenAI-Compatible — free-form base URL + optional env var
  *
  * The flavor drives which fields render. On submit, we compose the
  * backend payload from `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?,
- * isActive }`. On edit, we reverse-map the provider row back to a
- * flavor so the UI round-trips cleanly.
+ * isActive, timeoutMs?, maxRetries? }`. On edit, we reverse-map the
+ * provider row back to a flavor so the UI round-trips cleanly.
  *
  * API-key policy: the UI never accepts, stores, transmits, or renders
  * a raw API key value. The `apiKeyEnvVar` field is the *name* of an
@@ -35,7 +36,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save, X } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, ChevronRight, Loader2, Save, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -47,7 +48,23 @@ import { API } from '@/lib/api/endpoints';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiProviderConfig } from '@/types/prisma';
 
-type Flavor = 'anthropic' | 'openai' | 'ollama' | 'openai-compatible' | 'voyage';
+type Flavor =
+  | 'anthropic'
+  | 'openai'
+  | 'voyage'
+  | 'groq'
+  | 'together'
+  | 'fireworks'
+  | 'mistral'
+  | 'cohere'
+  | 'google'
+  | 'xai'
+  | 'deepseek'
+  | 'perplexity'
+  | 'openrouter'
+  | 'alibaba'
+  | 'ollama'
+  | 'openai-compatible';
 
 interface FlavorMeta {
   id: Flavor;
@@ -61,14 +78,45 @@ interface FlavorMeta {
   defaultApiKeyEnvVar: string | null;
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   isLocal: boolean;
+  group: 'frontier' | 'open-model' | 'embedding' | 'aggregator' | 'local' | 'custom';
 }
 
+const FLAVOR_GROUPS: { key: FlavorMeta['group']; label: string; description: string }[] = [
+  {
+    key: 'frontier',
+    label: 'Frontier Providers',
+    description: 'Proprietary models with leading capabilities',
+  },
+  {
+    key: 'open-model',
+    label: 'Open-Model Hosts',
+    description: 'Cloud inference for open-source/open-weight models',
+  },
+  {
+    key: 'embedding',
+    label: 'Embedding Specialists',
+    description: 'Dedicated embedding and retrieval models',
+  },
+  {
+    key: 'aggregator',
+    label: 'Aggregators & Enterprise',
+    description: 'Multi-model routing, fallback, and compliance',
+  },
+  {
+    key: 'local',
+    label: 'Local / Self-Hosted',
+    description: 'Run models on your own infrastructure',
+  },
+  { key: 'custom', label: 'Custom', description: 'Any OpenAI-compatible endpoint' },
+];
+
 const FLAVORS: readonly FlavorMeta[] = [
+  // ── Frontier Providers ──────────────────────────────────────────────
   {
     id: 'anthropic',
     label: 'Anthropic',
     description:
-      'Claude models (Haiku, Sonnet, Opus) for chat. No embedding support — pair with Voyage AI or OpenAI for vector search.',
+      'Claude models (Haiku, Sonnet, Opus). No embedding support — pair with Voyage AI or OpenAI for vectors.',
     defaultName: 'Anthropic',
     defaultSlug: 'anthropic',
     showBaseUrl: false,
@@ -77,12 +125,41 @@ const FLAVORS: readonly FlavorMeta[] = [
     defaultApiKeyEnvVar: 'ANTHROPIC_API_KEY',
     providerType: 'anthropic',
     isLocal: false,
+    group: 'frontier',
+  },
+  {
+    id: 'google',
+    label: 'Google AI',
+    description: 'Gemini models and text-embedding-004 via Google AI Studio.',
+    defaultName: 'Google AI',
+    defaultSlug: 'google',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultApiKeyEnvVar: 'GOOGLE_AI_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'frontier',
+  },
+  {
+    id: 'mistral',
+    label: 'Mistral AI',
+    description:
+      'Mistral Large, Mixtral, and Mistral Embed. European AI lab with open-weight models.',
+    defaultName: 'Mistral AI',
+    defaultSlug: 'mistral',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.mistral.ai/v1',
+    defaultApiKeyEnvVar: 'MISTRAL_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'frontier',
   },
   {
     id: 'openai',
     label: 'OpenAI',
-    description:
-      'GPT models and text-embedding-3 embeddings via the OpenAI API. Requires an API key.',
+    description: 'GPT models and text-embedding-3 embeddings.',
     defaultName: 'OpenAI',
     defaultSlug: 'openai',
     showBaseUrl: false,
@@ -91,26 +168,162 @@ const FLAVORS: readonly FlavorMeta[] = [
     defaultApiKeyEnvVar: 'OPENAI_API_KEY',
     providerType: 'openai-compatible',
     isLocal: false,
+    group: 'frontier',
+  },
+  {
+    id: 'xai',
+    label: 'xAI',
+    description: 'Grok models with strong reasoning and real-time knowledge.',
+    defaultName: 'xAI',
+    defaultSlug: 'xai',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    defaultApiKeyEnvVar: 'XAI_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'frontier',
+  },
+
+  // ── Open-Model Hosts ────────────────────────────────────────────────
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    description: 'DeepSeek Chat and Coder. Very cost-efficient open-weight models.',
+    defaultName: 'DeepSeek',
+    defaultSlug: 'deepseek',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.deepseek.com/v1',
+    defaultApiKeyEnvVar: 'DEEPSEEK_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'open-model',
+  },
+  {
+    id: 'fireworks',
+    label: 'Fireworks AI',
+    description: 'Fast open-model inference with function calling support.',
+    defaultName: 'Fireworks AI',
+    defaultSlug: 'fireworks',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
+    defaultApiKeyEnvVar: 'FIREWORKS_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'open-model',
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    description: 'Ultra-fast inference for Llama, Mixtral, and other open models.',
+    defaultName: 'Groq',
+    defaultSlug: 'groq',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    defaultApiKeyEnvVar: 'GROQ_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'open-model',
+  },
+  {
+    id: 'together',
+    label: 'Together AI',
+    description: 'Open-source model hosting — Llama, Mixtral, and more with competitive pricing.',
+    defaultName: 'Together AI',
+    defaultSlug: 'together',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.together.xyz/v1',
+    defaultApiKeyEnvVar: 'TOGETHER_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'open-model',
+  },
+
+  // ── Embedding Specialists ───────────────────────────────────────────
+  {
+    id: 'cohere',
+    label: 'Cohere',
+    description: 'Command R+ for chat and Embed v3 for multilingual embeddings.',
+    defaultName: 'Cohere',
+    defaultSlug: 'cohere',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.cohere.com/v2',
+    defaultApiKeyEnvVar: 'COHERE_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'embedding',
   },
   {
     id: 'voyage',
     label: 'Voyage AI',
     description:
-      'Embedding-focused provider by ex-Anthropic researchers. Free tier (200 M tokens/month). Recommended for knowledge base vector search.',
+      'Embedding specialist with free tier (200M tokens/month). Recommended for knowledge base search.',
     defaultName: 'Voyage AI',
-    defaultSlug: 'voyage-ai',
+    defaultSlug: 'voyage',
     showBaseUrl: false,
     showApiKeyEnvVar: true,
     defaultBaseUrl: 'https://api.voyageai.com/v1',
     defaultApiKeyEnvVar: 'VOYAGE_API_KEY',
     providerType: 'voyage',
     isLocal: false,
+    group: 'embedding',
+  },
+
+  // ── Aggregators & Enterprise ────────────────────────────────────────
+  {
+    id: 'alibaba',
+    label: 'Alibaba (Qwen)',
+    description: 'Qwen models via DashScope. Strong multilingual and code capabilities.',
+    defaultName: 'Alibaba (Qwen)',
+    defaultSlug: 'alibaba',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultApiKeyEnvVar: 'ALIBABA_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'aggregator',
   },
   {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    description: 'Aggregated multi-model routing — access 200+ models through one API key.',
+    defaultName: 'OpenRouter',
+    defaultSlug: 'openrouter',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    defaultApiKeyEnvVar: 'OPENROUTER_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'aggregator',
+  },
+  {
+    id: 'perplexity',
+    label: 'Perplexity AI',
+    description: 'Sonar search-grounded models with real-time web access.',
+    defaultName: 'Perplexity AI',
+    defaultSlug: 'perplexity',
+    showBaseUrl: false,
+    showApiKeyEnvVar: true,
+    defaultBaseUrl: 'https://api.perplexity.ai',
+    defaultApiKeyEnvVar: 'PERPLEXITY_API_KEY',
+    providerType: 'openai-compatible',
+    isLocal: false,
+    group: 'aggregator',
+  },
+
+  // ── Local / Self-Hosted ─────────────────────────────────────────────
+  {
     id: 'ollama',
-    label: 'Ollama (Local)',
+    label: 'Ollama',
     description:
-      'Run open-source models locally via Ollama. Free. Requires Ollama installed on the server.',
+      'Run open-source models locally. Free, no API key needed. Requires Ollama installed on the server.',
     defaultName: 'Ollama (Local)',
     defaultSlug: 'ollama-local',
     showBaseUrl: true,
@@ -119,12 +332,15 @@ const FLAVORS: readonly FlavorMeta[] = [
     defaultApiKeyEnvVar: null,
     providerType: 'openai-compatible',
     isLocal: true,
+    group: 'local',
   },
+
+  // ── Custom ──────────────────────────────────────────────────────────
   {
     id: 'openai-compatible',
-    label: 'OpenAI-Compatible',
+    label: 'Other (OpenAI-Compatible)',
     description:
-      'Any server with an OpenAI-compatible API — Together AI, Fireworks, Groq, LM Studio, vLLM, etc.',
+      'Any server with an OpenAI-compatible chat completions API — LM Studio, vLLM, custom deployments.',
     defaultName: 'OpenAI-Compatible',
     defaultSlug: 'openai-compatible',
     showBaseUrl: true,
@@ -133,11 +349,14 @@ const FLAVORS: readonly FlavorMeta[] = [
     defaultApiKeyEnvVar: null,
     providerType: 'openai-compatible',
     isLocal: false,
+    group: 'custom',
   },
 ] as const;
 
+const ALL_FLAVOR_IDS = FLAVORS.map((f) => f.id) as unknown as [string, ...string[]];
+
 const providerFormSchema = z.object({
-  flavor: z.enum(['anthropic', 'openai', 'ollama', 'openai-compatible', 'voyage']),
+  flavor: z.enum(ALL_FLAVOR_IDS),
   name: z.string().min(1, 'Name is required').max(100),
   slug: z
     .string()
@@ -152,11 +371,22 @@ const providerFormSchema = z.object({
     .optional()
     .or(z.literal('')),
   isActive: z.boolean(),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1000, 'Minimum 1000 ms')
+    .max(300000, 'Maximum 300000 ms')
+    .optional(),
+  maxRetries: z.number().int().min(0, 'Minimum 0').max(10, 'Maximum 10').optional(),
 });
 
 type ProviderFormData = z.infer<typeof providerFormSchema>;
 
-export type ProviderRowWithStatus = AiProviderConfig & { apiKeyPresent?: boolean };
+export type ProviderRowWithStatus = AiProviderConfig & {
+  apiKeyPresent?: boolean;
+  timeoutMs?: number | null;
+  maxRetries?: number | null;
+};
 
 export interface ProviderFormProps {
   mode: 'create' | 'edit';
@@ -168,7 +398,23 @@ function flavorFromProvider(provider: ProviderRowWithStatus): Flavor {
   if (provider.providerType === 'anthropic') return 'anthropic';
   if (provider.providerType === 'voyage') return 'voyage';
   if (provider.isLocal) return 'ollama';
-  if (provider.baseUrl && provider.baseUrl.includes('api.openai.com')) return 'openai';
+
+  // Match known providers by base URL or slug
+  const url = provider.baseUrl ?? '';
+  const slug = provider.slug ?? '';
+  if (url.includes('api.openai.com')) return 'openai';
+  if (url.includes('api.groq.com') || slug === 'groq') return 'groq';
+  if (url.includes('api.together.xyz') || slug === 'together') return 'together';
+  if (url.includes('api.fireworks.ai') || slug === 'fireworks') return 'fireworks';
+  if (url.includes('api.mistral.ai') || slug === 'mistral') return 'mistral';
+  if (url.includes('api.cohere.com') || slug === 'cohere') return 'cohere';
+  if (url.includes('generativelanguage.googleapis.com') || slug === 'google') return 'google';
+  if (url.includes('api.x.ai') || slug === 'xai') return 'xai';
+  if (url.includes('api.deepseek.com') || slug === 'deepseek') return 'deepseek';
+  if (url.includes('api.perplexity.ai') || slug === 'perplexity') return 'perplexity';
+  if (url.includes('openrouter.ai') || slug === 'openrouter') return 'openrouter';
+  if (url.includes('dashscope.aliyuncs.com') || slug === 'alibaba') return 'alibaba';
+
   return 'openai-compatible';
 }
 
@@ -189,11 +435,13 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const initialFlavor: Flavor = provider ? flavorFromProvider(provider) : 'anthropic';
 
   const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
   const [apiKeyPresent, setApiKeyPresent] = useState<boolean | null>(
     provider?.apiKeyPresent ?? null
   );
+  const [advancedOpen, setAdvancedOpen] = useState(!!(provider?.timeoutMs || provider?.maxRetries));
 
   const {
     register,
@@ -211,6 +459,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       baseUrl: provider?.baseUrl ?? '',
       apiKeyEnvVar: provider?.apiKeyEnvVar ?? '',
       isActive: provider?.isActive ?? true,
+      timeoutMs: provider?.timeoutMs ?? undefined,
+      maxRetries: provider?.maxRetries ?? undefined,
     },
   });
 
@@ -250,6 +500,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const onSubmit = async (data: ProviderFormData) => {
     setSubmitting(true);
     setError(null);
+    setSaved(false);
     try {
       const meta = FLAVORS.find((f) => f.id === data.flavor);
       if (!meta) throw new Error('Unknown flavor');
@@ -271,6 +522,10 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       };
       if (baseUrl) payload.baseUrl = baseUrl;
       if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
+      if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
+        payload.timeoutMs = data.timeoutMs;
+      if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
+        payload.maxRetries = data.maxRetries;
 
       if (isEdit && provider) {
         const updated = await apiClient.patch<ProviderRowWithStatus>(
@@ -283,6 +538,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           baseUrl: updated.baseUrl ?? '',
           apiKeyEnvVar: updated.apiKeyEnvVar ?? '',
         });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<ProviderRowWithStatus>(
           API.ADMIN.ORCHESTRATION.PROVIDERS,
@@ -313,11 +570,16 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/providers">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving…
+              </>
+            ) : saved ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                Saved
               </>
             ) : (
               <>
@@ -351,32 +613,46 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
             </p>
           </FieldHelp>
         </Label>
-        <div role="radiogroup" aria-label="Provider flavor" className="grid gap-3 sm:grid-cols-2">
-          {FLAVORS.map((f) => {
-            const selected = currentFlavor === f.id;
+        <div role="radiogroup" aria-label="Provider flavor" className="space-y-4">
+          {FLAVOR_GROUPS.map((group) => {
+            const groupFlavors = FLAVORS.filter((f) => f.group === group.key);
+            if (groupFlavors.length === 0) return null;
             return (
-              <button
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                key={f.id}
-                onClick={() => handleFlavorChange(f.id)}
-                className={`rounded-lg border p-3 text-left transition ${
-                  selected
-                    ? 'border-primary bg-primary/5 ring-primary ring-1'
-                    : 'hover:border-primary/50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`inline-block h-3 w-3 rounded-full border ${
-                      selected ? 'border-primary bg-primary' : 'border-muted-foreground/40'
-                    }`}
-                  />
-                  <span className="font-medium">{f.label}</span>
+              <div key={group.key}>
+                <div className="mb-2">
+                  <h4 className="text-sm font-medium">{group.label}</h4>
+                  <p className="text-muted-foreground text-xs">{group.description}</p>
                 </div>
-                <p className="text-muted-foreground mt-1 text-xs">{f.description}</p>
-              </button>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {groupFlavors.map((f) => {
+                    const selected = currentFlavor === f.id;
+                    return (
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        key={f.id}
+                        onClick={() => handleFlavorChange(f.id)}
+                        className={`rounded-lg border p-3 text-left transition ${
+                          selected
+                            ? 'border-primary bg-primary/5 ring-primary ring-1'
+                            : 'hover:border-primary/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-block h-3 w-3 rounded-full border ${
+                              selected ? 'border-primary bg-primary' : 'border-muted-foreground/40'
+                            }`}
+                          />
+                          <span className="font-medium">{f.label}</span>
+                        </div>
+                        <p className="text-muted-foreground mt-1 text-xs">{f.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -505,6 +781,69 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           checked={watch('isActive')}
           onCheckedChange={(checked) => setValue('isActive', checked)}
         />
+      </div>
+
+      {/* Advanced settings — collapsible */}
+      <div className="rounded-md border">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 p-3 text-sm font-medium"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+          Advanced settings
+        </button>
+        {advancedOpen && (
+          <div className="space-y-4 border-t px-3 pt-3 pb-4">
+            <div className="grid gap-2">
+              <Label htmlFor="timeoutMs">
+                Timeout (ms){' '}
+                <FieldHelp title="Request timeout">
+                  Maximum time in milliseconds to wait for a response from this provider. Leave
+                  empty to use the system default.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="timeoutMs"
+                type="number"
+                {...register('timeoutMs')}
+                placeholder="e.g. 30000"
+                className="font-mono text-xs"
+                min={1000}
+                max={300000}
+              />
+              {errors.timeoutMs && (
+                <p className="text-destructive text-xs">{errors.timeoutMs.message}</p>
+              )}
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="maxRetries">
+                Max retries{' '}
+                <FieldHelp title="Automatic retries">
+                  Number of automatic retries on transient failures (network errors, 5xx responses).
+                  Leave empty to use the system default.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="maxRetries"
+                type="number"
+                {...register('maxRetries')}
+                placeholder="e.g. 3"
+                className="font-mono text-xs"
+                min={0}
+                max={10}
+              />
+              {errors.maxRetries && (
+                <p className="text-destructive text-xs">{errors.maxRetries.message}</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Test connection — edit only (create mode has no id yet) */}

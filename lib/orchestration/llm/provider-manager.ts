@@ -60,7 +60,15 @@ export interface ProviderConfigWithStatus {
   status: 'ok' | 'error' | 'unknown';
 }
 
-const instanceCache = new Map<string, LlmProvider>();
+/** How long (ms) a cached provider instance is considered fresh. */
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface CachedProvider {
+  provider: LlmProvider;
+  cachedAt: number;
+}
+
+const instanceCache = new Map<string, CachedProvider>();
 
 /**
  * Resolve a provider instance by slug (or name).
@@ -68,10 +76,13 @@ const instanceCache = new Map<string, LlmProvider>();
  * Loads the `AiProviderConfig` row, validates it, resolves the API
  * key from the process environment, constructs the concrete provider,
  * and caches the instance under its slug.
+ *
+ * Cached instances are evicted after `CACHE_TTL_MS` (5 minutes) so
+ * that config changes in the database take effect without a restart.
  */
 export async function getProvider(slugOrName: string): Promise<LlmProvider> {
   const cached = instanceCache.get(slugOrName);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached.provider;
 
   const config = await prisma.aiProviderConfig.findFirst({
     where: {
@@ -94,9 +105,10 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
   }
 
   const instance = buildProviderFromConfig(config);
-  instanceCache.set(config.slug, instance);
+  const entry: CachedProvider = { provider: instance, cachedAt: Date.now() };
+  instanceCache.set(config.slug, entry);
   // Also key by name so callers that already looked up via name are consistent.
-  if (slugOrName !== config.slug) instanceCache.set(slugOrName, instance);
+  if (slugOrName !== config.slug) instanceCache.set(slugOrName, entry);
   return instance;
 }
 
@@ -107,7 +119,7 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
  */
 export function registerProvider(config: ProviderConfig): LlmProvider {
   const instance = buildProviderFromInMemoryConfig(config);
-  instanceCache.set(config.name, instance);
+  instanceCache.set(config.name, { provider: instance, cachedAt: Date.now() });
   return instance;
 }
 
@@ -119,7 +131,7 @@ export function registerProvider(config: ProviderConfig): LlmProvider {
  * and skip the database lookup entirely.
  */
 export function registerProviderInstance(name: string, instance: LlmProvider): void {
-  instanceCache.set(name, instance);
+  instanceCache.set(name, { provider: instance, cachedAt: Date.now() });
 }
 
 /**

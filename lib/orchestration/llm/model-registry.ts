@@ -24,8 +24,12 @@
 import { z } from 'zod';
 
 import { logger } from '@/lib/logging';
-import { fetchWithTimeout, ProviderError, type LlmProvider } from './provider';
-import type { ModelInfo, ModelTier } from './types';
+import {
+  fetchWithTimeout,
+  ProviderError,
+  type LlmProvider,
+} from '@/lib/orchestration/llm/provider';
+import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
@@ -159,6 +163,15 @@ export function getModelsByTier(tier: ModelTier): ModelInfo[] {
 /** Filter models by provider id. */
 export function getModelsByProvider(provider: string): ModelInfo[] {
   return dedupeModels(state.models).filter((m) => m.provider === provider);
+}
+
+/**
+ * Return the epoch timestamp (ms) when the registry was last populated
+ * from OpenRouter. `0` means the registry has never been refreshed and
+ * is running on the static fallback map only.
+ */
+export function getRegistryFetchedAt(): number {
+  return state.fetchedAt;
 }
 
 /**

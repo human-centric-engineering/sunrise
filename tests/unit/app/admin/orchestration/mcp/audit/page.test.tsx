@@ -171,7 +171,7 @@ describe('McpAuditPage', () => {
     vi.mocked(parseApiResponse).mockResolvedValue({
       success: true,
       data: [],
-      meta: { total: 42 },
+      meta: { total: 42, page: 1, limit: 50, totalPages: 1 },
     } as never);
 
     // Act

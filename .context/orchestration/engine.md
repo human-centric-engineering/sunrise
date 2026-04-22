@@ -58,7 +58,7 @@ Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `pri
 
 1. `execute()` is called with a validated `WorkflowDefinition`, `inputData`, and `{ userId, budgetLimitUsd?, signal?, resumeFromExecutionId? }`.
 2. The engine creates (or loads, on resume) an `AiWorkflowExecution` row with `status: 'running'` and yields `workflow_started`.
-3. Starting from `entryStepId`, the engine walks the DAG one step at a time:
+3. Starting from `entryStepId`, the engine walks the DAG, executing steps sequentially except when a `parallel` fan-out produces multiple ready branches, which are executed concurrently via `Promise.allSettled`. Convergence points (steps with multiple incoming edges) wait for all predecessors to complete before executing.
    - Emit `step_started`.
    - Fetch the executor from the registry, wrap it in the step's `errorStrategy`.
    - Merge the result into `ExecutionContext`, append a structured `ExecutionTraceEntry`, **checkpoint** by updating the row's `executionTrace`, `totalTokensUsed`, `totalCostUsd`, and `currentStep`.
@@ -67,6 +67,19 @@ Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `pri
 4. A terminal event (`workflow_completed` / `workflow_failed`) flips the row's final status and sets `completedAt`.
 
 If the process dies mid-run, the row reflects the **last completed checkpoint**. Mid-run resume of LLM failures is not yet implemented — the one resume path that is implemented is `human_approval`, handled by the approve route at `app/api/v1/admin/orchestration/executions/[id]/approve/route.ts`.
+
+## Parallel Execution
+
+When a `parallel` node completes, its `nextSteps` targets are all pushed to the ready queue. The engine detects multiple ready steps (those whose predecessors have all been visited) and runs them concurrently:
+
+1. **In-degree map** — built at DAG walk start from `step.nextSteps` edges. Maps each step to its set of predecessor step IDs.
+2. **Readiness check** — a step is "ready" when all its predecessors are in the `visited` set.
+3. **Batch detection** — if multiple steps are ready simultaneously, they form a parallel batch.
+4. **Concurrent execution** — batch steps run via `Promise.allSettled`, each receiving a frozen snapshot of the current context.
+5. **Sequential merge** — after all settle, results are merged into context one-by-one to avoid race conditions on `totalCostUsd` and `totalTokensUsed`.
+6. **Convergence** — a join step (with in-degree > 1) stays in the `pending` set until all its predecessors complete, then becomes ready on the next iteration.
+
+The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
 
 ## `ExecutionEvent` (SSE payloads)
 
@@ -127,20 +140,20 @@ Each executor self-registers at module import. The barrel at `executors/index.ts
 
 Twelve executors:
 
-| Type             | File                | Reuses                                                               |
-| ---------------- | ------------------- | -------------------------------------------------------------------- |
-| `llm_call`       | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                           |
-| `tool_call`      | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                    |
-| `chain`          | `chain.ts`          | pass-through — real work is on child steps                           |
-| `route`          | `route.ts`          | classifier LLM + DAG branch selection                                |
-| `parallel`       | `parallel.ts`       | fan-out marker — walker schedules branches                           |
-| `reflect`        | `reflect.ts`        | inner step + critic loop up to N iterations                          |
-| `plan`           | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                         |
-| `human_approval` | `human-approval.ts` | throws `PausedForApproval`                                           |
-| `rag_retrieve`   | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                        |
-| `guard`          | `guard.ts`          | LLM or regex safety check, routes pass/fail                          |
-| `evaluate`       | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                             |
-| `external_call`  | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers |
+| Type             | File                | Reuses                                                                    |
+| ---------------- | ------------------- | ------------------------------------------------------------------------- |
+| `llm_call`       | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                |
+| `tool_call`      | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                         |
+| `chain`          | `chain.ts`          | pass-through — real work is on child steps                                |
+| `route`          | `route.ts`          | classifier LLM + DAG branch selection                                     |
+| `parallel`       | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled |
+| `reflect`        | `reflect.ts`        | inner step + critic loop up to N iterations                               |
+| `plan`           | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                              |
+| `human_approval` | `human-approval.ts` | throws `PausedForApproval`                                                |
+| `rag_retrieve`   | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                             |
+| `guard`          | `guard.ts`          | LLM or regex safety check, routes pass/fail                               |
+| `evaluate`       | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                  |
+| `external_call`  | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers      |
 
 ## Error strategies
 
@@ -171,6 +184,17 @@ See [`external-calls.md`](./external-calls.md) for the full error code table.
 ### Per-step timeout
 
 Every step config supports an optional `timeoutMs` field (on `stepErrorConfigSchema`). When set, the engine wraps the executor call in `Promise.race` against a timeout. Timeout produces a non-retriable `step_timeout` `ExecutorError`.
+
+## `POST` vs `GET` execute streams
+
+The engine is exposed over HTTP via two routes with the same event payloads but different transport ergonomics:
+
+| Route                                                      | Method | Body / Input                                        | Resume support                                                                           | Intended client                                                                                       |
+| ---------------------------------------------------------- | ------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `/api/v1/admin/orchestration/workflows/:id/execute`        | `POST` | JSON body (`inputData`, `budgetLimitUsd`)           | Yes — `?resumeFromExecutionId=` query param routes through `human_approval` approve flow | `fetch()` + manual SSE parser (default admin UI)                                                      |
+| `/api/v1/admin/orchestration/workflows/:id/execute-stream` | `GET`  | `?inputData=<json>&budgetLimitUsd=<n>` query params | No                                                                                       | Native [`EventSource`](https://developer.mozilla.org/docs/Web/API/EventSource) (query-only transport) |
+
+Both rate-limit via `adminLimiter` on POST only — the GET variant is intended for trusted same-origin usage by EventSource where headers cannot be set. They share DAG validation, the `workflowDefinitionSchema.safeParse` pre-flight, and the `isActive` gate. Disconnect semantics are also the same: client aborts cancel the stream, but the engine's `status` poll keeps the DB row honest (see [Cancellation](#cancellation) below).
 
 ## Cancellation
 

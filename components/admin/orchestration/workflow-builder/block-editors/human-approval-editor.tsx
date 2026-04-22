@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { EditorProps } from './index';
+import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors';
 
 export interface HumanApprovalConfig extends Record<string, unknown> {
   prompt: string;
@@ -70,8 +70,7 @@ export function HumanApprovalEditor({ config, onChange }: EditorProps<HumanAppro
         <Label htmlFor="approval-channel" className="flex items-center text-xs">
           Notification channel{' '}
           <FieldHelp title="Notification channel">
-            Where the reviewer gets notified. Only in-app is wired in Session 5.1b; email and Slack
-            dispatch arrives in Session 5.2.
+            Where the reviewer gets notified. Currently only in-app notifications are supported.
           </FieldHelp>
         </Label>
         <Select

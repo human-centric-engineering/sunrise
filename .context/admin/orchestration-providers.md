@@ -1,6 +1,6 @@
 # Provider management pages
 
-Admin list/create/edit flows for `AiProviderConfig`. Landed in Phase 4 Session 4.3. Providers are the **LLM backends** your agents can call — Anthropic, OpenAI, Ollama, or any OpenAI-compatible service.
+Admin list/create/edit flows for `AiProviderConfig`. Landed in Phase 4 Session 4.3. Providers are the **LLM backends** your agents can call — Anthropic, OpenAI, Voyage AI, Ollama, or any OpenAI-compatible service.
 
 **Pages**
 
@@ -43,13 +43,26 @@ Test-connection results live in component state only — we never persist them. 
 
 The dot is decorative but has an accessible `title`/`aria-label` describing the state ("Tested OK this session", "Missing API key env var", etc.).
 
-### Lazy model count
+### Lazy model count (cached)
 
 Each card fires `GET /providers/:id/models` after first paint and shows the model count inline. Failures render `—`. Local providers additionally show a small `<Badge>Local</Badge>` because their model list is "what's pulled" rather than "what's priced".
+
+Model counts are cached client-side with a 60-second TTL in a module-level `Map`. This prevents redundant N+1 fetches when navigating back to the list page within the same session. The cache is invalidated by the "Refresh models" action in the models dialog.
+
+### Circuit breaker badge
+
+When the provider's circuit breaker is **open** or **half-open** (included in the list response), a small warning badge renders below the status dot:
+
+- **Open** — orange badge "Circuit open" with a "Reset" button that POSTs to `/providers/:id/health`.
+- **Half-open** — yellow badge "Circuit half-open".
+- **Closed** — nothing shown (healthy default).
+
+The badge disappears immediately on successful reset (re-fetches provider health inline).
 
 ### Card actions
 
 - **Edit** — links to `/admin/orchestration/providers/:id`.
+- **Reactivate** — shown only when `isActive === false`. PATCHes `{ isActive: true }` and updates local state. Provides a quick path back without navigating to the edit form.
 - **View models** — opens an inline `<Dialog>` rendering `<ProviderModelsPanel>` (see below). A dialog is lighter than a sub-route and keeps the admin in context.
 - **Delete** — inline `<DeleteProviderDialog>` → `DELETE /providers/:id` (soft delete via `isActive = false`). The dialog warns that agents referencing this slug will error on their next chat turn until reactivated.
 
@@ -73,6 +86,10 @@ Table columns:
 | Available   | `model.available`            | Green ✓ / `—`                                             |
 
 The panel fetches `GET /providers/:id/models` on mount. **Refresh models** re-fetches. Loading renders a spinner; failures render a friendly red banner ("Couldn't load models. Check the server logs for details.") — the server route has already sanitized the upstream error.
+
+### Per-model test button
+
+Each model row includes a small "Test" button that POSTs to `/providers/:id/test-model` with `{ model: modelId }`. On success, displays latency in ms (e.g. "320 ms"). On failure, shows "Failed" in red. This helps admins verify individual model availability without leaving the dialog.
 
 ## `<ProviderTestButton>` — shared extract
 
@@ -124,9 +141,22 @@ A fresh install with `ANTHROPIC_API_KEY` exported lights up Anthropic immediatel
 
 In development, the clear block deletes `AiProviderConfig` rows before deleting users to avoid a `createdBy` foreign-key violation.
 
+## Provider Models (Selection Matrix)
+
+`AiProviderConfig` tracks **operational config** (API keys, base URLs, timeouts). For **per-model intelligence** — tier classification, reasoning depth, latency characteristics, cost efficiency, embedding capabilities, and recommended agent roles — see the separate **Provider Models** system.
+
+Provider models are stored in the `AiProviderModel` table and managed at `/admin/orchestration/provider-models`. They are linked to configs via a soft match on `providerSlug` → `AiProviderConfig.slug` — a model entry can exist without a config (landscape entry) and vice versa.
+
+The flat table view shows all models with filters for provider, tier, and capability (Chat / Embedding / All). Each row shows capability badges and a configured-status dot (green = matching `AiProviderConfig` exists and is active). A built-in decision heuristic recommends models for a given task intent (`thinking`, `doing`, `fast_looping`, `high_reliability`, `private`, `embedding`).
+
+The embedding models in this table also power the "Compare Embedding Providers" modal on the Knowledge Base page, providing a single source of truth for embedding model data.
+
+See [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) for full details.
+
 ## Related
 
-- [Provider form](./provider-form.md) — 4-flavor selector, reverse-mapping, field help
+- [Provider form](./provider-form.md) — 5-flavor selector, reverse-mapping, field help
+- [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — tier classification, decision heuristic, model CRUD
 - [LLM providers (runtime)](../orchestration/llm-providers.md) — provider abstraction, model registry, cost tracking
 - [Admin API reference](../orchestration/admin-api.md)
 - [Agent form](./agent-form.md) — the Model tab consumes the same `<ProviderTestButton>`

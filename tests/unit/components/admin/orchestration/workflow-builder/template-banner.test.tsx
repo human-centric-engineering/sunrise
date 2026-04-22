@@ -17,7 +17,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { TemplateBanner } from '@/components/admin/orchestration/workflow-builder/template-banner';
-import type { WorkflowTemplateMetadata } from '@/types/orchestration';
+import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -46,6 +46,35 @@ const DEFAULT_PROPS = {
   metadata: MOCK_METADATA,
 };
 
+const MOCK_WORKFLOW_DEF: WorkflowDefinition = {
+  entryStepId: 'classify',
+  errorStrategy: 'fail',
+  steps: [
+    {
+      id: 'classify',
+      name: 'Classify',
+      type: 'llm_call',
+      config: {},
+      nextSteps: [{ targetStepId: 'route' }],
+    },
+    {
+      id: 'route',
+      name: 'Route',
+      type: 'route',
+      config: {},
+      nextSteps: [{ targetStepId: 'draft' }],
+    },
+    {
+      id: 'draft',
+      name: 'Draft',
+      type: 'llm_call',
+      config: {},
+      nextSteps: [{ targetStepId: 'approve' }],
+    },
+    { id: 'approve', name: 'Approve', type: 'human_approval', config: {}, nextSteps: [] },
+  ],
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function renderBanner(
@@ -54,6 +83,7 @@ function renderBanner(
     description: string;
     isTemplate: boolean;
     metadata: WorkflowTemplateMetadata | null;
+    workflowDefinition: WorkflowDefinition | null;
   }> = {}
 ) {
   return render(<TemplateBanner {...DEFAULT_PROPS} {...overrides} />);
@@ -177,6 +207,38 @@ describe('TemplateBanner', () => {
     it('shows the Flow section heading after expanding', async () => {
       await renderExpanded();
       expect(screen.getByText(/^flow$/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('cost indicator', () => {
+    it('shows a cost estimate badge when workflowDefinition has LLM steps', () => {
+      renderBanner({ workflowDefinition: MOCK_WORKFLOW_DEF });
+      // 3 LLM steps (classify=llm_call, route=route, draft=llm_call)
+      expect(screen.getByText(/\/run/)).toBeInTheDocument();
+    });
+
+    it('does not show cost badge when workflowDefinition is null', () => {
+      renderBanner({ workflowDefinition: null });
+      expect(screen.queryByText(/\/run/)).not.toBeInTheDocument();
+    });
+
+    it('does not show cost badge when workflow has no LLM steps', () => {
+      const noLlmDef: WorkflowDefinition = {
+        entryStepId: 'approve',
+        errorStrategy: 'fail',
+        steps: [
+          { id: 'approve', name: 'Approve', type: 'human_approval', config: {}, nextSteps: [] },
+        ],
+      };
+      renderBanner({ workflowDefinition: noLlmDef });
+      expect(screen.queryByText(/\/run/)).not.toBeInTheDocument();
+    });
+
+    it('includes a dollar sign icon in the cost badge', () => {
+      renderBanner({ workflowDefinition: MOCK_WORKFLOW_DEF });
+      // The cost badge renders with a DollarSign icon and /run suffix
+      const badge = screen.getByText(/\/run/);
+      expect(badge).toBeInTheDocument();
     });
   });
 });

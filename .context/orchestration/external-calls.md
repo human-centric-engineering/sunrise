@@ -15,17 +15,57 @@ The `external_call` workflow step type makes HTTP requests to external APIs. Liv
 
 ## Config fields
 
-| Field              | Type                                               | Default     | Description                                                              |
-| ------------------ | -------------------------------------------------- | ----------- | ------------------------------------------------------------------------ |
-| `url`              | `string`                                           | required    | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`           |
-| `method`           | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`  | `POST`      | HTTP method                                                              |
-| `headers`          | `Record<string, string>`                           | `{}`        | Additional HTTP headers                                                  |
-| `bodyTemplate`     | `string`                                           | —           | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation |
-| `timeoutMs`        | `number`                                           | `30000`     | Request timeout in ms                                                    |
-| `authType`         | `'none' \| 'bearer' \| 'api-key' \| 'query-param'` | `'none'`    | Authentication scheme                                                    |
-| `authSecret`       | `string`                                           | —           | Environment variable name holding the secret (never the raw value)       |
-| `authQueryParam`   | `string`                                           | `'api_key'` | Query parameter name when `authType` is `'query-param'`                  |
-| `maxResponseBytes` | `number`                                           | `1048576`   | Maximum response body size (1 MB)                                        |
+| Field               | Type                                               | Default     | Description                                                              |
+| ------------------- | -------------------------------------------------- | ----------- | ------------------------------------------------------------------------ |
+| `url`               | `string`                                           | required    | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`           |
+| `method`            | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`  | `POST`      | HTTP method                                                              |
+| `headers`           | `Record<string, string>`                           | `{}`        | Additional HTTP headers                                                  |
+| `bodyTemplate`      | `string`                                           | —           | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation |
+| `timeoutMs`         | `number`                                           | `30000`     | Request timeout in ms                                                    |
+| `authType`          | `'none' \| 'bearer' \| 'api-key' \| 'query-param'` | `'none'`    | Authentication scheme                                                    |
+| `authSecret`        | `string`                                           | —           | Environment variable name holding the secret (never the raw value)       |
+| `authQueryParam`    | `string`                                           | `'api_key'` | Query parameter name when `authType` is `'query-param'`                  |
+| `maxResponseBytes`  | `number`                                           | `1048576`   | Maximum response body size (1 MB)                                        |
+| `responseTransform` | `{ type, expression }`                             | —           | Transform the response body before returning (see below)                 |
+
+## Response Transformation
+
+The `responseTransform` config field lets you extract or reshape API response data before it becomes the step output. This avoids needing a downstream `llm_call` step just to parse a JSON response.
+
+```jsonc
+{
+  "url": "https://api.example.com/users",
+  "responseTransform": {
+    "type": "jmespath",
+    "expression": "data.items[?status=='active'].{id: id, name: name}",
+  },
+}
+```
+
+### Transform types
+
+| Type       | Description                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| `jmespath` | [JMESPath](https://jmespath.org/) expression — structured extraction from JSON responses   |
+| `template` | Simple `{{path.to.field}}` interpolation — produces a string with values from the response |
+
+**JMESPath** is the recommended type for structured extraction. It supports filtering, projections, multi-select, and sorting — e.g., `data.items[?price > \`100\`].{name: name, price: price}`.
+
+**Template** mode replaces `{{path}}` placeholders with values from the response body. Useful for constructing strings like `"User {{data.name}} ({{data.id}})"`. Missing paths resolve to empty strings; object values are JSON-serialized.
+
+### Error handling
+
+Transform failures are **non-fatal**. If the expression is invalid or the response shape doesn't match, the step returns the full original response with a `_transformError` field:
+
+```json
+{
+  "status": 200,
+  "body": { "original": "response" },
+  "_transformError": "Invalid JMESPath expression: unexpected token"
+}
+```
+
+This lets downstream steps detect and handle transform issues without failing the workflow.
 
 ## Security
 

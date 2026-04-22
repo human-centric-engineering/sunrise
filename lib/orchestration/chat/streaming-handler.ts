@@ -27,11 +27,14 @@ import type { ChatEvent, MessageMetadata } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
-import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
+import { scanOutput } from '@/lib/orchestration/chat/output-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
@@ -39,6 +42,8 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
 import {
   MAX_HISTORY_MESSAGES,
@@ -46,6 +51,29 @@ import {
   type ChatRequest,
   type ChatStream,
 } from '@/lib/orchestration/chat/types';
+
+/** Maximum time (ms) a single tool dispatch can run before being timed out. */
+const TOOL_DISPATCH_TIMEOUT_MS = 30_000;
+
+/** Race a promise against a timeout. Returns the timeout error shape on expiry. */
+async function withToolTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = TOOL_DISPATCH_TIMEOUT_MS,
+  toolName: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Tool '${toolName}' timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
 export class ChatError extends Error {
@@ -84,7 +112,9 @@ export class StreamingChatHandler {
 
       const agent = await this.loadAgent(request.agentSlug);
 
-      const budget = await checkBudget(agent.id);
+      // Per-agent mutex prevents TOCTOU race between concurrent budget reads.
+      // See lib/orchestration/llm/budget-mutex.ts for accepted over-run tolerance.
+      const budget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
 
       // Budget warning at 80%
       if (
@@ -122,9 +152,28 @@ export class StreamingChatHandler {
         return;
       }
 
-      const conversation = await this.loadOrCreateConversation(agent, request);
+      // Load cap settings once — used for conversation and message limits.
+      const capSettings = await prisma.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { maxConversationsPerUser: true, maxMessagesPerConversation: true },
+      });
+
+      const conversation = await this.loadOrCreateConversation(
+        agent,
+        request,
+        capSettings?.maxConversationsPerUser ?? null
+      );
       conversationId = conversation.id;
       const history = await this.loadHistory(conversation.id);
+
+      // Enforce message-per-conversation cap
+      const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
+      if (maxMessages !== null && history.length >= maxMessages) {
+        throw new ChatError(
+          'conversation_length_cap_reached',
+          `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
+        );
+      }
 
       // Persist the user message up front so a mid-stream crash still
       // leaves an audit trail.
@@ -136,6 +185,16 @@ export class StreamingChatHandler {
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
 
+      // Emit hook event for message creation
+      emitHookEvent('message.created', {
+        conversationId: conversation.id,
+        messageId: userMessage.id,
+        agentSlug: request.agentSlug,
+        agentId: agent.id,
+        userId: request.userId,
+        role: 'user',
+      });
+
       // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
@@ -146,12 +205,17 @@ export class StreamingChatHandler {
           // Never log message content
         });
 
-        let guardMode: string = 'log_only';
-        try {
-          const settings = await getOrchestrationSettings();
-          guardMode = settings.inputGuardMode;
-        } catch {
-          // Settings unavailable — fall back to log_only
+        // Agent-level override takes precedence over global setting
+        let guardMode: string = agent.inputGuardMode ?? 'log_only';
+        if (!agent.inputGuardMode) {
+          try {
+            const settings = await getOrchestrationSettings();
+            guardMode = settings.inputGuardMode;
+          } catch {
+            logger.warn(
+              'Failed to load orchestration settings for input guard mode, falling back to log_only'
+            );
+          }
         }
 
         if (guardMode === 'block') {
@@ -207,12 +271,30 @@ export class StreamingChatHandler {
           ? await buildContext(request.contextType, request.contextId)
           : null;
 
+      // Load per-user-per-agent memories for context injection
+      const memoryRows = await prisma.aiUserMemory.findMany({
+        where: { userId: request.userId, agentId: agent.id },
+        orderBy: { updatedAt: 'desc' },
+        take: 50,
+        select: { key: true, value: true },
+      });
+
+      // Resolve the context window for token-aware truncation.
+      // Agent-level maxHistoryTokens overrides the model's context window.
+      const modelInfo = getModel(agent.model);
+      const contextWindowTokens = agent.maxHistoryTokens ?? modelInfo?.maxContext ?? undefined;
+
       let messages: LlmMessage[] = buildMessages({
         systemInstructions: agent.systemInstructions,
         contextBlock,
         history: historyRows,
         newUserMessage: request.message,
+        attachments: request.attachments,
         conversationSummary,
+        userMemories: memoryRows.length > 0 ? memoryRows : undefined,
+        brandVoiceInstructions: agent.brandVoiceInstructions,
+        contextWindowTokens,
+        reserveTokens: agent.maxTokens ?? undefined,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
@@ -228,43 +310,133 @@ export class StreamingChatHandler {
       );
       resolvedProviderSlug = usedSlug;
 
+      // Extract responseFormat from agent metadata if configured
+      const agentMetadata = agent.metadata as Record<string, unknown> | null;
+      const responseFormat = agentMetadata?.responseFormat as
+        | import('@/lib/orchestration/llm/types').LlmResponseFormat
+        | undefined;
+
+      // Remaining fallback providers for mid-stream retry
+      const remainingFallbacks = [...(agent.fallbackProviders ?? [])];
+      let currentProvider = provider;
+      let currentProviderSlug = usedSlug;
+
+      // Track consecutive per-tool failures to avoid burning iterations
+      // on a tool that keeps crashing. After 2 failures the tool is
+      // skipped and the LLM receives a "temporarily unavailable" message.
+      const toolFailureCounts = new Map<string, number>();
+      const TOOL_FAILURE_THRESHOLD = 2;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
 
+        // Emit thinking indicator before each LLM turn
+        if (iteration === 1) {
+          yield { type: 'status', message: 'Thinking...' };
+        } else {
+          yield { type: 'status', message: 'Processing tool results...' };
+        }
+
         let assistantText = '';
-        let toolCall: LlmToolCall | null = null;
+        const toolCalls = new Map<number, LlmToolCall>();
         let usage: { inputTokens: number; outputTokens: number } | null = null;
 
-        const stream = provider.chatStream(messages, {
+        const llmOptions = {
           model: agent.model,
           ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
           ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
+          ...(responseFormat && toolDefinitions.length === 0 ? { responseFormat } : {}),
           ...(request.signal ? { signal: request.signal } : {}),
-        });
+        };
 
-        for await (const chunk of stream) {
-          if (chunk.type === 'text') {
-            // Suppress further text once we've captured a tool call —
-            // we're about to dispatch and loop, so any trailing prose
-            // from the same turn gets folded into the next turn's
-            // context via the appended assistant message.
-            if (toolCall) continue;
-            assistantText += chunk.content;
-            yield { type: 'content', delta: chunk.content };
-          } else if (chunk.type === 'tool_call') {
-            // Capture the first tool call. Multi-tool-per-turn is a
-            // later slice; for now we keep draining so the trailing
-            // `done` chunk (which carries usage) still lands.
-            if (!toolCall) toolCall = chunk.toolCall;
-          } else if (chunk.type === 'done') {
-            usage = chunk.usage;
+        // Stream with mid-stream retry: if the stream fails, try the
+        // next fallback provider and re-emit content from scratch.
+        let streamSucceeded = false;
+        let streamRetries = 0;
+        const MAX_STREAM_RETRIES = 2;
+
+        while (!streamSucceeded && streamRetries <= MAX_STREAM_RETRIES) {
+          try {
+            const stream = currentProvider.chatStream(messages, llmOptions);
+
+            let toolCallIndex = 0;
+            for await (const chunk of stream) {
+              if (chunk.type === 'text') {
+                if (toolCalls.size > 0) continue;
+                assistantText += chunk.content;
+                yield { type: 'content', delta: chunk.content };
+              } else if (chunk.type === 'tool_call') {
+                toolCalls.set(toolCallIndex++, chunk.toolCall);
+              } else if (chunk.type === 'done') {
+                usage = chunk.usage;
+              }
+            }
+            streamSucceeded = true;
+          } catch (streamErr) {
+            streamRetries++;
+            getBreaker(currentProviderSlug).recordFailure();
+
+            // If aborted, don't retry
+            if (
+              streamErr instanceof Error &&
+              (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
+            ) {
+              throw streamErr;
+            }
+
+            // Try next fallback provider
+            const nextSlug = remainingFallbacks.shift();
+            if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
+              log.error('Stream failed, no more fallback providers', streamErr as Error, {
+                agentSlug: request.agentSlug,
+                provider: currentProviderSlug,
+                retries: streamRetries,
+              });
+              throw streamErr;
+            }
+
+            log.warn('Stream failed, retrying with fallback provider', {
+              failedProvider: currentProviderSlug,
+              nextProvider: nextSlug,
+              error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+            });
+
+            yield {
+              type: 'warning',
+              code: 'provider_retry',
+              message: `Retrying with fallback provider...`,
+            };
+
+            // Signal client to discard any content deltas received so far —
+            // a fallback provider retry is about to start from scratch.
+            yield { type: 'content_reset', reason: 'provider_fallback' };
+
+            // Reset accumulated content for the retry
+            assistantText = '';
+            toolCalls.clear();
+            usage = null;
+
+            try {
+              currentProvider = await getProvider(nextSlug);
+              currentProviderSlug = nextSlug;
+              resolvedProviderSlug = nextSlug;
+            } catch {
+              log.error(
+                'Failed to load fallback provider',
+                new Error(`Provider ${nextSlug} not available`),
+                {
+                  agentSlug: request.agentSlug,
+                }
+              );
+              throw streamErr;
+            }
           }
         }
 
         if (assistantText.length > 0) {
-          await this.persistMessage({
+          const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
@@ -280,8 +452,82 @@ export class StreamingChatHandler {
                 }
               : {}),
           });
+          // Queue async embedding for semantic search (non-blocking)
+          queueMessageEmbedding(assistantMsg.id, assistantText);
+          emitHookEvent('message.created', {
+            conversationId: conversation.id,
+            messageId: assistantMsg.id,
+            agentSlug: request.agentSlug,
+            agentId: agent.id,
+            userId: request.userId,
+            role: 'assistant',
+          });
         }
 
+        if (toolCalls.size === 0) {
+          // Output guard — scan assistant response BEFORE logging cost.
+          // If the guard blocks, we skip cost logging since the user
+          // never sees the response.
+          if (assistantText.length > 0) {
+            const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
+            if (outputScan.flagged) {
+              log.warn('Output guard triggered', {
+                agentSlug: request.agentSlug,
+                conversationId: conversation.id,
+                topicMatches: outputScan.topicMatches,
+                builtInMatches: outputScan.builtInMatches,
+              });
+
+              // Agent-level override takes precedence over global setting
+              let outputMode: string = agent.outputGuardMode ?? 'log_only';
+              if (!agent.outputGuardMode) {
+                try {
+                  const settings = await getOrchestrationSettings();
+                  outputMode = settings.outputGuardMode;
+                } catch {
+                  logger.warn(
+                    'Failed to load orchestration settings for output guard mode, falling back to log_only'
+                  );
+                }
+              }
+
+              if (outputMode === 'block') {
+                yield errorEvent(
+                  'output_blocked',
+                  'Response blocked by content policy. Please rephrase your question.'
+                );
+                return;
+              }
+              if (outputMode === 'warn_and_continue') {
+                yield {
+                  type: 'warning',
+                  code: 'output_flagged',
+                  message: 'The response was flagged for review.',
+                };
+              }
+            }
+          }
+
+          if (usage) {
+            void logCost({
+              agentId: agent.id,
+              conversationId: conversation.id,
+              model: agent.model,
+              provider: agent.provider,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              operation: CostOperation.CHAT,
+            });
+          }
+
+          getBreaker(usedSlug).recordSuccess();
+          yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+          return;
+        }
+
+        // Tool call path — log cost for this LLM turn, then re-check
+        // budget before dispatching tools (which will trigger another
+        // LLM turn that costs more).
         if (usage) {
           void logCost({
             agentId: agent.id,
@@ -294,66 +540,261 @@ export class StreamingChatHandler {
           });
         }
 
-        if (!toolCall) {
-          getBreaker(usedSlug).recordSuccess();
-          yield buildDoneEvent(agent.model, usage);
+        // Re-check budget before the next tool-loop iteration
+        const midBudget = await checkBudget(agent.id);
+        if (!midBudget.withinBudget) {
+          const limitStr = midBudget.limit !== null ? `$${midBudget.limit.toFixed(2)}` : 'its';
+          yield errorEvent(
+            'budget_exceeded',
+            `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
+          );
           return;
         }
 
-        // Tool call path.
-        yield { type: 'status', message: `Executing ${toolCall.name}` };
-
-        const result = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
+        // Tool call path — dispatch all tool calls from this turn.
+        const toolCallArray = [...toolCalls.values()];
+        const dispatchContext = {
           userId: request.userId,
           agentId: agent.id,
           conversationId: conversation.id,
           ...(request.entityContext ? { entityContext: request.entityContext } : {}),
-        });
+        };
 
-        yield { type: 'capability_result', capabilitySlug: toolCall.name, result };
+        if (toolCallArray.length === 1) {
+          // Single tool call — preserve original event format for
+          // backward compatibility with existing SSE consumers.
+          const tc = toolCallArray[0];
 
-        await this.persistMessage({
-          conversationId: conversation.id,
-          role: 'tool',
-          content: JSON.stringify(result),
-          capabilitySlug: toolCall.name,
-          toolCallId: toolCall.id,
-          metadata: {
-            toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
-            result,
-          },
-        });
+          // Skip tool if it has failed too many times consecutively
+          const failCount = toolFailureCounts.get(tc.name) ?? 0;
+          if (failCount >= TOOL_FAILURE_THRESHOLD) {
+            log.warn('Skipping tool after repeated failures', {
+              tool: tc.name,
+              failures: failCount,
+            });
+            const unavailableResult = {
+              success: false,
+              error: {
+                code: 'tool_unavailable',
+                message: `Tool '${tc.name}' is temporarily unavailable after ${failCount} consecutive failures`,
+              },
+            };
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(unavailableResult),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: {
+                toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+                result: unavailableResult,
+              },
+            });
+            messages = [
+              ...messages,
+              { role: 'assistant', content: assistantText, toolCalls: [tc] },
+              { role: 'tool', content: JSON.stringify(unavailableResult), toolCallId: tc.id },
+            ];
+            continue;
+          }
 
-        // If the tool could have mutated the entity the conversation
-        // is locked to, drop the cached context so the next turn
-        // re-fetches. Phase 2c has no mutating capabilities, so this
-        // is a no-op in practice — the hook is wired for future
-        // slices.
-        if (request.contextType && request.contextId) {
-          invalidateContext(request.contextType, request.contextId);
-        }
+          yield { type: 'status', message: `Executing ${tc.name}` };
 
-        if (result.skipFollowup) {
-          getBreaker(usedSlug).recordSuccess();
-          yield buildDoneEvent(agent.model, usage);
-          return;
-        }
+          let result: Awaited<ReturnType<typeof capabilityDispatcher.dispatch>>;
+          try {
+            result = await withToolTimeout(
+              capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
+              TOOL_DISPATCH_TIMEOUT_MS,
+              tc.name
+            );
+            // Reset failure count on success
+            if (result.success) {
+              toolFailureCounts.delete(tc.name);
+            } else {
+              toolFailureCounts.set(tc.name, failCount + 1);
+            }
+          } catch (toolErr) {
+            toolFailureCounts.set(tc.name, failCount + 1);
+            result = {
+              success: false,
+              error: {
+                code: 'execution_error',
+                message: toolErr instanceof Error ? toolErr.message : 'Capability execution failed',
+              },
+            };
+          }
 
-        // Rebuild message array with assistant turn + tool result
-        // appended, then loop back to the LLM for its follow-up.
-        messages = [
-          ...messages,
-          {
-            role: 'assistant',
-            content: assistantText,
-            toolCalls: [toolCall],
-          },
-          {
+          yield { type: 'capability_result', capabilitySlug: tc.name, result };
+
+          await this.persistMessage({
+            conversationId: conversation.id,
             role: 'tool',
             content: JSON.stringify(result),
-            toolCallId: toolCall.id,
-          },
-        ];
+            capabilitySlug: tc.name,
+            toolCallId: tc.id,
+            metadata: {
+              toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+              result,
+            },
+          });
+
+          if (request.contextType && request.contextId) {
+            invalidateContext(request.contextType, request.contextId);
+          }
+
+          if (result.skipFollowup) {
+            getBreaker(usedSlug).recordSuccess();
+            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+            return;
+          }
+
+          messages = [
+            ...messages,
+            { role: 'assistant', content: assistantText, toolCalls: [tc] },
+            { role: 'tool', content: JSON.stringify(result), toolCallId: tc.id },
+          ];
+        } else {
+          // Multiple tool calls — dispatch in parallel for performance.
+          // Pre-filter tools that have exceeded the failure threshold.
+          const dispatchable: typeof toolCallArray = [];
+          const skippedResults: Array<{
+            tc: (typeof toolCallArray)[0];
+            result: { success: false; error: { code: string; message: string } };
+          }> = [];
+
+          for (const tc of toolCallArray) {
+            const failCount = toolFailureCounts.get(tc.name) ?? 0;
+            if (failCount >= TOOL_FAILURE_THRESHOLD) {
+              log.warn('Skipping tool after repeated failures (parallel)', {
+                tool: tc.name,
+                failures: failCount,
+              });
+              skippedResults.push({
+                tc,
+                result: {
+                  success: false,
+                  error: {
+                    code: 'tool_unavailable',
+                    message: `Tool '${tc.name}' is temporarily unavailable after ${failCount} consecutive failures`,
+                  },
+                },
+              });
+            } else {
+              dispatchable.push(tc);
+            }
+          }
+
+          const names = dispatchable.map((tc) => tc.name).join(', ');
+          const skippedCount = skippedResults.length;
+          const statusParts = [`Executing ${dispatchable.length} tools: ${names}`];
+          if (skippedCount > 0) statusParts.push(`(${skippedCount} skipped)`);
+          yield { type: 'status', message: statusParts.join(' ') };
+
+          const settled = await Promise.allSettled(
+            dispatchable.map((tc) =>
+              withToolTimeout(
+                capabilityDispatcher.dispatch(tc.name, tc.arguments, dispatchContext),
+                TOOL_DISPATCH_TIMEOUT_MS,
+                tc.name
+              )
+            )
+          );
+
+          const results: Array<{ capabilitySlug: string; result: unknown }> = [];
+          const toolResultMessages: LlmMessage[] = [];
+          let anySkipFollowup = false;
+
+          // Process skipped tools first
+          for (const { tc, result } of skippedResults) {
+            results.push({ capabilitySlug: tc.name, result });
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(result),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: { toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments }, result },
+            });
+            toolResultMessages.push({
+              role: 'tool',
+              content: JSON.stringify(result),
+              toolCallId: tc.id,
+            });
+          }
+
+          for (let i = 0; i < dispatchable.length; i++) {
+            const tc = dispatchable[i];
+            const outcome = settled[i];
+            const result =
+              outcome.status === 'fulfilled'
+                ? outcome.value
+                : {
+                    success: false,
+                    error: {
+                      code: 'execution_error',
+                      message:
+                        outcome.reason instanceof Error
+                          ? outcome.reason.message
+                          : 'Capability execution failed',
+                    },
+                  };
+
+            // Track failures for backoff
+            const prevFails = toolFailureCounts.get(tc.name) ?? 0;
+            if (
+              typeof result === 'object' &&
+              result !== null &&
+              'success' in result &&
+              result.success
+            ) {
+              toolFailureCounts.delete(tc.name);
+            } else {
+              toolFailureCounts.set(tc.name, prevFails + 1);
+            }
+
+            results.push({ capabilitySlug: tc.name, result });
+
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'tool',
+              content: JSON.stringify(result),
+              capabilitySlug: tc.name,
+              toolCallId: tc.id,
+              metadata: {
+                toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
+                result,
+              },
+            });
+
+            toolResultMessages.push({
+              role: 'tool',
+              content: JSON.stringify(result),
+              toolCallId: tc.id,
+            });
+
+            if (result.skipFollowup) anySkipFollowup = true;
+          }
+
+          yield { type: 'capability_results', results };
+
+          if (request.contextType && request.contextId) {
+            invalidateContext(request.contextType, request.contextId);
+          }
+
+          if (anySkipFollowup) {
+            getBreaker(usedSlug).recordSuccess();
+            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+            return;
+          }
+
+          // Rebuild messages with the assistant turn (carrying all tool
+          // calls) followed by each tool result message.
+          messages = [
+            ...messages,
+            { role: 'assistant', content: assistantText, toolCalls: toolCallArray },
+            ...toolResultMessages,
+          ];
+        }
       }
 
       log.warn('Chat tool loop hit iteration cap', {
@@ -383,6 +824,29 @@ export class StreamingChatHandler {
         userId: request.userId,
         conversationId,
       });
+
+      // Persist an error-marker assistant message so the conversation has
+      // no orphaned user message with no response. Clients can detect the
+      // marker via metadata.error === true.
+      if (conversationId) {
+        try {
+          await this.persistMessage({
+            conversationId,
+            role: 'assistant',
+            content: '[An error occurred and the response could not be completed.]',
+            metadata: {
+              error: true,
+              errorCode: 'internal_error',
+            },
+          });
+        } catch (persistErr) {
+          log.warn('Failed to persist error-marker assistant message', {
+            conversationId,
+            error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+          });
+        }
+      }
+
       // Do NOT forward raw err.message — it can leak Prisma internals,
       // provider SDK details, and internal hostnames to the client. The
       // detailed error has already been logged via logger.error above.
@@ -400,7 +864,8 @@ export class StreamingChatHandler {
 
   private async loadOrCreateConversation(
     agent: AiAgent,
-    request: ChatRequest
+    request: ChatRequest,
+    maxConversationsPerUser: number | null
   ): Promise<AiConversation> {
     if (request.conversationId) {
       const existing = await prisma.aiConversation.findFirst({
@@ -415,6 +880,21 @@ export class StreamingChatHandler {
         throw new ChatError('conversation_not_found', 'Conversation not found');
       }
       return existing;
+    }
+
+    // Enforce per-user conversation cap before creating a new one.
+    // Note: this is a soft cap — concurrent requests may race past the count
+    // check, which is acceptable for a usage limit (not a security boundary).
+    if (maxConversationsPerUser !== null) {
+      const count = await prisma.aiConversation.count({
+        where: { userId: request.userId, agentId: agent.id, isActive: true },
+      });
+      if (count >= maxConversationsPerUser) {
+        throw new ChatError(
+          'conversation_cap_reached',
+          `You have reached the maximum number of conversations (${maxConversationsPerUser}) for this agent.`
+        );
+      }
     }
 
     const data: Prisma.AiConversationUncheckedCreateInput = {
@@ -465,7 +945,8 @@ function errorEvent(code: string, message: string): ChatEvent {
 
 function buildDoneEvent(
   model: string,
-  usage: { inputTokens: number; outputTokens: number } | null
+  usage: { inputTokens: number; outputTokens: number } | null,
+  providerSlug?: string | null
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
@@ -478,5 +959,7 @@ function buildDoneEvent(
       totalTokens: inputTokens + outputTokens,
     },
     costUsd,
+    provider: providerSlug ?? undefined,
+    model,
   };
 }
