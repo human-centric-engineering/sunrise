@@ -117,19 +117,47 @@ interface ExperimentVariant {
 }
 ```
 
-## UI — ExperimentsList
+## Admin UI
 
-`components/admin/orchestration/experiments/experiments-list.tsx`
+### Where it lives
 
-- Fetches experiments via `apiClient.get` on mount
-- Displays status badge, variant count, and (if completed) average score
-- **Run** button visible only for `draft` experiments; calls `POST /experiments/:id/run`
-- **Delete** button calls `DELETE /experiments/:id` then refreshes list
-- **Create form** inline at top of page:
-  - Name field (required before submit)
-  - Agent selector (Radix Select loaded from `/api/v1/admin/orchestration/agents`)
-  - "Add Variant" button (min 2, max 5 variants)
-  - "Remove" disabled when only 2 variants remain
+Experiments do **not** have a standalone page. `/admin/orchestration/experiments` is a server-side redirect to `/admin/orchestration/evaluations?tab=experiments`. The actual surface is the **Experiments tab** on the unified Testing page (`app/admin/orchestration/evaluations/page.tsx`), which sits alongside an Evaluations tab.
+
+```
+/admin/orchestration/experiments  ──307──►  /admin/orchestration/evaluations?tab=experiments
+```
+
+The `defaultTab` is read from the `tab` query param — `experiments` opens the experiments tab, anything else (or absent) opens evaluations. This keeps the two workflows — evaluate a single agent vs A/B-compare variants — in one navigable surface.
+
+### `ExperimentsList` (`components/admin/orchestration/experiments/experiments-list.tsx`)
+
+Client-only island. Mounts with a `GET /experiments` fetch, stores the rows in local state, and mutates via `apiClient.post`/`delete` then re-fetches.
+
+**List row:** name + optional description, agent name, status badge (`draft` / `running` / `completed`), variant count, created date, actions.
+
+Completed experiments inline each variant's score under the name cell (`Variant A: 0.82  Variant B: 0.67`). Scores are read from `variant.score` — `N/A` when null.
+
+**Per-row actions:**
+
+| Action | Visibility                 | Call                                                |
+| ------ | -------------------------- | --------------------------------------------------- |
+| Run    | Only for `status: 'draft'` | `POST /experiments/:id/run` → refetch list          |
+| Delete | Always                     | `DELETE /experiments/:id` → optimistic local remove |
+
+No stop button. Status transitions to `completed` happen through a `PATCH` — not wired to the list today.
+
+**Create form (`CreateExperimentForm`):** collapsed into a "New Experiment" button until clicked, then expands to an inline Card.
+
+| Field       | Notes                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Name        | Required, ≤ 200 chars                                                                                                                     |
+| Description | Optional, ≤ 2000 chars                                                                                                                    |
+| Agent       | Radix `<Select>` populated from `GET /agents?limit=100`. Empty-agents state shows an amber "create one first" hint                        |
+| Variants    | Seeded with `[{ label: 'Variant A' }, { label: 'Variant B' }]`. "Add variant" autonumbers A→E (max 5). Remove disabled when only 2 remain |
+
+Submit is disabled until `name.trim()` and `agentId` are set. `APIClientError` surfaces the server message above the form; generic string otherwise.
+
+Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md contextual-help rule.
 
 ## Error handling
 

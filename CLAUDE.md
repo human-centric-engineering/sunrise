@@ -252,62 +252,67 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 
 **Entry point:** `.context/substrate.md` — full navigation and AI usage patterns
 
-| Domain                  | Path                                                  | Key Content                                              |
-| ----------------------- | ----------------------------------------------------- | -------------------------------------------------------- |
-| Architecture            | `.context/architecture/`                              | System design, deployment                                |
-| Authentication          | `.context/auth/`                                      | better-auth, sessions, guards                            |
-| API                     | `.context/api/`                                       | Endpoints, responses, client                             |
-| Database                | `.context/database/`                                  | Prisma schema, migrations, seeding                       |
-| Security                | `.context/security/`                                  | Rate limiting, headers, CORS                             |
-| Logging                 | `.context/logging/`                                   | Structured logging, request ctx                          |
-| Testing                 | `.context/testing/`                                   | Patterns, mocking, async                                 |
-| Email                   | `.context/email/`                                     | Templates, sending                                       |
-| Workflow                | `.context/workflow.md`                                | Git, commits, PR process                                 |
-| AI Orchestration        | `.claude/docs/agent-orchestration.md`                 | Agent system design, patterns                            |
-| Orchestration Overview  | `.context/admin/orchestration.md`                     | Architecture, quick start, key concepts, config          |
-| Solution Builder        | `.context/admin/orchestration-solution-builder.md`    | Problem-to-solution guide, 5 worked examples             |
-| Capabilities Guide      | `.context/admin/orchestration-capabilities-guide.md`  | How to create capabilities, BaseCapability ref           |
-| Workflows Guide         | `.context/admin/orchestration-workflows-guide.md`     | Step types, error strategies, templates, extending       |
-| LLM Providers           | `.context/orchestration/llm-providers.md`             | Provider abstraction, cost tracking                      |
-| Capabilities            | `.context/orchestration/capabilities.md`              | Tool dispatcher, built-ins, rate limits                  |
-| Streaming Chat          | `.context/orchestration/chat.md`                      | Chat handler, tool loop, context builder                 |
-| Knowledge Base          | `.context/orchestration/knowledge.md`                 | Document ingestion, chunking, vector search              |
-| Workflows               | `.context/orchestration/workflows.md`                 | DAG validator, step types, error codes                   |
-| Orchestration Engine    | `.context/orchestration/engine.md`                    | Runtime executor, registry, events, strategies           |
-| External Calls          | `.context/orchestration/external-calls.md`            | HTTP executor, outbound rate limits, auth, response caps |
-| Resilience & Errors     | `.context/orchestration/resilience.md`                | Circuit breaker, fallback, budget UX, input guard        |
-| Output Guard            | `.context/orchestration/output-guard.md`              | Topic boundaries, PII detection, brand voice             |
-| Agent Visibility        | `.context/orchestration/agent-visibility.md`          | Visibility modes, invite tokens, access control          |
-| API Keys                | `.context/orchestration/api-keys.md`                  | Self-service API keys, scopes, key resolution            |
-| MCP Server              | `.context/orchestration/mcp.md`                       | MCP protocol, tools, resources, keys, audit              |
-| Orchestration Admin API | `.context/orchestration/admin-api.md`                 | Agents, capabilities, chat, knowledge, executions        |
-| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`             | Admin HTTP reference for all 65 routes                   |
-| Provider Selection      | `.context/orchestration/provider-selection-matrix.md` | Tier classification, decision heuristic, profile CRUD    |
-| Consumer Chat API       | `.context/api/consumer-chat.md`                       | End-user chat endpoints, agent visibility, rate limits   |
-| Document Ingestion      | `.context/orchestration/document-ingestion.md`        | Multi-format parsing, PDF preview flow, parser arch      |
-| Scheduling & Webhooks   | `.context/orchestration/scheduling.md`                | Cron schedules, webhook triggers, scheduler tick         |
-| Client Analytics        | `.context/orchestration/analytics.md`                 | Popular topics, unanswered questions, engagement, gaps   |
-| Backup & Restore        | `.context/orchestration/backup.md`                    | Export/import config, schema versioning, ImportResult    |
-| Experiments (A/B)       | `.context/orchestration/experiments.md`               | Variants, lifecycle (draft→running→completed), run API   |
-| Embed Widget            | `.context/orchestration/embed.md`                     | Token auth, CORS, widget.js loader, Shadow DOM chat      |
-| SSE Bridge              | `.context/api/sse.md`                                 | `sseResponse` helper, framing, sanitization              |
-| Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`           | Admin landing page, data sources, layout                 |
-| Agents List / Pages     | `.context/admin/orchestration-agents.md`              | List, create, edit shells; table, bulk export            |
-| Agent Form              | `.context/admin/agent-form.md`                        | 6-tab create/edit form, FieldHelp reference              |
-| Capabilities List       | `.context/admin/orchestration-capabilities.md`        | Table, category filter, agents-using count               |
-| Capability Form         | `.context/admin/capability-form.md`                   | 4 tabs, visual builder ↔ JSON editor, safety             |
-| Providers List          | `.context/admin/orchestration-providers.md`           | Card grid, status dots, env-var-only security            |
-| Provider Form           | `.context/admin/provider-form.md`                     | 4-flavor selector, reverse-mapping on edit               |
-| Costs & Budget          | `.context/admin/orchestration-costs.md`               | Summary, trend, savings, settings singleton              |
-| Workflow Builder        | `.context/admin/workflow-builder.md`                  | React Flow canvas, palette, step registry                |
-| Learning UI             | `.context/admin/orchestration-learn.md`               | Pattern explorer, advisor chatbot, quiz, tabbed hub      |
-| Knowledge Base UI       | `.context/admin/orchestration-knowledge-ui.md`        | Document management, upload, search test                 |
-| Chat Interface          | `.context/admin/orchestration-chat-interface.md`      | Reusable SSE chat component, embedded mode               |
-| Evaluations UI          | `.context/admin/orchestration-evaluations.md`         | Evaluation runner, annotations, completion flow          |
-| Observability Dashboard | `.context/admin/orchestration-observability.md`       | Dashboard metrics, trace viewers, logging audit          |
-| Setup Wizard            | `.context/admin/setup-wizard.md`                      | 5-step guided setup flow, resume behavior                |
-| Contextual Help         | `.context/ui/contextual-help.md`                      | `<FieldHelp>` directive for form fields                  |
-| UI Hooks                | `.context/ui/hooks.md`                                | `useLocalStorage`, `useWizard`                           |
+| Domain                  | Path                                                  | Key Content                                                 |
+| ----------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| Architecture            | `.context/architecture/`                              | System design, deployment                                   |
+| Authentication          | `.context/auth/`                                      | better-auth, sessions, guards                               |
+| API                     | `.context/api/`                                       | Endpoints, responses, client                                |
+| Database                | `.context/database/`                                  | Prisma schema, migrations, seeding                          |
+| Security                | `.context/security/`                                  | Rate limiting, headers, CORS                                |
+| Logging                 | `.context/logging/`                                   | Structured logging, request ctx                             |
+| Testing                 | `.context/testing/`                                   | Patterns, mocking, async                                    |
+| Email                   | `.context/email/`                                     | Templates, sending                                          |
+| Workflow                | `.context/workflow.md`                                | Git, commits, PR process                                    |
+| AI Orchestration        | `.claude/docs/agent-orchestration.md`                 | Agent system design, patterns                               |
+| Orchestration Overview  | `.context/admin/orchestration.md`                     | Architecture, quick start, key concepts, config             |
+| Solution Builder        | `.context/admin/orchestration-solution-builder.md`    | Problem-to-solution guide, 5 worked examples                |
+| Capabilities Guide      | `.context/admin/orchestration-capabilities-guide.md`  | How to create capabilities, BaseCapability ref              |
+| Workflows Guide         | `.context/admin/orchestration-workflows-guide.md`     | Step types, error strategies, templates, extending          |
+| LLM Providers           | `.context/orchestration/llm-providers.md`             | Provider abstraction, cost tracking                         |
+| Capabilities            | `.context/orchestration/capabilities.md`              | Tool dispatcher, built-ins, rate limits                     |
+| Streaming Chat          | `.context/orchestration/chat.md`                      | Chat handler, tool loop, context builder                    |
+| Knowledge Base          | `.context/orchestration/knowledge.md`                 | Document ingestion, chunking, vector search                 |
+| Workflows               | `.context/orchestration/workflows.md`                 | DAG validator, step types, error codes                      |
+| Orchestration Engine    | `.context/orchestration/engine.md`                    | Runtime executor, registry, events, strategies              |
+| External Calls          | `.context/orchestration/external-calls.md`            | HTTP executor, outbound rate limits, auth, response caps    |
+| Resilience & Errors     | `.context/orchestration/resilience.md`                | Circuit breaker, fallback, budget UX, input guard           |
+| Output Guard            | `.context/orchestration/output-guard.md`              | Topic boundaries, PII detection, brand voice                |
+| Agent Visibility        | `.context/orchestration/agent-visibility.md`          | Visibility modes, invite tokens, access control             |
+| API Keys                | `.context/orchestration/api-keys.md`                  | Self-service API keys, scopes, key resolution               |
+| MCP Server              | `.context/orchestration/mcp.md`                       | MCP protocol, tools, resources, keys, audit                 |
+| Orchestration Admin API | `.context/orchestration/admin-api.md`                 | Agents, capabilities, chat, knowledge, executions           |
+| Orchestration Endpoints | `.context/api/orchestration-endpoints.md`             | Admin HTTP reference for all 65 routes                      |
+| Provider Selection      | `.context/orchestration/provider-selection-matrix.md` | Tier classification, decision heuristic, profile CRUD       |
+| Consumer Chat API       | `.context/api/consumer-chat.md`                       | End-user chat endpoints, agent visibility, rate limits      |
+| Document Ingestion      | `.context/orchestration/document-ingestion.md`        | Multi-format parsing, PDF preview flow, parser arch         |
+| Scheduling & Webhooks   | `.context/orchestration/scheduling.md`                | Cron schedules, webhook triggers, scheduler tick            |
+| Event Hooks             | `.context/orchestration/hooks.md`                     | In-process dispatch, outbound webhooks vs internal handlers |
+| Client Analytics        | `.context/orchestration/analytics.md`                 | Popular topics, unanswered questions, engagement, gaps      |
+| Backup & Restore        | `.context/orchestration/backup.md`                    | Export/import config, schema versioning, ImportResult       |
+| Experiments (A/B)       | `.context/orchestration/experiments.md`               | Variants, lifecycle (draft→running→completed), run API      |
+| Embed Widget            | `.context/orchestration/embed.md`                     | Token auth, CORS, widget.js loader, Shadow DOM chat         |
+| SSE Bridge              | `.context/api/sse.md`                                 | `sseResponse` helper, framing, sanitization                 |
+| Orchestration Dashboard | `.context/admin/orchestration-dashboard.md`           | Admin landing page, data sources, layout                    |
+| Agents List / Pages     | `.context/admin/orchestration-agents.md`              | List, create, edit shells; table, bulk export               |
+| Agent Form              | `.context/admin/agent-form.md`                        | 6-tab create/edit form, FieldHelp reference                 |
+| Capabilities List       | `.context/admin/orchestration-capabilities.md`        | Table, category filter, agents-using count                  |
+| Capability Form         | `.context/admin/capability-form.md`                   | 4 tabs, visual builder ↔ JSON editor, safety                |
+| Providers List          | `.context/admin/orchestration-providers.md`           | Card grid, status dots, env-var-only security               |
+| Provider Form           | `.context/admin/provider-form.md`                     | 4-flavor selector, reverse-mapping on edit                  |
+| Provider Models (admin) | `.context/admin/orchestration-provider-models.md`     | Matrix view, decision heuristic, model form                 |
+| Costs & Budget          | `.context/admin/orchestration-costs.md`               | Summary, trend, savings, settings singleton                 |
+| Workflow Builder        | `.context/admin/workflow-builder.md`                  | React Flow canvas, palette, step registry                   |
+| Learning UI             | `.context/admin/orchestration-learn.md`               | Pattern explorer, advisor chatbot, quiz, tabbed hub         |
+| Knowledge Base UI       | `.context/admin/orchestration-knowledge-ui.md`        | Document management, upload, search test                    |
+| Chat Interface          | `.context/admin/orchestration-chat-interface.md`      | Reusable SSE chat component, embedded mode                  |
+| Conversations (admin)   | `.context/admin/orchestration-conversations.md`       | Conversation list, trace viewer, tagging, export            |
+| Evaluations UI          | `.context/admin/orchestration-evaluations.md`         | Evaluation runner, annotations, completion flow             |
+| Observability Dashboard | `.context/admin/orchestration-observability.md`       | Dashboard metrics, trace viewers, logging audit             |
+| Analytics (admin)       | `.context/admin/orchestration-analytics.md`           | Usage, popular topics, unanswered, feedback, gaps           |
+| Audit Log (admin)       | `.context/admin/orchestration-audit-log.md`           | Immutable config change log, entity filters                 |
+| Setup Wizard            | `.context/admin/setup-wizard.md`                      | 5-step guided setup flow, resume behavior                   |
+| Contextual Help         | `.context/ui/contextual-help.md`                      | `<FieldHelp>` directive for form fields                     |
+| UI Hooks                | `.context/ui/hooks.md`                                | `useLocalStorage`, `useWizard`                              |
 
 ## Troubleshooting
 

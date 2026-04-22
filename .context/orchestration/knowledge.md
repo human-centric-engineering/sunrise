@@ -173,6 +173,21 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 Seed file lives at `prisma/seeds/data/chunks/chunks.json`. The admin route (`POST /knowledge/seed`) resolves this via `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and returns `{ seeded: true }` when the call completes.
 
+## Embedding backfill
+
+Chunks are written with `embedding: NULL` when no active embedding provider is configured at upload time (e.g. a dev environment without an `OPENAI_API_KEY`). Two admin endpoints close that loop without rechunking.
+
+| Route                                                    | Method | Purpose                                                                     |
+| -------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
+| `/api/v1/admin/orchestration/knowledge/embed`            | `POST` | Backfill: finds every chunk where `embedding IS NULL` and embeds in batches |
+| `/api/v1/admin/orchestration/knowledge/embedding-status` | `GET`  | Polling snapshot: `{ total, embedded, pending, hasActiveProvider }`         |
+
+**Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive — the seed flow also calls it after inserting chunks. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when either `AiProviderConfig` has an active row **or** `OPENAI_API_KEY` is set in env, so the admin UI can disable the "Generate Embeddings" button until at least one is configured.
+
+**Idempotency:** `/embed` only touches chunks with `NULL` embeddings, so it is safe to call repeatedly. A completed run is a cheap no-op.
+
+**UI pairing:** See [Knowledge Base UI — Seed & Embed](../admin/orchestration-knowledge-ui.md#seed--embed-two-step-flow) for the two-step "Load patterns → Generate embeddings" flow that consumes these endpoints.
+
 ## Anti-Patterns
 
 **Don't** bypass `documentManager` for uploads — it owns the chunk/embedding write ordering. Direct `prisma.aiKnowledgeDocument.create` skips the chunker entirely and leaves an unsearchable document.

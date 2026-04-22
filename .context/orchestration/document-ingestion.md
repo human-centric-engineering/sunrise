@@ -85,6 +85,51 @@ Confirms a `pending_review` document and proceeds with chunking + embedding.
 }
 ```
 
+### Chunks Inspector
+
+`GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks`
+
+Returns every chunk for a document ordered by `chunkKey` (creation order). Used by the admin `DocumentChunksModal` and by the review flow for `pending_review` PDFs.
+
+Response shape (each chunk):
+
+```jsonc
+{
+  "id": "cuid",
+  "content": "...",
+  "chunkType": "pattern_overview" | "pattern_detail" | "section" | "...",
+  "patternNumber": 3,
+  "patternName": "Chain of Thought",
+  "section": "Introduction",
+  "category": "sales",
+  "keywords": "pricing,discounts",
+  "estimatedTokens": 482,
+}
+```
+
+No pagination — documents are typically bounded to a few hundred chunks. The document row is fetched first so that a missing `id` returns 404 (`NotFoundError`) rather than an empty array.
+
+### Fetch from URL
+
+`POST /api/v1/admin/orchestration/knowledge/documents/fetch-url` — alternative to multipart upload when an admin has a publicly reachable URL rather than a local file.
+
+```jsonc
+{
+  "url": "https://example.com/guide.md", // ≤ 2000 chars, must be absolute HTTP(S)
+  "category": "optional — overrides any in-document metadata",
+}
+```
+
+Pipeline:
+
+1. Rate-limited via `adminLimiter`, body validated by an inline Zod schema.
+2. `fetchDocumentFromUrl(url)` (in `lib/orchestration/knowledge/url-fetcher.ts`) performs the fetch with **SSRF protection** — the same safe-URL checks used by webhook subscriptions plus content-type sniffing and a size cap.
+3. Extension is inferred from the response filename. PDFs **do not get a preview screen** through this route — they are processed through the buffer pipeline directly, which today throws for PDFs. Admins needing the preview flow should download the PDF and upload it via the multipart route.
+4. Text files (`.md` / `.markdown` / `.txt`) go through `uploadDocument`; binary formats go through `uploadDocumentFromBuffer`. Either call records the original URL so the provenance is visible in the admin UI.
+5. Writes an `knowledge_document.create` entry to the admin audit log with `sourceUrl` in metadata.
+
+Returns the created document with HTTP 201.
+
 ## PDF Preview Flow
 
 1. Admin uploads PDF via the documents endpoint

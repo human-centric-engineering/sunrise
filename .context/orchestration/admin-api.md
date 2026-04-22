@@ -923,8 +923,8 @@ curl -X POST /api/v1/admin/orchestration/knowledge/documents \
 **Multipart upload contract (load-bearing):**
 
 - **Field name:** `file` (form field)
-- **Max size:** 10 MB (`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in the route)
-- **Allowed extensions:** `.md`, `.markdown`, `.txt` — text only this session. PDF / HTML are future work
+- **Max size:** 50 MB (`MAX_UPLOAD_BYTES = 50 * 1024 * 1024` in the route)
+- **Allowed extensions:** `.md`, `.markdown`, `.txt`, `.epub`, `.docx`, `.pdf` — see [`document-ingestion.md`](./document-ingestion.md) for parser details and the `.pdf` preview/confirm flow
 - **MIME type:** advisory only. The extension check is the source of truth — browsers frequently omit `Content-Type` for `.md` files
 - **Unknown file field / missing file / wrong type** → 400 `ValidationError`
 - **Returns** 201 with `{ document: { id, title, status, ... } }`

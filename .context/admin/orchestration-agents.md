@@ -58,6 +58,33 @@ Row Delete sends `DELETE /agents/:id`, which sets `isActive=false` server-side. 
 - Sort is **client-side** over the current page, limited to `name` and `createdAt`, because Phase 3's `listAgentsQuerySchema` has no `sortBy` / `sortOrder` params.
 - Pagination delegates to the server (`?page=&limit=`) and mirrors `UserTable`'s prev/next buttons.
 
+## Compare agents
+
+`/admin/orchestration/agents/compare?a=<idA>&b=<idB>` — side-by-side comparison view for two agents.
+
+**Entry points:**
+
+- From the list page, select exactly two rows and click the **Compare** header button (enabled only when `selected.size === 2`).
+- Direct URL with both `a` and `b` query params.
+
+**Missing or partial query params** render a short explainer with a link back to the list. No `notFound()` — the page exists for any logged-in admin.
+
+**Shell:** `app/admin/orchestration/agents/compare/page.tsx` is an async server component that only parses the query params and mounts `<AgentComparisonView agentIdA={a} agentIdB={b} />` (the comparison itself is a client island).
+
+**Data:** `AgentComparisonView` fetches `GET /agents/compare?agentIds=<idA>,<idB>` on mount and expects `{ agents: [AgentStats, AgentStats] }`. The comma-separated `agentIds` form is required — single-param `?a=&b=` is the URL contract, `?agentIds=` is the API contract.
+
+**Layout:** three Cards rendered in a `grid-cols-[1fr_1fr_1fr]` row (label column, agent A column, agent B column):
+
+| Card                   | Rows                                                                  | Highlighting (`better`)     |
+| ---------------------- | --------------------------------------------------------------------- | --------------------------- |
+| **Configuration**      | Model, Provider, Capabilities                                         | Capabilities → higher       |
+| **Performance**        | Total Cost ($), LLM Calls, Input Tokens, Output Tokens, Conversations | Cost + Input Tokens → lower |
+| **Evaluation Results** | Total Evaluations, Completed                                          | Completed → higher          |
+
+Values that "win" on the `better` direction render in green. Ties and missing numbers are uncoloured. The `ComparisonRow` helper renders `—` for `null` values so rows stay aligned when an agent has no telemetry yet.
+
+**Back button:** top-left "Back to agents" link returns to the list without preserving selection state.
+
 ## Create & edit pages
 
 Both are thin server shells that parallel-fetch the provider list and the aggregated model registry so the form's Model tab hydrates without a loading flicker. Missing providers/models → the form falls back to free-text inputs with an amber warning banner (see [`agent-form.md`](./agent-form.md)).

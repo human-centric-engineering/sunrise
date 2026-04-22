@@ -151,6 +151,16 @@ reset(formData); // clears dirty state
 
 Errors from `apiClient` are caught and rendered as a banner at the top of the form — raw server error text is passed through only after it's already been sanitized by the API layer.
 
+## Execution Metrics panel (edit page only)
+
+`components/admin/orchestration/capability-stats-panel.tsx` — a card rendered **above** `<CapabilityForm>` on `/admin/orchestration/capabilities/[id]` (never on `/new`).
+
+- **Data source:** `GET /capabilities/:id/stats?period=<7d|30d|90d>`. The period selector in the card header re-fetches on change; default is `30d`.
+- **Metrics rendered:** Invocations, Success Rate, Avg Latency (with `p50` / `p95` subline), Total Cost (USD, 4dp).
+- **Colour rules:** Success rate badges green ≥ 95%, amber ≥ 80%, red otherwise. Cost, latency, and invocations use fixed brand colours.
+- **Empty state:** when `invocations === 0`, the description reads "No invocations recorded yet" but all metric cards still render (with zeroes).
+- **Error state:** fetch failures render a generic "Failed to load metrics" inline — the form below still mounts.
+
 ## Related
 
 - [Capabilities list page](./orchestration-capabilities.md)

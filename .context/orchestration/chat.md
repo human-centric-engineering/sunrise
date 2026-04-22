@@ -54,7 +54,6 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
 | `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
 | `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
-| `summarizeMessages`    | function | Budget-tier LLM summary of messages older than the truncation window        |
 | `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
 | `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
 | `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
@@ -215,6 +214,33 @@ Every terminal `error` event carries one of these stable `code` values:
 | `internal_error`         | Any other thrown exception                                        | Provider failure, DB outage, etc. `message` is a **generic** sanitized string — the raw error is logged server-side only |
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
+
+## Supporting modules
+
+Three internal modules under `lib/orchestration/chat/` are not exported from the barrel but are core to the handler. Documented here so they aren't invisible to future readers.
+
+### `summarizer.ts` — rolling history summary
+
+- Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs)` returning a string.
+- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > MAX_HISTORY_MESSAGES`.
+- Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
+- Logs cost as a `CostOperation.CHAT` row with `agentId: 'system'` and `conversationId: 'summary'`.
+- **Never throws.** Any failure (provider down, LLM error, empty response) returns `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` so the chat turn keeps moving.
+- Prompt is a fixed system message telling the model to produce a third-person summary covering the original problem, key decisions, facts/constraints, and current state.
+
+### `token-estimator.ts` — context window heuristic
+
+- `estimateTokens(text)` — character-based approximation: `ceil(len / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS` where `CHARS_PER_TOKEN = 3.5` and the per-message overhead is 4 tokens for role markers and delimiters.
+- `estimateMessagesTokens(messages)` — sum of `estimateTokens` across every message's extracted text content.
+- `truncateToTokenBudget(history, maxTokens)` — drops messages from the **front** of the array (oldest first) until the remainder fits. Always keeps at least one entry. Returns `{ messages, droppedCount }`.
+- The heuristic is deliberately **over-estimating** — better to truncate early than blow past the provider's context window. Not a real tokenizer; no tiktoken/sentencepiece dependency.
+
+### `message-embedder.ts` — async embedding for semantic search
+
+- `queueMessageEmbedding(messageId, content)` — fire-and-forget. Called after writing an assistant `AiMessage` row; returns immediately and runs the actual embed on a detached promise. Failures are logged but never surfaced to the chat stream. Messages shorter than 20 chars are skipped.
+- `backfillMissingEmbeddings(batchSize = 25)` — called from the unified maintenance tick (see [`scheduling.md`](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)). Finds assistant messages without a matching `AiMessageEmbedding` row (via `LEFT JOIN`) and re-embeds up to `batchSize` entries per invocation.
+- Internally `generateAndStoreEmbedding` truncates content above 8000 chars (cost control) and upserts through a raw `INSERT ... ON CONFLICT` so double-invocations are idempotent.
+- Powers `POST /conversations/search` (pgvector semantic search) — without the embedder those endpoints return empty results. See [`orchestration-conversations.md`](../admin/orchestration-conversations.md).
 
 ## HTTP Surface
 

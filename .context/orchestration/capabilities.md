@@ -23,9 +23,12 @@ const result = await capabilityDispatcher.dispatch(
 );
 
 if (result.success) {
-  console.log(result.data);
+  logger.info('capability result', { data: result.data });
 } else {
-  console.error(result.error?.code, result.error?.message);
+  logger.error('capability error', {
+    code: result.error?.code,
+    message: result.error?.message,
+  });
 }
 ```
 
@@ -208,7 +211,7 @@ Returns `{ key, action }` where `action` is `'created'` or `'updated'`.
 
 ### `escalate_to_human`
 
-Signals that the current conversation needs human attention. Dispatches a `conversation_escalated` webhook event so external systems (helpdesks, ticketing, Slack) can pick up the escalation. The agent remains in the conversation — it should inform the user that a human will follow up.
+Signals that the current conversation needs human attention. Dispatches a `conversation_escalated` webhook event so external systems (helpdesks, ticketing, Slack) can pick up the escalation, and calls `notifyEscalation` (`lib/orchestration/capabilities/built-in/escalation-notifier.ts`) which reads `OrchestrationSettings.escalationConfig` and sends email notifications (plus an optional secondary webhook POST to a config-driven URL). Both side effects are fire-and-forget. The agent remains in the conversation — it should inform the user that a human will follow up.
 
 ```json
 {
