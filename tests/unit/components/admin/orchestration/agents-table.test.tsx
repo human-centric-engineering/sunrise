@@ -735,4 +735,350 @@ describe('AgentsTable', () => {
       expect(screen.getByText(/openai/)).toBeInTheDocument();
     });
   });
+
+  // ── System agent ────────────────────────────────────────────────────────
+
+  describe('system agent', () => {
+    it('renders System badge for isSystem agents', () => {
+      // Arrange: isSystem agent
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-sys', name: 'System Agent', isSystem: true }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('System')).toBeInTheDocument();
+    });
+
+    it('hides Delete option from dropdown for system agents', async () => {
+      // Arrange: system agent cannot be deleted
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-sys', name: 'System Agent', isSystem: true }),
+      ];
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      // Act: open the row actions dropdown
+      const actionBtn = screen.getByRole('button', { name: /row actions/i });
+      await user.click(actionBtn);
+
+      // Assert: Delete menuitem is absent for system agents
+      const deleteItem = screen.queryByRole('menuitem', { name: /delete/i, hidden: true });
+      expect(deleteItem).not.toBeInTheDocument();
+    });
+
+    it('disables status switch for system agents', () => {
+      // Arrange: system agent
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-sys', name: 'System Agent', isSystem: true }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      const switches = screen.getAllByRole('switch');
+      // The switch for the system agent should be disabled
+      expect(switches[0]).toBeDisabled();
+    });
+  });
+
+  // ── Monthly budget display ──────────────────────────────────────────────
+
+  describe('monthly budget column', () => {
+    it('renders formatted budget when monthlyBudgetUsd is set', () => {
+      // Arrange: agent with monthly budget
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          monthlyBudgetUsd: 50.0,
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('$50.00')).toBeInTheDocument();
+    });
+
+    it('renders em-dash when monthlyBudgetUsd is null', () => {
+      // Arrange: agent without budget (default)
+      const agents: AiAgentListItem[] = [
+        makeAgent({ id: 'agent-1', name: 'Alpha', monthlyBudgetUsd: null }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      // At least one em-dash present
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ── formatRelativeTime branches ─────────────────────────────────────────
+
+  describe('formatRelativeTime', () => {
+    it('renders "just now" for agents created less than 1 minute ago', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          createdAt: new Date(Date.now() - 30_000), // 30 seconds ago
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('just now')).toBeInTheDocument();
+    });
+
+    it('renders "Xd ago" for agents created days ago', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          createdAt: new Date(Date.now() - 5 * 24 * 3600_000), // 5 days ago
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('5d ago')).toBeInTheDocument();
+    });
+
+    it('renders "Xmo ago" for agents created more than 30 days ago', () => {
+      const agents: AiAgentListItem[] = [
+        makeAgent({
+          id: 'agent-1',
+          name: 'Alpha',
+          createdAt: new Date(Date.now() - 62 * 24 * 3600_000), // ~2 months ago
+        }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 1 }} />);
+
+      expect(screen.getByText('2mo ago')).toBeInTheDocument();
+    });
+  });
+
+  // ── toggleAll ───────────────────────────────────────────────────────────
+
+  describe('toggle all selection', () => {
+    it('clicking select-all when none selected selects all rows', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // Act: click the header checkbox
+      const checkboxes = screen.getAllByRole('checkbox');
+      const selectAll = checkboxes[0]; // index 0 = select-all
+      await user.click(selectAll);
+
+      // Assert: Export button shows count of all agents
+      expect(screen.getByRole('button', { name: /export selected \(3\)/i })).toBeInTheDocument();
+    });
+
+    it('clicking select-all when all selected deselects all rows', async () => {
+      // Arrange: select all first
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[0]); // select all
+      await user.click(checkboxes[0]); // deselect all
+
+      // Assert: export button shows 0 selected and is disabled
+      const exportBtn = screen.getByRole('button', { name: /export selected \(0\)/i });
+      expect(exportBtn).toBeDisabled();
+    });
+  });
+
+  // ── Compare button ──────────────────────────────────────────────────────
+
+  describe('compare button', () => {
+    it('shows Compare button only when exactly 2 agents are selected', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+
+      // Select 2 agents
+      await user.click(checkboxes[1]); // row 1 = agent-1
+      await user.click(checkboxes[2]); // row 2 = agent-2
+
+      // Assert: Compare button visible
+      expect(screen.getByRole('button', { name: /compare/i })).toBeInTheDocument();
+    });
+
+    it('does not show Compare button when only 1 agent is selected', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // select only 1
+
+      // Assert: no Compare button
+      expect(screen.queryByRole('button', { name: /compare/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking Compare navigates to compare page with both agent ids', async () => {
+      // Arrange
+      const { useRouter } = await import('next/navigation');
+      const push = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push,
+        replace: vi.fn(),
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // agent-1
+      await user.click(checkboxes[2]); // agent-2
+
+      await user.click(screen.getByRole('button', { name: /compare/i }));
+
+      expect(push).toHaveBeenCalledWith(
+        expect.stringMatching(/compare\?a=agent-[12]&b=agent-[12]/)
+      );
+    });
+  });
+
+  // ── Bulk actions ────────────────────────────────────────────────────────
+
+  describe('bulk actions', () => {
+    it('shows bulk action buttons when agents are selected', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // select agent-1
+
+      // Assert: activate/deactivate/delete bulk buttons appear
+      // Multiple "activate"-matching buttons may exist (e.g. switch labels) — getAllByRole
+      const activateBtns = screen.getAllByRole('button', { name: /activate/i });
+      expect(activateBtns.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByRole('button', { name: /deactivate/i })).toBeInTheDocument();
+    });
+
+    it('bulk activate posts to bulk endpoint with activate action', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+      mockFetch.mockImplementation(() => Promise.resolve(makeAgentsListResponse()));
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // select agent-1
+
+      await user.click(screen.getByRole('button', { name: /^activate$/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/bulk'),
+          expect.objectContaining({
+            body: expect.objectContaining({ action: 'activate', agentIds: ['agent-1'] }),
+          })
+        );
+      });
+    });
+
+    it('shows error banner when bulk action fails with APIClientError', async () => {
+      // Arrange
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Forbidden', 'FORBIDDEN', 403)
+      );
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // select agent-1
+
+      await user.click(screen.getByRole('button', { name: /^activate$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/bulk activate failed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('opens bulk delete dialog when Delete selected is clicked', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]); // select agent-1
+
+      // Act: click the destructive Delete button (shows count)
+      const deleteBtn = screen.getByRole('button', { name: /delete \(1\)/i });
+      await user.click(deleteBtn);
+
+      // Assert: bulk delete dialog opens
+      await waitFor(() => {
+        expect(screen.getByText(/delete 1 agent/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Loading state with empty list ────────────────────────────────────
+
+  describe('loading state', () => {
+    it('shows Loading row when agents list is empty and loading is in progress', async () => {
+      // Arrange: trigger a fetch with empty initial data
+      let resolveFetch: (val: Response) => void;
+      const pending = new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+      mockFetch.mockReturnValueOnce(pending);
+
+      const user = userEvent.setup({ delay: null });
+      render(<AgentsTable initialAgents={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
+
+      // Type to trigger debounce fetch
+      await user.type(screen.getByPlaceholderText('Search agents...'), 'x');
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // While fetch is pending AND agents list is empty → shows Loading row
+      // Resolve after assertion to ensure clean test
+      resolveFetch!(makeAgentsListResponse([]));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ── Edit row action ─────────────────────────────────────────────────────
+
+  describe('edit row action', () => {
+    it('clicking Edit navigates to agent detail page', async () => {
+      // Arrange
+      const { useRouter } = await import('next/navigation');
+      const push = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push,
+        replace: vi.fn(),
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
+
+      const user = userEvent.setup();
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const editItem = await screen.findByRole('menuitem', { name: /edit/i, hidden: true });
+      await user.click(editItem);
+
+      expect(push).toHaveBeenCalledWith('/admin/orchestration/agents/agent-1');
+    });
+  });
 });

@@ -435,6 +435,212 @@ describe('ProviderForm', () => {
     });
   });
 
+  // ── Edit mode flavor change ────────────────────────────────────────────────
+
+  describe('edit mode flavor change', () => {
+    it('handles flavor change in edit mode — keeps existing name/slug, updates fields', async () => {
+      // Arrange: edit mode with existing anthropic provider
+      const user = userEvent.setup();
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({ name: 'My Anthropic', slug: 'my-anthropic' })}
+        />
+      );
+
+      // Act: switch flavor to OpenAI in edit mode
+      await selectFlavor(user, 'OpenAI');
+
+      // Assert: slug field still shows original value (disabled in edit mode)
+      const slugInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^slug/i });
+      expect(slugInput.value).toBe('my-anthropic');
+    });
+
+    it('navigates to provider list after successful edit save', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Anthropic',
+        slug: 'anthropic',
+        apiKeyPresent: true,
+        baseUrl: null,
+        apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="edit" provider={makeProvider()} />);
+
+      // Act: click save
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      // Assert: "Saved" button state appears after successful save
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /saved/i })).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic error for non-APIClientError on edit save', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new Error('Network timeout'));
+
+      const user = userEvent.setup();
+      render(<ProviderForm mode="edit" provider={makeProvider()} />);
+
+      // Act
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(screen.getByText(/could not save provider/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── flavorFromProvider URL/slug matching ──────────────────────────────────
+
+  describe('flavorFromProvider reverse-map (URL and slug matching)', () => {
+    it('groq provider by URL → radio "Groq" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.groq.com/openai/v1',
+            slug: 'groq',
+          })}
+        />
+      );
+
+      const groqRadio = getFlavorRadio('Groq');
+      expect(groqRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('together by URL → radio "Together AI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.together.xyz/v1',
+            slug: 'together',
+          })}
+        />
+      );
+
+      const togetherRadio = getFlavorRadio('Together AI');
+      expect(togetherRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('google by URL → radio "Google AI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            slug: 'google',
+          })}
+        />
+      );
+
+      const googleRadio = getFlavorRadio('Google AI');
+      expect(googleRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('xai by URL → radio "xAI" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.x.ai/v1',
+            slug: 'xai',
+          })}
+        />
+      );
+
+      const xaiRadio = getFlavorRadio('xAI');
+      expect(xaiRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('deepseek by URL → radio "DeepSeek" checked', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://api.deepseek.com/v1',
+            slug: 'deepseek',
+          })}
+        />
+      );
+
+      const deepseekRadio = getFlavorRadio('DeepSeek');
+      expect(deepseekRadio).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('unknown URL + non-local → radio "Other (OpenAI-Compatible)" checked as fallback', () => {
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            providerType: 'openai-compatible',
+            isLocal: false,
+            baseUrl: 'https://custom-endpoint.example.com/v1',
+            slug: 'custom',
+          })}
+        />
+      );
+
+      const customRadio = getFlavorRadio('Other (OpenAI-Compatible)');
+      expect(customRadio).toHaveAttribute('aria-checked', 'true');
+    });
+  });
+
+  // ── isActive toggle ────────────────────────────────────────────────────────
+
+  describe('isActive toggle', () => {
+    it('active switch is on by default in create mode', () => {
+      render(<ProviderForm mode="create" />);
+
+      // The switch should be checked (active=true default)
+      const switchEl = screen.getByRole('switch', { name: /active/i });
+      expect(switchEl).toHaveAttribute('data-state', 'checked');
+    });
+
+    it('active switch reflects provider isActive=false in edit mode', () => {
+      render(<ProviderForm mode="edit" provider={makeProvider({ isActive: false })} />);
+
+      const switchEl = screen.getByRole('switch', { name: /active/i });
+      expect(switchEl).toHaveAttribute('data-state', 'unchecked');
+    });
+  });
+
+  // ── Slug input manual edit sets slugTouched ───────────────────────────────
+
+  describe('slug input manual edit (create mode)', () => {
+    it('user can manually type in slug field in create mode', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      // Act: type directly in slug field
+      const slugInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^slug/i });
+      await user.clear(slugInput);
+      await user.type(slugInput, 'my-custom-slug');
+
+      // Assert: slug field updated with typed value
+      expect(slugInput.value).toBe('my-custom-slug');
+    });
+  });
+
   // ── Advanced settings ─────────────────────────────────────────────────────
 
   describe('advanced settings', () => {

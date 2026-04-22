@@ -206,6 +206,84 @@ describe('GET /audit-log', () => {
     expect(body.meta).toMatchObject({ total: 42 });
   });
 
+  it('passes entityId filter to Prisma where clause', async () => {
+    // Arrange
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act
+    await GET(makeRequest('entityId=agent-42'));
+
+    // Assert — route must pass entityId into the where object
+    expect(prisma.aiAdminAuditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ entityId: 'agent-42' }),
+      })
+    );
+  });
+
+  it('passes userId filter to Prisma where clause', async () => {
+    // Arrange
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act
+    await GET(makeRequest('userId=user-99'));
+
+    // Assert — route must pass userId into the where object
+    expect(prisma.aiAdminAuditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: 'user-99' }),
+      })
+    );
+  });
+
+  it('sets createdAt.gte when only dateFrom is provided', async () => {
+    // Arrange
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act — dateFrom only; dateTo absent so lte must not be set
+    await GET(makeRequest('dateFrom=2026-01-01'));
+
+    // Assert — gte is set, lte is NOT set on the where clause
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg).toBeDefined();
+    expect(callArg?.where?.createdAt).toBeDefined();
+    const createdAt = callArg?.where?.createdAt as Record<string, unknown>;
+    expect(createdAt['gte']).toEqual(new Date('2026-01-01'));
+    expect(createdAt['lte']).toBeUndefined();
+  });
+
+  it('sets createdAt.lte when only dateTo is provided', async () => {
+    // Arrange
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act — dateTo only; dateFrom absent so gte must not be set
+    await GET(makeRequest('dateTo=2026-12-31'));
+
+    // Assert — lte is set, gte is NOT set on the where clause
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg).toBeDefined();
+    expect(callArg?.where?.createdAt).toBeDefined();
+    const createdAt = callArg?.where?.createdAt as Record<string, unknown>;
+    expect(createdAt['lte']).toEqual(new Date('2026-12-31'));
+    expect(createdAt['gte']).toBeUndefined();
+  });
+
+  it('sets both createdAt.gte and createdAt.lte when dateFrom and dateTo are both provided', async () => {
+    // Arrange
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // Act — both bounds present
+    await GET(makeRequest('dateFrom=2026-01-01&dateTo=2026-12-31'));
+
+    // Assert — both gte and lte are set
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg).toBeDefined();
+    expect(callArg?.where?.createdAt).toBeDefined();
+    const createdAt = callArg?.where?.createdAt as Record<string, unknown>;
+    expect(createdAt['gte']).toEqual(new Date('2026-01-01'));
+    expect(createdAt['lte']).toEqual(new Date('2026-12-31'));
+  });
+
   it('returns 429 when rate limited', async () => {
     const { adminLimiter, createRateLimitResponse } = await import('@/lib/security/rate-limit');
     vi.mocked(adminLimiter.check).mockReturnValue({ success: false, retryAfter: 60 } as never);

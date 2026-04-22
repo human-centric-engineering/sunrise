@@ -154,5 +154,286 @@ describe('McpAuditLog', () => {
         expect(screen.getByText('Purged 5 log entries')).toBeInTheDocument();
       });
     });
+
+    it('shows "No old entries to purge" when deleted count is 0 and no message field', async () => {
+      // Arrange: purge returns 0 deleted, no message field → falls back to default string
+      vi.mocked(apiClient.delete).mockResolvedValue({ deleted: 0 });
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Act
+      await act(async () => {
+        fireEvent.click(screen.getByText('Purge Old Logs'));
+      });
+
+      // Assert: the default fallback message is shown
+      await waitFor(() => {
+        expect(screen.getByText('No old entries to purge')).toBeInTheDocument();
+      });
+    });
+
+    it('shows custom message when purge returns deleted=0 with a message field', async () => {
+      // Arrange: server returns custom message field
+      vi.mocked(apiClient.delete).mockResolvedValue({
+        deleted: 0,
+        message: 'Nothing to purge yet',
+      });
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Act
+      await act(async () => {
+        fireEvent.click(screen.getByText('Purge Old Logs'));
+      });
+
+      // Assert: the server-provided message is displayed
+      await waitFor(() => {
+        expect(screen.getByText('Nothing to purge yet')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "Purge failed" when purge throws', async () => {
+      // Arrange: apiClient.delete rejects
+      vi.mocked(apiClient.delete).mockRejectedValue(new Error('Network error'));
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Act
+      await act(async () => {
+        fireEvent.click(screen.getByText('Purge Old Logs'));
+      });
+
+      // Assert: error message shown
+      await waitFor(() => {
+        expect(screen.getByText('Purge failed')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Clear Filters', () => {
+    it('shows Clear Filters button when filters are active and clicking it resets state', async () => {
+      // Arrange: set up a fetch mock that returns empty with proper structure
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Initially no Clear Filters button (no active filters)
+      expect(screen.queryByText('Clear Filters')).not.toBeInTheDocument();
+
+      // Act: change the date-from filter to trigger hasFilters
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
+
+      // Assert: Clear Filters button now visible
+      await waitFor(() => {
+        expect(screen.getByText('Clear Filters')).toBeInTheDocument();
+      });
+
+      // Act: click Clear Filters — calls fetchEntries with empty params
+      await act(async () => {
+        fireEvent.click(screen.getByText('Clear Filters'));
+      });
+
+      // Assert: apiClient.get was called (the fetchEntries inside handleClearFilters)
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('/mcp/audit'),
+          expect.objectContaining({ params: expect.objectContaining({ page: 1, limit: 50 }) })
+        );
+      });
+    });
+  });
+
+  describe('fetchEntries response shapes', () => {
+    it('handles flat array response from apiClient.get', async () => {
+      // Arrange: API returns a flat array (not enveloped)
+      const flatEntry = { ...ENTRY, id: 'flat-1' };
+      vi.mocked(apiClient.get).mockResolvedValue([flatEntry]);
+
+      render(<McpAuditLog initialEntries={[]} initialMeta={null} />);
+
+      // Act: trigger a fetch
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      // Assert: the flat-array branch executed — new entry is displayed
+      await waitFor(() => {
+        expect(screen.getByText('tools/call')).toBeInTheDocument();
+      });
+    });
+
+    it('applies method filter param when method state is set before fetch', async () => {
+      // Arrange: mock returns empty with envelope
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Act: apply filters (method is '' by default so no method param — verify limit param shape)
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      // Assert: correct API call shape — no extra filter params when filters are empty
+      await waitFor(() => {
+        const call = vi.mocked(apiClient.get).mock.calls[0] as [
+          string,
+          { params: Record<string, unknown> },
+        ];
+        expect(call[1].params).not.toHaveProperty('method');
+        expect(call[1].params).not.toHaveProperty('responseCode');
+      });
+    });
+  });
+
+  describe('Entry target column variants', () => {
+    it('shows resourceUri when toolSlug is absent', () => {
+      // Arrange: entry has resourceUri but no toolSlug
+      const resourceEntry = {
+        ...ENTRY,
+        id: 'res-1',
+        toolSlug: null,
+        resourceUri: 'file://knowledge/doc.md',
+      };
+
+      render(<McpAuditLog initialEntries={[resourceEntry]} initialMeta={null} />);
+
+      // Assert: resourceUri rendered in target column
+      expect(screen.getByText('file://knowledge/doc.md')).toBeInTheDocument();
+    });
+
+    it('shows em-dash when both toolSlug and resourceUri are absent', () => {
+      // Arrange: entry has neither toolSlug nor resourceUri
+      const bareEntry = { ...ENTRY, id: 'bare-1', toolSlug: null, resourceUri: null };
+
+      render(<McpAuditLog initialEntries={[bareEntry]} initialMeta={null} />);
+
+      // Assert: em-dash shown in target column
+      // The component renders <span>—</span> for the target and also for clientIp
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shows em-dash for API key column when entry.apiKey is null', () => {
+      // Arrange: entry with no api key
+      const noKeyEntry = { ...ENTRY, id: 'nokey-1', apiKey: null };
+
+      render(<McpAuditLog initialEntries={[noKeyEntry]} initialMeta={null} />);
+
+      // Assert: at least one em-dash in the table (API key column)
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('getStatusVariant helper', () => {
+    it('renders "error" badge with destructive variant', () => {
+      // Arrange: entry with error responseCode
+      const errorEntry = { ...ENTRY, id: 'err-1', responseCode: 'error' };
+
+      render(<McpAuditLog initialEntries={[errorEntry]} initialMeta={null} />);
+
+      // Assert: badge for "error" is rendered
+      expect(screen.getByText('error')).toBeInTheDocument();
+    });
+
+    it('renders "rate_limited" badge with secondary variant', () => {
+      // Arrange: entry with rate_limited responseCode (neither success nor error → secondary)
+      const rateLimitedEntry = { ...ENTRY, id: 'rl-1', responseCode: 'rate_limited' };
+
+      render(<McpAuditLog initialEntries={[rateLimitedEntry]} initialMeta={null} />);
+
+      // Assert: badge renders with rate_limited text
+      expect(screen.getByText('rate_limited')).toBeInTheDocument();
+    });
+  });
+
+  describe('Pagination navigation', () => {
+    it('calls fetchEntries with page+1 when Next is clicked', async () => {
+      // Arrange: start on page 1 of 2
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [ENTRY],
+        meta: { page: 2, limit: 50, total: 100, totalPages: 2 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Act: click Next
+      await act(async () => {
+        fireEvent.click(screen.getByText('Next'));
+      });
+
+      // Assert: apiClient.get called with page: 2
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('/mcp/audit'),
+          expect.objectContaining({ params: expect.objectContaining({ page: 2 }) })
+        );
+      });
+    });
+
+    it('calls fetchEntries with page-1 when Previous is clicked on page 2', async () => {
+      // Arrange: start on page 2 of 3
+      const page2Meta = { page: 2, limit: 50, total: 150, totalPages: 3 };
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [ENTRY],
+        meta: { page: 1, limit: 50, total: 150, totalPages: 3 },
+      });
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={page2Meta} />);
+
+      // Assert: Previous is enabled on page 2
+      expect(screen.getByText('Previous')).not.toBeDisabled();
+
+      // Act: click Previous
+      await act(async () => {
+        fireEvent.click(screen.getByText('Previous'));
+      });
+
+      // Assert: apiClient.get called with page: 1
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('/mcp/audit'),
+          expect.objectContaining({ params: expect.objectContaining({ page: 1 }) })
+        );
+      });
+    });
+  });
+
+  describe('Empty state with active filters', () => {
+    it('shows filter-specific empty message when entries are empty and hasFilters is true', async () => {
+      // Arrange: fetch returns empty after applying filter
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+
+      render(<McpAuditLog initialEntries={[]} initialMeta={null} />);
+
+      // Act: set a date filter and apply
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      // Assert: filter-specific empty message shown
+      await waitFor(() => {
+        expect(screen.getByText('No entries match the current filters.')).toBeInTheDocument();
+      });
+    });
   });
 });

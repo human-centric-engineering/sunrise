@@ -443,4 +443,157 @@ describe('recommendModels', () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // New branch-coverage cases (Sprint 1, Batch 1.1)
+  // -------------------------------------------------------------------------
+
+  describe('embedding scoring — branch coverage', () => {
+    it('gives a base "Embedding model" reason when no quality/schema/freeTier attributes are set', async () => {
+      // Arrange: embedding model with no schemaCompatible, no quality, no hasFreeTier, not local
+      const minimalEmbed = makeModel({
+        slug: 'bare-embed',
+        capabilities: ['embedding'],
+        tierRole: 'embedding',
+        schemaCompatible: null,
+        quality: null,
+        hasFreeTier: null,
+        local: false,
+        costEfficiency: 'medium',
+      });
+      mockModels([minimalEmbed]);
+
+      // Act
+      const results = await recommendModels('embedding');
+
+      // Assert: falls through all optional score branches → reason is the fallback string
+      expect(results).toHaveLength(1);
+      expect(results[0].reason).toBe('Embedding model');
+      // Score should only include costEfficiency contribution (medium = 1 * 7 = 7)
+      expect(results[0].score).toBe(7);
+    });
+
+    it('gives bonus score and reason parts for hasFreeTier and local model', async () => {
+      // Arrange: embedding model with free tier and local flag, but no quality/schema
+      const localFreeEmbed = makeModel({
+        slug: 'local-free-embed',
+        capabilities: ['embedding'],
+        tierRole: 'embedding',
+        schemaCompatible: null,
+        quality: null,
+        hasFreeTier: true,
+        local: true,
+        costEfficiency: 'medium',
+      });
+      mockModels([localFreeEmbed]);
+
+      // Act
+      const results = await recommendModels('embedding');
+
+      // Assert: hasFreeTier (+10) and local (+5) are included in the score
+      expect(results).toHaveLength(1);
+      // Base score: costEfficiency medium = 1*7 = 7, hasFreeTier = +10, local = +5 → total 22
+      expect(results[0].score).toBe(22);
+      // reason parts include 'free tier' (hasFreeTier is true, quality is null so no quality push)
+      expect(results[0].reason).toContain('free tier');
+    });
+
+    it('applies medium quality bonus and includes quality in reason parts', async () => {
+      // Arrange: embedding model with quality 'medium' (not 'high') and no schema/freeTier
+      const medQualityEmbed = makeModel({
+        slug: 'med-embed',
+        capabilities: ['embedding'],
+        tierRole: 'embedding',
+        schemaCompatible: null,
+        quality: 'medium',
+        hasFreeTier: null,
+        local: false,
+        costEfficiency: 'medium',
+      });
+      mockModels([medQualityEmbed]);
+
+      // Act
+      const results = await recommendModels('embedding');
+
+      // Assert: quality 'medium' gives +10 bonus (not 'high' +20 branch)
+      expect(results).toHaveLength(1);
+      // costEfficiency medium = 1*7 = 7, quality medium = +10 → total 17
+      expect(results[0].score).toBe(17);
+      expect(results[0].reason).toContain('medium quality');
+    });
+  });
+
+  describe('scoring — edge-case branches', () => {
+    it('falls back to 0 when a secondary dimension value is not in the RATING_SCORE map', async () => {
+      // Arrange: a model whose secondary dimension (reasoningDepth for 'thinking' intent)
+      // has a value not present in the RATING_SCORE lookup table → the ?? 0 branch fires
+      const unknownDepthModel = makeModel({
+        slug: 'unknown-depth',
+        tierRole: 'thinking',
+        reasoningDepth: 'unknown_value' as never,
+      });
+      mockModels([unknownDepthModel]);
+
+      // Act
+      const results = await recommendModels('thinking');
+
+      // Assert: primaryScore 60 (tier match) + secondaryScore 0 (RATING_SCORE miss ?? 0) = 60
+      expect(results).toHaveLength(1);
+      expect(results[0].score).toBe(60);
+    });
+
+    it('uses raw tier string as label when tier is not in the known labels map', async () => {
+      // Arrange: use a model that does NOT match the target tier so both tierLabel calls are exercised
+      const thinkingModel = makeModel({
+        slug: 'real-thinking',
+        tierRole: 'thinking',
+        reasoningDepth: 'high',
+      });
+      // Cast unknownTierModel to a non-primary tier to trigger non-match branch
+      const foreignTier = makeModel({
+        slug: 'foreign',
+        tierRole: 'worker' as never,
+        reasoningDepth: 'high',
+      });
+      mockModels([thinkingModel, foreignTier]);
+
+      // Act: 'thinking' intent → thinkingModel matches, foreignTier doesn't → non-tier reason path
+      const results = await recommendModels('thinking');
+
+      // Assert: the non-matching model's reason uses tierLabel('worker') = 'Worker'
+      const foreignResult = results.find((r) => r.slug === 'foreign');
+      expect(foreignResult).toBeDefined();
+      expect(foreignResult!.reason).toContain('Worker');
+    });
+  });
+
+  describe('loadModels — error catch branch', () => {
+    it('returns empty array when the rejection is a non-Error value (string throw)', async () => {
+      // Arrange: DB throws a plain string — exercises `err instanceof Error` false path
+      __resetModelCacheForTests();
+      vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue('plain string error');
+
+      // Act
+      const results = await recommendModels('thinking');
+
+      // Assert: no throw, returns empty array (no stale cache available)
+      expect(results).toEqual([]);
+    });
+
+    it('logs the string representation when non-Error is thrown', async () => {
+      // Arrange
+      const { logger } = await import('@/lib/logging');
+      __resetModelCacheForTests();
+      vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue({ code: 'DB_GONE' });
+
+      // Act
+      await recommendModels('thinking');
+
+      // Assert: warning logged with stringified non-Error object in error field
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Provider model cache load failed',
+        expect.objectContaining({ error: '[object Object]' })
+      );
+    });
+  });
 });

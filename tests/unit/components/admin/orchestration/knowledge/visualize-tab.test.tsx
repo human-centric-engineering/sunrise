@@ -35,15 +35,53 @@ import { VisualizeTab } from '@/components/admin/orchestration/knowledge/visuali
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-// ReactECharts uses dynamic import + canvas; stub it out entirely
+/** Last captured chart props — updated each render so tests can call onEvents handlers */
+let capturedChartProps: {
+  option?: {
+    tooltip?: {
+      formatter?: (params: {
+        dataType?: string;
+        data?: {
+          value?: {
+            id: string;
+            name: string;
+            type: string;
+            value: number;
+            category: number;
+            metadata?: Record<string, unknown>;
+          };
+          name?: string;
+          edgeMeta?: {
+            label?: string;
+            sourceName: string;
+            sourceType: string;
+            sourceMeta?: Record<string, unknown>;
+            targetName: string;
+            targetType: string;
+            targetMeta?: Record<string, unknown>;
+          };
+        };
+      }) => string;
+    };
+  };
+  onEvents?: Record<string, (params: { data?: { value?: unknown } }) => void>;
+} = {};
+
+// ReactECharts uses dynamic import + canvas; stub it out and capture props for testing
 vi.mock('echarts-for-react', () => ({
-  default: () => <div data-testid="echarts-mock">chart</div>,
+  default: (props: typeof capturedChartProps) => {
+    capturedChartProps = props;
+    return <div data-testid="echarts-mock">chart</div>;
+  },
 }));
 
 vi.mock('next/dynamic', () => ({
   default: (_fn: () => Promise<{ default: unknown }>) => {
-    // Return the stub directly
-    return () => <div data-testid="echarts-mock">chart</div>;
+    // Return the stub that also captures props
+    return (props: typeof capturedChartProps) => {
+      capturedChartProps = props;
+      return <div data-testid="echarts-mock">chart</div>;
+    };
   },
 }));
 
@@ -104,6 +142,7 @@ function makeFetchResponse(graphData: ReturnType<typeof makeGraphData>) {
 describe('VisualizeTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    capturedChartProps = {};
   });
 
   afterEach(() => {
@@ -536,6 +575,435 @@ describe('VisualizeTab', () => {
       const fetchedUrl = (mockFetch.mock.calls[0] as [string])[0];
       expect(fetchedUrl).toContain('scope=app');
     });
+  });
+
+  // ── Fullscreen search bar ────────────────────────────────────────────────────
+
+  it('renders a filter input inside fullscreen mode', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+
+    const user = userEvent.setup();
+    render(<VisualizeTab />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^fullscreen$/i })).toBeInTheDocument()
+    );
+
+    // Enter fullscreen — reveals fullscreen search bar (in addition to the regular one)
+    await user.click(screen.getByRole('button', { name: /^fullscreen$/i }));
+
+    // Both the fullscreen header input and the normal bar should no longer be present;
+    // instead the fullscreen header bar appears. There should be at least one filter input.
+    const filterInputs = screen.getAllByPlaceholderText('Filter nodes...');
+    expect(filterInputs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Tooltip formatter — node types ────────────────────────────────────────
+
+  it('chart tooltip formatter returns Knowledge Base tooltip for kb node type', async () => {
+    // Arrange: load graph data so the chart renders with the option
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: call formatter with a kb node
+    const result = formatter!({
+      data: {
+        value: {
+          id: 'kb-1',
+          name: 'Knowledge Base',
+          type: 'kb',
+          value: 20,
+          category: 0,
+          metadata: { documents: 3, chunks: 42, totalTokens: 8500 },
+        },
+      },
+    });
+
+    // Assert: KB-specific tooltip content
+    expect(result).toContain('Knowledge Base');
+    expect(result).toContain('Documents: 3');
+    expect(result).toContain('Chunks: 42');
+  });
+
+  it('chart tooltip formatter returns document tooltip for document node type', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: call formatter with a document node
+    const result = formatter!({
+      data: {
+        value: {
+          id: 'doc-1',
+          name: 'Patterns Guide',
+          type: 'document',
+          value: 12,
+          category: 1,
+          metadata: { status: 'ready', chunkCount: 42, totalTokens: 8000 },
+        },
+      },
+    });
+
+    // Assert: document-specific tooltip content
+    expect(result).toContain('Patterns Guide');
+    expect(result).toContain('Status: ready');
+    expect(result).toContain('Chunks: 42');
+  });
+
+  it('chart tooltip formatter returns document tooltip with error message when errorMessage present', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: document node with errorMessage field
+    const result = formatter!({
+      data: {
+        value: {
+          id: 'doc-err',
+          name: 'Failed Doc',
+          type: 'document',
+          value: 8,
+          category: 3,
+          metadata: {
+            status: 'failed',
+            chunkCount: 0,
+            totalTokens: 0,
+            errorMessage: 'Parse error occurred',
+          },
+        },
+      },
+    });
+
+    // Assert: error message included in tooltip
+    expect(result).toContain('Parse error occurred');
+  });
+
+  it('chart tooltip formatter returns chunk tooltip for chunk node type', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: call formatter with a chunk node
+    const result = formatter!({
+      data: {
+        value: {
+          id: 'chunk-1',
+          name: 'Chunk 1',
+          type: 'chunk',
+          value: 5,
+          category: 4,
+          metadata: {
+            patternName: 'Overview',
+            chunkType: 'section_intro',
+            estimatedTokens: 250,
+            embeddingProvider: 'openai',
+            embeddingModel: 'text-embedding-3-small',
+            contentPreview: 'This is the intro chunk content...',
+          },
+        },
+      },
+    });
+
+    // Assert: chunk-specific tooltip content
+    expect(result).toContain('Overview');
+    expect(result).toContain('openai');
+    expect(result).toContain('250');
+  });
+
+  it('chart tooltip formatter returns chunk tooltip with "not embedded" when no embeddingProvider', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: chunk node without embeddingProvider
+    const result = formatter!({
+      data: {
+        value: {
+          id: 'chunk-bare',
+          name: 'Bare Chunk',
+          type: 'chunk',
+          value: 4,
+          category: 4,
+          metadata: {
+            chunkType: 'paragraph',
+            estimatedTokens: 100,
+            contentPreview: 'Some text...',
+          },
+        },
+      },
+    });
+
+    // Assert: "not embedded" shown
+    expect(result).toContain('not embedded');
+  });
+
+  it('chart tooltip formatter returns node name when node has no metadata', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: node without metadata
+    const result = formatter!({
+      data: { value: undefined, name: 'Unnamed Node' },
+    });
+
+    // Assert: falls back to node name
+    expect(result).toBe('Unnamed Node');
+  });
+
+  // ── Tooltip formatter — edge tooltip ──────────────────────────────────────
+
+  it('chart tooltip formatter returns edge tooltip for dataType="edge"', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: call with an edge params object
+    const result = formatter!({
+      dataType: 'edge',
+      data: {
+        edgeMeta: {
+          label: 'contains',
+          sourceName: 'Knowledge Base',
+          sourceType: 'kb',
+          sourceMeta: {},
+          targetName: 'Patterns Guide',
+          targetType: 'document',
+          targetMeta: { chunkCount: 42 },
+        },
+      },
+    });
+
+    // Assert: edge tooltip contains both node names and label
+    expect(result).toContain('Knowledge Base');
+    expect(result).toContain('contains');
+    expect(result).toContain('Patterns Guide');
+  });
+
+  it('chart tooltip formatter returns empty string for edge with no edgeMeta', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: edge params without edgeMeta
+    const result = formatter!({ dataType: 'edge', data: {} });
+
+    // Assert: returns empty string (early return on !em)
+    expect(result).toBe('');
+  });
+
+  it('edge tooltip nodeLine returns "Knowledge Base" for kb type', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: source is kb type
+    const result = formatter!({
+      dataType: 'edge',
+      data: {
+        edgeMeta: {
+          label: 'contains',
+          sourceName: 'KB Root',
+          sourceType: 'kb',
+          targetName: 'A Document',
+          targetType: 'document',
+          targetMeta: { chunkCount: 5 },
+        },
+      },
+    });
+
+    // Assert: "Knowledge Base" appears for kb source in the edge tooltip
+    expect(result).toContain('Knowledge Base');
+    expect(result).toContain('5 chunks');
+  });
+
+  it('edge tooltip nodeLine shows chunk details for chunk type', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const formatter = capturedChartProps.option?.tooltip?.formatter;
+    expect(formatter).toBeDefined();
+
+    // Act: target is chunk type with metadata
+    const result = formatter!({
+      dataType: 'edge',
+      data: {
+        edgeMeta: {
+          label: 'section',
+          sourceName: 'A Document',
+          sourceType: 'document',
+          sourceMeta: { chunkCount: 3 },
+          targetName: 'Chunk 1',
+          targetType: 'chunk',
+          targetMeta: {
+            patternName: 'Intro',
+            chunkType: 'section_intro',
+            estimatedTokens: 200,
+            embeddingProvider: 'openai',
+          },
+        },
+      },
+    });
+
+    // Assert: chunk detail line contains token/provider info
+    expect(result).toContain('Intro');
+    expect(result).toContain('openai');
+  });
+
+  // ── handleChartClick — node detail dialog ─────────────────────────────────
+
+  it('clicking a chart node opens the node detail dialog', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    // Act: simulate a chart click via the captured onEvents handler
+    const clickHandler = capturedChartProps.onEvents?.click;
+    expect(clickHandler).toBeDefined();
+
+    clickHandler!({
+      data: {
+        value: {
+          id: 'doc-1',
+          name: 'Patterns Guide',
+          type: 'document',
+          value: 12,
+          category: 1,
+          metadata: { status: 'ready', chunkCount: 42, totalTokens: 8000 },
+        },
+      },
+    });
+
+    // Assert: dialog opened with node name
+    await waitFor(() => {
+      expect(screen.getByText('Patterns Guide')).toBeInTheDocument();
+    });
+    expect(screen.getByText('document')).toBeInTheDocument();
+  });
+
+  it('node detail dialog shows contentPreview when present', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const clickHandler = capturedChartProps.onEvents?.click;
+    expect(clickHandler).toBeDefined();
+
+    // Act: click a chunk node that has a contentPreview
+    clickHandler!({
+      data: {
+        value: {
+          id: 'chunk-1',
+          name: 'Chunk 1',
+          type: 'chunk',
+          value: 5,
+          category: 4,
+          metadata: {
+            chunkType: 'section_intro',
+            estimatedTokens: 100,
+            contentPreview: 'Here is some preview text for the chunk.',
+          },
+        },
+      },
+    });
+
+    // Assert: content preview rendered
+    await waitFor(() => {
+      expect(screen.getByText('Here is some preview text for the chunk.')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/content preview/i)).toBeInTheDocument();
+  });
+
+  it('node detail dialog shows ISO date values as formatted dates', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const clickHandler = capturedChartProps.onEvents?.click;
+    expect(clickHandler).toBeDefined();
+
+    // Act: click node with an ISO date in metadata
+    clickHandler!({
+      data: {
+        value: {
+          id: 'chunk-date',
+          name: 'Dated Chunk',
+          type: 'chunk',
+          value: 5,
+          category: 4,
+          metadata: {
+            embeddedAt: '2026-04-01T10:00:00.000Z',
+            estimatedTokens: 50,
+          },
+        },
+      },
+    });
+
+    // Assert: embeddedAt shown (formatted by toLocaleString — just verify not raw ISO)
+    await waitFor(() => {
+      expect(screen.getByText('Dated Chunk')).toBeInTheDocument();
+    });
+    // The value "2026-04-01T10:00:00.000Z" should NOT appear raw; it should be locale-formatted
+    expect(screen.queryByText('2026-04-01T10:00:00.000Z')).not.toBeInTheDocument();
+  });
+
+  it('does not open dialog when chart click has no node data', async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse(makeGraphData()));
+    render(<VisualizeTab />);
+
+    await waitFor(() => expect(screen.getByTestId('echarts-mock')).toBeInTheDocument());
+
+    const clickHandler = capturedChartProps.onEvents?.click;
+    expect(clickHandler).toBeDefined();
+
+    // Act: click with empty data (no value)
+    clickHandler!({ data: {} });
+
+    // Assert: dialog NOT opened — "document" badge not in DOM (it only appears in dialog title)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   // ── New: Embedded + empty with graphData non-null → correct heading + toggle ──

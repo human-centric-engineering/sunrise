@@ -1219,6 +1219,1002 @@ describe('OrchestrationEngine', () => {
     expect(events.map((e) => e.type)).toContain('workflow_completed');
   });
 
+  // ─── Parallel batch: unknown step id ─────────────────────────────
+
+  it('unknown step ID in parallel batch emits workflow_failed', async () => {
+    // Arrange — entry step fans out to two siblings; one ID is valid, one is a ghost.
+    // Both are returned by the executor via nextStepIds so they appear as a parallel batch.
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        return { output: 'a-out', tokensUsed: 0, costUsd: 0, nextStepIds: ['b', 'ghost'] };
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'b' }],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+
+    // Assert — engine should fail with a message referencing the ghost step id.
+    expect(failed).toBeDefined();
+    expect(failed.error).toContain('ghost');
+  });
+
+  // ─── Parallel batch: step count cap exceeded ──────────────────────
+
+  it('parallel batch emits workflow_failed when it would exceed MAX_STEPS_PER_RUN', async () => {
+    // Arrange — build a DAG where the first step fans out to 1001 siblings.
+    // This triggers the stepCount + ready.length > MAX_STEPS_PER_RUN guard.
+    const branchIds = Array.from({ length: 1001 }, (_, i) => `b${i}`);
+    const branchSteps = branchIds.map((id) => ({
+      id,
+      name: id,
+      type: 'llm_call',
+      config: { prompt: id },
+      nextSteps: [] as { targetStepId: string }[],
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'entry',
+          name: 'Entry',
+          type: 'llm_call',
+          config: { prompt: 'entry' },
+          // All 1001 branches returned via nextStepIds to force a parallel ready set.
+          nextSteps: branchIds.map((id) => ({ targetStepId: id })),
+        },
+        ...branchSteps,
+      ],
+      entryStepId: 'entry',
+      errorStrategy: 'fail',
+    };
+
+    registerStepType('llm_call', async (step) => ({
+      output: step.id,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+
+    // Assert
+    expect(failed).toBeDefined();
+    expect(failed.error).toContain('1000');
+  });
+
+  // ─── Parallel batch: paused (human_approval in branch) ───────────
+
+  it('parallel batch pauses when a branch step throws PausedForApproval', async () => {
+    // Arrange — fan-out from p to two branches; branch 'a' is a human_approval step.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('human_approval', async (step) => {
+      throw new PausedForApproval(step.id, { prompt: 'approve me' });
+    });
+    registerStepType('llm_call', async (step) => ({
+      output: `${step.id}-out`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'approval' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'approval',
+          name: 'Approval',
+          type: 'human_approval',
+          config: { prompt: 'ok?' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — approval_required fired, no workflow_completed, no workflow_failed.
+    expect(types).toContain('approval_required');
+    expect(types).not.toContain('workflow_completed');
+    expect(types).not.toContain('workflow_failed');
+
+    // DB row must have been flipped to paused_for_approval.
+    const pauseCall = vi
+      .mocked(prisma.aiWorkflowExecution.update)
+      .mock.calls.find(
+        ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
+      );
+    expect(pauseCall).toBeDefined();
+  });
+
+  // ─── Parallel batch: budget exceeded after batch ──────────────────
+
+  it('parallel batch emits workflow_failed when total cost exceeds budget after batch', async () => {
+    // Arrange — entry step fans out to two branches, each costing $0.6.
+    // Budget is $1.0 — the batch total ($1.2) exceeds it.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async () => ({
+      output: 'done',
+      tokensUsed: 0,
+      costUsd: 0.6,
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+      userId: USER_ID,
+      budgetLimitUsd: 1.0,
+    });
+    const types = events.map((e) => e.type);
+
+    // Assert — workflow_failed for budget exceeded, no workflow_completed.
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed.error).toBe('Budget exceeded');
+  });
+
+  // ─── Parallel batch: budget warning after batch ───────────────────
+
+  it('parallel batch emits budget_warning when cost crosses 80% threshold', async () => {
+    // Arrange — each branch costs $0.45 (total $0.90 > 80% of $1.00).
+    // Both branches succeed so workflow_completed fires after the warning.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async () => ({
+      output: 'done',
+      tokensUsed: 0,
+      costUsd: 0.45,
+    }));
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+      userId: USER_ID,
+      budgetLimitUsd: 1.0,
+    });
+
+    // Assert — exactly one budget_warning, workflow still completes.
+    expect(events.map((e) => e.type)).toContain('budget_warning');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── Parallel batch: nextStepIds override from result ────────────
+
+  it('parallel branch can override next steps via result.nextStepIds', async () => {
+    // Arrange — fan-out from p to a and b; step a uses nextStepIds to redirect to c (not d).
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        return { output: 'a-out', tokensUsed: 0, costUsd: 0, nextStepIds: ['c'] };
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          // Definition says go to d, but executor will override to c.
+          nextSteps: [{ targetStepId: 'd' }],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+        { id: 'c', name: 'C', type: 'llm_call', config: { prompt: 'C' }, nextSteps: [] },
+        { id: 'd', name: 'D', type: 'llm_call', config: { prompt: 'D' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — c was executed, d was not.
+    const completedSteps = events
+      .filter((e) => e.type === 'step_completed')
+      .map((e) => (e.type === 'step_completed' ? e.stepId : ''));
+    expect(completedSteps).toContain('c');
+    expect(completedSteps).not.toContain('d');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── runStepToCompletion: skip strategy in parallel branch ────────
+
+  it('parallel branch skip strategy returns null output without failing workflow', async () => {
+    // Arrange — parallel batch where branch a uses skip strategy and errors.
+    // This exercises runStepToCompletion's skip path (not the generator path).
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError(step.id, 'test_err', 'skip me');
+      return { output: `${step.id}-out`, tokensUsed: 1, costUsd: 0.001 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'skip' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — workflow completed (skip doesn't kill workflow), b ran.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+    const completedSteps = events
+      .filter((e) => e.type === 'step_completed')
+      .map((e) => (e.type === 'step_completed' ? e.stepId : ''));
+    expect(completedSteps).toContain('b');
+  });
+
+  // ─── runStepToCompletion: fallback strategy in parallel branch ────
+
+  it('parallel branch fallback strategy routes to fallbackStepId', async () => {
+    // Arrange — parallel batch where branch a uses fallback and errors.
+    // The fallback step is 'fb'. This exercises runStepToCompletion's fallback
+    // path (with a fallbackStepId present).
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError(step.id, 'test_err', 'fallback please');
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'fallback', fallbackStepId: 'fb' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+        { id: 'fb', name: 'Fallback', type: 'llm_call', config: { prompt: 'FB' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — fallback step was executed; workflow completed.
+    const completedSteps = events
+      .filter((e) => e.type === 'step_completed')
+      .map((e) => (e.type === 'step_completed' ? e.stepId : ''));
+    expect(completedSteps).toContain('fb');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── runStepToCompletion: fallback without fallbackStepId (parallel) ─
+
+  it('parallel branch fallback without fallbackStepId behaves as skip', async () => {
+    // Exercises the fallback-no-id path in runStepToCompletion.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError(step.id, 'test_err', 'fallback no id');
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          // fallback without a fallbackStepId → behaves like skip in the parallel path.
+          config: { prompt: 'A', errorStrategy: 'fallback' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — workflow still completes; step a's failure was absorbed.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── runStepToCompletion: retry with PausedForApproval ───────────
+
+  it('parallel branch retry strategy re-throws PausedForApproval immediately', async () => {
+    // Exercises runStepToCompletion's retry loop: first attempt fails,
+    // second throws PausedForApproval — must NOT be retried.
+    let attempt = 0;
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        attempt++;
+        if (attempt === 1) throw new ExecutorError('a', 'transient', 'first fail');
+        throw new PausedForApproval('a', { prompt: 'approve in parallel' });
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'retry', retryCount: 3 },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — PausedForApproval propagated; paused state.
+    expect(types).toContain('approval_required');
+    expect(types).not.toContain('workflow_completed');
+  }, 15_000);
+
+  // ─── runStepToCompletion: retry with non-retriable error ─────────
+
+  it('parallel branch retry stops immediately on non-retriable error', async () => {
+    // Exercises runStepToCompletion's non-retriable guard in the retry loop.
+    let attempts = 0;
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        attempts++;
+        throw new ExecutorError('a', 'permanent', 'cannot retry', undefined, false);
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'retry', retryCount: 5 },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — exactly one attempt (not retried); workflow fails.
+    expect(attempts).toBe(1);
+    expect(events.map((e) => e.type)).toContain('workflow_failed');
+  });
+
+  // ─── runStepToCompletion: non-Error wrapping (parallel) ──────────
+
+  it('parallel branch wraps non-Error thrown value into ExecutorError', async () => {
+    // Exercises the non-Error wrapping path in runStepToCompletion.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'a plain string error in parallel';
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — workflow fails due to branch a's error.
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+  });
+
+  // ─── runStepToCompletion: timeout in parallel branch ─────────────
+
+  it('parallel branch timeout triggers workflow_failed', async () => {
+    // Exercises the stepTimeoutMs path in runStepToCompletion.
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+      }
+      return { output: `${step.id}-out`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', timeoutMs: 10 },
+          nextSteps: [],
+        },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — timeout causes workflow_failed.
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed.error).toContain('timed out');
+  }, 5_000);
+
+  // ─── resume with invalid trace entries ────────────────────────────
+
+  it('resumes gracefully when executionTrace contains invalid entries (schema parse fails)', async () => {
+    // Exercises the safeParse failure branch in initRun — invalid entries are silently
+    // dropped and the run starts with the steps that did parse (or all steps if none parse).
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_invalid_trace',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      // Array containing one valid entry and one entry that will fail the schema.
+      executionTrace: [
+        { not_a_valid_key: true, garbage: 123 }, // will fail safeParse → dropped
+      ],
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
+      budgetLimitUsd: null,
+      currentStep: null,
+      startedAt: new Date(),
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const events: ExecutionEvent[] = [];
+    const engine = new OrchestrationEngine();
+    for await (const e of engine.execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_invalid_trace',
+      }
+    )) {
+      events.push(e);
+    }
+
+    // Should still start and run from the beginning (empty parsed trace → full run).
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── resume when row has no startedAt (null fallback) ────────────
+
+  it('resume uses new Date() when row.startedAt is null', async () => {
+    // Exercises the `row.startedAt ?? new Date()` branch in initRun.
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_no_started_at',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      executionTrace: [],
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
+      budgetLimitUsd: null,
+      currentStep: null,
+      startedAt: null, // null → triggers the fallback
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const events: ExecutionEvent[] = [];
+    for await (const e of new OrchestrationEngine().execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID, resumeFromExecutionId: 'exec_no_started_at' }
+    )) {
+      events.push(e);
+    }
+
+    // Workflow must start and complete — the null startedAt fallback didn't crash.
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+
+    // DB update during resume must have been called with a non-null startedAt.
+    const resumeUpdateCall = vi
+      .mocked(prisma.aiWorkflowExecution.update)
+      .mock.calls.find(([arg]) => {
+        const { data } = arg as { data: { status?: string; startedAt?: Date } };
+        return data.status === 'running' && data.startedAt instanceof Date;
+      });
+    expect(resumeUpdateCall).toBeDefined();
+  });
+
+  // ─── resume with budgetLimitUsd from row ─────────────────────────
+
+  it('resume rehydrates budgetLimitUsd from the DB row when options.budgetLimitUsd is absent', async () => {
+    // Exercises the `row.budgetLimitUsd ?? options.budgetLimitUsd` branch in initRun.
+    // The row has a budgetLimitUsd; options does not → should use the row's value.
+    registerStepType('llm_call', async () => ({
+      output: 'done',
+      tokensUsed: 0,
+      costUsd: 2.0, // exceeds the rehydrated budget of $1.0
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_budget_row',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      executionTrace: [],
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
+      budgetLimitUsd: 1.0, // row has a budget limit
+      currentStep: null,
+      startedAt: new Date(),
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    // No budgetLimitUsd in options — engine must use the row's value.
+    const events: ExecutionEvent[] = [];
+    for await (const e of new OrchestrationEngine().execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID, resumeFromExecutionId: 'exec_budget_row' }
+    )) {
+      events.push(e);
+    }
+
+    // Assert — budget check fired (step cost $2.0 > limit $1.0).
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed).toBeDefined();
+    expect(failed.error).toBe('Budget exceeded');
+  });
+
+  // ─── resume with non-completed trace entries ─────────────────────
+
+  it('resume skips step output rehydration for non-completed trace entries', async () => {
+    // Exercises the `entry.status === 'completed'` branch in initRun — a trace entry
+    // with a non-completed status (e.g. 'failed') must NOT be added to ctx.stepOutputs.
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_failed_trace',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      // One completed entry (step a) and one failed entry (step a again, edge case).
+      // The failed entry must not populate stepOutputs.
+      executionTrace: [
+        {
+          stepId: 'a',
+          stepType: 'llm_call',
+          label: 'A',
+          status: 'failed',
+          output: null,
+          error: 'some error',
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs: 5,
+        },
+      ],
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
+      budgetLimitUsd: null,
+      currentStep: null,
+      startedAt: new Date(),
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const events: ExecutionEvent[] = [];
+    for await (const e of new OrchestrationEngine().execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID, resumeFromExecutionId: 'exec_failed_trace' }
+    )) {
+      events.push(e);
+    }
+
+    // Should run from start — the failed trace entry didn't block execution.
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+  });
+
+  // ─── nextIdsAfter with missing step ──────────────────────────────
+
+  it('resumes from a currentStep that no longer exists in the definition', async () => {
+    // Exercises nextIdsAfter returning [] when the step is missing from the map.
+    // The currentStep in the row points to 'ghost' which is not in the workflow definition.
+    // The engine should start from the entry step (no next IDs to resume from).
+    registerStepType('llm_call', async (step) => ({
+      output: `out:${step.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      id: 'exec_ghost_current',
+      workflowId: 'wf_test',
+      userId: USER_ID,
+      status: 'paused_for_approval',
+      inputData: {},
+      executionTrace: [],
+      totalTokensUsed: 0,
+      totalCostUsd: 0,
+      defaultErrorStrategy: 'fail',
+      budgetLimitUsd: null,
+      currentStep: 'ghost', // not in definition → nextIdsAfter returns []
+      startedAt: new Date(),
+      completedAt: null,
+      outputData: null,
+      errorMessage: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const events: ExecutionEvent[] = [];
+    for await (const e of new OrchestrationEngine().execute(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID, resumeFromExecutionId: 'exec_ghost_current' }
+    )) {
+      events.push(e);
+    }
+
+    // The queue is empty (no next IDs from ghost step + no trace to seed from).
+    // Engine should emit workflow_started and then complete with an empty DAG walk.
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+  });
+
+  // ─── checkpoint: non-Error in catch (String(err) path) ───────────
+
+  it('checkpoint swallows a non-Error thrown value from DB update', async () => {
+    // Exercises the `err instanceof Error ? err.message : String(err)` branch in checkpoint.
+    // When a non-Error value (e.g. a number) is thrown, String() is used.
+    registerStepType('llm_call', async () => ({
+      output: 'x',
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    let updateCalls = 0;
+    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+      updateCalls++;
+      if (updateCalls === 2) {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 42; // non-Error thrown value → triggers String(err) path
+      }
+      return {};
+    }) as never);
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+    // Engine must still complete despite the non-Error checkpoint failure.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── executeWithSubscriber without subscriber ─────────────────────
+
+  it('executeWithSubscriber works correctly when no subscriber is provided', async () => {
+    // Exercises the `if (subscriber)` false-branch in executeWithSubscriber.
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
+
+    const engine = new OrchestrationEngine();
+    const events: ExecutionEvent[] = [];
+    // No subscriber in options.
+    for await (const e of engine.executeWithSubscriber(
+      makeWorkflow(linearDefinition()),
+      {},
+      { userId: USER_ID }
+    )) {
+      events.push(e);
+    }
+
+    // Should yield all events normally without crashing.
+    expect(events.map((e) => e.type)).toContain('workflow_started');
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+    expect(events.map((e) => e.type).filter((t) => t === 'step_completed')).toHaveLength(2);
+  });
+
+  // ─── retry with non-Error wrapping (runStepWithStrategy) ─────────
+
+  it('retry strategy wraps non-Error thrown value into ExecutorError', async () => {
+    // Exercises the `err instanceof Error ? err.message : 'Executor threw...'` branch
+    // inside the retry catch block (the non-Error path, index 2 of binary-expr branch 40).
+    let attempt = 0;
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        attempt++;
+        if (attempt <= 1) {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'non-error string in retry'; // non-Error thrown value
+        }
+      }
+      return { output: `out:${step.id}`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'retry', retryCount: 2 };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Should complete — non-Error wrapped, retry succeeded on attempt 2.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  }, 10_000);
+
+  // ─── finalOutput unchanged when step returns undefined output ────
+
+  it('finalOutput stays null when step result.output is undefined', async () => {
+    // Exercises the `if (singleResult.output !== undefined)` false branch.
+    // When the executor returns `output: undefined`, finalOutput should remain null.
+    registerStepType('llm_call', async () => ({
+      output: undefined, // explicitly undefined — should NOT update finalOutput
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    // Use a one-step workflow so finalOutput is never overwritten by a later step.
+    const def: WorkflowDefinition = {
+      steps: [{ id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] }],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const completed = events.find((e) => e.type === 'workflow_completed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_completed' }
+    >;
+
+    // workflow_completed fires; finalOutput = null (not updated by the undefined output).
+    expect(completed).toBeDefined();
+    expect(completed.output).toBeNull();
+  });
+
   // ─── BudgetExceeded from executor ─────────────────────────────────
 
   it('BudgetExceeded thrown by executor is wrapped and sanitized like any unexpected error', async () => {

@@ -312,4 +312,200 @@ describe('SettingsForm', () => {
       expect(screen.getByRole('button', { name: /save settings/i })).toBeEnabled();
     });
   });
+
+  // ── Escalation section ──────────────────────────────────────────────────
+
+  describe('Escalation section', () => {
+    it('renders escalation checkbox unchecked by default (no escalationConfig)', () => {
+      // Arrange
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Assert: checkbox for enabling escalation is rendered and unchecked
+      const checkbox = screen.getByRole('checkbox', {
+        name: /enable escalation notifications/i,
+      });
+      expect(checkbox).toBeInTheDocument();
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it('renders escalation checkbox checked when escalationConfig is present', () => {
+      // Arrange
+      const settingsWithEscalation: OrchestrationSettings = {
+        ...FULL_SETTINGS,
+        escalationConfig: {
+          emailAddresses: ['admin@example.com'],
+          notifyOnPriority: 'all',
+        },
+      };
+      render(<SettingsForm initialSettings={settingsWithEscalation} />);
+
+      // Assert
+      const checkbox = screen.getByRole('checkbox', {
+        name: /enable escalation notifications/i,
+      });
+      expect(checkbox).toBeChecked();
+    });
+
+    it('adds email to escalation list when Add button is clicked', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Act: type an email and click Add
+      const emailInput = screen.getByPlaceholderText(/add email address/i);
+      await user.type(emailInput, 'ops@example.com');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+      // Assert: email appears as a tag
+      await waitFor(() => {
+        expect(screen.getByText('ops@example.com')).toBeInTheDocument();
+      });
+    });
+
+    it('adds email when Enter key is pressed in email input', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Act: type email and press Enter
+      const emailInput = screen.getByPlaceholderText(/add email address/i);
+      await user.type(emailInput, 'enter@example.com{Enter}');
+
+      // Assert: email appears as tag
+      await waitFor(() => {
+        expect(screen.getByText('enter@example.com')).toBeInTheDocument();
+      });
+    });
+
+    it('does not add duplicate email', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const emailInput = screen.getByPlaceholderText(/add email address/i);
+
+      // Add email once
+      await user.type(emailInput, 'dup@example.com');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+      await waitFor(() => expect(screen.getByText('dup@example.com')).toBeInTheDocument());
+
+      // Act: try to add the same email again
+      await user.type(emailInput, 'dup@example.com');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+      // Assert: only one tag with that email
+      await waitFor(() => {
+        const tags = screen.getAllByText('dup@example.com');
+        expect(tags).toHaveLength(1);
+      });
+    });
+
+    it('removes email tag when X button is clicked', async () => {
+      // Arrange: start with an email already in the list
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Add email first
+      const emailInput = screen.getByPlaceholderText(/add email address/i);
+      await user.type(emailInput, 'remove@example.com');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+      await waitFor(() => expect(screen.getByText('remove@example.com')).toBeInTheDocument());
+
+      // Act: click the X button on the tag (the SVG button inside the span)
+      const tag = screen.getByText('remove@example.com').closest('span');
+      const removeBtn = tag?.querySelector('button');
+      expect(removeBtn).not.toBeNull();
+      await user.click(removeBtn!);
+
+      // Assert: email tag is gone
+      await waitFor(() => {
+        expect(screen.queryByText('remove@example.com')).not.toBeInTheDocument();
+      });
+    });
+
+    it('includes escalationConfig in payload when enabled with emails', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Enable escalation
+      const checkbox = screen.getByRole('checkbox', {
+        name: /enable escalation notifications/i,
+      });
+      await user.click(checkbox);
+
+      // Add email
+      const emailInput = screen.getByPlaceholderText(/add email address/i);
+      await user.type(emailInput, 'escalate@example.com');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+      await waitFor(() => expect(screen.getByText('escalate@example.com')).toBeInTheDocument());
+
+      // Submit
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      // Assert: escalationConfig is included in payload
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              escalationConfig: expect.objectContaining({
+                emailAddresses: ['escalate@example.com'],
+                notifyOnPriority: 'all',
+              }),
+            }),
+          })
+        );
+      });
+    });
+
+    it('sends null escalationConfig when escalation is disabled', async () => {
+      // Arrange: escalation disabled (checkbox unchecked, default state)
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      // Submit with escalation off (default)
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      // Assert: escalationConfig is null
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              escalationConfig: null,
+            }),
+          })
+        );
+      });
+    });
+
+    it('initialises email list from escalationConfig.emailAddresses', () => {
+      // Arrange
+      const settingsWithEscalation: OrchestrationSettings = {
+        ...FULL_SETTINGS,
+        escalationConfig: {
+          emailAddresses: ['pre@example.com', 'loaded@example.com'],
+          notifyOnPriority: 'high',
+        },
+      };
+
+      render(<SettingsForm initialSettings={settingsWithEscalation} />);
+
+      // Assert: both pre-loaded emails are shown as tags
+      expect(screen.getByText('pre@example.com')).toBeInTheDocument();
+      expect(screen.getByText('loaded@example.com')).toBeInTheDocument();
+    });
+  });
 });
