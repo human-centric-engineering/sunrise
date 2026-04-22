@@ -1091,7 +1091,7 @@ describe('AnthropicProvider.chat — SDK status-bearing error mapping', () => {
       .catch((e: unknown) => e);
 
     expect(thrown).toBeInstanceOf(ProviderError);
-    const pe = thrown as ProviderError;
+    const pe = thrown as InstanceType<typeof ProviderError>;
     // toProviderError reads .status and marks it retriable when status is 429
     expect(pe.status).toBe(429);
     expect(pe.retriable).toBe(true);
@@ -1114,7 +1114,7 @@ describe('AnthropicProvider.chat — SDK status-bearing error mapping', () => {
       .catch((e: unknown) => e);
 
     expect(thrown).toBeInstanceOf(ProviderError);
-    const pe = thrown as ProviderError;
+    const pe = thrown as InstanceType<typeof ProviderError>;
     // 400 is not in the retriable set (429 or 5xx only)
     expect(pe.status).toBe(400);
     expect(pe.retriable).toBe(false);

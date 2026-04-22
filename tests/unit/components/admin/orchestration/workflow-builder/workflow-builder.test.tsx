@@ -726,7 +726,9 @@ describe('WorkflowBuilder', () => {
 
     it('skips the client-side fetch when initialCapabilities is non-empty', () => {
       // Arrange: prefetch provided — fallback effect should bail out immediately
-      const caps = [{ id: 'cap-1', name: 'Search', type: 'tool' }] as CapabilityOption[];
+      const caps: CapabilityOption[] = [
+        { id: 'cap-1', slug: 'search', name: 'Search', description: '' },
+      ];
       vi.mocked(apiClient.get).mockResolvedValue([]);
 
       // Act
