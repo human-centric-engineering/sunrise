@@ -16,6 +16,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
+import { toSafeHook } from '@/lib/orchestration/hooks/serialize';
 import { HOOK_EVENT_TYPES } from '@/lib/orchestration/hooks/types';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { cuidSchema } from '@/lib/validations/common';
@@ -58,7 +59,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   if (!hook) throw new NotFoundError(`Hook ${id} not found`);
 
   log.info('Event hook fetched', { hookId: id });
-  return successResponse(hook);
+  return successResponse(toSafeHook(hook));
 });
 
 export const PATCH = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
@@ -92,7 +93,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, _session, { p
 
   invalidateHookCache();
   log.info('Event hook updated', { hookId: id });
-  return successResponse(updated);
+  return successResponse(toSafeHook(updated));
 });
 
 export const DELETE = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
