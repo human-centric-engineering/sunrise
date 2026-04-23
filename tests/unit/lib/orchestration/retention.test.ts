@@ -22,6 +22,9 @@ vi.mock('@/lib/db/client', () => ({
     aiCostLog: {
       deleteMany: vi.fn(),
     },
+    aiAdminAuditLog: {
+      deleteMany: vi.fn(),
+    },
     aiOrchestrationSettings: {
       findUnique: vi.fn(),
     },
@@ -39,6 +42,7 @@ import {
   enforceRetentionPolicies,
   pruneWebhookDeliveries,
   pruneCostLogs,
+  pruneAuditLogs,
 } from '@/lib/orchestration/retention';
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -50,6 +54,7 @@ describe('enforceRetentionPolicies', () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.aiCostLog.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
   });
 
@@ -61,6 +66,7 @@ describe('enforceRetentionPolicies', () => {
       agentsProcessed: 0,
       webhookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
+      auditLogsDeleted: 0,
     });
     expect(prisma.aiConversation.deleteMany).not.toHaveBeenCalled();
   });
@@ -104,18 +110,21 @@ describe('enforceRetentionPolicies', () => {
     expect(result.agentsProcessed).toBe(1);
   });
 
-  it('includes webhook and cost log prune results', async () => {
+  it('includes webhook, cost log, and audit log prune results', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
       webhookRetentionDays: 30,
       costLogRetentionDays: 60,
+      auditLogRetentionDays: 365,
     } as never);
     vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 12 } as never);
     vi.mocked(prisma.aiCostLog.deleteMany).mockResolvedValue({ count: 8 } as never);
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 3 } as never);
 
     const result = await enforceRetentionPolicies();
 
     expect(result.webhookDeliveriesDeleted).toBe(12);
     expect(result.costLogsDeleted).toBe(8);
+    expect(result.auditLogsDeleted).toBe(3);
   });
 });
 
@@ -257,5 +266,68 @@ describe('pruneCostLogs', () => {
 
     expect(result).toEqual({ deleted: 0 });
     expect(prisma.aiCostLog.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── pruneAuditLogs ─────────────────────────────────────────────────────────
+
+describe('pruneAuditLogs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('skips when no maxAgeDays passed and no setting configured', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+    const result = await pruneAuditLogs();
+
+    expect(result).toEqual({ deleted: 0 });
+    expect(prisma.aiAdminAuditLog.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('skips when setting row exists but auditLogRetentionDays is null', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      auditLogRetentionDays: null,
+    } as never);
+
+    const result = await pruneAuditLogs();
+
+    expect(result).toEqual({ deleted: 0 });
+    expect(prisma.aiAdminAuditLog.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('deletes rows older than configured auditLogRetentionDays', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      auditLogRetentionDays: 365,
+    } as never);
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 42 } as never);
+
+    const result = await pruneAuditLogs();
+
+    expect(result).toEqual({ deleted: 42 });
+    expect(prisma.aiAdminAuditLog.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: expect.objectContaining({ lt: expect.any(Date) }),
+        }),
+      })
+    );
+  });
+
+  it('uses explicit maxAgeDays over settings', async () => {
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 5 } as never);
+
+    const result = await pruneAuditLogs(30);
+
+    expect(result).toEqual({ deleted: 5 });
+    expect(prisma.aiOrchestrationSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns deleted: 0 when no rows match cutoff', async () => {
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 0 } as never);
+
+    const result = await pruneAuditLogs(90);
+
+    expect(result).toEqual({ deleted: 0 });
   });
 });

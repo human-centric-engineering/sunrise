@@ -109,6 +109,7 @@ const DEFAULT_RETENTION_RESULT = {
   agentsProcessed: 2,
   webhookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
+  auditLogsDeleted: 0,
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 

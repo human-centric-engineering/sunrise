@@ -131,6 +131,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
+      auditLogsDeleted: 0,
     });
     vi.mocked(processPendingExecutions).mockResolvedValue({
       recovered: 0,
@@ -173,6 +174,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
+      auditLogsDeleted: 0,
     });
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });

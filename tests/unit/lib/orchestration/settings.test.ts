@@ -59,6 +59,7 @@ function makeRow(
     outputGuardMode: string | null;
     webhookRetentionDays: number | null;
     costLogRetentionDays: number | null;
+    auditLogRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
   }> = {}
@@ -81,6 +82,7 @@ function makeRow(
     outputGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
+    auditLogRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     createdAt: NOW,

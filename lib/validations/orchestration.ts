@@ -1595,6 +1595,13 @@ export const updateOrchestrationSettingsSchema = z
       .max(365, 'Cost log retention must be at most 365 days')
       .nullable()
       .optional(),
+    auditLogRetentionDays: z
+      .number()
+      .int()
+      .positive('Audit log retention must be a positive number of days')
+      .max(3650, 'Audit log retention must be at most 3650 days')
+      .nullable()
+      .optional(),
     maxConversationsPerUser: z
       .number()
       .int()
@@ -1622,6 +1629,7 @@ export const updateOrchestrationSettingsSchema = z
       v.outputGuardMode !== undefined ||
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
+      v.auditLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
       v.escalationConfig !== undefined,

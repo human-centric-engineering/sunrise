@@ -832,6 +832,7 @@ model AiOrchestrationSettings {
   outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   webhookRetentionDays       Int?
   costLogRetentionDays       Int?
+  auditLogRetentionDays      Int?
   maxConversationsPerUser    Int?
   maxMessagesPerConversation Int?
   escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
