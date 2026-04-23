@@ -4,11 +4,13 @@
  * Loads enabled hooks from the database, caches them by event type,
  * and dispatches events to matching hooks.
  *
- * Hooks send plain JSON HTTP POST requests with any admin-supplied
- * custom headers — payloads are not currently HMAC-signed. Each webhook
- * dispatch creates an `AiEventHookDelivery` record so admins can audit
- * delivery history and manually retry failures. Retries follow the same
- * backoff strategy as outbound webhooks (10s, 60s, 300s; 3 attempts total).
+ * Hooks send JSON HTTP POST requests with any admin-supplied custom
+ * headers. When the hook has a `secret` set, the body is signed with
+ * HMAC-SHA256 and `X-Sunrise-Signature` / `X-Sunrise-Timestamp` headers
+ * are added (see `./signing.ts`). Each webhook dispatch creates an
+ * `AiEventHookDelivery` record so admins can audit delivery history and
+ * manually retry failures. Retries follow the same backoff strategy as
+ * outbound webhooks (10s, 60s, 300s; 3 attempts total).
  *
  * Dispatch is fire-and-forget — failures are logged and persisted to the
  * delivery table but never propagate to the caller.
@@ -26,6 +28,11 @@ import {
   type HookFilter,
   type WebhookAction,
 } from '@/lib/orchestration/hooks/types';
+import {
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  signHookPayload,
+} from '@/lib/orchestration/hooks/signing';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
 const CACHE_TTL_MS = 60_000;
@@ -44,6 +51,7 @@ interface CachedHook {
   eventType: string;
   action: HookAction;
   filter: HookFilter | null;
+  secret: string | null;
 }
 
 let hookCache: Map<string, CachedHook[]> | null = null;
@@ -61,7 +69,7 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
 
   const hooks = await prisma.aiEventHook.findMany({
     where: { isEnabled: true },
-    select: { id: true, eventType: true, action: true, filter: true },
+    select: { id: true, eventType: true, action: true, filter: true, secret: true },
   });
 
   const byType = new Map<string, CachedHook[]>();
@@ -81,6 +89,7 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
       eventType: hook.eventType,
       action: parsedAction.data,
       filter: hook.filter as HookFilter | null,
+      secret: hook.secret,
     };
 
     const list = byType.get(hook.eventType) ?? [];
@@ -145,7 +154,7 @@ async function dispatchToHooks(payload: HookEventPayload): Promise<void> {
     if (!matchesFilter(hook.filter, payload)) continue;
 
     if (hook.action.type === 'webhook') {
-      void dispatchWebhook(hook.id, hook.action, payload);
+      void dispatchWebhook(hook.id, hook.action, hook.secret, payload);
     }
   }
 }
@@ -153,6 +162,7 @@ async function dispatchToHooks(payload: HookEventPayload): Promise<void> {
 async function dispatchWebhook(
   hookId: string,
   action: WebhookAction,
+  secret: string | null,
   payload: HookEventPayload
 ): Promise<void> {
   try {
@@ -164,7 +174,7 @@ async function dispatchWebhook(
         status: 'pending',
       },
     });
-    await attemptDelivery(delivery.id, action.url, action.headers ?? null, payload);
+    await attemptDelivery(delivery.id, action.url, action.headers ?? null, secret, payload);
   } catch (err: unknown) {
     logger.warn('Hook webhook dispatch setup failed', {
       hookId,
@@ -178,11 +188,17 @@ async function dispatchWebhook(
  * Attempt a single webhook delivery, updating the `AiEventHookDelivery`
  * record with the outcome. On failure, schedules an in-process retry
  * via setTimeout (up to MAX_ATTEMPTS total).
+ *
+ * When `secret` is non-null, adds `X-Sunrise-Signature` +
+ * `X-Sunrise-Timestamp` headers. The timestamp is fresh on each
+ * attempt so consumers that reject stale signatures still accept
+ * retries.
  */
 async function attemptDelivery(
   deliveryId: string,
   url: string,
   customHeaders: Record<string, string> | null,
+  secret: string | null,
   payload: HookEventPayload
 ): Promise<void> {
   const now = new Date();
@@ -191,11 +207,19 @@ async function attemptDelivery(
 
   try {
     const body = JSON.stringify(payload);
+    const signingHeaders: Record<string, string> = {};
+    if (secret) {
+      const { timestamp, signature } = signHookPayload(secret, body);
+      signingHeaders[TIMESTAMP_HEADER] = timestamp;
+      signingHeaders[SIGNATURE_HEADER] = signature;
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Hook-Event': payload.eventType,
+        ...signingHeaders,
         ...(customHeaders ?? {}),
       },
       body,
@@ -269,13 +293,21 @@ async function attemptDelivery(
  */
 async function parseDeliveryForDispatch(delivery: {
   id: string;
-  hook: { action: Prisma.JsonValue };
+  hook: { action: Prisma.JsonValue; secret: string | null };
   payload: Prisma.JsonValue;
-}): Promise<{ action: WebhookAction; payload: HookEventPayload } | null> {
+}): Promise<{
+  action: WebhookAction;
+  payload: HookEventPayload;
+  secret: string | null;
+} | null> {
   const actionParsed = WebhookActionSchema.safeParse(delivery.hook.action);
   const payloadParsed = HookEventPayloadSchema.safeParse(delivery.payload);
   if (actionParsed.success && payloadParsed.success) {
-    return { action: actionParsed.data, payload: payloadParsed.data };
+    return {
+      action: actionParsed.data,
+      payload: payloadParsed.data,
+      secret: delivery.hook.secret,
+    };
   }
 
   const lastError = !actionParsed.success ? 'invalid_action' : 'invalid_payload';
@@ -323,6 +355,7 @@ function scheduleRetry(deliveryId: string, delayMs: number): void {
             deliveryId,
             parsed.action.url,
             parsed.action.headers ?? null,
+            parsed.secret,
             parsed.payload
           );
         } catch (err: unknown) {
@@ -374,6 +407,7 @@ export async function processPendingHookRetries(): Promise<number> {
         delivery.id,
         parsed.action.url,
         parsed.action.headers ?? null,
+        parsed.secret,
         parsed.payload
       );
     })
@@ -409,6 +443,7 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
     deliveryId,
     parsed.action.url,
     parsed.action.headers ?? null,
+    parsed.secret,
     parsed.payload
   );
   return true;

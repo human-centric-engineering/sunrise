@@ -870,3 +870,119 @@ describe('dispatchToHooks (filter negative match)', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('HMAC signing (via dispatchWebhook)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('adds X-Sunrise-Timestamp and X-Sunrise-Signature headers when hook.secret is set', async () => {
+    const secret = 'a'.repeat(64);
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-signed',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/signed' },
+        secret,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Timestamp']).toMatch(/^\d+$/);
+    expect(headers['X-Sunrise-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+  });
+
+  it('omits signing headers when hook.secret is null', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-unsigned',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/unsigned' },
+        secret: null,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Timestamp']).toBeUndefined();
+    expect(headers['X-Sunrise-Signature']).toBeUndefined();
+  });
+
+  it('refreshes the timestamp on retries so receivers with strict staleness tolerance still accept them', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-23T00:00:00Z'));
+
+    const secret = 'b'.repeat(64);
+    const hookId = 'hook-retry-signed';
+    const deliveryId = 'del-retry-signed';
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/signed-retry' },
+        secret,
+      }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: deliveryId, hookId, attempts: 0 }) as never
+    );
+
+    // First attempt fails → schedules retry 10s out
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Retry attempt succeeds
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(
+      makeDelivery({ id: deliveryId, attempts: 0 }) as never
+    );
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, attempts: 1 }),
+      hook: makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/signed-retry' },
+        secret,
+      }),
+    } as never);
+
+    emitHookEvent('workflow.completed', { workflowId: 'wf-1' });
+
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance 10s — retry fires
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const firstHeaders = (mockFetch.mock.calls[0]?.[1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    const retryHeaders = (mockFetch.mock.calls[1]?.[1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    expect(firstHeaders['X-Sunrise-Timestamp']).toBeDefined();
+    expect(retryHeaders['X-Sunrise-Timestamp']).toBeDefined();
+    expect(Number(retryHeaders['X-Sunrise-Timestamp'])).toBeGreaterThan(
+      Number(firstHeaders['X-Sunrise-Timestamp'])
+    );
+    // Refreshed timestamp → refreshed signature
+    expect(retryHeaders['X-Sunrise-Signature']).not.toBe(firstHeaders['X-Sunrise-Signature']);
+  });
+});
