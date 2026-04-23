@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findFirst: vi.fn() },
-    aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn() },
+    aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn(), update: vi.fn() },
     aiMessage: { findMany: vi.fn(), create: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
@@ -122,6 +122,7 @@ const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { scanOutput } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
+const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -234,6 +235,7 @@ beforeEach(() => {
   (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
   (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     async ({ data }: { data: Record<string, unknown> }) =>
@@ -1734,5 +1736,218 @@ describe('guard mode fallback logging', () => {
 
     // Should end with a done event
     expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Input guard mode — block and warn_and_continue branches (L221-231)
+// ---------------------------------------------------------------------------
+
+describe('input guard mode dispatch', () => {
+  // Helper: provider that yields a normal text response when called.
+  function guardTestProvider() {
+    return mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+  }
+
+  it("input guard — guardMode='block' yields input_blocked error event and terminates without calling provider", async () => {
+    // Arrange: injection scanner flags the message; agent has no override;
+    // settings returns 'block' mode.
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: null })
+    );
+    (getOrchestrationSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      inputGuardMode: 'block',
+      outputGuardMode: 'log_only',
+    });
+
+    const provider = guardTestProvider();
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: error event with 'input_blocked' code is present
+    const errorEvt = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'error'
+    ) as Record<string, unknown> | undefined;
+    expect(errorEvt).toBeDefined();
+    expect(errorEvt).toMatchObject({ type: 'error', code: 'input_blocked' });
+
+    // Assert: provider was never invoked — request was short-circuited before LLM call
+    expect(provider.chatStream).not.toHaveBeenCalled();
+  });
+
+  it("input guard — guardMode='warn_and_continue' yields a warning event then proceeds with the stream", async () => {
+    // Arrange: injection scanner flags the message; agent has no override;
+    // settings returns 'warn_and_continue' mode.
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: null })
+    );
+    (getOrchestrationSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      inputGuardMode: 'warn_and_continue',
+      outputGuardMode: 'log_only',
+    });
+
+    const provider = guardTestProvider();
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: warning event with 'input_flagged' code is present
+    const warningEvt = events.find(
+      (e: unknown) =>
+        (e as Record<string, unknown>).type === 'warning' &&
+        (e as Record<string, unknown>).code === 'input_flagged'
+    );
+    expect(warningEvt).toBeDefined();
+    expect(warningEvt).toMatchObject({ type: 'warning', code: 'input_flagged' });
+
+    // Assert: stream completed with a done event — processing continued past warning
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+
+    // Assert: provider WAS invoked — message was not blocked
+    expect(provider.chatStream).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rolling summarization — history-window exceeded (L243-266)
+// ---------------------------------------------------------------------------
+
+describe('rolling conversation summarization', () => {
+  // Build MAX_HISTORY_MESSAGES + 2 history rows so droppedCount = 2 > 0.
+  // MAX_HISTORY_MESSAGES is 50 (from lib/orchestration/chat/types.ts).
+  const HISTORY_SIZE = 52; // 50 + 2
+
+  function makeHistoryMessages(count: number) {
+    return Array.from({ length: count }, (_, i) =>
+      makeMessage({
+        id: `hist-msg-${i}`,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `Message ${i}`,
+        conversationId: 'conv-1',
+      })
+    );
+  }
+
+  it('generates and persists a new summary when historyRows > MAX_HISTORY_MESSAGES and no reusable summary exists', async () => {
+    // Arrange: seed 52 messages (> 50 threshold); conversation has no prior summary.
+    // Pass conversationId in the request so the existing conversation (with no summary)
+    // is loaded via findFirst rather than creating a new one via create.
+    const history = makeHistoryMessages(HISTORY_SIZE);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ id: 'conv-summ', summary: null, summaryUpToMessageId: null })
+    );
+    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue('summary-text');
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Here is my answer.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act — supply conversationId so that the existing conversation (with summary: null)
+    // is loaded via findFirst, not created fresh via create.
+    const events = await collect(streamChat({ ...baseRequest, conversationId: 'conv-summ' }));
+
+    // Assert: status event indicating summarization was emitted
+    const statusEvts = events.filter(
+      (e: unknown) =>
+        (e as Record<string, unknown>).type === 'status' &&
+        (e as Record<string, unknown>).message === 'Summarizing conversation history...'
+    );
+    expect(statusEvts.length).toBeGreaterThanOrEqual(1);
+
+    // Assert: summarizeMessages was called exactly once to generate the summary
+    expect(summarizeMessages).toHaveBeenCalledTimes(1);
+
+    // Assert: prisma.aiConversation.update was called with the generated summary,
+    // filtering by calls that include a 'summary' key in the data argument.
+    const updateCalls = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls;
+    const summaryUpdateCall = updateCalls.find(
+      (c: unknown[]) =>
+        typeof (c[0] as Record<string, unknown>).data === 'object' &&
+        'summary' in ((c[0] as Record<string, unknown>).data as object)
+    );
+    expect(summaryUpdateCall).toBeDefined();
+    expect((summaryUpdateCall![0] as Record<string, unknown>).data).toMatchObject(
+      expect.objectContaining({
+        summary: 'summary-text',
+        summaryUpToMessageId: expect.any(String),
+      })
+    );
+
+    // Assert: stream ended normally
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+  });
+
+  it('reuses existing conversation.summary when summaryUpToMessageId matches the last dropped message id', async () => {
+    // Arrange: seed 52 messages; conversation already has a summary covering the
+    // first 2 dropped messages (droppedCount = 52 - 50 = 2 → lastDropped = history[1]).
+    // Pass conversationId so the existing conversation with the cached summary is
+    // loaded via findFirst rather than created fresh.
+    const history = makeHistoryMessages(HISTORY_SIZE);
+    const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({
+        id: 'conv-cached',
+        summary: 'cached-text',
+        summaryUpToMessageId: lastDroppedId,
+      })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Answer using cached context.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act — supply conversationId so existing conversation with cached summary is loaded
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-cached' }));
+
+    // Assert: summarizeMessages was NOT called — summary was reused from cache
+    expect(summarizeMessages).not.toHaveBeenCalled();
+
+    // Assert: no aiConversation.update call included a 'summary' field.
+    // There may be other update calls, so we filter by whether 'summary' is in data.
+    const updateCalls = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls;
+    const summaryUpdateCall = updateCalls.find(
+      (c: unknown[]) =>
+        typeof (c[0] as Record<string, unknown>).data === 'object' &&
+        'summary' in ((c[0] as Record<string, unknown>).data as object)
+    );
+    expect(summaryUpdateCall).toBeUndefined();
   });
 });

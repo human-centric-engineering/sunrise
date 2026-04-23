@@ -345,6 +345,194 @@ describe('retryHookDelivery', () => {
   });
 });
 
+describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('on retry timer firing, re-attempts delivery against still-enabled hook and flips to delivered on success', async () => {
+    // Arrange
+    vi.useFakeTimers();
+
+    const deliveryId = 'del-retry-1';
+    const hookId = 'hook-retry-1';
+    const webhookUrl = 'https://example.com/retry-hook';
+
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: webhookUrl },
+      }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: deliveryId, hookId, attempts: 0 }) as never
+    );
+
+    // First fetch fails — triggers scheduleRetry
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Second fetch succeeds — triggered by the retry timer
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+    // findUnique call 1 (in attemptDelivery failure path, no include) — returns attempts: 0
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(
+      makeDelivery({ id: deliveryId, attempts: 0 }) as never
+    );
+
+    // findUnique call 2 (in scheduleRetry timer, with include: { hook: true }) — returns delivery with enabled hook
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, attempts: 1 }),
+      hook: makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: webhookUrl },
+      }),
+    } as never);
+
+    // Act — emit event; initial attempt fails, schedules 10s retry
+    emitHookEvent('workflow.completed', { workflowId: 'wf-1' });
+
+    // Wait for the initial dispatch to complete (fetch + findUnique + update all settle)
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Verify initial failure update
+    const updateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
+    const firstUpdate = updateCalls[0]?.[0];
+    expect(firstUpdate).toMatchObject({
+      where: { id: deliveryId },
+      data: expect.objectContaining({ status: 'failed' }),
+    });
+
+    // Advance timers to fire the scheduleRetry callback (10_000ms delay)
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // Assert — the retry fired, second fetch was called, and delivery flipped to delivered
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
+    const deliveredCall = allUpdateCalls.find(
+      (call) => (call[0] as { data: { status?: string } }).data?.status === 'delivered'
+    );
+    expect(deliveredCall).toBeDefined();
+    expect(deliveredCall?.[0]).toMatchObject({
+      where: { id: deliveryId },
+      data: expect.objectContaining({
+        status: 'delivered',
+        attempts: { increment: 1 },
+      }),
+    });
+  });
+
+  it('on retry timer firing with a disabled hook, marks delivery exhausted without re-dispatching', async () => {
+    // Arrange
+    vi.useFakeTimers();
+
+    const deliveryId = 'del-retry-2';
+    const hookId = 'hook-retry-2';
+
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+      }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: deliveryId, hookId, attempts: 0 }) as never
+    );
+
+    // Initial fetch fails — triggers scheduleRetry
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    // findUnique call 1 (in attemptDelivery failure path) — returns attempts: 0
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(
+      makeDelivery({ id: deliveryId, attempts: 0 }) as never
+    );
+
+    // findUnique call 2 (in scheduleRetry timer) — hook is now disabled
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, attempts: 1 }),
+      hook: makeHook({ id: hookId, isEnabled: false }),
+    } as never);
+
+    // Act
+    emitHookEvent('workflow.completed', { workflowId: 'wf-2' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance timers to fire retry callback
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // Assert — fetch was NOT called again (no re-dispatch)
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // An exhausted update was issued for the disabled hook
+    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
+    const exhaustedCall = allUpdateCalls.find(
+      (call) => (call[0] as { data: { status?: string } }).data?.status === 'exhausted'
+    );
+    expect(exhaustedCall).toBeDefined();
+    expect(exhaustedCall?.[0]).toMatchObject({
+      where: { id: deliveryId },
+      data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
+    });
+  });
+
+  it('on retry timer firing with a non-webhook hook action, returns early without dispatch', async () => {
+    // Arrange
+    vi.useFakeTimers();
+
+    const deliveryId = 'del-retry-3';
+    const hookId = 'hook-retry-3';
+
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+      }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: deliveryId, hookId, attempts: 0 }) as never
+    );
+
+    // Initial fetch fails — triggers scheduleRetry
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
+
+    // findUnique call 1 (in attemptDelivery failure path) — returns attempts: 0
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(
+      makeDelivery({ id: deliveryId, attempts: 0 }) as never
+    );
+
+    // findUnique call 2 (in scheduleRetry timer) — hook action is no longer a webhook
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, attempts: 1 }),
+      hook: makeHook({ id: hookId, action: { type: 'internal', handler: 'some-handler' } }),
+    } as never);
+
+    // Act
+    emitHookEvent('workflow.completed', { workflowId: 'wf-3' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance timers to fire retry callback
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // Assert — fetch was NOT called again (returned early for non-webhook action)
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // No further update calls beyond the initial failure update
+    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('processPendingHookRetries', () => {
   it('returns 0 when no pending retries', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([]);
@@ -397,5 +585,47 @@ describe('processPendingHookRetries', () => {
         }),
       })
     );
+  });
+
+  it('skips deliveries whose hook action is not a webhook (defensive)', async () => {
+    // Arrange — seed findMany with a delivery whose hook action is internal (not webhook)
+    vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({ id: 'd1', attempts: 1 }),
+        hook: makeHook({ isEnabled: true, action: { type: 'internal', handler: 'noop' } }),
+      },
+    ] as never);
+
+    // Act
+    const count = await processPendingHookRetries();
+
+    // Assert — fetch was never called (early return on non-webhook action)
+    expect(mockFetch).not.toHaveBeenCalled();
+    // The function still returns the number of pending rows found
+    expect(count).toBe(1);
+  });
+});
+
+describe('dispatchToHooks (filter negative match)', () => {
+  it('skips hooks whose filter does not match payload.data', async () => {
+    // Arrange — hook filters on agentSlug: 'support-bot' but payload has 'different-bot'
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-filter-neg',
+        eventType: 'message.created',
+        filter: { agentSlug: 'support-bot' },
+      }),
+    ] as never);
+
+    // Act
+    emitHookEvent('message.created', { agentSlug: 'different-bot' });
+
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHook.findMany).toHaveBeenCalled();
+    });
+
+    // Assert — filter did not match, so no delivery record was created and no fetch fired
+    expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
