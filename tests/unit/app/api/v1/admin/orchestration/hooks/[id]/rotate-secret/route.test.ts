@@ -278,4 +278,28 @@ describe('DELETE /api/v1/admin/orchestration/hooks/:id/rotate-secret', () => {
     await DELETE(makeDeleteRequest(), makeParams(VALID_ID));
     expect(logAdminAction).not.toHaveBeenCalled();
   });
+
+  it('returns 429 when rate limit exceeded', async () => {
+    // Arrange: rate limit exceeded
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 30,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    } as never);
+
+    // Act
+    const response = await DELETE(makeDeleteRequest(), makeParams(VALID_ID));
+
+    // Assert
+    expect(response.status).toBe(429);
+  });
+
+  it('returns 400 for a non-CUID id', async () => {
+    // Act
+    const response = await DELETE(makeDeleteRequest(), makeParams('not-a-cuid'));
+
+    // Assert
+    expect(response.status).toBe(400);
+  });
 });

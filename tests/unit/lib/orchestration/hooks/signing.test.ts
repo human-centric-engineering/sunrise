@@ -162,6 +162,21 @@ describe('verifyHookSignature', () => {
   });
 });
 
+describe('verifyHookSignature (default clock fallback)', () => {
+  it('accepts a valid signature when no options are supplied (uses real wall-clock time)', () => {
+    // Arrange — use actual current time; this exercises the `?? Math.floor(Date.now() / 1000)` branch
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expectedHmac = createHmac('sha256', SECRET).update(`${nowSec}.${BODY}`).digest('hex');
+    const oracleSignature = `sha256=${expectedHmac}`;
+
+    // Act — no options argument → verifyHookSignature uses its own Date.now() fallback
+    const result = verifyHookSignature(SECRET, BODY, String(nowSec), oracleSignature);
+
+    // Assert
+    expect(result).toEqual({ valid: true });
+  });
+});
+
 describe('constants', () => {
   it('exports the expected header names', () => {
     expect(SIGNATURE_HEADER).toBe('X-Sunrise-Signature');
