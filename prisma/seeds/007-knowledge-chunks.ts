@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 /**
  * Seed the "Agentic Design Patterns" knowledge base document and its

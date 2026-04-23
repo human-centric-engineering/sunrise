@@ -14,8 +14,8 @@
  * @see .context/analytics/overview.md for architecture documentation
  */
 
-import type { AnalyticsProvider } from './providers/types';
-import type { AnalyticsProviderType } from './types';
+import type { AnalyticsProvider } from '@/lib/analytics/providers/types';
+import type { AnalyticsProviderType } from '@/lib/analytics/types';
 import {
   detectProvider,
   getGA4Config,
@@ -23,11 +23,11 @@ import {
   getPlausibleConfig,
   isBrowser,
   isDevelopment,
-} from './config';
-import { createConsoleProvider } from './providers/console';
-import { createGA4Provider } from './providers/ga4';
-import { createPostHogProvider } from './providers/posthog';
-import { createPlausibleProvider } from './providers/plausible';
+} from '@/lib/analytics/config';
+import { createConsoleProvider } from '@/lib/analytics/providers/console';
+import { createGA4Provider } from '@/lib/analytics/providers/ga4';
+import { createPostHogProvider } from '@/lib/analytics/providers/posthog';
+import { createPlausibleProvider } from '@/lib/analytics/providers/plausible';
 import { logger } from '@/lib/logging';
 
 let analyticsClient: AnalyticsProvider | null = null;

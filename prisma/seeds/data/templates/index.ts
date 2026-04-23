@@ -11,17 +11,21 @@
  * will flag invalid DAGs on save.
  */
 
-import { CODE_REVIEW_TEMPLATE } from './code-review';
-import { CONTENT_PIPELINE_TEMPLATE } from './content-pipeline';
-import { CONVERSATIONAL_LEARNING_TEMPLATE } from './conversational-learning';
-import { CUSTOMER_SUPPORT_TEMPLATE } from './customer-support';
-import { DATA_PIPELINE_TEMPLATE } from './data-pipeline';
-import { OUTREACH_SAFETY_TEMPLATE } from './outreach-safety';
-import { RESEARCH_AGENT_TEMPLATE } from './research-agent';
-import { SAAS_BACKEND_TEMPLATE } from './saas-backend';
-import type { WorkflowTemplate } from './types';
+import { CODE_REVIEW_TEMPLATE } from '@/prisma/seeds/data/templates/code-review';
+import { CONTENT_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/content-pipeline';
+import { CONVERSATIONAL_LEARNING_TEMPLATE } from '@/prisma/seeds/data/templates/conversational-learning';
+import { CUSTOMER_SUPPORT_TEMPLATE } from '@/prisma/seeds/data/templates/customer-support';
+import { DATA_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/data-pipeline';
+import { OUTREACH_SAFETY_TEMPLATE } from '@/prisma/seeds/data/templates/outreach-safety';
+import { RESEARCH_AGENT_TEMPLATE } from '@/prisma/seeds/data/templates/research-agent';
+import { SAAS_BACKEND_TEMPLATE } from '@/prisma/seeds/data/templates/saas-backend';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
-export type { WorkflowTemplate, WorkflowTemplatePattern, WorkflowTemplateUseCase } from './types';
+export type {
+  WorkflowTemplate,
+  WorkflowTemplatePattern,
+  WorkflowTemplateUseCase,
+} from '@/prisma/seeds/data/templates/types';
 
 export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   CUSTOMER_SUPPORT_TEMPLATE,

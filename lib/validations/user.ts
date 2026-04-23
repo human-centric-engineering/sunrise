@@ -7,8 +7,8 @@
  */
 
 import { z } from 'zod';
-import { emailSchema, passwordSchema } from './auth';
-import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from './common';
+import { emailSchema, passwordSchema } from '@/lib/validations/auth';
+import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from '@/lib/validations/common';
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)

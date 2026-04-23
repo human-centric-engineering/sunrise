@@ -9,7 +9,7 @@
  * @see .context/analytics/overview.md for architecture documentation
  */
 
-import type { AnalyticsProviderType } from './types';
+import type { AnalyticsProviderType } from '@/lib/analytics/types';
 import { logger } from '@/lib/logging';
 
 /**

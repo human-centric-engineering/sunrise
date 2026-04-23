@@ -1,4 +1,4 @@
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 /**
  * Upsert the three default providers (anthropic, openai, ollama-local).

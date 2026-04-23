@@ -2,7 +2,7 @@
 
 import Markdown from 'react-markdown';
 
-import { MermaidDiagram } from './mermaid-diagram';
+import { MermaidDiagram } from '@/components/admin/orchestration/learn/mermaid-diagram';
 
 interface PatternContentProps {
   content: string;

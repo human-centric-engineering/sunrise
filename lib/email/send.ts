@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { render } from '@react-email/render';
-import { getResendClient, isEmailEnabled, getDefaultSender } from './client';
+import { getResendClient, isEmailEnabled, getDefaultSender } from '@/lib/email/client';
 import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
 

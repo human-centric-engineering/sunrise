@@ -20,8 +20,8 @@ import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
-import { PasswordStrength } from './password-strength';
-import { FormError } from './form-error';
+import { PasswordStrength } from '@/components/forms/password-strength';
+import { FormError } from '@/components/forms/form-error';
 
 // Password change schema with confirmation
 const changePasswordSchema = z

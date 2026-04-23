@@ -16,8 +16,13 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
-import { validateStorageKey } from './validate-key';
+import type {
+  StorageProvider,
+  UploadOptions,
+  UploadResult,
+  DeleteResult,
+} from '@/lib/storage/providers/types';
+import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 import { logger } from '@/lib/logging';
 
 /**

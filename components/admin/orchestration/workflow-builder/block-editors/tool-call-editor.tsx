@@ -19,7 +19,10 @@ import {
 import { Label } from '@/components/ui/label';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { EditorProps, CapabilityOption } from './index';
+import type {
+  EditorProps,
+  CapabilityOption,
+} from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 
 export interface ToolCallConfig extends Record<string, unknown> {
   capabilitySlug: string;

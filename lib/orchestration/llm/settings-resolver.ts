@@ -17,7 +17,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseStoredDefaults } from '@/lib/orchestration/settings';
-import { computeDefaultModelMap } from './model-registry';
+import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 /**

@@ -6,8 +6,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { logger } from '../lib/logging';
-import { runSeeds } from './runner';
+import { logger } from '@/lib/logging';
+import { runSeeds } from '@/prisma/runner';
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });

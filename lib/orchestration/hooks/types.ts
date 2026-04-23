@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
-import { SIGNATURE_HEADER, TIMESTAMP_HEADER } from './signing';
+import { SIGNATURE_HEADER, TIMESTAMP_HEADER } from '@/lib/orchestration/hooks/signing';
 
 const RESERVED_HEADER_NAMES = new Set(
   [SIGNATURE_HEADER, TIMESTAMP_HEADER].map((h) => h.toLowerCase())

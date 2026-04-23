@@ -25,8 +25,8 @@ import {
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
-} from './provider';
-import { OpenAiCompatibleProvider } from './openai-compatible';
+} from '@/lib/orchestration/llm/provider';
+import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
 import type {
   EmbedOptions,
   LlmMessage,
@@ -35,7 +35,7 @@ import type {
   ModelInfo,
   ProviderConfig,
   StreamChunk,
-} from './types';
+} from '@/lib/orchestration/llm/types';
 
 /** Voyage API base URL. */
 const VOYAGE_BASE_URL = 'https://api.voyageai.com/v1';

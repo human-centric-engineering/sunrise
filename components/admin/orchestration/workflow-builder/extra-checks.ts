@@ -13,7 +13,7 @@
  */
 import type { Edge } from '@xyflow/react';
 
-import type { PatternNode } from './workflow-mappers';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 /**
  * Structured error, shape-compatible with `WorkflowValidationError`.

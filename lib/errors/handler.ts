@@ -32,7 +32,7 @@
 
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { trackError, ErrorSeverity } from './sentry';
+import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 /**
  * Fields that contain sensitive data

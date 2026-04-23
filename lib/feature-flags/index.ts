@@ -21,7 +21,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { FeatureFlag, Prisma } from '@/types/prisma';
-import { DEFAULT_FLAGS } from './config';
+import { DEFAULT_FLAGS } from '@/lib/feature-flags/config';
 
 /**
  * Check if a feature flag is enabled

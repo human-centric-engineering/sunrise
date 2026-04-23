@@ -30,7 +30,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { SECURITY_CONSTANTS } from './constants';
+import { SECURITY_CONSTANTS } from '@/lib/security/constants';
 
 /**
  * CORS configuration options

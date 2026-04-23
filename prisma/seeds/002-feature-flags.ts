@@ -1,5 +1,5 @@
 import { DEFAULT_FLAGS } from '@/lib/feature-flags/config';
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 const unit: SeedUnit = {
   name: '002-feature-flags',

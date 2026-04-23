@@ -43,7 +43,11 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { useUrlTabs, type UseUrlTabsOptions, type UseUrlTabsReturn } from './use-url-tabs';
+import {
+  useUrlTabs,
+  type UseUrlTabsOptions,
+  type UseUrlTabsReturn,
+} from '@/lib/hooks/use-url-tabs';
 import { useAnalytics } from '@/lib/analytics';
 
 /**

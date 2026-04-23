@@ -6,7 +6,7 @@
  * Phase 3.5: Landing Page & Marketing
  */
 
-import type { CookieCategory, ConsentState } from './types';
+import type { CookieCategory, ConsentState } from '@/lib/consent/types';
 
 /**
  * Current consent storage version

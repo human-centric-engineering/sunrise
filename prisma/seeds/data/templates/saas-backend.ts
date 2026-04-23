@@ -9,7 +9,7 @@
  * failing branch can fall through to the safety check instead of halting.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-saas-backend',

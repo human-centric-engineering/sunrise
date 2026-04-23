@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { VerifyEmailClientContent } from './verify-email-content';
+import { VerifyEmailClientContent } from '@/app/(auth)/verify-email/verify-email-content';
 
 export const metadata: Metadata = {
   title: 'Verify Email',

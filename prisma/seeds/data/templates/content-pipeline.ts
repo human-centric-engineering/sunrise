@@ -8,7 +8,7 @@
  * loop) until the draft meets the quality bar.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-content-pipeline',

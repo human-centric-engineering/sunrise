@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-import type { TemplateItem } from './template-types';
+import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
 
 export interface TemplateDescriptionDialogProps {
   open: boolean;

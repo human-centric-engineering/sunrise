@@ -5,5 +5,8 @@
  * consumption by the admin API routes and by tests.
  */
 
-export { completeEvaluationSession } from './complete-session';
-export type { CompleteEvaluationParams, CompleteEvaluationResult } from './types';
+export { completeEvaluationSession } from '@/lib/orchestration/evaluations/complete-session';
+export type {
+  CompleteEvaluationParams,
+  CompleteEvaluationResult,
+} from '@/lib/orchestration/evaluations/types';

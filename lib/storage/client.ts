@@ -12,10 +12,10 @@
  * @see .context/storage/overview.md for architecture documentation
  */
 
-import type { StorageProvider, StorageProviderType } from './providers/types';
-import { createS3ProviderFromEnv } from './providers/s3';
-import { createVercelBlobProviderFromEnv } from './providers/vercel-blob';
-import { createLocalProvider } from './providers/local';
+import type { StorageProvider, StorageProviderType } from '@/lib/storage/providers/types';
+import { createS3ProviderFromEnv } from '@/lib/storage/providers/s3';
+import { createVercelBlobProviderFromEnv } from '@/lib/storage/providers/vercel-blob';
+import { createLocalProvider } from '@/lib/storage/providers/local';
 import { logger } from '@/lib/logging';
 
 let storageClient: StorageProvider | null = null;

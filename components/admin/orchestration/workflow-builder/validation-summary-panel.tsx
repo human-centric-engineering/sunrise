@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { WorkflowValidationError } from '@/lib/orchestration/workflows/validator';
 
-import type { ExtraCheckError } from './extra-checks';
+import type { ExtraCheckError } from '@/components/admin/orchestration/workflow-builder/extra-checks';
 
 export type CombinedError = WorkflowValidationError | ExtraCheckError;
 

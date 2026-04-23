@@ -9,7 +9,7 @@
  * and the user can still drop chain nodes onto the canvas for layout.
  */
 
-import type { EditorProps } from './index';
+import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 
 export interface ChainConfig extends Record<string, unknown> {
   steps?: unknown[];

@@ -16,7 +16,7 @@ import type {
   PageProperties,
   TrackResult,
   ProviderFeatures,
-} from '../types';
+} from '@/lib/analytics/types';
 
 /**
  * Analytics Provider Interface

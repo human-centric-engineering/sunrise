@@ -6,7 +6,7 @@
  * it prevents unnecessary re-renders of the custom node components.
  */
 
-import { PatternNode } from './pattern-node';
+import { PatternNode } from '@/components/admin/orchestration/workflow-builder/node-types/pattern-node';
 
 export const nodeTypes = {
   pattern: PatternNode,

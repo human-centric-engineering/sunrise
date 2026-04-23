@@ -1,4 +1,4 @@
-import { auth } from './config';
+import { auth } from '@/lib/auth/config';
 import { headers } from 'next/headers';
 import { logger } from '@/lib/logging';
 

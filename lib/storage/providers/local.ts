@@ -12,8 +12,13 @@
 import { writeFile, unlink, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
-import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
-import { validateStorageKey } from './validate-key';
+import type {
+  StorageProvider,
+  UploadOptions,
+  UploadResult,
+  DeleteResult,
+} from '@/lib/storage/providers/types';
+import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 import { logger } from '@/lib/logging';
 
 /**

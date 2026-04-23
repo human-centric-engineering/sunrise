@@ -43,7 +43,7 @@
  */
 
 // Constants
-export { EVENTS, type EventName } from './constants';
+export { EVENTS, type EventName } from '@/lib/analytics/events/constants';
 
 // Types
 export type {
@@ -55,7 +55,7 @@ export type {
   PreferencesUpdatedEventProps,
   FormSubmittedEventProps,
   IdentifyTraits,
-} from './types';
+} from '@/lib/analytics/events/types';
 
 // Generic form tracking hook
-export { useFormAnalytics } from './forms';
+export { useFormAnalytics } from '@/lib/analytics/events/forms';

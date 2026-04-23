@@ -4,9 +4,9 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { StatusIndicator } from './status-indicator';
-import { ServiceStatusCard } from './service-status-card';
-import { useHealthCheck, type UseHealthCheckOptions } from './use-health-check';
+import { StatusIndicator } from '@/components/status/status-indicator';
+import { ServiceStatusCard } from '@/components/status/service-status-card';
+import { useHealthCheck, type UseHealthCheckOptions } from '@/components/status/use-health-check';
 import { formatBytes } from '@/lib/monitoring';
 import { RefreshCw, Clock, Server, Database, MemoryStick } from 'lucide-react';
 

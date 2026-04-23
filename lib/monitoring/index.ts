@@ -42,7 +42,7 @@ export type {
   ServiceHealth,
   MemoryUsage,
   HealthCheckResponse,
-} from './types';
+} from '@/lib/monitoring/types';
 
 // Performance utilities
 export {
@@ -51,4 +51,4 @@ export {
   trackDatabaseQuery,
   getMemoryUsage,
   formatBytes,
-} from './performance';
+} from '@/lib/monitoring/performance';

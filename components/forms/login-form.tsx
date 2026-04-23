@@ -14,8 +14,8 @@ import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { FormError } from './form-error';
-import { OAuthButtons } from './oauth-buttons';
+import { FormError } from '@/components/forms/form-error';
+import { OAuthButtons } from '@/components/forms/oauth-buttons';
 
 /**
  * Login Form Component

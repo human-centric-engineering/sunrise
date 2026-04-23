@@ -1,4 +1,4 @@
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 const QUIZ_MASTER_INSTRUCTIONS = `You are a quiz master for agentic design patterns. Your job is to test and teach through interactive questioning.
 

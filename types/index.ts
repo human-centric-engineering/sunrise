@@ -6,8 +6,8 @@
  * For API types, see @/types/api
  */
 
-import type { User } from './prisma';
-import type { APIResponse } from './api';
+import type { User } from '@/types/prisma';
+import type { APIResponse } from '@/types/api';
 
 // Re-export storage types
 export type {
@@ -21,7 +21,7 @@ export type {
   AvatarUploadResponse,
   AvatarDeleteResponse,
   StorageStatus,
-} from './storage';
+} from '@/types/storage';
 
 /**
  * User Role Types

@@ -16,8 +16,8 @@ import type {
   PageProperties,
   TrackResult,
   ProviderFeatures,
-} from '../types';
-import type { AnalyticsProvider, PostHogProviderConfig } from './types';
+} from '@/lib/analytics/types';
+import type { AnalyticsProvider, PostHogProviderConfig } from '@/lib/analytics/providers/types';
 import { logger } from '@/lib/logging';
 
 // PostHog type definitions

@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useConsent, useShouldShowConsentBanner, BANNER_DELAY_MS } from '@/lib/consent';
-import { PreferencesModal } from './preferences-modal';
+import { PreferencesModal } from '@/components/cookie-consent/preferences-modal';
 
 export function CookieBanner() {
   const { acceptAll, rejectOptional, isPreferencesOpen, openPreferences, closePreferences } =

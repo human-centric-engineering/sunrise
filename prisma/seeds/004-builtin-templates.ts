@@ -1,5 +1,5 @@
-import { BUILTIN_WORKFLOW_TEMPLATES } from './data/templates';
-import type { SeedUnit } from '../runner';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
+import type { SeedUnit } from '@/prisma/runner';
 
 /**
  * Upsert the built-in workflow templates (`BUILTIN_WORKFLOW_TEMPLATES`)

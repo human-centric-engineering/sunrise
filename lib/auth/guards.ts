@@ -25,7 +25,7 @@
 
 import { NextRequest } from 'next/server';
 import { headers } from 'next/headers';
-import { auth } from './config';
+import { auth } from '@/lib/auth/config';
 import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
 
 /**

@@ -19,7 +19,7 @@
  * evaluate (quality scoring).
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-code-review',

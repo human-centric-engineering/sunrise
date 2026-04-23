@@ -9,9 +9,14 @@
  */
 
 import { put, del, list } from '@vercel/blob';
-import type { StorageProvider, UploadOptions, UploadResult, DeleteResult } from './types';
+import type {
+  StorageProvider,
+  UploadOptions,
+  UploadResult,
+  DeleteResult,
+} from '@/lib/storage/providers/types';
 import { logger } from '@/lib/logging';
-import { validateStorageKey } from './validate-key';
+import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 
 /**
  * Vercel Blob Provider Configuration

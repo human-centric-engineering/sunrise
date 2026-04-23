@@ -31,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { FormError } from './form-error';
+import { FormError } from '@/components/forms/form-error';
 import { getTimezonesByRegion, getTimezoneRegions } from '@/lib/utils/timezones';
 
 interface ProfileFormProps {

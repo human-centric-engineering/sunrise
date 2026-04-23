@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/accordion';
 import type { AiKnowledgeChunk } from '@/types/orchestration';
 
-import { PatternContent } from './pattern-content';
+import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
 
 function stripEmbeddingPrefix(content: string): string {
   const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);

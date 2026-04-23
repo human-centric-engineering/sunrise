@@ -17,6 +17,7 @@ export default tseslint.config(
       '.vercel/**',
       '.swc/**',
       'public/**',
+      'next-env.d.ts',
     ],
   },
 
@@ -105,6 +106,23 @@ export default tseslint.config(
       'no-console': 'error',
       'react/react-in-jsx-scope': 'off', // Not needed with Next.js
       'react/prop-types': 'off', // Using TypeScript
+
+      // Enforce @/ alias for all intra-repo imports.
+      // Rationale: this is a starter template — downstream forks copy and
+      // move folders. The @/ alias survives folder moves, gives /pre-pr
+      // and /code-review a deterministic grep-checkable rule, and removes
+      // "is this local or cross-module?" judgment calls. See CLAUDE.md.
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['./*', '../*'],
+              message: 'Use the @/ path alias instead of relative imports (CLAUDE.md).',
+            },
+          ],
+        },
+      ],
     },
   },
 

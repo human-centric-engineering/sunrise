@@ -31,7 +31,10 @@ import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
-import type { CompleteEvaluationParams, CompleteEvaluationResult } from './types';
+import type {
+  CompleteEvaluationParams,
+  CompleteEvaluationResult,
+} from '@/lib/orchestration/evaluations/types';
 
 /** Maximum number of log events included in the analysis prompt. */
 const MAX_LOGS_IN_PROMPT = 50;

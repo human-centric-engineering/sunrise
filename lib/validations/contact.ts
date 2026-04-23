@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { emailSchema } from './auth';
+import { emailSchema } from '@/lib/validations/auth';
 
 /**
  * Contact form submission schema

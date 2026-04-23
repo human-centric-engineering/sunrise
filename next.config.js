@@ -8,7 +8,10 @@ const nextConfig = {
 
   // Prevent Next.js from bundling Prisma's WASM query compiler.
   // Without this, Turbopack/webpack breaks the WASM module loading.
-  serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg'],
+  // `ioredis` is an optional peer dep loaded lazily by the Redis rate-limit
+  // store; marking it external silences the "Module not found" warning when
+  // it isn't installed (the runtime try/catch already handles absence).
+  serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg', 'ioredis'],
 
   // Security headers
   async headers() {

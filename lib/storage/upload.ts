@@ -7,9 +7,9 @@
  * @see .context/storage/overview.md for architecture documentation
  */
 
-import { getStorageClient, isStorageEnabled } from './client';
-import { processImage, type ProcessImageOptions } from './image';
-import type { UploadResult, DeleteResult } from './providers/types';
+import { getStorageClient, isStorageEnabled } from '@/lib/storage/client';
+import { processImage, type ProcessImageOptions } from '@/lib/storage/image';
+import type { UploadResult, DeleteResult } from '@/lib/storage/providers/types';
 import { logger } from '@/lib/logging';
 import { MAX_FILE_SIZE_BYTES, getMaxFileSizeBytes } from '@/lib/validations/storage';
 
