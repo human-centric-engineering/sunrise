@@ -87,6 +87,12 @@ import type { AiAgent } from '@/types/orchestration';
 import { DuplicateAgentDialog } from '@/components/admin/orchestration/duplicate-agent-dialog';
 import { ImportAgentsDialog } from '@/components/admin/orchestration/import-agents-dialog';
 
+const VISIBILITY_BADGE: Record<string, { label: string; icon: React.ReactNode } | null> = {
+  internal: null,
+  public: { label: 'Public', icon: <Eye className="h-3 w-3" /> },
+  invite_only: { label: 'Invite', icon: <Link2 className="h-3 w-3" /> },
+};
+
 export interface AgentsTableProps {
   initialAgents: AiAgentListItem[];
   initialMeta: PaginationMeta;
@@ -338,12 +344,6 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     return `${diffMonths}mo ago`;
   }
 
-  const VISIBILITY_BADGE: Record<string, { label: string; icon: React.ReactNode } | null> = {
-    internal: null,
-    public: { label: 'Public', icon: <Eye className="h-3 w-3" /> },
-    invite_only: { label: 'Invite', icon: <Link2 className="h-3 w-3" /> },
-  };
-
   return (
     <div className="space-y-4">
       {/* Header / toolbar */}
@@ -590,10 +590,22 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                       {agent.model}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
+                      {agent.monthlyBudgetUsd ? (
+                        `$${agent.monthlyBudgetUsd.toFixed(2)}`
+                      ) : (
+                        <Tip label="No budget cap set">
+                          <span className="text-muted-foreground">—</span>
+                        </Tip>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {agent._budget ? `$${agent._budget.spent.toFixed(2)}` : '—'}
+                      {agent._budget ? (
+                        `$${agent._budget.spent.toFixed(2)}`
+                      ) : (
+                        <Tip label="Spend data not available">
+                          <span className="text-muted-foreground">—</span>
+                        </Tip>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">
                       <Tip
@@ -609,12 +621,23 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                       </Tip>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Switch
-                        checked={agent.isActive}
-                        onCheckedChange={(v) => void handleToggleStatus(agent, v)}
-                        disabled={agent.isSystem}
-                        aria-label={`Toggle ${agent.name} active`}
-                      />
+                      {agent.isSystem ? (
+                        <Tip label="System agents cannot be deactivated">
+                          <span className="inline-block">
+                            <Switch
+                              checked={agent.isActive}
+                              disabled
+                              aria-label={`${agent.name} is a system agent and cannot be deactivated`}
+                            />
+                          </span>
+                        </Tip>
+                      ) : (
+                        <Switch
+                          checked={agent.isActive}
+                          onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+                          aria-label={`Toggle ${agent.name} active`}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>

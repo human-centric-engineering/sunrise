@@ -23,6 +23,10 @@ import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
 
 export const GET = withAdminAuth(async (request, _session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
 
   const { searchParams } = new URL(request.url);

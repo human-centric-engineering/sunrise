@@ -479,17 +479,23 @@ export const attachAgentCapabilitySchema = z.object({
  * Update an agent↔capability link — PATCH /agents/[id]/capabilities/[capId]
  * All fields optional. The pivot is identified by the URL params, not the body.
  */
-export const updateAgentCapabilitySchema = z.object({
-  isEnabled: z.boolean().optional(),
-  customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
-  customRateLimit: z
-    .number()
-    .int('Custom rate limit must be an integer')
-    .min(1, 'Custom rate limit must be at least 1')
-    .max(10000, 'Custom rate limit must be at most 10000')
-    .nullable()
-    .optional(),
-});
+export const updateAgentCapabilitySchema = z
+  .object({
+    isEnabled: z.boolean().optional(),
+    customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+    customRateLimit: z
+      .number()
+      .int('Custom rate limit must be an integer')
+      .min(1, 'Custom rate limit must be at least 1')
+      .max(10000, 'Custom rate limit must be at most 10000')
+      .nullable()
+      .optional(),
+  })
+  .refine(
+    (v) =>
+      v.isEnabled !== undefined || v.customConfig !== undefined || v.customRateLimit !== undefined,
+    { message: 'At least one field must be provided' }
+  );
 
 // ============================================================================
 // Agent Export / Import Schemas

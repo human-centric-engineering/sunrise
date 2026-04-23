@@ -14,6 +14,8 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 
 function validateIds(rawAgentId: string, rawVersionId: string) {
@@ -29,7 +31,11 @@ function validateIds(rawAgentId: string, rawVersionId: string) {
 }
 
 export const GET = withAdminAuth<{ id: string; versionId: string }>(
-  async (_request, _session, { params }) => {
+  async (request, _session, { params }) => {
+    const clientIP = getClientIP(request);
+    const rateLimit = adminLimiter.check(clientIP);
+    if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
     const { id: rawId, versionId: rawVersionId } = await params;
     const { agentId, versionId } = validateIds(rawId, rawVersionId);
 

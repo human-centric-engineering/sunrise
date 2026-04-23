@@ -64,7 +64,10 @@ export default async function CompareAgentsPage({
 
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Compare Agents</h1>
-        <p className="text-muted-foreground text-sm">Side-by-side performance comparison</p>
+        <p className="text-muted-foreground text-sm">
+          Side-by-side comparison of configuration, usage stats, and cost. Select two agents from
+          the list to compare their model, instructions, capabilities, and spend.
+        </p>
       </div>
 
       <AgentComparisonView agentIdA={a} agentIdB={b} />

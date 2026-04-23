@@ -49,7 +49,10 @@ import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-v
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import { slugSchema } from '@/lib/validations/common';
+import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
+
+export type { ModelOption };
 
 /**
  * Form schema — a hand-picked subset of the create schema. We keep the
@@ -81,15 +84,6 @@ const agentFormSchema = z.object({
 });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
-
-export interface ModelOption {
-  /** Provider slug this model belongs to (`anthropic`, `openai`, etc.). */
-  provider: string;
-  /** Model identifier the provider exposes. */
-  id: string;
-  /** Tier label used for the dropdown hint (`frontier`, `mid`, `budget`). */
-  tier?: string;
-}
 
 export interface AgentFormProps {
   mode: 'create' | 'edit';
@@ -504,8 +498,14 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
         <TabsContent value="model" className="space-y-4 pt-4">
           {(providerFallback || modelFallback) && (
             <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              We couldn&apos;t load the provider or model list from the server. You can still enter
-              a provider slug and model id by hand below.
+              We couldn&apos;t load the{' '}
+              {providerFallback && modelFallback
+                ? 'provider and model lists'
+                : providerFallback
+                  ? 'provider list'
+                  : 'model list'}{' '}
+              from the server. You can still enter {providerFallback ? 'a provider slug and ' : ''}a
+              model id by hand below.
             </div>
           )}
 
@@ -666,9 +666,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               <FieldHelp title="Hard spend cap">
                 Hard spend cap for this agent, in USD. When month-to-date spend reaches the cap, new
                 chats are rejected with a friendly &ldquo;budget exhausted&rdquo; message until the
-                calendar month rolls over or you raise the limit. For example, $10.00 would allow
-                roughly 2 000–5 000 conversations depending on model and reply length. Leave blank
-                to disable the cap.
+                calendar month rolls over or you raise the limit. Actual cost varies significantly
+                by model — check the Costs page for per-model pricing. Leave blank to disable the
+                cap.
               </FieldHelp>
             </Label>
             <Input
@@ -689,8 +689,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="rateLimitRpm">
               Rate limit (RPM){' '}
               <FieldHelp title="Per-user request throttle">
-                Maximum requests per minute each user can send to this agent. Each user has their
-                own limit. Leave blank to use the global default.
+                Maximum requests per minute each user can send to this specific agent. Limits are
+                tracked per user per agent — a user&apos;s activity on one agent does not affect
+                their limit on another. Leave blank to use the global default.
               </FieldHelp>
             </Label>
             <Input
@@ -732,7 +733,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
+            <div className="grid gap-2 rounded-md border p-3">
               <Label htmlFor="inputGuardMode">
                 Input guard{' '}
                 <FieldHelp title="Prompt injection protection">
@@ -766,7 +767,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               </Select>
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid gap-2 rounded-md border p-3">
               <Label htmlFor="outputGuardMode">
                 Output guard{' '}
                 <FieldHelp title="Response content filtering">
@@ -805,13 +806,6 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
 
         {/* ================= TAB 3 — INSTRUCTIONS ================= */}
         <TabsContent value="instructions" className="space-y-4 pt-4">
-          {isEdit && agent?.isSystem && (
-            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
-              <Shield className="h-4 w-4 shrink-0" />
-              This is a system agent. Changes to instructions are versioned and can be reverted from
-              the history panel below.
-            </div>
-          )}
           <div className="grid gap-2">
             <Label htmlFor="systemInstructions">
               System instructions{' '}
