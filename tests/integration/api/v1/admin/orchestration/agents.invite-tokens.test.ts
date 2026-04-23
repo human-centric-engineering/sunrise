@@ -101,7 +101,7 @@ function makeToken(overrides: Record<string, unknown> = {}) {
 }
 
 function makeInviteOnlyAgent() {
-  return { id: AGENT_ID, visibility: 'invite_only' };
+  return { id: AGENT_ID, visibility: 'invite_only', isActive: true };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -457,6 +457,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'public',
+        isActive: true,
       } as never);
 
       const response = await POST(makePostRequest({ label: 'Test' }), makeAgentParams());
@@ -470,6 +471,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'private',
+        isActive: true,
       } as never);
 
       const response = await POST(makePostRequest({ label: 'Test' }), makeAgentParams());
@@ -481,6 +483,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'public',
+        isActive: true,
       } as never);
 
       await POST(makePostRequest({ label: 'Test' }), makeAgentParams());

@@ -516,7 +516,7 @@ export const bulkAgentActionSchema = z.object({
 
 /** Create embed token — POST /agents/:id/embed-tokens */
 export const createEmbedTokenSchema = z.object({
-  label: z.string().max(100).optional(),
+  label: z.string().min(1, 'Label must not be empty').max(100).optional(),
   allowedOrigins: z.array(z.string().url().max(500)).max(20).default([]),
 });
 
@@ -1871,8 +1871,8 @@ export const rateMessageSchema = z.object({
 
 /** Create an invite token for an invite_only agent */
 export const createInviteTokenSchema = z.object({
-  label: z.string().max(200).optional(),
-  maxUses: z.number().int().min(1).optional(),
+  label: z.string().min(1, 'Label must not be empty').max(200).optional(),
+  maxUses: z.number().int().min(1).max(1_000_000).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 

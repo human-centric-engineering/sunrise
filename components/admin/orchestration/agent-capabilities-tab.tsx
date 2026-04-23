@@ -209,6 +209,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       variant="ghost"
                       size="sm"
                       onClick={() => setConfigureTarget(link)}
+                      aria-label={`Configure ${link.capability.name}`}
                     >
                       Configure
                     </Button>
@@ -218,6 +219,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       size="sm"
                       className="text-red-600"
                       onClick={() => void handleDetach(link.capabilityId)}
+                      aria-label={`Detach ${link.capability.name}`}
                     >
                       Detach
                     </Button>

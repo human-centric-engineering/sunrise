@@ -83,81 +83,83 @@ export function AgentTestChat({
 
     const MAX_RECONNECT_ATTEMPTS = 3;
 
-    for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
-      try {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
-          method: 'POST',
-          credentials: 'include',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentSlug, message }),
-        });
+    try {
+      for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+        try {
+          const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
+            method: 'POST',
+            credentials: 'include',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agentSlug, message }),
+          });
 
-        if (!res.ok || !res.body) {
-          // HTTP-level errors are not retriable via reconnect
-          if (res.status === 429) {
-            setError(getUserFacingError('rate_limited'));
-          } else {
-            setError(getUserFacingError('stream_error'));
+          if (!res.ok || !res.body) {
+            // HTTP-level errors are not retriable via reconnect
+            if (res.status === 429) {
+              setError(getUserFacingError('rate_limited'));
+            } else {
+              setError(getUserFacingError('stream_error'));
+            }
+            return;
           }
-          return;
-        }
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
 
-          let sepIndex;
-          while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-            const block = buffer.slice(0, sepIndex);
-            buffer = buffer.slice(sepIndex + 2);
-            const parsed = parseSseBlock(block);
-            if (!parsed) continue;
+            let sepIndex;
+            while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+              const block = buffer.slice(0, sepIndex);
+              buffer = buffer.slice(sepIndex + 2);
+              const parsed = parseSseBlock(block);
+              if (!parsed) continue;
 
-            if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
-              const delta: string = parsed.data.delta;
-              setReply((prev) => prev + delta);
-            } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
-              setWarning(parsed.data.message);
-            } else if (parsed.type === 'error') {
-              const code =
-                typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
-              setError(getUserFacingError(code));
-              return;
-            } else if (parsed.type === 'done') {
-              return;
+              if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
+                const delta: string = parsed.data.delta;
+                setReply((prev) => prev + delta);
+              } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
+                setWarning(parsed.data.message);
+              } else if (parsed.type === 'error') {
+                const code =
+                  typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+                setError(getUserFacingError(code));
+                return;
+              } else if (parsed.type === 'done') {
+                return;
+              }
             }
           }
+
+          // Stream ended without a done/error event — treat as complete
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+
+          // Network failure — attempt reconnect with exponential backoff
+          if (attempt < MAX_RECONNECT_ATTEMPTS) {
+            const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
+            setWarning('Connection interrupted. Reconnecting...');
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+
+          setError({
+            title: 'Connection Lost',
+            message: 'Could not reconnect to the chat stream.',
+            action: 'Please try sending your message again.',
+          });
+          return;
         }
-
-        // Stream ended without a done/error event — treat as complete
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-
-        // Network failure — attempt reconnect with exponential backoff
-        if (attempt < MAX_RECONNECT_ATTEMPTS) {
-          const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
-          setWarning('Connection interrupted. Reconnecting...');
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          continue;
-        }
-
-        setError({
-          title: 'Connection Lost',
-          message: 'Could not reconnect to the chat stream.',
-          action: 'Please try sending your message again.',
-        });
-        return;
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
       }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
     }
   }
 
@@ -206,7 +208,12 @@ export function AgentTestChat({
         </div>
       )}
 
-      <div className={`bg-muted/30 ${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}>
+      <div
+        className={`bg-muted/30 ${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}
+        role="log"
+        aria-live="polite"
+        aria-label="Agent reply"
+      >
         {reply || (
           <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
         )}

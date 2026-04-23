@@ -449,7 +449,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       )}
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className={`rounded-md border ${isLoading && agents.length > 0 ? 'opacity-60' : ''}`}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -462,7 +462,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 />
               </TableHead>
               <TableHead>
-                <Tip label="Sort by agent name">
+                <Tip label="Sort this page by agent name">
                   <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
                     Name
                     {renderSortIcon('name')}
@@ -725,6 +725,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               default lists, but their history is preserved. System agents are excluded.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {listError && <p className="text-destructive text-sm">{listError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction

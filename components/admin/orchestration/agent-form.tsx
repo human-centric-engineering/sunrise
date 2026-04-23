@@ -680,6 +680,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                   v === '' || v === null || v === undefined ? undefined : Number(v),
               })}
             />
+            {errors.monthlyBudgetUsd && (
+              <p className="text-destructive text-xs">{errors.monthlyBudgetUsd.message}</p>
+            )}
           </div>
 
           <div className="grid gap-2">
@@ -856,6 +859,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 setValueAs: (v: string) => (v === '' ? null : v),
               })}
             />
+            {errors.brandVoiceInstructions && (
+              <p className="text-destructive text-xs">{errors.brandVoiceInstructions.message}</p>
+            )}
           </div>
 
           <div className="grid gap-2">

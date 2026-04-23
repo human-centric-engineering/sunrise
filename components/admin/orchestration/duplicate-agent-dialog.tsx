@@ -48,7 +48,7 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
   useEffect(() => {
     if (source) {
       setName(`${source.name} (copy)`);
-      setSlug(`${source.slug}-copy`);
+      setSlug(`${source.slug}-copy`.slice(0, 100));
       setError(null);
     }
   }, [source]);

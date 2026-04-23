@@ -24,7 +24,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -61,11 +61,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     where: { id },
     select: {
       id: true,
+      isSystem: true,
       systemInstructions: true,
       systemInstructionsHistory: true,
     },
   });
   if (!current) throw new NotFoundError(`Agent ${id} not found`);
+
+  if (current.isSystem) {
+    throw new ForbiddenError('Cannot revert instructions on system agents');
+  }
 
   const historyParse = systemInstructionsHistorySchema.safeParse(current.systemInstructionsHistory);
   if (!historyParse.success) {

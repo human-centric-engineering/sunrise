@@ -24,6 +24,12 @@ const agentBackupSchema = z.object({
   knowledgeCategories: z.array(z.string()),
   topicBoundaries: z.array(z.string()),
   brandVoiceInstructions: z.string().nullable(),
+  rateLimitRpm: z.number().nullable().optional().default(null),
+  inputGuardMode: z.string().nullable().optional().default(null),
+  outputGuardMode: z.string().nullable().optional().default(null),
+  maxHistoryTokens: z.number().nullable().optional().default(null),
+  retentionDays: z.number().nullable().optional().default(null),
+  providerConfig: z.unknown().nullable().optional().default(null),
 });
 
 const capabilityBackupSchema = z.object({

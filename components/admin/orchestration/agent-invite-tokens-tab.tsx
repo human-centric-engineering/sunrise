@@ -132,9 +132,13 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
   };
 
   const handleCopy = async (token: string, id: string) => {
-    await navigator.clipboard.writeText(token);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopied(id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      // Clipboard API may be unavailable in non-secure contexts
+    }
   };
 
   if (loading) {
@@ -225,6 +229,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                           onClick={() => void handleCopy(t.token, t.id)}
                           className="text-muted-foreground hover:text-foreground"
                           title="Copy full token"
+                          aria-label={`Copy token ${t.label || t.token.slice(0, 8)}`}
                         >
                           <Copy className="h-3 w-3" />
                         </button>
@@ -256,6 +261,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                           onClick={() => void handleRevoke(t.id)}
                           disabled={revoking === t.id}
                           className="text-destructive hover:text-destructive h-7 px-2"
+                          aria-label={`Revoke token ${t.label || t.token.slice(0, 8)}`}
                         >
                           {revoking === t.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

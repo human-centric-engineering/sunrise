@@ -36,10 +36,17 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   checkBudget: vi.fn(),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiAgent: { findUnique: vi.fn() },
+  },
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { checkBudget } from '@/lib/orchestration/llm/cost-tracker';
+import { prisma } from '@/lib/db/client';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -99,6 +106,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
   describe('Successful responses', () => {
     it('returns 200 with budget status when agent has a budget set', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
       vi.mocked(checkBudget).mockResolvedValue(makeBudgetStatus(true));
 
       const response = await GET(makeRequest(), makeParams(AGENT_ID));
@@ -116,6 +124,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
 
     it('returns 200 with null limit and remaining when agent has no budget', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
       vi.mocked(checkBudget).mockResolvedValue(makeBudgetStatus(false));
 
       const response = await GET(makeRequest(), makeParams(AGENT_ID));
@@ -133,6 +142,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
 
     it('calls checkBudget with the agent id from the URL', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
       vi.mocked(checkBudget).mockResolvedValue(makeBudgetStatus(true));
 
       await GET(makeRequest(), makeParams(AGENT_ID));
@@ -142,9 +152,9 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
   });
 
   describe('Not found', () => {
-    it('returns 404 when checkBudget throws an "not found" error', async () => {
+    it('returns 404 when agent does not exist', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(checkBudget).mockRejectedValue(new Error(`Agent ${AGENT_ID} not found`));
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null as never);
 
       const response = await GET(makeRequest(), makeParams(AGENT_ID));
 

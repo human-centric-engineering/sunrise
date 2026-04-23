@@ -58,6 +58,12 @@ export async function importOrchestrationConfig(
             knowledgeCategories: agent.knowledgeCategories,
             topicBoundaries: agent.topicBoundaries,
             brandVoiceInstructions: agent.brandVoiceInstructions,
+            rateLimitRpm: agent.rateLimitRpm,
+            inputGuardMode: agent.inputGuardMode,
+            outputGuardMode: agent.outputGuardMode,
+            maxHistoryTokens: agent.maxHistoryTokens,
+            retentionDays: agent.retentionDays,
+            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
         });
         result.agents.updated++;
@@ -66,6 +72,7 @@ export async function importOrchestrationConfig(
           data: {
             ...agent,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             createdBy: userId,
           },
         });

@@ -8,10 +8,18 @@ import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
-export const metadata: Metadata = {
-  title: 'Edit agent · AI Orchestration',
-  description: 'Edit an existing AI agent.',
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const agent = await getAgent(id);
+  return {
+    title: agent ? `Edit ${agent.name} · AI Orchestration` : 'Edit agent · AI Orchestration',
+    description: 'Edit an existing AI agent.',
+  };
+}
 
 /**
  * Admin — Edit agent page (Phase 4 Session 4.2).

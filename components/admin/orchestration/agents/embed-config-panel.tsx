@@ -120,6 +120,9 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
   }
 
   function getSnippet(token: string): string {
+    if (!appUrl) {
+      return '<!-- NEXT_PUBLIC_APP_URL is not configured — set it in .env.local to generate a valid embed snippet -->';
+    }
     return `<script src="${escapeHtml(appUrl)}/api/v1/embed/widget.js" data-token="${escapeHtml(token)}"></script>`;
   }
 
@@ -221,6 +224,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
                       size="sm"
                       onClick={() => copyToClipboard(getSnippet(t.token), t.id)}
                       title="Copy embed snippet"
+                      aria-label={`Copy embed snippet for ${t.label || 'token'}`}
                     >
                       {copied === t.id ? (
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -233,6 +237,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
                       size="sm"
                       onClick={() => void handleToggle(t.id, !t.isActive)}
                       title={t.isActive ? 'Deactivate' : 'Activate'}
+                      aria-label={`${t.isActive ? 'Deactivate' : 'Activate'} ${t.label || 'token'}`}
                     >
                       {t.isActive ? (
                         <Power className="h-3.5 w-3.5" />
@@ -245,6 +250,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
                       size="sm"
                       onClick={() => void handleDelete(t.id)}
                       title="Delete token"
+                      aria-label={`Delete ${t.label || 'token'}`}
                     >
                       <Trash2 className="h-3.5 w-3.5 text-red-500" />
                     </Button>

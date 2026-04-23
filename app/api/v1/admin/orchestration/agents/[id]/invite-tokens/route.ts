@@ -68,9 +68,15 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
 
   const agent = await prisma.aiAgent.findFirst({
     where: { id: parsed.data },
-    select: { id: true, visibility: true },
+    select: { id: true, visibility: true, isActive: true },
   });
   if (!agent) throw new NotFoundError('Agent not found');
+
+  if (!agent.isActive) {
+    throw new ValidationError('Cannot create invite tokens for a deactivated agent', {
+      isActive: ['Agent must be active'],
+    });
+  }
 
   if (agent.visibility !== 'invite_only') {
     throw new ValidationError('Agent must have visibility set to invite_only', {
