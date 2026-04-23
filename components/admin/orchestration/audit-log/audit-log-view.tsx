@@ -218,6 +218,7 @@ export function AuditLogView() {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Previous page"
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
@@ -229,6 +230,7 @@ export function AuditLogView() {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Next page"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >

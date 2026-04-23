@@ -219,8 +219,7 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => screen.getByText(/1 \/ 2/));
 
-    const buttons = screen.getAllByRole('button');
-    await user.click(buttons[buttons.length - 1]);
+    await user.click(screen.getByRole('button', { name: /next page/i }));
     await waitFor(() => screen.getByText(/2 \/ 2/));
 
     await user.type(screen.getByPlaceholderText(/filter by action/i), 'alice');
@@ -280,10 +279,7 @@ describe('AuditLogView', () => {
     // Page indicator: "1 / 1"
     expect(screen.getByText(/1 \/ 1/)).toBeInTheDocument();
 
-    // The last button in the toolbar is Next — it should be disabled (page >= totalPages)
-    const buttons = screen.getAllByRole('button');
-    const nextButton = buttons[buttons.length - 1];
-    expect(nextButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: /next page/i })).toBeDisabled();
   });
 
   it('prev page button is disabled on first page', async () => {
@@ -291,10 +287,7 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => screen.getByText('Support Bot'));
 
-    // Prev is second-to-last button (Refresh, Prev, Next order)
-    const buttons = screen.getAllByRole('button');
-    const prevButton = buttons[buttons.length - 2];
-    expect(prevButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
   });
 
   it('non-ok fetch response does not crash the component', async () => {
@@ -421,8 +414,7 @@ describe('AuditLogView', () => {
 
     const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    const buttons = screen.getAllByRole('button');
-    const nextButton = buttons[buttons.length - 1];
+    const nextButton = screen.getByRole('button', { name: /next page/i });
     expect(nextButton).not.toBeDisabled();
     await user.click(nextButton);
 
@@ -442,16 +434,18 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => screen.getByText(/1 \/ 2/));
 
-    // First navigate to page 2
-    const buttons = screen.getAllByRole('button');
-    await user.click(buttons[buttons.length - 1]);
+    // Navigate to page 2 and wait for both the fetch *and* the re-render
+    // to settle before clicking prev — clicking during a pending update
+    // races the React commit and the second click can be dropped.
+    await user.click(screen.getByRole('button', { name: /next page/i }));
     await waitFor(() => screen.getByText(/2 \/ 2/));
+    await waitFor(() => {
+      const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
+      expect(url).toContain('page=2');
+    });
 
     const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-
-    const updatedButtons = screen.getAllByRole('button');
-    const prevButton = updatedButtons[updatedButtons.length - 2];
-    await user.click(prevButton);
+    await user.click(screen.getByRole('button', { name: /previous page/i }));
 
     await waitFor(() => {
       const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
