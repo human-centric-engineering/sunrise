@@ -21,7 +21,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   const { searchParams } = new URL(request.url);
-  const { page, limit, action, entityType, entityId, userId, dateFrom, dateTo } =
+  const { page, limit, action, entityType, entityId, userId, dateFrom, dateTo, q } =
     validateQueryParams(searchParams, listAuditLogQuerySchema);
 
   const skip = (page - 1) * limit;
@@ -35,6 +35,13 @@ export const GET = withAdminAuth(async (request, _session) => {
     where.createdAt = {};
     if (dateFrom) where.createdAt.gte = dateFrom;
     if (dateTo) where.createdAt.lte = dateTo;
+  }
+  if (q) {
+    where.OR = [
+      { action: { contains: q, mode: 'insensitive' } },
+      { entityName: { contains: q, mode: 'insensitive' } },
+      { user: { name: { contains: q, mode: 'insensitive' } } },
+    ];
   }
 
   const [entries, total] = await Promise.all([

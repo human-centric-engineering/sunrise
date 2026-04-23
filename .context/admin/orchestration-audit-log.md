@@ -27,7 +27,7 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 ┌────────────────────────────────────────────────────────────────┐
 │ Heading + Refresh button                                       │
 ├────────────────────────────────────────────────────────────────┤
-│ [ Search input (client-side) ]  [ Entity type select ▼ ]       │
+│ [ Search input (debounced, server-side) ] [ Entity type ▼ ]    │
 ├────────────────────────────────────────────────────────────────┤
 │ Table: Timestamp │ Action │ Entity │ User │ IP                 │
 │   (row click → expands `changes` JSON inline below entity cell)│
@@ -38,11 +38,11 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 
 ### Filters
 
-| Control        | Behaviour                                                                                                                                    |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search input   | **Client-side only** — filters the 25 rows currently loaded against `action`, `entityName`, and `user.name`. Does not round-trip to the API. |
-| Entity type    | Server-side filter. Options: `agent`, `workflow`, `capability`, `knowledge_document`, `settings`, `webhook`. Selecting one resets to page 1. |
-| Refresh button | Re-fetches the current page.                                                                                                                 |
+| Control        | Behaviour                                                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1. |
+| Entity type    | Server-side filter. Options: `agent`, `workflow`, `capability`, `knowledge_document`, `settings`, `webhook`. Selecting one resets to page 1.                                                    |
+| Refresh button | Re-fetches the current page.                                                                                                                                                                    |
 
 Known gaps in the dropdown (present in the data, absent from the filter UI): `experiment`, `embed_token`, `backup`. The `webhook` option appears in the dropdown but **no call site currently emits `entityType: 'webhook'`** — it will always return zero results until webhook writes are wired up. To filter by any of these, hit the API directly with `?entityType=experiment` etc.
 
@@ -69,16 +69,17 @@ Admin-guarded (`withAdminAuth`) and rate-limited via `adminLimiter`. Returns a p
 
 **Query params** (validated by `listAuditLogQuerySchema`):
 
-| Param        | Type      | Default | Notes                                                |
-| ------------ | --------- | ------- | ---------------------------------------------------- |
-| `page`       | int ≥1    | `1`     | From shared `paginationQuerySchema`.                 |
-| `limit`      | int 1–100 | `10`    | View component hard-codes `25`.                      |
-| `action`     | string    | —       | Exact match on `action` (e.g. `agent.update`).       |
-| `entityType` | string    | —       | Exact match on `entityType`.                         |
-| `entityId`   | string    | —       | Scope to a single entity (e.g. agent id).            |
-| `userId`     | string    | —       | Scope to one admin.                                  |
-| `dateFrom`   | date      | —       | `gte` on `createdAt`. Coerced via `z.coerce.date()`. |
-| `dateTo`     | date      | —       | `lte` on `createdAt`.                                |
+| Param        | Type      | Default | Notes                                                                                |
+| ------------ | --------- | ------- | ------------------------------------------------------------------------------------ |
+| `page`       | int ≥1    | `1`     | From shared `paginationQuerySchema`.                                                 |
+| `limit`      | int 1–100 | `10`    | View component hard-codes `25`.                                                      |
+| `action`     | string    | —       | Exact match on `action` (e.g. `agent.update`).                                       |
+| `entityType` | string    | —       | Exact match on `entityType`.                                                         |
+| `entityId`   | string    | —       | Scope to a single entity (e.g. agent id).                                            |
+| `userId`     | string    | —       | Scope to one admin.                                                                  |
+| `dateFrom`   | date      | —       | `gte` on `createdAt`. Coerced via `z.coerce.date()`.                                 |
+| `dateTo`     | date      | —       | `lte` on `createdAt`.                                                                |
+| `q`          | string    | —       | Case-insensitive `OR` across `action`, `entityName`, and `user.name`. Max 100 chars. |
 
 Response data rows include `user: { id, name, email }`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
 

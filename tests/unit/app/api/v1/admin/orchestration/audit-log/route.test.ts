@@ -286,6 +286,37 @@ describe('GET /audit-log', () => {
     expect(createdAt['lte']).toEqual(new Date('2026-12-31'));
   });
 
+  it('passes q as an OR filter across action, entityName, and user.name', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest('q=alice'));
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.where?.OR).toEqual([
+      { action: { contains: 'alice', mode: 'insensitive' } },
+      { entityName: { contains: 'alice', mode: 'insensitive' } },
+      { user: { name: { contains: 'alice', mode: 'insensitive' } } },
+    ]);
+  });
+
+  it('omits the OR filter when q is absent', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest());
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.where?.OR).toBeUndefined();
+  });
+
+  it('rejects q longer than 100 characters with 400', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const longQ = 'a'.repeat(101);
+    const response = await GET(makeRequest(`q=${longQ}`));
+
+    expect(response.status).toBe(400);
+  });
+
   it('returns 429 when rate limited', async () => {
     const { adminLimiter, createRateLimitResponse } = await import('@/lib/security/rate-limit');
     vi.mocked(adminLimiter.check).mockReturnValue({

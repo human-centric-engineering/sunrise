@@ -2022,4 +2022,5 @@ export const listAuditLogQuerySchema = paginationQuerySchema.extend({
   userId: z.string().trim().max(50).optional(),
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
+  q: z.string().trim().min(1).max(100).optional(),
 });

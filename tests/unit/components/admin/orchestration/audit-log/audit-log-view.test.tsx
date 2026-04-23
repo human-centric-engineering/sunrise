@@ -5,7 +5,7 @@
  * - Loading state on initial mount
  * - Renders audit entries (timestamp, action badge, entity, user, IP)
  * - Empty state: "No audit entries found."
- * - Search filter: shows only matching entries (by action, entityName, user)
+ * - Search input: debounced and pushed server-side via `q` query param
  * - Expand row to reveal change diff JSON
  * - Pagination: next/prev buttons, shows page N / totalPages
  * - Refresh button re-fetches
@@ -190,38 +190,50 @@ describe('AuditLogView', () => {
     expect(screen.queryByRole('code')).not.toBeInTheDocument();
   });
 
-  // ── Search filter ─────────────────────────────────────────────────────────
+  // ── Search filter (server-side via `q` query param) ──────────────────────
 
-  it('filters entries by action text', async () => {
+  it('debounces search input and sends q as a server-side query param', async () => {
     const user = userEvent.setup();
-    mockFetchSuccess([
-      makeEntry({ id: 'e1', action: 'agent.create', entityName: 'Bot A' }),
-      makeEntry({ id: 'e2', action: 'workflow.delete', entityName: 'Flow X' }),
-    ]);
+    mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText('Bot A'));
+    await waitFor(() => screen.getByText('Support Bot'));
 
     await user.type(screen.getByPlaceholderText(/filter by action/i), 'workflow');
 
-    expect(screen.queryByText('Bot A')).not.toBeInTheDocument();
-    expect(screen.getByText('Flow X')).toBeInTheDocument();
+    await waitFor(
+      () => {
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const lastUrl = calls[calls.length - 1][0] as string;
+        expect(lastUrl).toContain('q=workflow');
+      },
+      { timeout: 1500 }
+    );
   });
 
-  it('filters entries by user name', async () => {
+  it('resets to page=1 when search query changes', async () => {
     const user = userEvent.setup();
-    mockFetchSuccess([
-      makeEntry({ id: 'e1', user: { id: 'u1', name: 'Alice', email: 'a@x.com' }, entityName: 'X' }),
-      makeEntry({ id: 'e2', user: { id: 'u2', name: 'Bob', email: 'b@x.com' }, entityName: 'Y' }),
-    ]);
+    // Start on page 2 by having 50 entries
+    mockFetchSuccess([makeEntry()], 50);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText('Alice'));
+    await waitFor(() => screen.getByText(/1 \/ 2/));
 
-    await user.type(screen.getByPlaceholderText(/filter by action/i), 'Bob');
+    const buttons = screen.getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() => screen.getByText(/2 \/ 2/));
 
-    expect(screen.queryByText('Alice')).not.toBeInTheDocument();
-    expect(screen.getByText('Bob')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText(/filter by action/i), 'alice');
+
+    await waitFor(
+      () => {
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const lastUrl = calls[calls.length - 1][0] as string;
+        expect(lastUrl).toContain('page=1');
+        expect(lastUrl).toContain('q=alice');
+      },
+      { timeout: 1500 }
+    );
   });
 
   // ── Refresh ───────────────────────────────────────────────────────────────
@@ -357,24 +369,37 @@ describe('AuditLogView', () => {
     expect(lastUrl).toContain('entityType=agent');
   });
 
-  it('clears search filter to show all entries when query is erased', async () => {
+  it('omits q from the URL when the search input is empty', async () => {
     const user = userEvent.setup();
-    mockFetchSuccess([
-      makeEntry({ id: 'e1', action: 'agent.create', entityName: 'Bot A' }),
-      makeEntry({ id: 'e2', action: 'workflow.delete', entityName: 'Flow X' }),
-    ]);
+    mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText('Bot A'));
+    await waitFor(() => screen.getByText('Support Bot'));
 
     const searchInput = screen.getByPlaceholderText(/filter by action/i);
     await user.type(searchInput, 'workflow');
-    expect(screen.queryByText('Bot A')).not.toBeInTheDocument();
 
-    // Clear the search — both entries should reappear
+    // Wait for debounced fetch with q
+    await waitFor(
+      () => {
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const lastUrl = calls[calls.length - 1][0] as string;
+        expect(lastUrl).toContain('q=workflow');
+      },
+      { timeout: 1500 }
+    );
+
+    // Clear the search — next debounced fetch should omit q
     await user.clear(searchInput);
-    expect(screen.getByText('Bot A')).toBeInTheDocument();
-    expect(screen.getByText('Flow X')).toBeInTheDocument();
+
+    await waitFor(
+      () => {
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const lastUrl = calls[calls.length - 1][0] as string;
+        expect(lastUrl).not.toContain('q=');
+      },
+      { timeout: 1500 }
+    );
   });
 
   it('falls back to entityId when entityName is null but entityId is present', async () => {
