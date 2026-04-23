@@ -69,6 +69,7 @@ function makeHook(overrides: Record<string, unknown> = {}) {
     action: { type: 'webhook', url: 'https://example.com/hook' },
     filter: null,
     isEnabled: true,
+    secret: null,
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -122,6 +123,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default session: admin authenticated. Tests that need a different user override this.
+  vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
   // Reset rate limiter to allow-by-default after each test
   vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
   vi.mocked(createRateLimitResponse).mockReturnValue(
@@ -147,6 +150,32 @@ describe('GET /hooks', () => {
     const body = await parseJson<{ data: unknown[]; meta: { total: number } }>(response);
     expect(body.data).toHaveLength(1);
     expect(body.meta.total).toBe(1);
+  });
+
+  it('strips `secret` and exposes `hasSecret: false` when no secret is set', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook({ secret: null })] as never);
+    vi.mocked(prisma.aiEventHook.count).mockResolvedValue(1);
+
+    const response = await ListHooks(makeListRequest());
+    const body = await parseJson<{ data: Array<Record<string, unknown>> }>(response);
+
+    expect(body.data[0]).toHaveProperty('hasSecret', false);
+    expect(body.data[0]).not.toHaveProperty('secret');
+  });
+
+  it('strips `secret` and exposes `hasSecret: true` when a secret is set', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ secret: 'a'.repeat(64) }),
+    ] as never);
+    vi.mocked(prisma.aiEventHook.count).mockResolvedValue(1);
+
+    const response = await ListHooks(makeListRequest());
+    const body = await parseJson<{ data: Array<Record<string, unknown>> }>(response);
+
+    expect(body.data[0]).toHaveProperty('hasSecret', true);
+    expect(body.data[0]).not.toHaveProperty('secret');
   });
 
   it('filters by eventType', async () => {
@@ -199,6 +228,14 @@ describe('POST /hooks', () => {
         }),
       })
     );
+
+    const body = await parseJson<{
+      success: boolean;
+      data: { id: string; name: string; hasSecret: boolean };
+    }>(response);
+    expect(body.success).toBe(true);
+    expect(body.data.hasSecret).toBe(false);
+    expect(body.data).not.toHaveProperty('secret');
   });
 
   it('rejects internal-action hooks (schema only accepts webhook)', async () => {
@@ -243,6 +280,66 @@ describe('POST /hooks', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('returns 429 when rate limited on POST', async () => {
+    // Arrange: rate limit exceeded
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    } as never);
+
+    // Act
+    const response = await CreateHook(
+      makeCreateRequest({
+        name: 'Rate Limited Hook',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+      })
+    );
+
+    // Assert
+    expect(response.status).toBe(429);
+  });
+
+  it('rejects custom action.headers that collide with reserved signing header names', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await CreateHook(
+      makeCreateRequest({
+        name: 'Reserved header',
+        eventType: 'conversation.started',
+        action: {
+          type: 'webhook',
+          url: 'https://example.com/hook',
+          headers: { 'x-sunrise-signature': 'sha256=deadbeef' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.create).not.toHaveBeenCalled();
+  });
+
+  it('drops admin-supplied `secret` from POST body (not persisted via create route)', async () => {
+    // Arrange: body includes a `secret` field that must not reach the DB
+    vi.mocked(prisma.aiEventHook.create).mockResolvedValue(makeHook() as never);
+
+    // Act
+    await CreateHook(
+      makeCreateRequest({
+        name: 'Smuggled Secret',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+        secret: 'evil-user-secret',
+      })
+    );
+
+    // Assert: secret was stripped before the DB write
+    const createCall = vi.mocked(prisma.aiEventHook.create).mock.calls[0]?.[0];
+    expect(createCall?.data).not.toHaveProperty('secret');
+  });
 });
 
 describe('GET /hooks/:id', () => {
@@ -263,6 +360,19 @@ describe('GET /hooks/:id', () => {
 
     const body = await parseJson<{ data: { id: string } }>(response);
     expect(body.data.id).toBe(HOOK_ID);
+  });
+
+  it('strips `secret` from the response and exposes `hasSecret`', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(
+      makeHook({ secret: 'deadbeef' }) as never
+    );
+
+    const response = await GetHook(makeDetailRequest(), makeParams(HOOK_ID));
+    const body = await parseJson<{ data: Record<string, unknown> }>(response);
+
+    expect(body.data).toHaveProperty('hasSecret', true);
+    expect(body.data).not.toHaveProperty('secret');
   });
 });
 
@@ -468,6 +578,23 @@ describe('PATCH /hooks/:id', () => {
     // Assert: cache invalidated exactly once after the successful update
     expect(response.status).toBe(200);
     expect(vi.mocked(invalidateHookCache)).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops admin-supplied `secret` from PATCH body', async () => {
+    // Arrange: body includes a `secret` field that must not reach the DB
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(makeHook() as never);
+
+    // Act
+    await UpdateHook(
+      makePatchRequest({ name: 'still-no-secret', secret: 'sneaky' }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert: secret was stripped before the DB write
+    const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0]?.[0];
+    expect(updateCall?.data).not.toHaveProperty('secret');
   });
 });
 

@@ -16,7 +16,12 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
-import { HOOK_EVENT_TYPES } from '@/lib/orchestration/hooks/types';
+import { toSafeHook } from '@/lib/orchestration/hooks/serialize';
+import {
+  HOOK_EVENT_TYPES,
+  RESERVED_HEADER_ERROR,
+  hasReservedHookHeader,
+} from '@/lib/orchestration/hooks/types';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { z } from 'zod';
 
@@ -29,7 +34,10 @@ const createHookSchema = z.object({
       .string()
       .url()
       .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
-    headers: z.record(z.string(), z.string()).optional(),
+    headers: z
+      .record(z.string(), z.string())
+      .refine((h) => !hasReservedHookHeader(h), RESERVED_HEADER_ERROR)
+      .optional(),
   }),
   filter: z.record(z.string(), z.unknown()).nullable().optional(),
   isEnabled: z.boolean().optional().default(true),
@@ -55,7 +63,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   ]);
 
   log.info('Event hooks listed', { count: hooks.length, total });
-  return paginatedResponse(hooks, { page, limit, total });
+  return paginatedResponse(hooks.map(toSafeHook), { page, limit, total });
 });
 
 export const POST = withAdminAuth(async (request, session) => {
@@ -89,5 +97,5 @@ export const POST = withAdminAuth(async (request, session) => {
   invalidateHookCache();
   log.info('Event hook created', { hookId: hook.id, eventType });
 
-  return successResponse(hook, undefined, { status: 201 });
+  return successResponse(toSafeHook(hook), undefined, { status: 201 });
 });

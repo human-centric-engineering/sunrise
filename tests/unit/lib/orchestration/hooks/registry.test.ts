@@ -58,6 +58,7 @@ function makeHook(overrides: Record<string, unknown> = {}) {
     action: { type: 'webhook', url: 'https://example.com/hook' },
     filter: null,
     isEnabled: true,
+    secret: null,
     createdBy: 'user-1',
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -413,11 +414,8 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
     const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
-    const deliveredCall = allUpdateCalls.find(
-      (call) => (call[0] as { data: { status?: string } }).data?.status === 'delivered'
-    );
-    expect(deliveredCall).toBeDefined();
-    expect(deliveredCall?.[0]).toMatchObject({
+    expect(allUpdateCalls.length).toBe(2);
+    expect(allUpdateCalls.at(-1)![0]).toMatchObject({
       where: { id: deliveryId },
       data: expect.objectContaining({
         status: 'delivered',
@@ -473,11 +471,8 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
 
     // An exhausted update was issued for the disabled hook
     const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
-    const exhaustedCall = allUpdateCalls.find(
-      (call) => (call[0] as { data: { status?: string } }).data?.status === 'exhausted'
-    );
-    expect(exhaustedCall).toBeDefined();
-    expect(exhaustedCall?.[0]).toMatchObject({
+    expect(allUpdateCalls.length).toBe(2);
+    expect(allUpdateCalls.at(-1)![0]).toMatchObject({
       where: { id: deliveryId },
       data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
     });
@@ -532,11 +527,8 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // so there are now 2 update calls total: the initial failure update + the exhausted update.
     const allUpdates = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
     expect(allUpdates.length).toBe(2);
-    const exhaustedCall = allUpdates.find(
-      (c) => (c[0] as { data?: { status?: string } }).data?.status === 'exhausted'
-    );
-    expect(exhaustedCall).toBeDefined();
-    expect(exhaustedCall?.[0]).toMatchObject({
+    const exhaustedUpdate = allUpdates[1];
+    expect(exhaustedUpdate?.[0]).toMatchObject({
       where: { id: deliveryId },
       data: expect.objectContaining({
         status: 'exhausted',
@@ -768,11 +760,8 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
 
     // First update call sets status: 'pending' (the reset before re-dispatch)
     const updateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
-    const pendingCall = updateCalls.find(
-      (c) => (c[0] as { data?: { status?: string } }).data?.status === 'pending'
-    );
-    expect(pendingCall).toBeDefined();
-    expect(pendingCall?.[0]).toMatchObject({
+    const pendingUpdate = updateCalls[0];
+    expect(pendingUpdate?.[0]).toMatchObject({
       where: { id: deliveryId },
       data: expect.objectContaining({
         status: 'pending',
@@ -868,5 +857,208 @@ describe('dispatchToHooks (filter negative match)', () => {
     // Assert — filter did not match, so no delivery record was created and no fetch fired
     expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('attemptDelivery (null-delivery guard after HTTP failure)', () => {
+  it('skips update and scheduleRetry when findUnique returns null after HTTP failure', async () => {
+    // Arrange — fetch rejects so attemptDelivery enters the failure path;
+    // the subsequent findUnique call returns null (row was deleted between steps).
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ id: 'hook-null-guard', eventType: 'conversation.started' }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: 'del-null-guard' }) as never
+    );
+
+    mockFetch.mockRejectedValueOnce(new Error('network failure'));
+
+    // First findUnique (attemptDelivery failure path) returns null — row gone
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(null);
+
+    // Act
+    emitHookEvent('conversation.started', { conversationId: 'conv-null' });
+
+    // Wait for the async dispatch to settle (create is the last observable side-effect before
+    // the null guard short-circuits)
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.create).toHaveBeenCalledTimes(1);
+    });
+
+    // Give the promise chain time to fully resolve after the null guard
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Assert — update was never called and no retry was scheduled (no further fetch calls)
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('matchesFilter (null/undefined filter values)', () => {
+  it('fires hook when filter contains a null value for a key absent from the payload', async () => {
+    // Arrange — hook filter has status: null which should be skipped, so any event fires the hook
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-null-filter',
+        eventType: 'message.created',
+        filter: { status: null },
+      }),
+    ] as never);
+
+    // Act — payload does not contain a `status` key
+    emitHookEvent('message.created', { messageId: 'msg-null-filter' });
+
+    // Assert — hook fired despite the null filter value (null means "skip this key")
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('HMAC signing (via dispatchWebhook)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('adds X-Sunrise-Timestamp and X-Sunrise-Signature headers when hook.secret is set', async () => {
+    const secret = 'a'.repeat(64);
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-signed',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/signed' },
+        secret,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Timestamp']).toMatch(/^\d+$/);
+    expect(headers['X-Sunrise-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+  });
+
+  it('omits signing headers when hook.secret is null', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-unsigned',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/unsigned' },
+        secret: null,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Timestamp']).toBeUndefined();
+    expect(headers['X-Sunrise-Signature']).toBeUndefined();
+  });
+
+  it('refreshes the timestamp on retries so receivers with strict staleness tolerance still accept them', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-23T00:00:00Z'));
+
+    const secret = 'b'.repeat(64);
+    const hookId = 'hook-retry-signed';
+    const deliveryId = 'del-retry-signed';
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/signed-retry' },
+        secret,
+      }),
+    ] as never);
+
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ id: deliveryId, hookId, attempts: 0 }) as never
+    );
+
+    // First attempt fails → schedules retry 10s out
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Retry attempt succeeds
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce(
+      makeDelivery({ id: deliveryId, attempts: 0 }) as never
+    );
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, attempts: 1 }),
+      hook: makeHook({
+        id: hookId,
+        eventType: 'workflow.completed',
+        action: { type: 'webhook', url: 'https://example.com/signed-retry' },
+        secret,
+      }),
+    } as never);
+
+    emitHookEvent('workflow.completed', { workflowId: 'wf-1' });
+
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance 10s — retry fires
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const firstHeaders = (mockFetch.mock.calls[0]?.[1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    const retryHeaders = (mockFetch.mock.calls[1]?.[1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    expect(firstHeaders['X-Sunrise-Timestamp']).toBeDefined();
+    expect(retryHeaders['X-Sunrise-Timestamp']).toBeDefined();
+    expect(Number(retryHeaders['X-Sunrise-Timestamp'])).toBeGreaterThan(
+      Number(firstHeaders['X-Sunrise-Timestamp'])
+    );
+    // Refreshed timestamp → refreshed signature
+    expect(retryHeaders['X-Sunrise-Signature']).not.toBe(firstHeaders['X-Sunrise-Signature']);
+  });
+
+  it('signing headers win when admin-supplied custom headers collide with reserved names', async () => {
+    const secret = 'c'.repeat(64);
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-collide',
+        eventType: 'conversation.started',
+        action: {
+          type: 'webhook',
+          url: 'https://example.com/collide',
+          headers: {
+            'X-Sunrise-Signature': 'sha256=deadbeef',
+            'X-Sunrise-Timestamp': '0',
+          },
+        },
+        secret,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-collide' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+    expect(headers['X-Sunrise-Signature']).not.toBe('sha256=deadbeef');
+    expect(headers['X-Sunrise-Timestamp']).not.toBe('0');
   });
 });

@@ -464,7 +464,7 @@ model AiMessageEmbedding {
 
 // Configurable event hooks for orchestration events
 // Fires on events like conversation.started, message.created,
-// workflow.completed, etc. Supports webhook and internal action types.
+// workflow.completed, etc. Webhook-only action type.
 model AiEventHook {
   id        String   @id @default(cuid())
   name      String
@@ -472,6 +472,7 @@ model AiEventHook {
   action    Json     // { type: 'webhook', url, headers }
   filter    Json?    // optional event filtering e.g. { agentSlug: 'support-bot' }
   isEnabled Boolean  @default(true)
+  secret    String?  @db.Text // HMAC-SHA256 signing key (hex); nullable = unsigned
   createdBy String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
