@@ -62,8 +62,14 @@ export class RedisRateLimitStore implements RateLimitStore {
 
   private async init(redisUrl: string): Promise<void> {
     try {
-      // Dynamic import — ioredis is an optional peer dependency
-      const { default: Redis } = await import('ioredis');
+      // Dynamic import — ioredis is an optional peer dependency.
+      // Both magic comments + the indirected specifier evade Turbopack /
+      // webpack static resolution so the bundler does not warn when the
+      // package is absent in dev. The runtime catch handles real failures.
+      const moduleName = 'ioredis';
+      const { default: Redis } = (await import(
+        /* webpackIgnore: true */ /* turbopackIgnore: true */ moduleName
+      )) as typeof import('ioredis');
       this.client = new Redis(redisUrl, {
         maxRetriesPerRequest: 2,
         enableReadyCheck: true,
