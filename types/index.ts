@@ -21,7 +21,7 @@ export type {
   AvatarUploadResponse,
   AvatarDeleteResponse,
   StorageStatus,
-} from './storage';
+} from '@/types/storage';
 
 /**
  * User Role Types

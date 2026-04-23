@@ -6,4 +6,7 @@
  */
 
 export { completeEvaluationSession } from '@/lib/orchestration/evaluations/complete-session';
-export type { CompleteEvaluationParams, CompleteEvaluationResult } from './types';
+export type {
+  CompleteEvaluationParams,
+  CompleteEvaluationResult,
+} from '@/lib/orchestration/evaluations/types';

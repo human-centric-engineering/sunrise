@@ -100,13 +100,17 @@ app/
 
 ### Imports
 
-Always use the `@/` path alias — never relative paths:
+Always use the `@/` path alias — never relative paths. Enforced by ESLint (`no-restricted-imports`).
 
 ```typescript
 import { logger } from '@/lib/logging'; // ✅
 import { Button } from '@/components/ui/button';
+import { FormError } from '@/components/forms/form-error'; // ✅ even for sibling files
 import { logger } from '../../lib/logging'; // ❌
+import { FormError } from './form-error'; // ❌ no exception for siblings
 ```
+
+**Why no sibling-import exception:** Sunrise is a starter template. Downstream forks copy folders, rename modules, and split capsules — `@/` survives those moves; `./` breaks silently. A single mechanical rule is also grep-checkable by `/pre-pr` and `/code-review`, removes "is this local or cross-module?" judgment, and avoids the slow drift toward inconsistency that exception-laden rules invite. We accept the cost: cohesive capsules (`components/forms/`, `components/admin/orchestration/workflow-builder/`) read slightly more verbosely than they would with `./` siblings. That trade is intentional, not an oversight.
 
 ### API Response Format
 

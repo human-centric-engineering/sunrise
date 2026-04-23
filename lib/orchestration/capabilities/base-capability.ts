@@ -19,7 +19,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
   CapabilitySchema,
-} from './types';
+} from '@/lib/orchestration/capabilities/types';
 
 export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
   abstract readonly slug: string;

@@ -18,13 +18,13 @@
 
 // Components
 export { StatusIndicator, getStatusConfig } from '@/components/status/status-indicator';
-export type { StatusIndicatorProps } from './status-indicator';
+export type { StatusIndicatorProps } from '@/components/status/status-indicator';
 
 export { ServiceStatusCard } from '@/components/status/service-status-card';
-export type { ServiceStatusCardProps } from './service-status-card';
+export type { ServiceStatusCardProps } from '@/components/status/service-status-card';
 
 export { StatusPage } from '@/components/status/status-page';
-export type { StatusPageProps } from './status-page';
+export type { StatusPageProps } from '@/components/status/status-page';
 
 // Hook
 export { useHealthCheck } from '@/components/status/use-health-check';
@@ -32,4 +32,4 @@ export type {
   HealthCheckState,
   UseHealthCheckOptions,
   UseHealthCheckReturn,
-} from './use-health-check';
+} from '@/components/status/use-health-check';

@@ -18,7 +18,7 @@ import type {
   LlmResponse,
   ModelInfo,
   StreamChunk,
-} from './types';
+} from '@/lib/orchestration/llm/types';
 
 /** Default request timeout for cloud providers. */
 export const DEFAULT_TIMEOUT_MS = 30_000;

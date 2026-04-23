@@ -55,7 +55,7 @@ export type {
   PreferencesUpdatedEventProps,
   FormSubmittedEventProps,
   IdentifyTraits,
-} from './types';
+} from '@/lib/analytics/events/types';
 
 // Generic form tracking hook
 export { useFormAnalytics } from '@/lib/analytics/events/forms';

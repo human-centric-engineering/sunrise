@@ -21,7 +21,11 @@ import { RESEARCH_AGENT_TEMPLATE } from '@/prisma/seeds/data/templates/research-
 import { SAAS_BACKEND_TEMPLATE } from '@/prisma/seeds/data/templates/saas-backend';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
-export type { WorkflowTemplate, WorkflowTemplatePattern, WorkflowTemplateUseCase } from './types';
+export type {
+  WorkflowTemplate,
+  WorkflowTemplatePattern,
+  WorkflowTemplateUseCase,
+} from '@/prisma/seeds/data/templates/types';
 
 export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   CUSTOMER_SUPPORT_TEMPLATE,

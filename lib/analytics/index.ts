@@ -75,10 +75,10 @@ export type {
   AnalyticsContextValue,
   ServerTrackOptions,
   ServerTrackContext,
-} from './types';
+} from '@/lib/analytics/types';
 
 // Provider interface
-export type { AnalyticsProvider as AnalyticsProviderInterface } from './providers/types';
+export type { AnalyticsProvider as AnalyticsProviderInterface } from '@/lib/analytics/providers/types';
 
 // PostHog provider (for type guards and feature flag access)
 export { PostHogProvider } from '@/lib/analytics/providers/posthog';
@@ -111,7 +111,7 @@ export {
 
 // Event constants and types (for direct track() + EVENTS pattern)
 export { EVENTS } from '@/lib/analytics/events/constants';
-export type { EventName } from './events/constants';
+export type { EventName } from '@/lib/analytics/events/constants';
 export type {
   AuthMethod,
   AuthEventProps,
@@ -120,7 +120,7 @@ export type {
   ProfileUpdatedEventProps,
   PreferencesUpdatedEventProps,
   FormSubmittedEventProps,
-} from './events/types';
+} from '@/lib/analytics/events/types';
 
 // Form analytics helper (generic form tracking)
 export { useFormAnalytics } from '@/lib/analytics/events/forms';

@@ -7,13 +7,16 @@
  */
 
 export { validateWorkflow } from '@/lib/orchestration/workflows/validator';
-export type { WorkflowValidationResult, WorkflowValidationError } from './validator';
+export type {
+  WorkflowValidationResult,
+  WorkflowValidationError,
+} from '@/lib/orchestration/workflows/validator';
 
 export { semanticValidateWorkflow } from '@/lib/orchestration/workflows/semantic-validator';
 export type {
   SemanticValidationResult,
   SemanticValidationError,
   SemanticErrorCode,
-} from './semantic-validator';
+} from '@/lib/orchestration/workflows/semantic-validator';
 
 export { extractTemplateVariables } from '@/lib/orchestration/workflows/template-scanner';

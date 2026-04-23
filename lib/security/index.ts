@@ -29,7 +29,7 @@ export {
   getRateLimitHeaders,
   createRateLimitResponse,
 } from '@/lib/security/rate-limit';
-export type { RateLimitOptions, RateLimitResult, RateLimiter } from './rate-limit';
+export type { RateLimitOptions, RateLimitResult, RateLimiter } from '@/lib/security/rate-limit';
 
 // Security headers
 export {
@@ -39,7 +39,7 @@ export {
   setSecurityHeaders,
   extendCSP,
 } from '@/lib/security/headers';
-export type { CSPConfig } from './headers';
+export type { CSPConfig } from '@/lib/security/headers';
 
 // Input sanitization
 export {
@@ -60,7 +60,7 @@ export {
   withCORS,
   createCORSHandlers,
 } from '@/lib/security/cors';
-export type { CORSOptions } from './cors';
+export type { CORSOptions } from '@/lib/security/cors';
 
 // Constants
 export { SECURITY_CONSTANTS } from '@/lib/security/constants';

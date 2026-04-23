@@ -18,13 +18,13 @@ import type {
   EventProperties,
   PageProperties,
   TrackResult,
-} from './types';
+} from '@/lib/analytics/types';
 import {
   getAnalyticsClient,
   initAnalytics,
   getAnalyticsProviderName,
   resetAnalyticsClient,
-} from './client';
+} from '@/lib/analytics/client';
 import { useHasOptionalConsent } from '@/lib/consent';
 import { logger } from '@/lib/logging';
 
