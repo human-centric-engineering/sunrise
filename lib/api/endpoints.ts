@@ -133,6 +133,7 @@ export const API = {
         `/api/v1/admin/orchestration/conversations/${id}/messages`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
       CONVERSATIONS_EXPORT: '/api/v1/admin/orchestration/conversations/export',
+      CONVERSATIONS_SEARCH: '/api/v1/admin/orchestration/conversations/search',
       KNOWLEDGE_DOCUMENTS: '/api/v1/admin/orchestration/knowledge/documents',
       knowledgeDocumentById: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,

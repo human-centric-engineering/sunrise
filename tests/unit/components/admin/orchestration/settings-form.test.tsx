@@ -52,6 +52,7 @@ const FULL_SETTINGS: OrchestrationSettings = {
   searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2 },
   webhookRetentionDays: 30,
   costLogRetentionDays: 90,
+  auditLogRetentionDays: 365,
   maxConversationsPerUser: 50,
   maxMessagesPerConversation: 200,
 };
@@ -65,6 +66,7 @@ const EMPTY_SETTINGS: OrchestrationSettings = {
   searchConfig: null,
   webhookRetentionDays: null,
   costLogRetentionDays: null,
+  auditLogRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
 };
@@ -98,11 +100,12 @@ describe('SettingsForm', () => {
       expect(document.getElementById('maxMessagesPerConversation')).toBeInTheDocument();
     });
 
-    it('renders Retention section with webhook and cost log fields', () => {
+    it('renders Retention section with webhook, cost log, and audit log fields', () => {
       render(<SettingsForm initialSettings={FULL_SETTINGS} />);
       expect(screen.getByText('Retention')).toBeInTheDocument();
       expect(document.getElementById('webhookRetentionDays')).toBeInTheDocument();
       expect(document.getElementById('costLogRetentionDays')).toBeInTheDocument();
+      expect(document.getElementById('auditLogRetentionDays')).toBeInTheDocument();
     });
 
     it('renders Approvals section with timeout and action fields', () => {
@@ -132,6 +135,7 @@ describe('SettingsForm', () => {
       expect(document.getElementById('maxMessagesPerConversation')).toHaveValue(200);
       expect(document.getElementById('webhookRetentionDays')).toHaveValue(30);
       expect(document.getElementById('costLogRetentionDays')).toHaveValue(90);
+      expect(document.getElementById('auditLogRetentionDays')).toHaveValue(365);
       expect(document.getElementById('approvalTimeout')).toHaveValue(60000);
       expect(document.getElementById('keywordBoostWeight')).toHaveValue(-0.05);
       expect(document.getElementById('vectorWeight')).toHaveValue(1.2);
@@ -143,6 +147,7 @@ describe('SettingsForm', () => {
       expect(document.getElementById('maxConversationsPerUser')).toHaveValue(null);
       expect(document.getElementById('webhookRetentionDays')).toHaveValue(null);
       expect(document.getElementById('costLogRetentionDays')).toHaveValue(null);
+      expect(document.getElementById('auditLogRetentionDays')).toHaveValue(null);
     });
 
     it('defaults guard modes to none when null', () => {
@@ -182,6 +187,7 @@ describe('SettingsForm', () => {
               maxMessagesPerConversation: 200,
               webhookRetentionDays: 30,
               costLogRetentionDays: 90,
+              auditLogRetentionDays: 365,
               defaultApprovalTimeoutMs: 60000,
               approvalDefaultAction: 'deny',
               searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2 },

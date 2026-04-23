@@ -48,6 +48,7 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET as ListHooks, POST as CreateHook } from '@/app/api/v1/admin/orchestration/hooks/route';
 import {
@@ -200,11 +201,8 @@ describe('POST /hooks', () => {
     );
   });
 
-  it('creates an internal hook', async () => {
+  it('rejects internal-action hooks (schema only accepts webhook)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiEventHook.create).mockResolvedValue(
-      makeHook({ action: { type: 'internal', handler: 'logToAnalytics' } }) as never
-    );
 
     const response = await CreateHook(
       makeCreateRequest({
@@ -214,7 +212,8 @@ describe('POST /hooks', () => {
       })
     );
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.create).not.toHaveBeenCalled();
   });
 
   it('rejects invalid event type', async () => {
@@ -358,6 +357,118 @@ describe('PATCH /hooks/:id', () => {
     // Assert
     expect(response.status).toBe(429);
   });
+
+  it('updates only eventType and passes it through to prisma.update', async () => {
+    // Arrange: only eventType provided — all other optional fields absent
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(
+      makeHook({ eventType: 'message.created' }) as never
+    );
+
+    // Act
+    const response = await UpdateHook(
+      makePatchRequest({ eventType: 'message.created' }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert: status and that prisma received exactly the eventType field
+    expect(response.status).toBe(200);
+    const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0][0];
+    expect(updateCall.data).toEqual(expect.objectContaining({ eventType: 'message.created' }));
+    // Selective patch: name, action, filter, isEnabled must NOT be included in the data object
+    expect(updateCall.data).not.toHaveProperty('name');
+    expect(updateCall.data).not.toHaveProperty('action');
+    expect(updateCall.data).not.toHaveProperty('filter');
+    expect(updateCall.data).not.toHaveProperty('isEnabled');
+  });
+
+  it('updates only action (valid webhook URL) and passes it through to prisma.update', async () => {
+    // Arrange: only action provided
+    const newAction = { type: 'webhook', url: 'https://hooks.example.com/x' };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(
+      makeHook({ action: newAction }) as never
+    );
+
+    // Act
+    const response = await UpdateHook(makePatchRequest({ action: newAction }), makeParams(HOOK_ID));
+
+    // Assert: status 200, action propagated to DB, other fields absent
+    expect(response.status).toBe(200);
+    const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0][0];
+    expect(updateCall.data).toEqual(expect.objectContaining({ action: newAction }));
+    expect(updateCall.data).not.toHaveProperty('name');
+    expect(updateCall.data).not.toHaveProperty('eventType');
+    expect(updateCall.data).not.toHaveProperty('filter');
+    expect(updateCall.data).not.toHaveProperty('isEnabled');
+  });
+
+  it('sets filter to an object and passes it through to prisma.update', async () => {
+    // Arrange: filter is a non-null object (agentSlug selector)
+    const filterValue = { agentSlug: 'support-bot' };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(
+      makeHook({ filter: filterValue }) as never
+    );
+
+    // Act
+    const response = await UpdateHook(
+      makePatchRequest({ filter: filterValue }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert: status 200, filter propagated to DB with the object value
+    expect(response.status).toBe(200);
+    const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0][0];
+    expect(updateCall.data).toEqual(expect.objectContaining({ filter: filterValue }));
+    expect(updateCall.data).not.toHaveProperty('name');
+    expect(updateCall.data).not.toHaveProperty('eventType');
+    expect(updateCall.data).not.toHaveProperty('action');
+    expect(updateCall.data).not.toHaveProperty('isEnabled');
+  });
+
+  it('sets filter to null (nullable clear) and passes null through to prisma.update', async () => {
+    // Arrange: filter is explicitly null — clears any previously set filter
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(
+      makeHook({ filter: { agentSlug: 'old-bot' } }) as never
+    );
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(makeHook({ filter: null }) as never);
+
+    // Act
+    const response = await UpdateHook(makePatchRequest({ filter: null }), makeParams(HOOK_ID));
+
+    // Assert: status 200, null filter propagated to DB
+    expect(response.status).toBe(200);
+    const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0][0];
+    expect(updateCall.data).toEqual(expect.objectContaining({ filter: null }));
+    expect(updateCall.data).not.toHaveProperty('name');
+    expect(updateCall.data).not.toHaveProperty('eventType');
+    expect(updateCall.data).not.toHaveProperty('action');
+    expect(updateCall.data).not.toHaveProperty('isEnabled');
+  });
+
+  it('calls invalidateHookCache after a successful update', async () => {
+    // Arrange: happy-path PATCH
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(
+      makeHook({ name: 'Cache Test' }) as never
+    );
+
+    // Act
+    const response = await UpdateHook(
+      makePatchRequest({ name: 'Cache Test' }),
+      makeParams(HOOK_ID)
+    );
+
+    // Assert: cache invalidated exactly once after the successful update
+    expect(response.status).toBe(200);
+    expect(vi.mocked(invalidateHookCache)).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('DELETE /hooks/:id', () => {
@@ -407,5 +518,19 @@ describe('DELETE /hooks/:id', () => {
 
     // Assert
     expect(response.status).toBe(429);
+  });
+
+  it('calls invalidateHookCache after a successful delete', async () => {
+    // Arrange: happy-path DELETE
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook() as never);
+    vi.mocked(prisma.aiEventHook.delete).mockResolvedValue(makeHook() as never);
+
+    // Act
+    const response = await DeleteHook(makeDeleteRequest(), makeParams(HOOK_ID));
+
+    // Assert: cache invalidated exactly once after the successful delete
+    expect(response.status).toBe(200);
+    expect(vi.mocked(invalidateHookCache)).toHaveBeenCalledTimes(1);
   });
 });

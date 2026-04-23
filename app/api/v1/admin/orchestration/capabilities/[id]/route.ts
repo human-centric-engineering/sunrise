@@ -26,6 +26,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { updateCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseCapabilityId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -98,6 +99,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       fieldsChanged: Object.keys(data),
     });
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'capability.update',
+      entityType: 'capability',
+      entityId: id,
+      entityName: capability.name,
+      changes: computeChanges(
+        current as unknown as Record<string, unknown>,
+        capability as unknown as Record<string, unknown>
+      ),
+      clientIp: clientIP,
+    });
+
     return successResponse(capability);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -136,6 +150,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     capabilityId: id,
     slug: capability.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'capability.delete',
+    entityType: 'capability',
+    entityId: id,
+    entityName: capability.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ id, isActive: false });

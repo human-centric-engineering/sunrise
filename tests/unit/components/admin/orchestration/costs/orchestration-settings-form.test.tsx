@@ -63,6 +63,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   outputGuardMode: 'log_only',
   webhookRetentionDays: null,
   costLogRetentionDays: null,
+  auditLogRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
   escalationConfig: null,

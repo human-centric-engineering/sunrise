@@ -360,29 +360,91 @@ describe('ConversationsTable', () => {
     expect(mockFetch.mock.calls.length).toBe(initialCallCount);
   });
 
-  it('toggling message search when search has a value triggers a refetch', async () => {
-    // Arrange: type in search first, then toggle message search
+  it('toggling message search with a search value hits the semantic search endpoint', async () => {
+    // Arrange: type in search first, then toggle message search.
+    // Semantic endpoint returns results with semanticAvailable:true.
     const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/conversations/search?')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: [],
+              meta: { total: 0, semanticAvailable: true },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: [], meta: makeMeta() }),
+      });
+    });
+
     render(<ConversationsTable initialConversations={[]} initialMeta={makeMeta()} agents={[]} />);
 
     const input = screen.getByPlaceholderText('Search by title…');
-    await user.type(input, 'test');
+    await user.type(input, 'refund');
 
-    // Wait for debounce... but we do not need to advance timers here
-    // Just get the call count after typing
     const callsAfterType = mockFetch.mock.calls.length;
 
-    // Act: toggle message search
     const checkbox = screen.getByRole('checkbox', { name: /search messages/i });
     await user.click(checkbox);
 
-    // Assert: fetch was triggered with searchMessages=true path (messageSearch param)
     await waitFor(() => {
-      const calls = mockFetch.mock.calls;
-      const msgSearchCalls = calls
+      const semanticCalls = mockFetch.mock.calls
+        .slice(callsAfterType)
+        .filter((call) => String(call[0]).includes('/conversations/search?'));
+      expect(semanticCalls.length).toBeGreaterThan(0);
+      // And the lexical `messageSearch=` path was NOT used (semantic was available).
+      const lexicalCalls = mockFetch.mock.calls
         .slice(callsAfterType)
         .filter((call) => String(call[0]).includes('messageSearch='));
-      expect(msgSearchCalls.length).toBeGreaterThan(0);
+      expect(lexicalCalls.length).toBe(0);
+    });
+  });
+
+  it('falls back to lexical messageSearch when semantic endpoint signals unavailable', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/conversations/search?')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: [],
+              meta: { total: 0, semanticAvailable: false },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: [], meta: makeMeta() }),
+      });
+    });
+
+    render(<ConversationsTable initialConversations={[]} initialMeta={makeMeta()} agents={[]} />);
+
+    const input = screen.getByPlaceholderText('Search by title…');
+    await user.type(input, 'refund');
+
+    const callsAfterType = mockFetch.mock.calls.length;
+
+    const checkbox = screen.getByRole('checkbox', { name: /search messages/i });
+    await user.click(checkbox);
+
+    await waitFor(() => {
+      const semanticCalls = mockFetch.mock.calls
+        .slice(callsAfterType)
+        .filter((call) => String(call[0]).includes('/conversations/search?'));
+      const fallbackCalls = mockFetch.mock.calls
+        .slice(callsAfterType)
+        .filter((call) => String(call[0]).includes('messageSearch='));
+
+      expect(semanticCalls.length).toBeGreaterThan(0);
+      expect(fallbackCalls.length).toBeGreaterThan(0);
     });
   });
 

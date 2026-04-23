@@ -5,41 +5,52 @@
  * used by the hook registry and dispatcher.
  */
 
+import { z } from 'zod';
+import { isSafeProviderUrl } from '@/lib/security/safe-url';
+
 /** All supported hook event types */
 export const HOOK_EVENT_TYPES = [
   'conversation.started',
-  'conversation.completed',
   'message.created',
   'workflow.started',
   'workflow.completed',
   'workflow.failed',
   'agent.updated',
-  'budget.warning',
 ] as const;
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
 
-/** Payload delivered with each hook event */
-export interface HookEventPayload {
-  eventType: HookEventType;
-  timestamp: string;
-  data: Record<string, unknown>;
-}
+/**
+ * Webhook action schema — dispatches an HTTP POST to an external URL.
+ *
+ * Used to validate Prisma JSON rows (`AiEventHook.action`) at dispatch
+ * time, so dispatch code can never trust a cast from the database.
+ */
+export const WebhookActionSchema = z.object({
+  type: z.literal('webhook'),
+  url: z
+    .string()
+    .url()
+    .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+  headers: z.record(z.string(), z.string()).optional(),
+});
 
-/** Webhook action — dispatches an HTTP POST to an external URL */
-export interface WebhookAction {
-  type: 'webhook';
-  url: string;
-  headers?: Record<string, string>;
-}
+export type WebhookAction = z.infer<typeof WebhookActionSchema>;
+export type HookAction = WebhookAction;
 
-/** Internal action — calls a registered in-process handler */
-export interface InternalAction {
-  type: 'internal';
-  handler: string;
-}
+/**
+ * Hook event payload schema.
+ *
+ * Used to validate Prisma JSON rows (`AiEventHookDelivery.payload`)
+ * before re-dispatching queued retries.
+ */
+export const HookEventPayloadSchema = z.object({
+  eventType: z.enum(HOOK_EVENT_TYPES),
+  timestamp: z.string().datetime(),
+  data: z.record(z.string(), z.unknown()),
+});
 
-export type HookAction = WebhookAction | InternalAction;
+export type HookEventPayload = z.infer<typeof HookEventPayloadSchema>;
 
 /** Filter criteria for selective hook firing */
 export interface HookFilter {
@@ -48,6 +59,3 @@ export interface HookFilter {
   userId?: string;
   [key: string]: unknown;
 }
-
-/** Registered internal handler function */
-export type InternalHandler = (payload: HookEventPayload) => void | Promise<void>;

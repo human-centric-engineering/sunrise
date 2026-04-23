@@ -71,8 +71,8 @@ Flag `console.log`, `console.warn`, `console.error`, or `console.info` in change
 **4e. Missing error or loading boundaries**
 For any new `page.tsx` files added under `app/`, check that the same route segment has an `error.tsx` and `loading.tsx`. Flag missing boundaries. Route groups that share a parent `error.tsx`/`loading.tsx` are fine — check parent directories.
 
-**4f. New code files missing tests**
-For any new TypeScript files added on this branch (identified via `git diff --name-status $BASE...HEAD` — look for `A` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag new files that have no corresponding test. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
+**4f. Changed code files missing tests**
+For any TypeScript files added OR modified on this branch (identified via `git diff --name-status $BASE...HEAD` — `A` or `M` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag changed files that have no corresponding test. Also accept co-located parent-directory tests for route files under dynamic segments (e.g., tests for `app/api/v1/foo/[id]/route.ts` may live in `tests/unit/app/api/v1/foo/route.test.ts`). A modified source file with no corresponding test is the same completeness gap as a newly added one — flag both. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
 
 **4g. Direct data imports bypassing the API**
 Flag non-type imports in pages, layouts, and components that pull data or constants from `lib/` modules when that data is seeded into the database and should be fetched via the API. The key indicator is importing runtime values (not just types) from modules whose data is also available through an API endpoint or is seeded into the database — e.g., importing `BUILTIN_WORKFLOW_TEMPLATES` from `@/lib/orchestration/workflows/templates` instead of fetching templates from the API. Type-only imports (`import type { ... }`) are fine — the concern is runtime coupling to data that should come through the API boundary. This enforces the same API-first separation as 4l below: components should fetch data from the API, not import it directly from server-side modules.
@@ -143,7 +143,7 @@ Output a clear summary in this format:
 - [ ] Duplicated auth checks: {count found or CLEAN}
 - [ ] Console usage: {count found or CLEAN}
 - [ ] Missing error/loading boundaries: {count found or CLEAN}
-- [ ] New files missing tests: {count found or CLEAN}
+- [ ] Changed files missing tests: {count found or CLEAN}
 - [ ] Direct data imports bypassing API: {count found or CLEAN}
 - [ ] N+1 client-side fetches: {count found or CLEAN}
 - [ ] Relative imports: {count found or CLEAN}

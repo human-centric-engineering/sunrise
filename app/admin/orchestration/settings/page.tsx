@@ -27,6 +27,7 @@ async function getSettings(): Promise<OrchestrationSettings> {
     searchConfig: null,
     webhookRetentionDays: null,
     costLogRetentionDays: null,
+    auditLogRetentionDays: null,
     maxConversationsPerUser: null,
     maxMessagesPerConversation: null,
     escalationConfig: null,

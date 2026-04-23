@@ -2,28 +2,42 @@
  * Event Hook Registry & Dispatcher
  *
  * Loads enabled hooks from the database, caches them by event type,
- * and dispatches events to matching hooks. Webhook hooks send plain
- * JSON HTTP POST requests with any admin-supplied custom headers —
- * payloads are not currently HMAC-signed. Internal hooks call
- * registered TypeScript handler functions.
+ * and dispatches events to matching hooks.
  *
- * All dispatch is fire-and-forget — failures are logged but never
- * propagate to the caller.
+ * Hooks send plain JSON HTTP POST requests with any admin-supplied
+ * custom headers — payloads are not currently HMAC-signed. Each webhook
+ * dispatch creates an `AiEventHookDelivery` record so admins can audit
+ * delivery history and manually retry failures. Retries follow the same
+ * backoff strategy as outbound webhooks (10s, 60s, 300s; 3 attempts total).
+ *
+ * Dispatch is fire-and-forget — failures are logged and persisted to the
+ * delivery table but never propagate to the caller.
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type {
-  HookAction,
-  HookEventPayload,
-  HookEventType,
-  HookFilter,
-  InternalHandler,
-  WebhookAction,
+import {
+  HookEventPayloadSchema,
+  WebhookActionSchema,
+  type HookAction,
+  type HookEventPayload,
+  type HookEventType,
+  type HookFilter,
+  type WebhookAction,
 } from '@/lib/orchestration/hooks/types';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
 const CACHE_TTL_MS = 60_000;
+
+/** Outbound HTTP timeout for webhook delivery */
+const DISPATCH_TIMEOUT_MS = 10_000;
+
+/** Maximum delivery attempts (initial + retries). */
+const MAX_ATTEMPTS = 3;
+
+/** Backoff delays in milliseconds: 10s, 60s, 5min. */
+const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
 
 interface CachedHook {
   id: string;
@@ -34,19 +48,6 @@ interface CachedHook {
 
 let hookCache: Map<string, CachedHook[]> | null = null;
 let cacheLoadedAt = 0;
-
-/** Registered internal handlers keyed by handler name */
-const internalHandlers = new Map<string, InternalHandler>();
-
-/**
- * Register an internal handler that can be referenced by event hooks.
- *
- * Call this at startup for any in-process hook handlers (e.g.,
- * analytics logging, cache invalidation).
- */
-export function registerInternalHandler(name: string, handler: InternalHandler): void {
-  internalHandlers.set(name, handler);
-}
 
 /**
  * Load enabled hooks from the database, grouped by event type.
@@ -66,15 +67,19 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
   const byType = new Map<string, CachedHook[]>();
 
   for (const hook of hooks) {
-    const action = hook.action as unknown;
-    if (!action || typeof action !== 'object' || !('type' in (action as Record<string, unknown>))) {
+    const parsedAction = WebhookActionSchema.safeParse(hook.action);
+    if (!parsedAction.success) {
+      logger.warn('Hook skipped: invalid action shape', {
+        hookId: hook.id,
+        issues: parsedAction.error.issues,
+      });
       continue;
     }
 
     const cached: CachedHook = {
       id: hook.id,
       eventType: hook.eventType,
-      action: action as HookAction,
+      action: parsedAction.data,
       filter: hook.filter as HookFilter | null,
     };
 
@@ -141,8 +146,6 @@ async function dispatchToHooks(payload: HookEventPayload): Promise<void> {
 
     if (hook.action.type === 'webhook') {
       void dispatchWebhook(hook.id, hook.action, payload);
-    } else if (hook.action.type === 'internal') {
-      void dispatchInternal(hook.id, hook.action.handler, payload);
     }
   }
 }
@@ -153,26 +156,17 @@ async function dispatchWebhook(
   payload: HookEventPayload
 ): Promise<void> {
   try {
-    const body = JSON.stringify(payload);
-    const response = await fetch(action.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(action.headers ?? {}),
-      },
-      body,
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!response.ok) {
-      logger.warn('Hook webhook failed', {
+    const delivery = await prisma.aiEventHookDelivery.create({
+      data: {
         hookId,
-        url: action.url,
-        status: response.status,
-      });
-    }
+        eventType: payload.eventType,
+        payload: payload as unknown as Prisma.InputJsonValue,
+        status: 'pending',
+      },
+    });
+    await attemptDelivery(delivery.id, action.url, action.headers ?? null, payload);
   } catch (err: unknown) {
-    logger.warn('Hook webhook error', {
+    logger.warn('Hook webhook dispatch setup failed', {
       hookId,
       url: action.url,
       error: err instanceof Error ? err.message : String(err),
@@ -180,24 +174,242 @@ async function dispatchWebhook(
   }
 }
 
-async function dispatchInternal(
-  hookId: string,
-  handlerName: string,
+/**
+ * Attempt a single webhook delivery, updating the `AiEventHookDelivery`
+ * record with the outcome. On failure, schedules an in-process retry
+ * via setTimeout (up to MAX_ATTEMPTS total).
+ */
+async function attemptDelivery(
+  deliveryId: string,
+  url: string,
+  customHeaders: Record<string, string> | null,
   payload: HookEventPayload
 ): Promise<void> {
-  const handler = internalHandlers.get(handlerName);
-  if (!handler) {
-    logger.warn('Hook internal handler not found', { hookId, handler: handlerName });
-    return;
-  }
+  const now = new Date();
+  let statusCode: number | undefined;
+  let error: string | undefined;
 
   try {
-    await handler(payload);
-  } catch (err: unknown) {
-    logger.warn('Hook internal handler error', {
-      hookId,
-      handler: handlerName,
-      error: err instanceof Error ? err.message : String(err),
+    const body = JSON.stringify(payload);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hook-Event': payload.eventType,
+        ...(customHeaders ?? {}),
+      },
+      body,
+      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
     });
+
+    statusCode = res.status;
+
+    if (res.ok) {
+      await prisma.aiEventHookDelivery.update({
+        where: { id: deliveryId },
+        data: {
+          status: 'delivered',
+          attempts: { increment: 1 },
+          lastAttemptAt: now,
+          lastResponseCode: statusCode,
+          lastError: null,
+          nextRetryAt: null,
+        },
+      });
+      return;
+    }
+
+    error = `HTTP ${res.status}`;
+  } catch (err: unknown) {
+    error = err instanceof Error ? err.message : String(err);
   }
+
+  // Delivery failed — update record and maybe schedule retry
+  const delivery = await prisma.aiEventHookDelivery.findUnique({
+    where: { id: deliveryId },
+  });
+  if (!delivery) return;
+
+  const newAttempts = delivery.attempts + 1;
+  const exhausted = newAttempts >= MAX_ATTEMPTS;
+  const retryDelay = RETRY_DELAYS_MS[newAttempts - 1];
+  const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
+
+  await prisma.aiEventHookDelivery.update({
+    where: { id: deliveryId },
+    data: {
+      status: exhausted ? 'exhausted' : 'failed',
+      attempts: newAttempts,
+      lastAttemptAt: now,
+      lastResponseCode: statusCode ?? null,
+      lastError: error ?? null,
+      nextRetryAt,
+    },
+  });
+
+  if (!exhausted && nextRetryAt) {
+    scheduleRetry(deliveryId, retryDelay ?? RETRY_DELAYS_MS[0]);
+  }
+
+  logger.warn('Hook webhook delivery failed', {
+    deliveryId,
+    url,
+    attempt: newAttempts,
+    maxAttempts: MAX_ATTEMPTS,
+    exhausted,
+    error,
+    statusCode,
+  });
+}
+
+/**
+ * Validate a stored delivery's `hook.action` and `payload` JSON before
+ * re-dispatching. If either fails validation the delivery is marked
+ * `exhausted` (malformed rows are not retriable) and `null` is returned.
+ */
+async function parseDeliveryForDispatch(delivery: {
+  id: string;
+  hook: { action: Prisma.JsonValue };
+  payload: Prisma.JsonValue;
+}): Promise<{ action: WebhookAction; payload: HookEventPayload } | null> {
+  const actionParsed = WebhookActionSchema.safeParse(delivery.hook.action);
+  const payloadParsed = HookEventPayloadSchema.safeParse(delivery.payload);
+  if (actionParsed.success && payloadParsed.success) {
+    return { action: actionParsed.data, payload: payloadParsed.data };
+  }
+
+  const lastError = !actionParsed.success ? 'invalid_action' : 'invalid_payload';
+  await prisma.aiEventHookDelivery.update({
+    where: { id: delivery.id },
+    data: { status: 'exhausted', nextRetryAt: null, lastError },
+  });
+  logger.warn('Hook delivery abandoned: invalid action or payload', {
+    deliveryId: delivery.id,
+    lastError,
+  });
+  return null;
+}
+
+/**
+ * Schedule an in-process retry via setTimeout.
+ *
+ * The timeout is unref'd so it doesn't prevent Node from exiting. If the
+ * process restarts before the retry fires, `processPendingHookRetries()`
+ * picks it up on the next maintenance tick.
+ */
+function scheduleRetry(deliveryId: string, delayMs: number): void {
+  const timer = setTimeout(
+    () =>
+      void (async () => {
+        try {
+          const delivery = await prisma.aiEventHookDelivery.findUnique({
+            where: { id: deliveryId },
+            include: { hook: true },
+          });
+          if (!delivery || !delivery.hook.isEnabled) {
+            if (delivery) {
+              await prisma.aiEventHookDelivery.update({
+                where: { id: deliveryId },
+                data: { status: 'exhausted', nextRetryAt: null },
+              });
+            }
+            return;
+          }
+
+          const parsed = await parseDeliveryForDispatch(delivery);
+          if (!parsed) return;
+
+          await attemptDelivery(
+            deliveryId,
+            parsed.action.url,
+            parsed.action.headers ?? null,
+            parsed.payload
+          );
+        } catch (err: unknown) {
+          logger.error('Hook scheduled retry error', {
+            deliveryId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })(),
+    delayMs
+  );
+
+  if (typeof timer === 'object' && 'unref' in timer) {
+    timer.unref();
+  }
+}
+
+/**
+ * Process pending hook-delivery retries. Called on a maintenance tick.
+ * Picks up deliveries whose `nextRetryAt` has passed.
+ */
+export async function processPendingHookRetries(): Promise<number> {
+  const pending = await prisma.aiEventHookDelivery.findMany({
+    where: {
+      status: 'failed',
+      nextRetryAt: { lte: new Date() },
+      attempts: { lt: MAX_ATTEMPTS },
+    },
+    include: { hook: true },
+    take: 50,
+  });
+
+  if (pending.length === 0) return 0;
+
+  await Promise.allSettled(
+    pending.map(async (delivery) => {
+      if (!delivery.hook.isEnabled) {
+        await prisma.aiEventHookDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'exhausted', nextRetryAt: null },
+        });
+        return;
+      }
+
+      const parsed = await parseDeliveryForDispatch(delivery);
+      if (!parsed) return;
+
+      await attemptDelivery(
+        delivery.id,
+        parsed.action.url,
+        parsed.action.headers ?? null,
+        parsed.payload
+      );
+    })
+  );
+
+  return pending.length;
+}
+
+/**
+ * Manually retry a specific hook delivery. Resets the attempt counter so
+ * admin-initiated retries get a fresh set of retry attempts.
+ *
+ * Returns `false` if the delivery does not exist or its hook is disabled
+ * or no longer a webhook action.
+ */
+export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
+  const delivery = await prisma.aiEventHookDelivery.findUnique({
+    where: { id: deliveryId },
+    include: { hook: true },
+  });
+  if (!delivery) return false;
+  if (!delivery.hook.isEnabled) return false;
+
+  const parsed = await parseDeliveryForDispatch(delivery);
+  if (!parsed) return false;
+
+  await prisma.aiEventHookDelivery.update({
+    where: { id: deliveryId },
+    data: { status: 'pending', attempts: 0, lastError: null, nextRetryAt: null },
+  });
+
+  void attemptDelivery(
+    deliveryId,
+    parsed.action.url,
+    parsed.action.headers ?? null,
+    parsed.payload
+  );
+  return true;
 }

@@ -48,6 +48,7 @@ export interface OrchestrationSettings {
   searchConfig: { keywordBoostWeight: number; vectorWeight: number } | null;
   webhookRetentionDays: number | null;
   costLogRetentionDays: number | null;
+  auditLogRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   escalationConfig?: EscalationConfig | null;
@@ -80,6 +81,7 @@ const settingsFormSchema = z.object({
   // Retention
   webhookRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
   costLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
+  auditLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
   // Approvals
   approvalTimeout: nullableNumber.pipe(z.number().int().positive().max(3_600_000).nullable()),
   approvalDefaultAction: z.enum(APPROVAL_ACTIONS),
@@ -131,6 +133,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       maxMessagesPerConversation: toStr(initialSettings.maxMessagesPerConversation),
       webhookRetentionDays: toStr(initialSettings.webhookRetentionDays),
       costLogRetentionDays: toStr(initialSettings.costLogRetentionDays),
+      auditLogRetentionDays: toStr(initialSettings.auditLogRetentionDays),
       approvalTimeout: toStr(initialSettings.defaultApprovalTimeoutMs),
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
       keywordBoostWeight: toStr(initialSettings.searchConfig?.keywordBoostWeight),
@@ -185,6 +188,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           maxMessagesPerConversation: values.maxMessagesPerConversation,
           webhookRetentionDays: values.webhookRetentionDays,
           costLogRetentionDays: values.costLogRetentionDays,
+          auditLogRetentionDays: values.auditLogRetentionDays,
           defaultApprovalTimeoutMs: values.approvalTimeout,
           approvalDefaultAction: values.approvalDefaultAction,
           searchConfig,
@@ -400,6 +404,28 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             />
             {errors.costLogRetentionDays && (
               <p className="text-xs text-red-600">{errors.costLogRetentionDays.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="auditLogRetentionDays" className="flex items-center gap-1">
+              Audit log retention (days)
+              <FieldHelp title="Admin audit log cleanup">
+                Admin audit log entries older than this are automatically deleted. Leave blank to
+                keep all records indefinitely. Compliance regimes often require 1–7 years — the max
+                is 3650 days (10 years).
+              </FieldHelp>
+            </Label>
+            <Input
+              id="auditLogRetentionDays"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="Keep indefinitely"
+              {...register('auditLogRetentionDays')}
+            />
+            {errors.auditLogRetentionDays && (
+              <p className="text-xs text-red-600">{errors.auditLogRetentionDays.message}</p>
             )}
           </div>
         </CardContent>

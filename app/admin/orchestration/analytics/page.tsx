@@ -14,6 +14,7 @@ import type {
   ContentGap,
   FeedbackSummary,
 } from '@/lib/orchestration/analytics';
+import { getAnalyticsDefaultDateInputs } from '@/lib/orchestration/analytics/date-range';
 
 export const metadata: Metadata = {
   title: 'Analytics · AI Orchestration',
@@ -105,20 +106,11 @@ async function getAgents(): Promise<AgentOption[]> {
   }
 }
 
-function getDefaultDates(): { today: string; thirtyDaysAgo: string } {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  return { today, thirtyDaysAgo };
-}
-
 export default async function AnalyticsPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const query = buildQuery(params);
 
-  const { today, thirtyDaysAgo } = getDefaultDates();
+  const { from: thirtyDaysAgo, to: today } = getAnalyticsDefaultDateInputs();
 
   const [engagement, topics, unanswered, feedback, contentGaps, agents] = await Promise.all([
     getEngagement(query),

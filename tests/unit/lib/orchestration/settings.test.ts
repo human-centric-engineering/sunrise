@@ -39,6 +39,7 @@ import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   parseStoredDefaults,
   parseSearchConfig,
+  parseEscalationConfig,
   hydrateSettings,
   getOrchestrationSettings,
 } from '@/lib/orchestration/settings';
@@ -59,6 +60,7 @@ function makeRow(
     outputGuardMode: string | null;
     webhookRetentionDays: number | null;
     costLogRetentionDays: number | null;
+    auditLogRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
   }> = {}
@@ -81,6 +83,7 @@ function makeRow(
     outputGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
+    auditLogRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     createdAt: NOW,
@@ -174,6 +177,39 @@ describe('parseSearchConfig', () => {
 
   it('returns null when required fields are missing', () => {
     expect(parseSearchConfig({ keywordBoostWeight: -0.02 })).toBeNull();
+  });
+});
+
+describe('parseEscalationConfig', () => {
+  it('returns a valid EscalationConfig when input is well-formed', () => {
+    // Arrange
+    const input = { emailAddresses: ['admin@example.com', 'ops@example.com'] };
+
+    // Act
+    const result = parseEscalationConfig(input);
+
+    // Assert — the schema applies the notifyOnPriority default ('all') when not supplied
+    expect(result).toEqual({
+      emailAddresses: ['admin@example.com', 'ops@example.com'],
+      notifyOnPriority: 'all',
+    });
+    expect(result?.webhookUrl).toBeUndefined();
+  });
+
+  it('returns null when input is null', () => {
+    // Arrange / Act / Assert
+    expect(parseEscalationConfig(null)).toBeNull();
+  });
+
+  it('returns null when input is an invalid shape', () => {
+    // Arrange — 'mode' is not a field in escalationConfigSchema; emailAddresses is required
+    const invalid = { mode: 'not-a-valid-mode' };
+
+    // Act
+    const result = parseEscalationConfig(invalid);
+
+    // Assert — Zod safeParse fails because emailAddresses is missing
+    expect(result).toBeNull();
   });
 });
 
@@ -342,6 +378,39 @@ describe('hydrateSettings', () => {
     const result = hydrateSettings(row);
 
     expect(result.slug).toBe('global');
+  });
+
+  it('returns null approvalDefaultAction when row value is an unknown string', () => {
+    // Arrange — 'maybe' is not in VALID_APPROVAL_ACTIONS ('deny' | 'allow')
+    const row = makeRow({ approvalDefaultAction: 'maybe' });
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert — unknown value falls through to the null branch at L114
+    expect(result.approvalDefaultAction).toBeNull();
+  });
+
+  it("falls back to 'log_only' when inputGuardMode is an unknown string", () => {
+    // Arrange — 'panic' is not in VALID_GUARD_MODES
+    const row = makeRow({ inputGuardMode: 'panic' });
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert — unknown value falls through to the default at L115
+    expect(result.inputGuardMode).toBe('log_only');
+  });
+
+  it("falls back to 'log_only' when outputGuardMode is an unknown string", () => {
+    // Arrange — 'panic' is not in VALID_OUTPUT_GUARD_MODES
+    const row = makeRow({ outputGuardMode: 'panic' });
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert — unknown value falls through to the default at L117
+    expect(result.outputGuardMode).toBe('log_only');
   });
 });
 

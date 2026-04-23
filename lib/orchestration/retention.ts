@@ -3,11 +3,14 @@
  *
  * Deletes conversations (and their messages, embeddings, cost logs)
  * that exceed the per-agent retention window. Also prunes old webhook
- * delivery records and cost log rows based on global settings.
+ * subscription delivery records, event-hook delivery records, cost log
+ * rows, and admin audit log rows based on global settings.
  *
  * Agents with `retentionDays = null` keep conversations forever.
- * Settings with `webhookRetentionDays = null` or `costLogRetentionDays = null`
- * skip the respective pruning.
+ * Settings with `webhookRetentionDays`, `costLogRetentionDays`, or
+ * `auditLogRetentionDays` set to `null` skip the respective pruning.
+ * Event-hook deliveries share the `webhookRetentionDays` window —
+ * they are the same class of outbound-dispatch audit data.
  *
  * Called by the unified maintenance tick endpoint.
  */
@@ -20,10 +23,14 @@ export interface RetentionResult {
   deleted: number;
   /** Number of agents with retention policies. */
   agentsProcessed: number;
-  /** Number of webhook delivery rows pruned. */
+  /** Number of webhook subscription delivery rows pruned. */
   webhookDeliveriesDeleted: number;
+  /** Number of event-hook delivery rows pruned. */
+  hookDeliveriesDeleted: number;
   /** Number of cost log rows pruned. */
   costLogsDeleted: number;
+  /** Number of admin audit log rows pruned. */
+  auditLogsDeleted: number;
 }
 
 /**
@@ -63,13 +70,17 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
   }
 
   const webhookResult = await pruneWebhookDeliveries();
+  const hookResult = await pruneHookDeliveries();
   const costLogResult = await pruneCostLogs();
+  const auditLogResult = await pruneAuditLogs();
 
   return {
     deleted: totalDeleted,
     agentsProcessed: agents.length,
     webhookDeliveriesDeleted: webhookResult.deleted,
+    hookDeliveriesDeleted: hookResult.deleted,
     costLogsDeleted: costLogResult.deleted,
+    auditLogsDeleted: auditLogResult.deleted,
   };
 }
 
@@ -102,6 +113,27 @@ export async function pruneWebhookDeliveries(maxAgeDays?: number): Promise<Prune
 }
 
 /**
+ * Delete event-hook delivery rows older than `maxAgeDays`.
+ * Shares the `webhookRetentionDays` setting with outbound webhook
+ * subscriptions — the two are the same class of dispatch-audit data.
+ * Skips if no value is configured.
+ */
+export async function pruneHookDeliveries(maxAgeDays?: number): Promise<PruneResult> {
+  const days = maxAgeDays ?? (await resolveRetentionDays('webhookRetentionDays'));
+  if (days === null) return { deleted: 0 };
+
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const result = await prisma.aiEventHookDelivery.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+
+  if (result.count > 0) {
+    logger.info('Event-hook delivery rows pruned', { deleted: result.count, maxAgeDays: days });
+  }
+  return { deleted: result.count };
+}
+
+/**
  * Delete cost log rows older than `maxAgeDays`.
  * Reads `costLogRetentionDays` from AiOrchestrationSettings if not passed.
  * Skips if no value is configured.
@@ -121,9 +153,29 @@ export async function pruneCostLogs(maxAgeDays?: number): Promise<PruneResult> {
   return { deleted: result.count };
 }
 
+/**
+ * Delete admin audit log rows older than `maxAgeDays`.
+ * Reads `auditLogRetentionDays` from AiOrchestrationSettings if not passed.
+ * Skips if no value is configured.
+ */
+export async function pruneAuditLogs(maxAgeDays?: number): Promise<PruneResult> {
+  const days = maxAgeDays ?? (await resolveRetentionDays('auditLogRetentionDays'));
+  if (days === null) return { deleted: 0 };
+
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const result = await prisma.aiAdminAuditLog.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+
+  if (result.count > 0) {
+    logger.info('Admin audit log rows pruned', { deleted: result.count, maxAgeDays: days });
+  }
+  return { deleted: result.count };
+}
+
 /** Read a named retention column from the singleton settings row. */
 async function resolveRetentionDays(
-  field: 'webhookRetentionDays' | 'costLogRetentionDays'
+  field: 'webhookRetentionDays' | 'costLogRetentionDays' | 'auditLogRetentionDays'
 ): Promise<number | null> {
   try {
     const row = await prisma.aiOrchestrationSettings.findUnique({

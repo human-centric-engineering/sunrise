@@ -242,7 +242,7 @@ describe('logAdminAction', () => {
     expect(result).toBeUndefined();
   });
 
-  it('passes metadata as-is without mutation or serialisation', async () => {
+  it('passes non-secret metadata through structurally unchanged', async () => {
     // Arrange
     vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
     const complexMetadata = { nested: { a: [1, 2, null] }, x: null };
@@ -256,8 +256,38 @@ describe('logAdminAction', () => {
     });
     await flushPromises();
 
-    // Assert — the exact metadata object is forwarded to prisma unchanged
+    // Assert — structural equality preserved; no secret keys to redact
     const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
     expect(call.data.metadata).toEqual(complexMetadata);
+  });
+
+  it('redacts secret-matching keys in metadata at any nesting depth', async () => {
+    // Arrange
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+
+    // Act — secrets at top level, nested in a safe container, and a whole
+    // secret-named subtree that must be redacted wholesale
+    logAdminAction({
+      userId: 'u8',
+      action: 'webhook.create',
+      entityType: 'webhook',
+      metadata: {
+        password: 'hunter2',
+        safe: 'keep-me',
+        headers: { authorization: 'Bearer x', 'x-trace': 'abc', apiKey: 'leak' },
+        credentials: [{ apiKey: 'k1' }, { apiKey: 'k2' }],
+      },
+    });
+    await flushPromises();
+
+    // Assert — secret-named keys are redacted wholesale (matching sanitizeChanges
+    // behaviour); non-secret containers are walked and inner secrets redacted
+    const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
+    expect(call.data.metadata).toEqual({
+      password: '[REDACTED]',
+      safe: 'keep-me',
+      headers: { authorization: 'Bearer x', 'x-trace': 'abc', apiKey: '[REDACTED]' },
+      credentials: '[REDACTED]',
+    });
   });
 });

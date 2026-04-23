@@ -50,7 +50,10 @@ function makeSearchResult(overrides: Record<string, unknown> = {}) {
     conversationTitle: 'Test Conversation',
     agentId: 'agent-1',
     userId: 'user-1',
+    conversationIsActive: true,
     conversationCreatedAt: new Date('2025-01-01'),
+    conversationUpdatedAt: new Date('2025-01-02'),
+    messageCount: 5,
     messageId: 'msg-1',
     messageRole: 'assistant',
     messageContent: 'This is the matching message content',
@@ -206,5 +209,51 @@ describe('GET /conversations/search', () => {
 
     expect(threshold).toBe(0.5);
     expect(limit).toBe(5);
+  });
+
+  it('signals semanticAvailable:false when the embedder throws', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(embedText).mockRejectedValue(new Error('no embedding provider configured'));
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    expect(response.status).toBe(200);
+
+    const body = await parseJson<{
+      data: unknown[];
+      meta: { total: number; semanticAvailable: boolean };
+    }>(response);
+
+    expect(body.data).toHaveLength(0);
+    expect(body.meta.total).toBe(0);
+    expect(body.meta.semanticAvailable).toBe(false);
+    expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('includes list-shape fields (isActive, updatedAt, _count) for the UI', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+      makeSearchResult({
+        conversationIsActive: false,
+        conversationUpdatedAt: new Date('2025-02-10'),
+        messageCount: 7,
+      }),
+    ]);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    const body = await parseJson<{
+      data: Array<{
+        isActive: boolean;
+        updatedAt: string;
+        _count: { messages: number };
+        agentId: string;
+      }>;
+      meta: { semanticAvailable: boolean };
+    }>(response);
+
+    expect(body.data[0].isActive).toBe(false);
+    expect(body.data[0]._count.messages).toBe(7);
+    expect(body.data[0].agentId).toBe('agent-1');
+    expect(body.data[0].updatedAt).toBeTruthy();
+    expect(body.meta.semanticAvailable).toBe(true);
   });
 });

@@ -8,10 +8,12 @@
  * Key security assertions:
  * - Admin auth required (401/403 otherwise)
  * - Rate limited (adminLimiter)
- * - Empty body rejected by Zod refine (at least one filter required) — CRITICAL
- *   safety net preventing accidental "delete all conversations" calls.
- * - WHERE clause always includes userId: session.user.id — admins cannot
- *   clear other users' conversations.
+ * - Empty body rejected by Zod refine (at least one of olderThan/agentId required) —
+ *   CRITICAL safety net preventing accidental "delete all conversations" calls.
+ * - Default scope is `userId: session.user.id` (caller's own conversations).
+ * - Opt-in cross-user scope via `userId: <cuid>` (single user) or `allUsers: true`.
+ *   `userId` and `allUsers` are mutually exclusive; `allUsers: true` alone is rejected.
+ * - Cross-user deletions emit an AiAdminAuditLog entry (`conversation.bulk_clear`).
  * - olderThan filter adds createdAt: { lt: Date } to WHERE clause.
  * - agentId filter adds agentId to WHERE clause.
  * - deleteMany is called (not single delete).
@@ -45,6 +47,10 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
@@ -59,11 +65,13 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwu2';
+const OTHER_USER_ID = 'cmjbv4i3x00003wsloputgwu3';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -216,6 +224,88 @@ describe('POST /api/v1/admin/orchestration/conversations/clear', () => {
       await POST(makePostRequest({ agentId: AGENT_ID }));
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('Cross-user clear (targeted userId)', () => {
+    it('scopes WHERE to the supplied userId and audit-logs the bulk clear', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.deleteMany).mockResolvedValue({ count: 4 });
+
+      const response = await POST(makePostRequest({ userId: OTHER_USER_ID, agentId: AGENT_ID }));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(prisma.aiConversation.deleteMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: OTHER_USER_ID, agentId: AGENT_ID }),
+        })
+      );
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'conversation.bulk_clear',
+          metadata: expect.objectContaining({
+            scope: 'user',
+            targetUserId: OTHER_USER_ID,
+            deletedCount: 4,
+          }),
+        })
+      );
+    });
+  });
+
+  describe('Cross-user clear (allUsers: true)', () => {
+    it('omits the userId predicate and audit-logs the bulk clear', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.deleteMany).mockResolvedValue({ count: 12 });
+
+      const response = await POST(
+        makePostRequest({ allUsers: true, olderThan: '2025-01-01T00:00:00Z' })
+      );
+
+      expect(response.status).toBe(200);
+      const where = vi.mocked(prisma.aiConversation.deleteMany).mock.calls[0][0]!.where;
+      expect(where).not.toHaveProperty('userId');
+      expect(where).toHaveProperty('createdAt');
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'conversation.bulk_clear',
+          metadata: expect.objectContaining({ scope: 'all', deletedCount: 12 }),
+        })
+      );
+    });
+
+    it('returns 400 when allUsers:true has no narrowing filter', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest({ allUsers: true }));
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(prisma.aiConversation.deleteMany)).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when userId and allUsers are both set', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makePostRequest({
+          userId: OTHER_USER_ID,
+          allUsers: true,
+          agentId: AGENT_ID,
+        })
+      );
+
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe('Self-scoped clear does NOT emit audit log', () => {
+    it('omits logAdminAction when no cross-user target is supplied', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.deleteMany).mockResolvedValue({ count: 1 });
+
+      await POST(makePostRequest({ agentId: AGENT_ID }));
+
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
     });
   });
 });

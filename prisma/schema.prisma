@@ -469,7 +469,7 @@ model AiEventHook {
   id        String   @id @default(cuid())
   name      String
   eventType String   @db.VarChar(100) // e.g. "conversation.started", "workflow.completed"
-  action    Json     // { type: 'webhook', url, headers } or { type: 'internal', handler }
+  action    Json     // { type: 'webhook', url, headers }
   filter    Json?    // optional event filtering e.g. { agentSlug: 'support-bot' }
   isEnabled Boolean  @default(true)
   createdBy String
@@ -477,11 +477,35 @@ model AiEventHook {
   updatedAt DateTime @updatedAt
 
   // Relations
-  creator User @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+  creator    User                  @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+  deliveries AiEventHookDelivery[]
 
   @@index([eventType])
   @@index([isEnabled])
   @@map("ai_event_hook")
+}
+
+// Delivery history / retry queue for webhook-type AiEventHook dispatches.
+// Internal handlers run in-process and are not tracked here.
+model AiEventHookDelivery {
+  id               String    @id @default(cuid())
+  hookId           String
+  eventType        String
+  payload          Json
+  status           String    @default("pending") // pending, delivered, failed, exhausted
+  attempts         Int       @default(0)
+  lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  lastResponseCode Int?
+  lastError        String?   @db.Text
+  createdAt        DateTime  @default(now())
+
+  hook AiEventHook @relation(fields: [hookId], references: [id], onDelete: Cascade)
+
+  @@index([hookId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("ai_event_hook_delivery")
 }
 
 // Per-user-per-agent key-value memory (preferences, prior topics, facts)
@@ -808,6 +832,7 @@ model AiOrchestrationSettings {
   outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   webhookRetentionDays       Int?
   costLogRetentionDays       Int?
+  auditLogRetentionDays      Int?
   maxConversationsPerUser    Int?
   maxMessagesPerConversation Int?
   escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }

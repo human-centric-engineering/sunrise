@@ -90,6 +90,8 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks/:id/test`                | POST               | Send a test delivery to verify webhook endpoint         | 5.1     |
 | `/webhooks/:id/deliveries`          | GET                | List delivery history for a subscription                | 5.1     |
 | `/webhooks/deliveries/:id/retry`    | POST               | Retry a failed delivery                                 | 5.1     |
+| `/hooks/:id/deliveries`             | GET                | Paginated delivery history for an event hook            | 5.1     |
+| `/hooks/deliveries/:id/retry`       | POST               | Retry a failed / exhausted event-hook delivery          | 5.1     |
 | `/analytics/engagement`             | GET                | Conversation volume, avg length, retention              | 6       |
 | `/analytics/topics`                 | GET                | Popular topics grouped by frequency                     | 6       |
 | `/analytics/unanswered`             | GET                | Messages with hedging phrases / low confidence          | 6       |
@@ -616,13 +618,21 @@ Paginated. Same ownership check.
 Bulk delete by filter. Body validated by `clearConversationsBodySchema`:
 
 ```jsonc
-{ "olderThan": "2025-01-01T00:00:00Z" }    // or
-{ "agentId": "<cuid>" }                     // or both
+{ "olderThan": "2025-01-01T00:00:00Z" }                      // caller's own
+{ "agentId": "<cuid>" }                                       // caller's own
+{ "agentId": "<cuid>", "userId": "<cuid>" }                  // target that user
+{ "olderThan": "2025-01-01T00:00:00Z", "allUsers": true }    // all users, narrowed by date
 ```
 
-**At least one of `olderThan` or `agentId` is required** — a Zod `.refine()` rejects empty bodies. This is deliberate: an empty-body "delete everything" call is a common tooling mistake; the schema makes it impossible. The `WHERE` clause is hardcoded to `{ userId: session.user.id, ...filters }` — `userId` is never an input. Cross-user bulk delete is impossible by construction.
+**At least one of `olderThan` or `agentId` is required** — a Zod `.refine()` rejects empty bodies and `allUsers: true` alone. This is deliberate: an empty-body or unscoped "delete everything" call is a common tooling mistake; the schema makes it impossible.
 
-Returns `{ deletedCount }`.
+Scope:
+
+- default → caller's own conversations (`userId = session.user.id`)
+- `userId` → a specific user
+- `allUsers: true` → across all users (mutually exclusive with `userId`)
+
+Cross-user deletions emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`). Returns `{ deletedCount }`.
 
 ---
 

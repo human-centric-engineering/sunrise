@@ -8,6 +8,10 @@
  * best-matching message, with optional filters for agent, user,
  * and date range.
  *
+ * When no embedding provider is configured (or embedding fails), returns
+ * `{ success: true, data: [], meta: { semanticAvailable: false } }` so the
+ * caller can fall back to lexical `?messageSearch=` on the list endpoint.
+ *
  * Authentication: Admin role required.
  */
 
@@ -42,8 +46,18 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   const { q, agentId, userId, dateFrom, dateTo, limit, threshold } = parsed.data;
 
-  // Embed the search query
-  const queryEmbedding = await embedText(q, 'query');
+  // Embed the search query. If no provider is configured or the call
+  // fails, signal `semanticAvailable: false` so the caller can fall back
+  // to lexical search.
+  let queryEmbedding: number[];
+  try {
+    queryEmbedding = await embedText(q, 'query');
+  } catch (err: unknown) {
+    log.warn('Conversation semantic search unavailable — embedding failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return successResponse([], { total: 0, semanticAvailable: false });
+  }
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
   // Build dynamic WHERE conditions
@@ -81,7 +95,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       c.title           AS "conversationTitle",
       c."agentId",
       c."userId",
+      c."isActive"      AS "conversationIsActive",
       c."createdAt"     AS "conversationCreatedAt",
+      c."updatedAt"     AS "conversationUpdatedAt",
+      (SELECT COUNT(*)::int FROM ai_message m2 WHERE m2."conversationId" = c.id) AS "messageCount",
       m.id              AS "messageId",
       m.role            AS "messageRole",
       m.content         AS "messageContent",
@@ -105,7 +122,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       conversationTitle: string | null;
       agentId: string;
       userId: string;
+      conversationIsActive: boolean;
       conversationCreatedAt: Date;
+      conversationUpdatedAt: Date;
+      messageCount: number;
       messageId: string;
       messageRole: string;
       messageContent: string;
@@ -134,8 +154,12 @@ export const GET = withAdminAuth(async (request, _session) => {
       conversationId: r.conversationId,
       title: r.conversationTitle,
       agent: { id: r.agentId, name: r.agentName, slug: r.agentSlug },
+      agentId: r.agentId,
       userId: r.userId,
+      isActive: r.conversationIsActive,
       createdAt: r.conversationCreatedAt,
+      updatedAt: r.conversationUpdatedAt,
+      _count: { messages: r.messageCount },
       bestMatch: {
         messageId: r.messageId,
         role: r.messageRole,
@@ -145,5 +169,5 @@ export const GET = withAdminAuth(async (request, _session) => {
       },
     }));
 
-  return successResponse(grouped, { total: grouped.length });
+  return successResponse(grouped, { total: grouped.length, semanticAvailable: true });
 });

@@ -67,6 +67,10 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   processPendingRetries: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  processPendingHookRetries: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/engine/execution-reaper', () => ({
   reapZombieExecutions: vi.fn(),
 }));
@@ -84,6 +88,7 @@ vi.mock('@/lib/orchestration/retention', () => ({
 import { auth } from '@/lib/auth/config';
 import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
+import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
@@ -118,13 +123,16 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       errors: [],
     });
     vi.mocked(processPendingRetries).mockResolvedValue(3);
+    vi.mocked(processPendingHookRetries).mockResolvedValue(2);
     vi.mocked(reapZombieExecutions).mockResolvedValue({ reaped: 1 });
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 5, failed: 0 });
     vi.mocked(enforceRetentionPolicies).mockResolvedValue({
       deleted: 10,
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
+      hookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
+      auditLogsDeleted: 0,
     });
     vi.mocked(processPendingExecutions).mockResolvedValue({
       recovered: 0,
@@ -159,13 +167,16 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.success).toBe(true);
     expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
     expect(body.data.webhookRetries).toBe(3);
+    expect(body.data.hookRetries).toBe(2);
     expect(body.data.zombieReaper).toEqual({ reaped: 1 });
     expect(body.data.embeddingBackfill).toEqual({ processed: 5, failed: 0 });
     expect(body.data.retention).toEqual({
       deleted: 10,
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
+      hookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
+      auditLogsDeleted: 0,
     });
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });
@@ -205,6 +216,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // None of the maintenance functions should have been called
     expect(processDueSchedules).not.toHaveBeenCalled();
     expect(processPendingRetries).not.toHaveBeenCalled();
+    expect(processPendingHookRetries).not.toHaveBeenCalled();
     expect(reapZombieExecutions).not.toHaveBeenCalled();
   });
 });

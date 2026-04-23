@@ -41,6 +41,8 @@ const ENTITY_TYPES = [
   { value: 'agent', label: 'Agents' },
   { value: 'workflow', label: 'Workflows' },
   { value: 'capability', label: 'Capabilities' },
+  { value: 'provider', label: 'Providers' },
+  { value: 'mcp_api_key', label: 'MCP API keys' },
   { value: 'knowledge_document', label: 'Knowledge' },
   { value: 'settings', label: 'Settings' },
   { value: 'experiment', label: 'Experiments' },
@@ -72,15 +74,25 @@ export function AuditLogView() {
   const [loading, setLoading] = useState(true);
   const [entityType, setEntityType] = useState('all');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const limit = 25;
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search]);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (entityType !== 'all') params.set('entityType', entityType);
+      if (debouncedSearch) params.set('q', debouncedSearch);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
       if (!res.ok) return;
       const json = (await res.json()) as {
@@ -95,22 +107,13 @@ export function AuditLogView() {
     } finally {
       setLoading(false);
     }
-  }, [page, entityType]);
+  }, [page, entityType, debouncedSearch]);
 
   useEffect(() => {
     void fetchEntries();
   }, [fetchEntries]);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
-
-  const filtered = search
-    ? entries.filter(
-        (e) =>
-          e.action.toLowerCase().includes(search.toLowerCase()) ||
-          (e.entityName ?? '').toLowerCase().includes(search.toLowerCase()) ||
-          e.user.name.toLowerCase().includes(search.toLowerCase())
-      )
-    : entries;
 
   return (
     <div className="space-y-6">
@@ -166,14 +169,14 @@ export function AuditLogView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.length === 0 ? (
+            {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
                   {loading ? 'Loading...' : 'No audit entries found.'}
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((entry) => (
+              entries.map((entry) => (
                 <TableRow
                   key={entry.id}
                   className="cursor-pointer"

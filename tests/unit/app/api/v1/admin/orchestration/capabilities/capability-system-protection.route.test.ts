@@ -55,6 +55,11 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(() => null),
+}));
+
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';

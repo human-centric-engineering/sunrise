@@ -492,6 +492,8 @@ export interface OrchestrationSettings {
   webhookRetentionDays: number | null;
   /** Days to retain cost logs, or `null` for no auto-cleanup. */
   costLogRetentionDays: number | null;
+  /** Days to retain admin audit log rows, or `null` for no auto-cleanup. */
+  auditLogRetentionDays: number | null;
   /** Max active conversations per user per agent, or `null` for unlimited. */
   maxConversationsPerUser: number | null;
   /** Max messages per conversation, or `null` for unlimited. */

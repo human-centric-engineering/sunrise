@@ -83,6 +83,7 @@ export function hydrateSettings(row: {
   outputGuardMode: string | null;
   webhookRetentionDays: number | null;
   costLogRetentionDays: number | null;
+  auditLogRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   escalationConfig?: Prisma.JsonValue | null;
@@ -116,6 +117,7 @@ export function hydrateSettings(row: {
       outputMode && VALID_OUTPUT_GUARD_MODES.has(outputMode) ? outputMode : 'log_only',
     webhookRetentionDays: row.webhookRetentionDays,
     costLogRetentionDays: row.costLogRetentionDays,
+    auditLogRetentionDays: row.auditLogRetentionDays,
     maxConversationsPerUser: row.maxConversationsPerUser,
     maxMessagesPerConversation: row.maxMessagesPerConversation,
     escalationConfig: parseEscalationConfig(row.escalationConfig),

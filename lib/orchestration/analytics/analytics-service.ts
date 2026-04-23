@@ -10,20 +10,12 @@
 
 import { prisma } from '@/lib/db/client';
 import type { AnalyticsQuery } from '@/lib/validations/orchestration';
+import { resolveAnalyticsDateRange } from '@/lib/orchestration/analytics/date-range';
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
 
-interface DateRange {
-  from: Date;
-  to: Date;
-}
-
-function resolveDateRange(query: AnalyticsQuery): DateRange {
-  const to = query.to ? new Date(query.to) : new Date();
-  const from = query.from
-    ? new Date(query.from)
-    : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-  return { from, to };
+function resolveDateRange(query: AnalyticsQuery) {
+  return resolveAnalyticsDateRange(query);
 }
 
 function agentFilter(agentId?: string) {

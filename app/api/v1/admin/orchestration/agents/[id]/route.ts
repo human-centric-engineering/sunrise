@@ -23,6 +23,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { logger } from '@/lib/logging';
 import {
   systemInstructionsHistorySchema,
@@ -204,6 +205,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         agent as unknown as Record<string, unknown>
       ),
       clientIp: clientIP,
+    });
+
+    emitHookEvent('agent.updated', {
+      agentId: id,
+      agentSlug: agent.slug,
+      fieldsChanged: Object.keys(data),
     });
 
     const response = successResponse(agent);

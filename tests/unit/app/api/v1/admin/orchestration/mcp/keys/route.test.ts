@@ -57,6 +57,11 @@ vi.mock('@/lib/orchestration/mcp', () => ({
   generateApiKey: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(() => null),
+}));
+
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';

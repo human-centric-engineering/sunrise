@@ -1351,17 +1351,28 @@ export const conversationExportQuerySchema = z.object({
 /**
  * Clear conversations body (POST /admin/orchestration/conversations/clear).
  *
- * At least one filter must be supplied — an empty body is rejected to
- * prevent accidental "delete all my conversations" calls. `userId` is
- * never an input; the route hardcodes `session.user.id`.
+ * At least one of `olderThan` or `agentId` must be supplied — an empty
+ * body is rejected to prevent accidental "delete everything" calls.
+ *
+ * Scope:
+ *   - default: caller's own conversations (`session.user.id`)
+ *   - `userId`: a specific other user's conversations
+ *   - `allUsers: true`: cross-user (scoped by `olderThan` / `agentId`)
+ *
+ * `userId` and `allUsers` are mutually exclusive.
  */
 export const clearConversationsBodySchema = z
   .object({
     olderThan: z.string().datetime({ offset: true }).optional(),
     agentId: cuidSchema.optional(),
+    userId: cuidSchema.optional(),
+    allUsers: z.literal(true).optional(),
   })
   .refine((v) => v.olderThan !== undefined || v.agentId !== undefined, {
     message: 'At least one of `olderThan` or `agentId` must be provided',
+  })
+  .refine((v) => !(v.userId !== undefined && v.allUsers === true), {
+    message: '`userId` and `allUsers` are mutually exclusive',
   });
 
 /** List knowledge documents query (GET /admin/orchestration/knowledge/documents). */
@@ -1595,6 +1606,13 @@ export const updateOrchestrationSettingsSchema = z
       .max(365, 'Cost log retention must be at most 365 days')
       .nullable()
       .optional(),
+    auditLogRetentionDays: z
+      .number()
+      .int()
+      .positive('Audit log retention must be a positive number of days')
+      .max(3650, 'Audit log retention must be at most 3650 days')
+      .nullable()
+      .optional(),
     maxConversationsPerUser: z
       .number()
       .int()
@@ -1622,6 +1640,7 @@ export const updateOrchestrationSettingsSchema = z
       v.outputGuardMode !== undefined ||
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
+      v.auditLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
       v.escalationConfig !== undefined,
@@ -2014,4 +2033,5 @@ export const listAuditLogQuerySchema = paginationQuerySchema.extend({
   userId: z.string().trim().max(50).optional(),
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
+  q: z.string().trim().min(1).max(100).optional(),
 });

@@ -109,6 +109,7 @@ function makeSettingsRow(
     outputGuardMode: string | null;
     webhookRetentionDays: number | null;
     costLogRetentionDays: number | null;
+    auditLogRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
   }> = {}
@@ -131,6 +132,7 @@ function makeSettingsRow(
     outputGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
+    auditLogRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     createdAt: NOW,
@@ -459,6 +461,23 @@ describe('Admin Orchestration — /settings', () => {
       expect(res.status).toBe(200);
       const body = await parseJson<{ data: { costLogRetentionDays: number | null } }>(res);
       expect(body.data.costLogRetentionDays).toBe(90);
+    });
+
+    it('updates auditLogRetentionDays', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ auditLogRetentionDays: 365 }) as never
+      );
+
+      const res = await PATCH(makePatch({ auditLogRetentionDays: 365 }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { auditLogRetentionDays: number | null } }>(res);
+      expect(body.data.auditLogRetentionDays).toBe(365);
+    });
+
+    it('rejects auditLogRetentionDays above 3650 (400)', async () => {
+      const res = await PATCH(makePatch({ auditLogRetentionDays: 3651 }));
+      expect(res.status).toBe(400);
     });
 
     it('updates maxConversationsPerUser', async () => {

@@ -1,6 +1,6 @@
 # Event Hooks
 
-In-process event dispatch for orchestration lifecycle events. Admins configure hooks that fire on events like `workflow.completed` or `message.created`, routing them to either an outbound webhook URL or a registered in-process handler.
+In-process event dispatch for orchestration lifecycle events. Admins configure hooks that fire on events like `workflow.completed` or `message.created`, routing them to an outbound webhook URL.
 
 > **Source of truth:** `lib/orchestration/hooks/`. Update this doc when those files change.
 
@@ -8,18 +8,18 @@ In-process event dispatch for orchestration lifecycle events. Admins configure h
 
 These are two different subsystems — don't confuse them:
 
-| System                     | Model                                         | Purpose                                                      | Signing                                 | Retry                            |
-| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | --------------------------------------- | -------------------------------- |
-| **Event Hooks** (this doc) | `AiEventHook`                                 | Lightweight fire-and-forget dispatch on lifecycle events     | **None** — plain POST with user headers | **None**                         |
-| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field          | Retry queue via maintenance tick |
+| System                     | Model                                         | Purpose                                                      | Signing                                 | Retry                     |
+| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | --------------------------------------- | ------------------------- |
+| **Event Hooks** (this doc) | `AiEventHook` / `AiEventHookDelivery`         | Lightweight fire-and-forget dispatch on lifecycle events     | **None** — plain POST with user headers | 3 attempts (10s/60s/300s) |
+| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field          | 3 attempts (10s/60s/300s) |
 
-If you need HMAC signing or guaranteed delivery, use the webhook subscriptions subsystem — see [Webhook Management UI](../admin/orchestration-webhooks.md).
+If you need HMAC signing, use the webhook subscriptions subsystem — see [Webhook Management UI](../admin/orchestration-webhooks.md).
 
 ## Module Layout
 
 ```
 lib/orchestration/hooks/
-├── registry.ts   # emitHookEvent, registerInternalHandler, invalidateHookCache
+├── registry.ts   # emitHookEvent, invalidateHookCache
 └── types.ts      # HOOK_EVENT_TYPES, HookAction, HookFilter, HookEventPayload
 ```
 
@@ -27,32 +27,28 @@ lib/orchestration/hooks/
 
 `AiEventHook` — stored in `ai_event_hook`:
 
-| Field       | Type         | Notes                                                                   |
-| ----------- | ------------ | ----------------------------------------------------------------------- |
-| `id`        | CUID         | Primary key                                                             |
-| `name`      | String       | Human label (max 200)                                                   |
-| `eventType` | VarChar(100) | One of `HOOK_EVENT_TYPES` (indexed)                                     |
-| `action`    | JSON         | `{ type: 'webhook', url, headers? }` or `{ type: 'internal', handler }` |
-| `filter`    | JSON?        | Optional — equality-match keys on `payload.data`                        |
-| `isEnabled` | Boolean      | Indexed. Only enabled hooks load into the cache.                        |
-| `createdBy` | FK → User    |                                                                         |
+| Field       | Type         | Notes                                            |
+| ----------- | ------------ | ------------------------------------------------ |
+| `id`        | CUID         | Primary key                                      |
+| `name`      | String       | Human label (max 200)                            |
+| `eventType` | VarChar(100) | One of `HOOK_EVENT_TYPES` (indexed)              |
+| `action`    | JSON         | `{ type: 'webhook', url, headers? }`             |
+| `filter`    | JSON?        | Optional — equality-match keys on `payload.data` |
+| `isEnabled` | Boolean      | Indexed. Only enabled hooks load into the cache. |
+| `createdBy` | FK → User    |                                                  |
 
 ## Event Types
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type               | Currently Emitted By                               |
-| ------------------------ | -------------------------------------------------- |
-| `workflow.started`       | `lib/orchestration/engine/orchestration-engine.ts` |
-| `workflow.completed`     | `lib/orchestration/engine/orchestration-engine.ts` |
-| `workflow.failed`        | `lib/orchestration/engine/orchestration-engine.ts` |
-| `message.created`        | `lib/orchestration/chat/streaming-handler.ts`      |
-| `conversation.started`   | _Not emitted anywhere in current codebase_         |
-| `conversation.completed` | _Not emitted anywhere in current codebase_         |
-| `agent.updated`          | _Not emitted anywhere in current codebase_         |
-| `budget.warning`         | _Not emitted anywhere in current codebase_         |
-
-Hooks can be configured for unemitted types — they simply never fire until a caller of `emitHookEvent()` is added.
+| Event Type             | Currently Emitted By                                  |
+| ---------------------- | ----------------------------------------------------- |
+| `workflow.started`     | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.completed`   | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.failed`      | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `message.created`      | `lib/orchestration/chat/streaming-handler.ts`         |
+| `conversation.started` | `lib/orchestration/chat/streaming-handler.ts`         |
+| `agent.updated`        | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
 
 ## Event Payload
 
@@ -95,20 +91,6 @@ emitHookEvent('workflow.completed', {
 
 `emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch.
 
-## Registering an Internal Handler
-
-```ts
-import { registerInternalHandler } from '@/lib/orchestration/hooks/registry';
-
-registerInternalHandler('log-workflow-completion', async (payload) => {
-  logger.info('Workflow completed', payload.data);
-});
-```
-
-The handler is keyed by name. An admin then creates a hook with `action: { type: 'internal', handler: 'log-workflow-completion' }`. If the hook fires and no matching handler is registered, it logs `Hook internal handler not found` and drops the event.
-
-**Note:** As of this writing, no `registerInternalHandler` calls exist outside tests. The internal-action code path is wired up but unused.
-
 ## Webhook Action
 
 ```ts
@@ -122,10 +104,12 @@ The handler is keyed by name. An admin then creates a hook with `action: { type:
 
 Dispatch behaviour (`dispatchWebhook`):
 
-- `POST` with `Content-Type: application/json` plus any user-supplied headers
+- Creates an `AiEventHookDelivery` record per dispatch (status `pending` → `delivered` / `failed` / `exhausted`)
+- `POST` with `Content-Type: application/json`, `X-Hook-Event: <eventType>`, plus any user-supplied headers
 - Body is the full `HookEventPayload`
 - 10-second timeout via `AbortSignal.timeout(10_000)`
-- **No signing, no retry, no delivery log** — a non-2xx response is logged and discarded
+- **No HMAC signing** — use webhook subscriptions for signed delivery
+- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)
 
 ## Cache Behaviour
@@ -139,15 +123,34 @@ Dispatch behaviour (`dispatchWebhook`):
 
 All routes require admin auth (`withAdminAuth`). Mutations are rate-limited via `adminLimiter`.
 
-| Method   | Path                                    | Description                                      |
-| -------- | --------------------------------------- | ------------------------------------------------ |
-| `GET`    | `/api/v1/admin/orchestration/hooks`     | Paginated list (`?page`, `?limit`, `?eventType`) |
-| `POST`   | `/api/v1/admin/orchestration/hooks`     | Create a hook                                    |
-| `GET`    | `/api/v1/admin/orchestration/hooks/:id` | Fetch one hook                                   |
-| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id` | Update (all fields optional)                     |
-| `DELETE` | `/api/v1/admin/orchestration/hooks/:id` | Hard delete                                      |
+| Method   | Path                                                     | Description                                                  |
+| -------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| `GET`    | `/api/v1/admin/orchestration/hooks`                      | Paginated list (`?page`, `?limit`, `?eventType`)             |
+| `POST`   | `/api/v1/admin/orchestration/hooks`                      | Create a hook                                                |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id`                  | Fetch one hook                                               |
+| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id`                  | Update (all fields optional)                                 |
+| `DELETE` | `/api/v1/admin/orchestration/hooks/:id`                  | Hard delete                                                  |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id/deliveries`       | Paginated delivery history (`?page`, `?pageSize`, `?status`) |
+| `POST`   | `/api/v1/admin/orchestration/hooks/deliveries/:id/retry` | Manually re-dispatch a `failed` / `exhausted` delivery       |
 
-Validation: `createHookSchema` / `updateHookSchema` in the route files use Zod with a discriminated union on `action.type`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
+Validation: `createHookSchema` / `updateHookSchema` in the route files enforce `action.type === 'webhook'`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
+
+### Deliveries
+
+Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action](#webhook-action) above for the lifecycle). The two delivery routes make that history queryable:
+
+- **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
+- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
+
+## Retention
+
+Delivery rows persist across process restarts so admins can audit failures and manually retry. They are pruned by `pruneHookDeliveries()` in `lib/orchestration/retention.ts`, invoked from the unified maintenance tick alongside the other retention sweeps.
+
+- **Setting**: shares the `webhookRetentionDays` column on `AiOrchestrationSettings` with outbound webhook subscriptions — event-hook deliveries and subscription deliveries are the same class of dispatch-audit data.
+- **Null setting → skip**: if `webhookRetentionDays` is unset the sweep is a no-op and rows accumulate indefinitely.
+- **Target table**: `AiEventHookDelivery`. Deletes rows whose `createdAt` is older than `now - webhookRetentionDays`.
+
+See [Retention Pruning](./scheduling.md#retention-pruning) for the full list of prune sweeps.
 
 ## Related Docs
 

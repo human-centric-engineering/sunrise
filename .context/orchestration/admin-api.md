@@ -89,6 +89,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/conversations/search`             | POST               | Semantic search across conversation messages              |
 | `/api/v1/admin/orchestration/hooks`                            | GET, POST          | List / create event hooks                                 |
 | `/api/v1/admin/orchestration/hooks/:id`                        | GET, PATCH, DELETE | Get / update / delete an event hook                       |
+| `/api/v1/admin/orchestration/hooks/:id/deliveries`             | GET                | Paginated delivery history for an event hook              |
+| `/api/v1/admin/orchestration/hooks/deliveries/:id/retry`       | POST               | Retry a `failed` / `exhausted` event-hook delivery        |
 | `/api/v1/admin/orchestration/observability/dashboard-stats`    | GET                | Aggregated observability metrics                          |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.
@@ -1003,11 +1005,17 @@ curl -X POST /api/v1/admin/orchestration/conversations/clear \
 **This is the single most dangerous endpoint in the orchestration admin surface.** Validated by `clearConversationsBodySchema`, which uses a Zod `.refine()` to **require at least one of `olderThan` or `agentId`**:
 
 - **Empty body → 400.** This is deliberate. An empty-body "delete everything" call is a common tooling mistake; the schema makes it impossible.
-- `{ olderThan }` — deletes the caller's conversations with `createdAt < olderThan`
-- `{ agentId }` — deletes the caller's conversations bound to that agent
+- `{ olderThan }` — conversations with `createdAt < olderThan`
+- `{ agentId }` — conversations bound to that agent
 - Both — AND-combined
 
-The `WHERE` clause is hardcoded to `{ userId: session.user.id, ...filters }` — `userId` is never an input. Cross-user bulk delete is impossible through this endpoint by construction. Returns `{ deletedCount }`. `AiMessage` rows cascade.
+**Scope** (optional, opt-in):
+
+- default → `userId = session.user.id` (caller's own conversations)
+- `{ userId: "<cuid>" }` → that specific user's conversations
+- `{ allUsers: true }` → across all users — still narrowed by the `olderThan` / `agentId` filters
+
+`userId` and `allUsers` are mutually exclusive. `allUsers: true` alone (no narrowing filter) is rejected by the same `.refine()` safety rail. Cross-user deletions (`userId` or `allUsers`) append an `AiAdminAuditLog` entry (`conversation.bulk_clear`). Returns `{ deletedCount }`. `AiMessage` rows cascade.
 
 ## Costs
 
