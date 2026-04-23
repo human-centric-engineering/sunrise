@@ -24,6 +24,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { generateApiKey } from '@/lib/orchestration/mcp/auth';
 import { mcpApiKeyRotateSchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { Prisma } from '@prisma/client';
 
 const SAFE_SELECT = {
@@ -74,6 +75,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     keyId: id,
     previousPrefix: existing.keyPrefix,
     newPrefix: prefix,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'mcp_api_key.rotate',
+    entityType: 'mcp_api_key',
+    entityId: id,
+    entityName: existing.name,
+    metadata: { previousPrefix: existing.keyPrefix, newPrefix: prefix },
+    clientIp: clientIP,
   });
 
   // plaintext is returned once only — never stored or logged

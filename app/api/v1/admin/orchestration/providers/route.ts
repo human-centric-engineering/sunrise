@@ -24,6 +24,7 @@ import {
 } from '@/lib/orchestration/llm/provider-manager';
 import { getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -101,6 +102,15 @@ export const POST = withAdminAuth(async (request, session) => {
       providerId: provider.id,
       slug: provider.slug,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'provider.create',
+      entityType: 'provider',
+      entityId: provider.id,
+      entityName: provider.name,
+      clientIp: clientIP,
     });
 
     return successResponse(

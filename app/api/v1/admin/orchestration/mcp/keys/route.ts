@@ -14,6 +14,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { generateApiKey } from '@/lib/orchestration/mcp';
 import { createApiKeySchema, listApiKeysQuerySchema } from '@/lib/validations/mcp';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
@@ -86,6 +87,16 @@ export const POST = withAdminAuth(async (request, session) => {
     keyId: key.id,
     keyPrefix: prefix,
     scopes: body.scopes,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'mcp_api_key.create',
+    entityType: 'mcp_api_key',
+    entityId: key.id,
+    entityName: key.name,
+    metadata: { keyPrefix: prefix, scopes: body.scopes },
+    clientIp: clientIP,
   });
 
   // Return plaintext once — it cannot be retrieved again

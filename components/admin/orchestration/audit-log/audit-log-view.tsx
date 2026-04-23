@@ -41,6 +41,8 @@ const ENTITY_TYPES = [
   { value: 'agent', label: 'Agents' },
   { value: 'workflow', label: 'Workflows' },
   { value: 'capability', label: 'Capabilities' },
+  { value: 'provider', label: 'Providers' },
+  { value: 'mcp_api_key', label: 'MCP API keys' },
   { value: 'knowledge_document', label: 'Knowledge' },
   { value: 'settings', label: 'Settings' },
   { value: 'experiment', label: 'Experiments' },

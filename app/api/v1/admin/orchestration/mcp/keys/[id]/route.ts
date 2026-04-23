@@ -15,6 +15,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { updateApiKeySchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
+import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const { id } = await params;
@@ -53,6 +54,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     changedKeys: Object.keys(body),
   });
 
+  logAdminAction({
+    userId: session.user.id,
+    action: 'mcp_api_key.update',
+    entityType: 'mcp_api_key',
+    entityId: id,
+    entityName: updated.name,
+    changes: computeChanges(
+      existing as unknown as Record<string, unknown>,
+      updated as unknown as Record<string, unknown>
+    ),
+    clientIp: clientIP,
+  });
+
   return successResponse(updated);
 });
 
@@ -75,6 +89,16 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     adminId: session.user.id,
     keyId: id,
     keyPrefix: existing.keyPrefix,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'mcp_api_key.delete',
+    entityType: 'mcp_api_key',
+    entityId: id,
+    entityName: existing.name,
+    metadata: { keyPrefix: existing.keyPrefix },
+    clientIp: clientIP,
   });
 
   return successResponse({ id, deleted: true });

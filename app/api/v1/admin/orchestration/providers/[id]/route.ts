@@ -27,6 +27,7 @@ import {
 } from '@/lib/orchestration/llm/provider-manager';
 import { updateProviderConfigSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseProviderId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -90,6 +91,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       fieldsChanged: Object.keys(data),
     });
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'provider.update',
+      entityType: 'provider',
+      entityId: id,
+      entityName: updated.name,
+      changes: computeChanges(
+        current as unknown as Record<string, unknown>,
+        updated as unknown as Record<string, unknown>
+      ),
+      clientIp: clientIP,
+    });
+
     return successResponse({
       ...updated,
       apiKeyPresent: isApiKeyEnvVarSet(updated.apiKeyEnvVar),
@@ -130,6 +144,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     providerId: id,
     slug: updated.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'provider.delete',
+    entityType: 'provider',
+    entityId: id,
+    entityName: updated.name,
+    clientIp: clientIP,
   });
 
   return successResponse({ id, isActive: false });

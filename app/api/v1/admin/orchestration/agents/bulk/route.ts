@@ -20,6 +20,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { bulkAgentActionSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -56,6 +57,15 @@ export const POST = withAdminAuth(async (request, session) => {
     requested: agentIds.length,
     affected,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: `agent.bulk.${action}`,
+    entityType: 'agent',
+    entityName: `Bulk ${action} (${affected}/${agentIds.length})`,
+    metadata: { action, requested: agentIds.length, affected, agentIds },
+    clientIp: clientIP,
   });
 
   return successResponse({ action, requested: agentIds.length, affected });
