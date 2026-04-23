@@ -17,12 +17,14 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type {
-  HookAction,
-  HookEventPayload,
-  HookEventType,
-  HookFilter,
-  WebhookAction,
+import {
+  HookEventPayloadSchema,
+  WebhookActionSchema,
+  type HookAction,
+  type HookEventPayload,
+  type HookEventType,
+  type HookFilter,
+  type WebhookAction,
 } from '@/lib/orchestration/hooks/types';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
@@ -65,15 +67,19 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
   const byType = new Map<string, CachedHook[]>();
 
   for (const hook of hooks) {
-    const action = hook.action as unknown;
-    if (!action || typeof action !== 'object' || !('type' in (action as Record<string, unknown>))) {
+    const parsedAction = WebhookActionSchema.safeParse(hook.action);
+    if (!parsedAction.success) {
+      logger.warn('Hook skipped: invalid action shape', {
+        hookId: hook.id,
+        issues: parsedAction.error.issues,
+      });
       continue;
     }
 
     const cached: CachedHook = {
       id: hook.id,
       eventType: hook.eventType,
-      action: action as HookAction,
+      action: parsedAction.data,
       filter: hook.filter as HookFilter | null,
     };
 
@@ -257,6 +263,34 @@ async function attemptDelivery(
 }
 
 /**
+ * Validate a stored delivery's `hook.action` and `payload` JSON before
+ * re-dispatching. If either fails validation the delivery is marked
+ * `exhausted` (malformed rows are not retriable) and `null` is returned.
+ */
+async function parseDeliveryForDispatch(delivery: {
+  id: string;
+  hook: { action: Prisma.JsonValue };
+  payload: Prisma.JsonValue;
+}): Promise<{ action: WebhookAction; payload: HookEventPayload } | null> {
+  const actionParsed = WebhookActionSchema.safeParse(delivery.hook.action);
+  const payloadParsed = HookEventPayloadSchema.safeParse(delivery.payload);
+  if (actionParsed.success && payloadParsed.success) {
+    return { action: actionParsed.data, payload: payloadParsed.data };
+  }
+
+  const lastError = !actionParsed.success ? 'invalid_action' : 'invalid_payload';
+  await prisma.aiEventHookDelivery.update({
+    where: { id: delivery.id },
+    data: { status: 'exhausted', nextRetryAt: null, lastError },
+  });
+  logger.warn('Hook delivery abandoned: invalid action or payload', {
+    deliveryId: delivery.id,
+    lastError,
+  });
+  return null;
+}
+
+/**
  * Schedule an in-process retry via setTimeout.
  *
  * The timeout is unref'd so it doesn't prevent Node from exiting. If the
@@ -282,21 +316,14 @@ function scheduleRetry(deliveryId: string, delayMs: number): void {
             return;
           }
 
-          const action = delivery.hook.action as unknown;
-          if (
-            !action ||
-            typeof action !== 'object' ||
-            (action as Record<string, unknown>).type !== 'webhook'
-          ) {
-            return;
-          }
-          const webhookAction = action as WebhookAction;
+          const parsed = await parseDeliveryForDispatch(delivery);
+          if (!parsed) return;
 
           await attemptDelivery(
             deliveryId,
-            webhookAction.url,
-            webhookAction.headers ?? null,
-            delivery.payload as unknown as HookEventPayload
+            parsed.action.url,
+            parsed.action.headers ?? null,
+            parsed.payload
           );
         } catch (err: unknown) {
           logger.error('Hook scheduled retry error', {
@@ -340,21 +367,14 @@ export async function processPendingHookRetries(): Promise<number> {
         return;
       }
 
-      const action = delivery.hook.action as unknown;
-      if (
-        !action ||
-        typeof action !== 'object' ||
-        (action as Record<string, unknown>).type !== 'webhook'
-      ) {
-        return;
-      }
-      const webhookAction = action as WebhookAction;
+      const parsed = await parseDeliveryForDispatch(delivery);
+      if (!parsed) return;
 
       await attemptDelivery(
         delivery.id,
-        webhookAction.url,
-        webhookAction.headers ?? null,
-        delivery.payload as unknown as HookEventPayload
+        parsed.action.url,
+        parsed.action.headers ?? null,
+        parsed.payload
       );
     })
   );
@@ -377,15 +397,8 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
   if (!delivery) return false;
   if (!delivery.hook.isEnabled) return false;
 
-  const action = delivery.hook.action as unknown;
-  if (
-    !action ||
-    typeof action !== 'object' ||
-    (action as Record<string, unknown>).type !== 'webhook'
-  ) {
-    return false;
-  }
-  const webhookAction = action as WebhookAction;
+  const parsed = await parseDeliveryForDispatch(delivery);
+  if (!parsed) return false;
 
   await prisma.aiEventHookDelivery.update({
     where: { id: deliveryId },
@@ -394,9 +407,9 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
 
   void attemptDelivery(
     deliveryId,
-    webhookAction.url,
-    webhookAction.headers ?? null,
-    delivery.payload as unknown as HookEventPayload
+    parsed.action.url,
+    parsed.action.headers ?? null,
+    parsed.payload
   );
   return true;
 }

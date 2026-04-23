@@ -5,6 +5,9 @@
  * used by the hook registry and dispatcher.
  */
 
+import { z } from 'zod';
+import { isSafeProviderUrl } from '@/lib/security/safe-url';
+
 /** All supported hook event types */
 export const HOOK_EVENT_TYPES = [
   'conversation.started',
@@ -17,21 +20,37 @@ export const HOOK_EVENT_TYPES = [
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
 
-/** Payload delivered with each hook event */
-export interface HookEventPayload {
-  eventType: HookEventType;
-  timestamp: string;
-  data: Record<string, unknown>;
-}
+/**
+ * Webhook action schema — dispatches an HTTP POST to an external URL.
+ *
+ * Used to validate Prisma JSON rows (`AiEventHook.action`) at dispatch
+ * time, so dispatch code can never trust a cast from the database.
+ */
+export const WebhookActionSchema = z.object({
+  type: z.literal('webhook'),
+  url: z
+    .string()
+    .url()
+    .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+  headers: z.record(z.string(), z.string()).optional(),
+});
 
-/** Webhook action — dispatches an HTTP POST to an external URL */
-export interface WebhookAction {
-  type: 'webhook';
-  url: string;
-  headers?: Record<string, string>;
-}
-
+export type WebhookAction = z.infer<typeof WebhookActionSchema>;
 export type HookAction = WebhookAction;
+
+/**
+ * Hook event payload schema.
+ *
+ * Used to validate Prisma JSON rows (`AiEventHookDelivery.payload`)
+ * before re-dispatching queued retries.
+ */
+export const HookEventPayloadSchema = z.object({
+  eventType: z.enum(HOOK_EVENT_TYPES),
+  timestamp: z.string().datetime(),
+  data: z.record(z.string(), z.unknown()),
+});
+
+export type HookEventPayload = z.infer<typeof HookEventPayloadSchema>;
 
 /** Filter criteria for selective hook firing */
 export interface HookFilter {
