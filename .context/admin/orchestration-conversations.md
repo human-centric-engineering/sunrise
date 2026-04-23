@@ -6,19 +6,19 @@ Admin UI for browsing, inspecting, tagging, and exporting AI agent conversations
 
 ## Quick Reference
 
-| What                       | Path                                                                                                                                                             |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| List page                  | `app/admin/orchestration/conversations/page.tsx`                                                                                                                 |
-| Detail page                | `app/admin/orchestration/conversations/[id]/page.tsx`                                                                                                            |
-| List table                 | `components/admin/orchestration/conversations-table.tsx`                                                                                                         |
-| Trace viewer               | `components/admin/orchestration/conversation-trace-viewer.tsx`                                                                                                   |
-| Tag editor                 | `components/admin/orchestration/conversation-tags.tsx`                                                                                                           |
-| List / read / patch / del  | `app/api/v1/admin/orchestration/conversations/`                                                                                                                  |
-| Messages (admin scope)     | `app/api/v1/admin/orchestration/conversations/[id]/messages/`                                                                                                    |
-| Export                     | `app/api/v1/admin/orchestration/conversations/export/`                                                                                                           |
-| Bulk clear                 | `app/api/v1/admin/orchestration/conversations/clear/`                                                                                                            |
-| Semantic search (API-only) | `app/api/v1/admin/orchestration/conversations/search/`                                                                                                           |
-| Validation schemas         | `lib/validations/orchestration.ts` (`listConversationsQuerySchema`, `updateConversationSchema`, `conversationExportQuerySchema`, `clearConversationsBodySchema`) |
+| What                      | Path                                                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| List page                 | `app/admin/orchestration/conversations/page.tsx`                                                                                                                 |
+| Detail page               | `app/admin/orchestration/conversations/[id]/page.tsx`                                                                                                            |
+| List table                | `components/admin/orchestration/conversations-table.tsx`                                                                                                         |
+| Trace viewer              | `components/admin/orchestration/conversation-trace-viewer.tsx`                                                                                                   |
+| Tag editor                | `components/admin/orchestration/conversation-tags.tsx`                                                                                                           |
+| List / read / patch / del | `app/api/v1/admin/orchestration/conversations/`                                                                                                                  |
+| Messages (admin scope)    | `app/api/v1/admin/orchestration/conversations/[id]/messages/`                                                                                                    |
+| Export                    | `app/api/v1/admin/orchestration/conversations/export/`                                                                                                           |
+| Bulk clear                | `app/api/v1/admin/orchestration/conversations/clear/`                                                                                                            |
+| Semantic search           | `app/api/v1/admin/orchestration/conversations/search/`                                                                                                           |
+| Validation schemas        | `lib/validations/orchestration.ts` (`listConversationsQuerySchema`, `updateConversationSchema`, `conversationExportQuerySchema`, `clearConversationsBodySchema`) |
 
 What admins can do from the UI:
 
@@ -30,7 +30,6 @@ What admins can do from the UI:
 
 What admins **cannot** do from the UI (API-only — no UI wiring):
 
-- Semantic search (`/conversations/search`). No button in the list view; only the lexical `q` + `messageSearch` filters are exposed.
 - Bulk clear (`/conversations/clear`). Endpoint exists and is smoke-tested, but no UI affordance calls it.
 - Filter by `tag`, `userId`, or `dateFrom` / `dateTo`. Supported by the list endpoint but not rendered in the toolbar.
 
@@ -59,9 +58,9 @@ Rows dim (`opacity-50`) while a refetch is in flight.
 All filter changes re-fetch page 1 from `/api/v1/admin/orchestration/conversations`.
 
 - **Title search** — debounced 300 ms → `?q=` (case-insensitive `contains` on `title`).
-- **"Search messages" checkbox** — swaps the query parameter to `?messageSearch=` which hits `messages: { some: { content: { contains, mode: 'insensitive' } } }` on the server. The placeholder text in the input flips to `"Search message content…"`. The two modes are mutually exclusive; toggling while a search term is present triggers an immediate refetch.
-- **Agent filter** — `?agentId=` (`all` omits the param).
-- **Active filter** — `?isActive=true|false` (`all` omits the param).
+- **"Search messages" checkbox** — routes to the pgvector-backed `/conversations/search?q=…` endpoint (with the current agent filter forwarded). Placeholder flips to `"Search message content…"`. If the server responds with `meta.semanticAvailable === false` (no embedding provider configured, or the embedding call threw), the table automatically re-fetches from the list endpoint using lexical `?messageSearch=` — no UI prompt. Semantic results come back un-paginated: `totalPages` is pinned to `1` so the pager doesn't render.
+- **Agent filter** — `?agentId=` (`all` omits the param). Forwarded to the semantic endpoint as well when "Search messages" is on.
+- **Active filter** — `?isActive=true|false` (`all` omits the param). Not forwarded to the semantic endpoint.
 
 No cross-user filter, date filter, or tag filter is exposed in the UI despite the endpoint accepting `userId`, `dateFrom`, `dateTo`, `tag`.
 

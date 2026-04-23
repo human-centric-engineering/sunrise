@@ -5,10 +5,12 @@
  *
  * Admin list view for AI conversations. Supports:
  *   - Title search (300ms debounce via ?q=)
- *   - Message content search (via ?messageSearch=)
+ *   - Message content search — semantic via `/conversations/search`
+ *     (pgvector) with automatic fallback to lexical `?messageSearch=`
+ *     when no embedding provider is configured.
  *   - Agent filter dropdown
  *   - Active/inactive filter
- *   - Pagination (prev/next)
+ *   - Pagination (prev/next) — disabled while a semantic search is active.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -101,6 +103,41 @@ export function ConversationsTable({
         const activeValue = overrides?.isActive !== undefined ? overrides.isActive : activeFilter;
         const msgSearch =
           overrides?.searchMessages !== undefined ? overrides.searchMessages : searchMessages;
+
+        // Semantic search path: when "Search messages" is on and there is
+        // a non-empty query, hit the pgvector-backed search endpoint first.
+        // If the server signals `semanticAvailable: false`, fall through to
+        // the lexical list endpoint below.
+        if (msgSearch && searchValue) {
+          const semanticParams = new URLSearchParams({ q: searchValue });
+          if (agentValue && agentValue !== 'all') semanticParams.set('agentId', agentValue);
+
+          const semanticRes = await fetch(
+            `${API.ADMIN.ORCHESTRATION.CONVERSATIONS_SEARCH}?${semanticParams.toString()}`,
+            { credentials: 'same-origin' }
+          );
+
+          if (semanticRes.ok) {
+            const semanticBody = await parseApiResponse<ConversationListItem[]>(semanticRes);
+            const semanticMeta = semanticBody.success
+              ? (semanticBody.meta as { semanticAvailable?: boolean } | undefined)
+              : undefined;
+            if (semanticBody.success && semanticMeta?.semanticAvailable !== false) {
+              setConversations(semanticBody.data);
+              // Semantic results come back un-paginated; pin meta to a
+              // single page so the pager doesn't render.
+              setMeta({
+                page: 1,
+                limit: meta.limit,
+                total: semanticBody.data.length,
+                totalPages: 1,
+              });
+              return;
+            }
+            // Otherwise: semanticAvailable === false → fall through to
+            // lexical `?messageSearch=` below.
+          }
+        }
 
         const params = new URLSearchParams({
           page: String(page),
