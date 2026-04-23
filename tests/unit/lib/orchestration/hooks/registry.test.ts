@@ -2,8 +2,8 @@
  * Tests: Event Hook Registry & Dispatcher
  *
  * Covers: emit → dispatch → webhook delivery (with persisted delivery records
- * and retry scheduling) and internal-handler paths. Also covers
- * `retryHookDelivery` and `processPendingHookRetries`.
+ * and retry scheduling). Also covers `retryHookDelivery` and
+ * `processPendingHookRetries`.
  *
  * @see lib/orchestration/hooks/registry.ts
  */
@@ -43,7 +43,6 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
   emitHookEvent,
-  registerInternalHandler,
   invalidateHookCache,
   retryHookDelivery,
   processPendingHookRetries,
@@ -160,50 +159,6 @@ describe('emitHookEvent', () => {
     emitHookEvent('message.created', { agentSlug: 'support-bot' });
     await vi.waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it('dispatches internal handlers by name without creating a delivery record', async () => {
-    const handler = vi.fn();
-    registerInternalHandler('test-handler', handler);
-
-    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
-      makeHook({
-        id: 'hook-2',
-        eventType: 'workflow.completed',
-        action: { type: 'internal', handler: 'test-handler' },
-      }),
-    ] as never);
-
-    emitHookEvent('workflow.completed', { workflowId: 'wf-1' });
-
-    await vi.waitFor(() => {
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eventType: 'workflow.completed',
-          data: { workflowId: 'wf-1' },
-        })
-      );
-    });
-    expect(prisma.aiEventHookDelivery.create).not.toHaveBeenCalled();
-  });
-
-  it('logs warning when internal handler is not registered', async () => {
-    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
-      makeHook({
-        id: 'hook-3',
-        eventType: 'agent.updated',
-        action: { type: 'internal', handler: 'nonexistent' },
-      }),
-    ] as never);
-
-    emitHookEvent('agent.updated', { agentId: 'agent-1' });
-
-    await vi.waitFor(() => {
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Hook internal handler not found',
-        expect.objectContaining({ handler: 'nonexistent' })
-      );
     });
   });
 
@@ -356,10 +311,10 @@ describe('retryHookDelivery', () => {
     expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
   });
 
-  it('returns false when hook is not a webhook action', async () => {
+  it('returns false when hook action is not a webhook (defensive against legacy data)', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
       ...makeDelivery({ status: 'exhausted' }),
-      hook: makeHook({ action: { type: 'internal', handler: 'x' } }),
+      hook: makeHook({ action: { type: 'legacy-internal', handler: 'x' } }),
     } as never);
 
     const result = await retryHookDelivery('del-1');

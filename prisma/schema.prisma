@@ -469,7 +469,7 @@ model AiEventHook {
   id        String   @id @default(cuid())
   name      String
   eventType String   @db.VarChar(100) // e.g. "conversation.started", "workflow.completed"
-  action    Json     // { type: 'webhook', url, headers } or { type: 'internal', handler }
+  action    Json     // { type: 'webhook', url, headers }
   filter    Json?    // optional event filtering e.g. { agentSlug: 'support-bot' }
   isEnabled Boolean  @default(true)
   createdBy String

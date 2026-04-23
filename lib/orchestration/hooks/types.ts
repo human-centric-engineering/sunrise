@@ -31,13 +31,7 @@ export interface WebhookAction {
   headers?: Record<string, string>;
 }
 
-/** Internal action — calls a registered in-process handler */
-export interface InternalAction {
-  type: 'internal';
-  handler: string;
-}
-
-export type HookAction = WebhookAction | InternalAction;
+export type HookAction = WebhookAction;
 
 /** Filter criteria for selective hook firing */
 export interface HookFilter {
@@ -46,6 +40,3 @@ export interface HookFilter {
   userId?: string;
   [key: string]: unknown;
 }
-
-/** Registered internal handler function */
-export type InternalHandler = (payload: HookEventPayload) => void | Promise<void>;

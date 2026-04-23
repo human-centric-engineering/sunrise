@@ -23,23 +23,14 @@ import { z } from 'zod';
 const createHookSchema = z.object({
   name: z.string().min(1).max(200),
   eventType: z.enum(HOOK_EVENT_TYPES),
-  action: z.discriminatedUnion('type', [
-    z.object({
-      type: z.literal('webhook'),
-      url: z
-        .string()
-        .url()
-        .refine(
-          (url) => isSafeProviderUrl(url),
-          'URL is not allowed (private or internal address)'
-        ),
-      headers: z.record(z.string(), z.string()).optional(),
-    }),
-    z.object({
-      type: z.literal('internal'),
-      handler: z.string().min(1),
-    }),
-  ]),
+  action: z.object({
+    type: z.literal('webhook'),
+    url: z
+      .string()
+      .url()
+      .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
   filter: z.record(z.string(), z.unknown()).nullable().optional(),
   isEnabled: z.boolean().optional().default(true),
 });

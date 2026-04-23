@@ -1,6 +1,6 @@
 # Event Hooks
 
-In-process event dispatch for orchestration lifecycle events. Admins configure hooks that fire on events like `workflow.completed` or `message.created`, routing them to either an outbound webhook URL or a registered in-process handler.
+In-process event dispatch for orchestration lifecycle events. Admins configure hooks that fire on events like `workflow.completed` or `message.created`, routing them to an outbound webhook URL.
 
 > **Source of truth:** `lib/orchestration/hooks/`. Update this doc when those files change.
 
@@ -19,7 +19,7 @@ If you need HMAC signing, use the webhook subscriptions subsystem — see [Webho
 
 ```
 lib/orchestration/hooks/
-├── registry.ts   # emitHookEvent, registerInternalHandler, invalidateHookCache
+├── registry.ts   # emitHookEvent, invalidateHookCache
 └── types.ts      # HOOK_EVENT_TYPES, HookAction, HookFilter, HookEventPayload
 ```
 
@@ -27,15 +27,15 @@ lib/orchestration/hooks/
 
 `AiEventHook` — stored in `ai_event_hook`:
 
-| Field       | Type         | Notes                                                                   |
-| ----------- | ------------ | ----------------------------------------------------------------------- |
-| `id`        | CUID         | Primary key                                                             |
-| `name`      | String       | Human label (max 200)                                                   |
-| `eventType` | VarChar(100) | One of `HOOK_EVENT_TYPES` (indexed)                                     |
-| `action`    | JSON         | `{ type: 'webhook', url, headers? }` or `{ type: 'internal', handler }` |
-| `filter`    | JSON?        | Optional — equality-match keys on `payload.data`                        |
-| `isEnabled` | Boolean      | Indexed. Only enabled hooks load into the cache.                        |
-| `createdBy` | FK → User    |                                                                         |
+| Field       | Type         | Notes                                            |
+| ----------- | ------------ | ------------------------------------------------ |
+| `id`        | CUID         | Primary key                                      |
+| `name`      | String       | Human label (max 200)                            |
+| `eventType` | VarChar(100) | One of `HOOK_EVENT_TYPES` (indexed)              |
+| `action`    | JSON         | `{ type: 'webhook', url, headers? }`             |
+| `filter`    | JSON?        | Optional — equality-match keys on `payload.data` |
+| `isEnabled` | Boolean      | Indexed. Only enabled hooks load into the cache. |
+| `createdBy` | FK → User    |                                                  |
 
 ## Event Types
 
@@ -91,20 +91,6 @@ emitHookEvent('workflow.completed', {
 
 `emitHookEvent` is **fire-and-forget**. It returns `void` immediately and swallows all dispatch errors with a `logger.warn`. Callers never await hook dispatch.
 
-## Registering an Internal Handler
-
-```ts
-import { registerInternalHandler } from '@/lib/orchestration/hooks/registry';
-
-registerInternalHandler('log-workflow-completion', async (payload) => {
-  logger.info('Workflow completed', payload.data);
-});
-```
-
-The handler is keyed by name. An admin then creates a hook with `action: { type: 'internal', handler: 'log-workflow-completion' }`. If the hook fires and no matching handler is registered, it logs `Hook internal handler not found` and drops the event.
-
-**Note:** As of this writing, no `registerInternalHandler` calls exist outside tests. The internal-action code path is wired up but unused.
-
 ## Webhook Action
 
 ```ts
@@ -126,8 +112,6 @@ Dispatch behaviour (`dispatchWebhook`):
 - On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)
 
-Internal-action hooks do **not** create delivery rows — they run synchronously in-process and have no retry semantics.
-
 ## Cache Behaviour
 
 - Enabled hooks load from the DB into a module-level `Map<eventType, CachedHook[]>`
@@ -147,7 +131,7 @@ All routes require admin auth (`withAdminAuth`). Mutations are rate-limited via 
 | `PATCH`  | `/api/v1/admin/orchestration/hooks/:id` | Update (all fields optional)                     |
 | `DELETE` | `/api/v1/admin/orchestration/hooks/:id` | Hard delete                                      |
 
-Validation: `createHookSchema` / `updateHookSchema` in the route files use Zod with a discriminated union on `action.type`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
+Validation: `createHookSchema` / `updateHookSchema` in the route files enforce `action.type === 'webhook'`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
 
 ## Related Docs
 

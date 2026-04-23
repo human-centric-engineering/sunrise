@@ -4,14 +4,11 @@
  * Loads enabled hooks from the database, caches them by event type,
  * and dispatches events to matching hooks.
  *
- * Webhook hooks send plain JSON HTTP POST requests with any admin-supplied
+ * Hooks send plain JSON HTTP POST requests with any admin-supplied
  * custom headers — payloads are not currently HMAC-signed. Each webhook
  * dispatch creates an `AiEventHookDelivery` record so admins can audit
  * delivery history and manually retry failures. Retries follow the same
  * backoff strategy as outbound webhooks (10s, 60s, 300s; 3 attempts total).
- *
- * Internal hooks call registered TypeScript handler functions. These run
- * in-process with no delivery record.
  *
  * Dispatch is fire-and-forget — failures are logged and persisted to the
  * delivery table but never propagate to the caller.
@@ -25,7 +22,6 @@ import type {
   HookEventPayload,
   HookEventType,
   HookFilter,
-  InternalHandler,
   WebhookAction,
 } from '@/lib/orchestration/hooks/types';
 
@@ -50,19 +46,6 @@ interface CachedHook {
 
 let hookCache: Map<string, CachedHook[]> | null = null;
 let cacheLoadedAt = 0;
-
-/** Registered internal handlers keyed by handler name */
-const internalHandlers = new Map<string, InternalHandler>();
-
-/**
- * Register an internal handler that can be referenced by event hooks.
- *
- * Call this at startup for any in-process hook handlers (e.g.,
- * analytics logging, cache invalidation).
- */
-export function registerInternalHandler(name: string, handler: InternalHandler): void {
-  internalHandlers.set(name, handler);
-}
 
 /**
  * Load enabled hooks from the database, grouped by event type.
@@ -157,8 +140,6 @@ async function dispatchToHooks(payload: HookEventPayload): Promise<void> {
 
     if (hook.action.type === 'webhook') {
       void dispatchWebhook(hook.id, hook.action, payload);
-    } else if (hook.action.type === 'internal') {
-      void dispatchInternal(hook.id, hook.action.handler, payload);
     }
   }
 }
@@ -182,28 +163,6 @@ async function dispatchWebhook(
     logger.warn('Hook webhook dispatch setup failed', {
       hookId,
       url: action.url,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-async function dispatchInternal(
-  hookId: string,
-  handlerName: string,
-  payload: HookEventPayload
-): Promise<void> {
-  const handler = internalHandlers.get(handlerName);
-  if (!handler) {
-    logger.warn('Hook internal handler not found', { hookId, handler: handlerName });
-    return;
-  }
-
-  try {
-    await handler(payload);
-  } catch (err: unknown) {
-    logger.warn('Hook internal handler error', {
-      hookId,
-      handler: handlerName,
       error: err instanceof Error ? err.message : String(err),
     });
   }

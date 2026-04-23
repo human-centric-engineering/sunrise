@@ -200,11 +200,8 @@ describe('POST /hooks', () => {
     );
   });
 
-  it('creates an internal hook', async () => {
+  it('rejects internal-action hooks (schema only accepts webhook)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiEventHook.create).mockResolvedValue(
-      makeHook({ action: { type: 'internal', handler: 'logToAnalytics' } }) as never
-    );
 
     const response = await CreateHook(
       makeCreateRequest({
@@ -214,7 +211,8 @@ describe('POST /hooks', () => {
       })
     );
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.create).not.toHaveBeenCalled();
   });
 
   it('rejects invalid event type', async () => {
