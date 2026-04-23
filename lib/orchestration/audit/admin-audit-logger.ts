@@ -44,6 +44,27 @@ function sanitizeChanges(
   return sanitized;
 }
 
+function sanitizeMetadataValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeMetadataValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = SECRET_PATTERN.test(key) ? '[REDACTED]' : sanitizeMetadataValue(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function sanitizeMetadata(
+  metadata: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null {
+  if (!metadata) return null;
+  return sanitizeMetadataValue(metadata) as Record<string, unknown>;
+}
+
 // ─── Diff utility ───────────────────────────────────────────────────────────
 
 /**
@@ -83,7 +104,7 @@ export function logAdminAction(entry: AdminAuditEntry): void {
         entityId: entry.entityId ?? null,
         entityName: entry.entityName ?? null,
         changes: sanitizeChanges(entry.changes) as never,
-        metadata: (entry.metadata ?? null) as never,
+        metadata: sanitizeMetadata(entry.metadata) as never,
         clientIp: entry.clientIp ?? null,
       },
     })
