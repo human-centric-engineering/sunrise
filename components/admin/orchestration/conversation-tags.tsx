@@ -23,19 +23,26 @@ export interface ConversationTagsProps {
 
 export function ConversationTags({ conversationId, initialTags }: ConversationTagsProps) {
   const [tags, setTags] = useState<string[]>(initialTags);
+  // Tracks the last server-confirmed tag list so rollbacks don't discard
+  // prior successful edits (e.g. two successful adds followed by a failure
+  // should revert only the failing change, not the whole session).
+  const [committedTags, setCommittedTags] = useState<string[]>(initialTags);
   const [adding, setAdding] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const saveTags = async (updatedTags: string[]) => {
     setSaving(true);
+    setErrorMessage(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.conversationById(conversationId), {
         body: { tags: updatedTags },
       });
+      setCommittedTags(updatedTags);
     } catch {
-      // Revert to the tags before the optimistic update
-      setTags(initialTags);
+      setTags(committedTags);
+      setErrorMessage('Failed to save tags — reverted to last saved state.');
     } finally {
       setSaving(false);
     }
@@ -58,62 +65,69 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {tags.map((tag) => (
-        <Badge key={tag} variant="secondary" className="gap-1 pr-1">
-          {tag}
-          <button
-            type="button"
-            onClick={() => handleRemove(tag)}
-            disabled={saving}
-            className="hover:text-destructive rounded-sm"
-            aria-label={`Remove tag ${tag}`}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </Badge>
-      ))}
-      {adding ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleAdd();
-          }}
-          className="flex items-center gap-1"
-        >
-          <Input
-            value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            placeholder="Tag name"
-            className="h-7 w-32 text-xs"
-            disabled={saving}
-          />
-          <Button type="submit" variant="ghost" size="icon" className="h-7 w-7" disabled={saving}>
-            <Plus className="h-3 w-3" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => {
-              setAdding(false);
-              setNewTag('');
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {tags.map((tag) => (
+          <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+            {tag}
+            <button
+              type="button"
+              onClick={() => handleRemove(tag)}
+              disabled={saving}
+              className="hover:text-destructive rounded-sm"
+              aria-label={`Remove tag ${tag}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
+        {adding ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAdd();
             }}
+            className="flex items-center gap-1"
           >
-            <X className="h-3 w-3" />
+            <Input
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="Tag name"
+              className="h-7 w-32 text-xs"
+              disabled={saving}
+            />
+            <Button type="submit" variant="ghost" size="icon" className="h-7 w-7" disabled={saving}>
+              <Plus className="h-3 w-3" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => {
+                setAdding(false);
+                setNewTag('');
+              }}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </form>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs"
+            onClick={() => setAdding(true)}
+            disabled={saving}
+          >
+            <Plus className="mr-1 h-3 w-3" /> Add tag
           </Button>
-        </form>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 text-xs"
-          onClick={() => setAdding(true)}
-          disabled={saving}
-        >
-          <Plus className="mr-1 h-3 w-3" /> Add tag
-        </Button>
+        )}
+      </div>
+      {errorMessage && (
+        <p className="text-destructive text-xs" role="alert">
+          {errorMessage}
+        </p>
       )}
     </div>
   );

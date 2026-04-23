@@ -176,7 +176,7 @@ describe('ConversationTags', () => {
 
   // ── Error revert ───────────────────────────────────────────────────────────
 
-  it('reverts to initialTags when patch throws', async () => {
+  it('reverts to the last committed tags on patch failure and shows an error message', async () => {
     mockPatch.mockRejectedValue(new Error('Network error'));
 
     const user = userEvent.setup();
@@ -185,9 +185,47 @@ describe('ConversationTags', () => {
     // Optimistically remove "bug"
     await user.click(screen.getByRole('button', { name: /remove tag bug/i }));
 
-    // After the patch fails the tag should reappear
+    // After the patch fails the tag should reappear and an error message shown
     await waitFor(() => {
       expect(screen.getByText('bug')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/failed to save tags/i);
+    });
+  });
+
+  it('rolls back only the failing edit — preserves prior successful edits', async () => {
+    // First two patches succeed, third fails. The third failure must not wipe
+    // the first two successful additions (regression guard for the previous bug
+    // where rollback reset to initialTags).
+    mockPatch
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('Network error'));
+
+    const user = userEvent.setup();
+    render(<ConversationTags conversationId={CONVERSATION_ID} initialTags={[]} />);
+
+    // Add "alpha" (succeeds)
+    await user.click(screen.getByRole('button', { name: /add tag/i }));
+    await user.type(screen.getByPlaceholderText('Tag name'), 'alpha');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.getByText('alpha')).toBeInTheDocument());
+
+    // Add "beta" (succeeds)
+    await user.click(screen.getByRole('button', { name: /add tag/i }));
+    await user.type(screen.getByPlaceholderText('Tag name'), 'beta');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.getByText('beta')).toBeInTheDocument());
+
+    // Add "gamma" (fails) — rollback must NOT wipe alpha + beta
+    await user.click(screen.getByRole('button', { name: /add tag/i }));
+    await user.type(screen.getByPlaceholderText('Tag name'), 'gamma');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(screen.queryByText('gamma')).not.toBeInTheDocument();
+      expect(screen.getByText('alpha')).toBeInTheDocument();
+      expect(screen.getByText('beta')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/failed to save tags/i);
     });
   });
 
