@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError } from '@/lib/api/errors';
+import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -78,6 +79,7 @@ export const POST = withAdminAuth(async (request, session) => {
       return {
         name: agent.name,
         slug: agent.slug,
+        isSystem: agent.isSystem,
         description: agent.description,
         systemInstructions: agent.systemInstructions,
         systemInstructionsHistory: history,
@@ -115,11 +117,7 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
-  return new Response(JSON.stringify({ success: true, data: bundle }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
+  return successResponse(bundle, undefined, {
+    headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
   });
 });

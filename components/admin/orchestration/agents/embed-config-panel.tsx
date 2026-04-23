@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { Copy, Plus, Trash2, Check, ExternalLink } from 'lucide-react';
+import { Copy, Plus, Trash2, Check, Power, PowerOff } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -234,7 +234,11 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
                       onClick={() => void handleToggle(t.id, !t.isActive)}
                       title={t.isActive ? 'Deactivate' : 'Activate'}
                     >
-                      <ExternalLink className="h-3.5 w-3.5" />
+                      {t.isActive ? (
+                        <Power className="h-3.5 w-3.5" />
+                      ) : (
+                        <PowerOff className="h-3.5 w-3.5" />
+                      )}
                     </Button>
                     <Button
                       variant="ghost"

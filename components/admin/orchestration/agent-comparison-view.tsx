@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -109,8 +109,8 @@ export function AgentComparisonView({ agentIdA, agentIdB }: AgentComparisonViewP
           `${API.ADMIN.ORCHESTRATION.AGENTS_COMPARE}?agentIds=${agentIdA},${agentIdB}`
         );
         setData(result);
-      } catch {
-        setError('Failed to load comparison data');
+      } catch (err) {
+        setError(err instanceof APIClientError ? err.message : 'Failed to load comparison data');
       } finally {
         setLoading(false);
       }

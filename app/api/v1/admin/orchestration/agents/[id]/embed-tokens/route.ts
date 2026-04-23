@@ -14,9 +14,10 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { createEmbedTokenSchema } from '@/lib/validations/orchestration';
+import { cuidSchema } from '@/lib/validations/common';
 
 type Params = { id: string };
 
@@ -25,7 +26,11 @@ export const GET = withAdminAuth<Params>(async (request, _session, { params }) =
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-  const { id: agentId } = await params;
+  const { id: rawId } = await params;
+  const parsed = cuidSchema.safeParse(rawId);
+  if (!parsed.success)
+    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+  const agentId = parsed.data;
   const log = await getRouteLogger(request);
 
   const agent = await prisma.aiAgent.findUnique({
@@ -49,7 +54,11 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-  const { id: agentId } = await params;
+  const { id: rawId } = await params;
+  const parsed = cuidSchema.safeParse(rawId);
+  if (!parsed.success)
+    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+  const agentId = parsed.data;
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, createEmbedTokenSchema);
 

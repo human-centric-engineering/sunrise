@@ -70,6 +70,7 @@ function makeDbAgent(id: string, slug: string) {
     monthlyBudgetUsd: null,
     metadata: null,
     isActive: true,
+    isSystem: false,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -202,6 +203,20 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       expect(exportedAgent).not.toHaveProperty('createdAt');
       expect(exportedAgent).not.toHaveProperty('updatedAt');
       expect(exportedAgent).not.toHaveProperty('createdBy');
+    });
+
+    it('includes isSystem field in exported agents', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        { ...makeDbAgent(AGENT_ID_1, 'agent-one'), isSystem: true },
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+
+      const data = await parseJson<{
+        data: { agents: Array<{ isSystem: boolean }> };
+      }>(response);
+      expect(data.data.agents[0].isSystem).toBe(true);
     });
 
     it('exports empty history array when stored systemInstructionsHistory is malformed', async () => {

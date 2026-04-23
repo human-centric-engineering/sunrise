@@ -104,6 +104,26 @@ beforeEach(() => {
 });
 
 describe('PATCH /agents/:id/embed-tokens/:tokenId', () => {
+  it('returns 400 when agent id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await PATCH(makePatchRequest({ isActive: false }), {
+      params: Promise.resolve({ id: 'bad-id', tokenId: TOKEN_ID }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when token id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await PATCH(makePatchRequest({ isActive: false }), {
+      params: Promise.resolve({ id: AGENT_ID, tokenId: 'bad-token' }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
@@ -158,6 +178,16 @@ describe('PATCH /agents/:id/embed-tokens/:tokenId', () => {
 });
 
 describe('DELETE /agents/:id/embed-tokens/:tokenId', () => {
+  it('returns 400 when agent id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await DELETE(makeDeleteRequest(), {
+      params: Promise.resolve({ id: 'bad-id', tokenId: TOKEN_ID }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 

@@ -29,7 +29,7 @@ Fields: `name`, `slug`, `description`, `isActive`, `visibility`.
 
 Select with three options: `internal` (default), `public`, `invite_only`. Controls who can access the agent via the consumer chat API. Placed after the Active toggle.
 
-**Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode the slug input is disabled — changing slugs breaks existing deep links.
+**Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode, slug auto-generation is disabled (`slugTouched = true` on mount), but the field remains editable. System agent slugs are protected server-side — the PATCH handler rejects slug changes when `isSystem` is true. Both the form and the duplicate dialog validate slugs client-side with `slugSchema` (lowercase alphanumeric with single hyphens).
 
 ### Help copy
 
@@ -208,7 +208,7 @@ Edit mode only. Embeds `<AgentTestChat agentSlug={agent.slug} minHeight="min-h-[
 
 File: `components/admin/orchestration/agent-test-chat.tsx`.
 
-- POSTs to `/chat/stream` via `fetch` with `ReadableStream.getReader()`.
+- POSTs to `/api/v1/admin/orchestration/chat/stream` via `fetch` with `ReadableStream.getReader()`. The body includes `{ message, agentSlug, conversationId?, ... }` — note that the endpoint requires `agentSlug` (not `agentId`), which is passed from the agent object's `slug` field.
 - Parses standard SSE frames (`event:` / `data:` lines separated by `\n\n`).
 - Renders `content` deltas into a growing reply; stops on `done`.
 - `error` frame → **"The agent ran into a problem. Check the server logs for details."** The raw `data.message` is never forwarded to the DOM. The wizard test pins this behaviour; any regression is caught by two unit tests (wizard + direct chat component).
@@ -227,6 +227,8 @@ reset(data); // clears dirty state
 ```
 
 Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). Version restore also pushes the pre-restore instructions onto history, keeping the JSONB trail in sync with the `AiAgentVersion` table. The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. System agent slugs are protected from mutation — the PATCH handler rejects slug changes when `isSystem` is true.
+
+**Dirty state scope:** The form's `isDirty` tracking (via react-hook-form) only covers the main form fields on Tabs 1–3 (Identity, Model, Instructions). Tabs 4–8 (Capabilities, Invite tokens, Versions, Test, Embed) perform mutations directly via `apiClient` calls and save immediately — they don't mark the form as dirty. The `beforeunload` unsaved-changes warning only fires for unsaved Tab 1–3 changes.
 
 ## Related
 

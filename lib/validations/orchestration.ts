@@ -594,6 +594,7 @@ export const listWebhooksQuerySchema = paginationQuerySchema.extend({
 const bundledAgentSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100),
+  isSystem: z.boolean().default(false),
   description: z.string().min(1).max(5000),
   systemInstructions: z.string().min(1).max(50000),
   systemInstructionsHistory: systemInstructionsHistorySchema.default([]),
