@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema } from './common';
+import { paginationQuerySchema, cuidSchema } from '@/lib/validations/common';
 
 /**
  * Feature flag metadata value schema

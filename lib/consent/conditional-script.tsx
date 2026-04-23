@@ -32,7 +32,7 @@
  */
 
 import { useEffect } from 'react';
-import { useHasOptionalConsent } from './use-consent';
+import { useHasOptionalConsent } from '@/lib/consent/use-consent';
 
 interface ConditionalScriptProps {
   /**

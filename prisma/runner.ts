@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { dirname, join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import type { PrismaClient } from '@prisma/client';
-import { logger } from '../lib/logging';
+import { logger } from '@/lib/logging';
 
 export interface SeedContext {
   prisma: PrismaClient;

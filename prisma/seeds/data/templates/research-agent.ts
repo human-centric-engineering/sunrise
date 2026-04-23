@@ -10,7 +10,7 @@
  * report.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-research-agent',

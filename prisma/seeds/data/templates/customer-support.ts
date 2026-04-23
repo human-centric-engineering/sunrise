@@ -10,7 +10,7 @@
  * reviewer in the loop.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-customer-support',

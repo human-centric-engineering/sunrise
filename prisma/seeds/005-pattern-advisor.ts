@@ -1,4 +1,4 @@
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 const PATTERN_ADVISOR_INSTRUCTIONS = `You are the Pattern Advisor for the Sunrise AI orchestration platform. Your role is to help administrators understand and apply agentic design patterns when building workflows.
 

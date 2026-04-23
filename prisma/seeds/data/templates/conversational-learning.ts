@@ -11,7 +11,7 @@
  * the agent's instructions.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-conversational-learning',

@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusIndicator, getStatusConfig } from './status-indicator';
+import { StatusIndicator, getStatusConfig } from '@/components/status/status-indicator';
 import type { ServiceHealth } from '@/lib/monitoring';
 
 /**

@@ -11,7 +11,7 @@ import type { XYPosition } from '@xyflow/react';
 import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 import type { WorkflowStepType } from '@/types/orchestration';
 
-import type { PatternNode } from './workflow-mappers';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 /** Build a short random step id. Deterministic length for snapshot tests. */
 export function makeStepId(): string {

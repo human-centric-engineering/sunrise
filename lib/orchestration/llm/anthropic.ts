@@ -277,7 +277,10 @@ export class AnthropicProvider implements LlmProvider {
     };
   }
 
-  embed(_text: string, _options?: import('./types').EmbedOptions): Promise<number[]> {
+  embed(
+    _text: string,
+    _options?: import('@/lib/orchestration/llm/types').EmbedOptions
+  ): Promise<number[]> {
     return Promise.reject(
       new ProviderError('Anthropic does not provide a first-party embeddings API', {
         code: 'not_supported',

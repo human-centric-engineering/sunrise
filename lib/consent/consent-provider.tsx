@@ -10,13 +10,13 @@
  */
 
 import { createContext, useCallback, useState, useSyncExternalStore } from 'react';
-import type { ConsentContextValue, ConsentState } from './types';
+import type { ConsentContextValue, ConsentState } from '@/lib/consent/types';
 import {
   CONSENT_STORAGE_KEY,
   CONSENT_VERSION,
   DEFAULT_CONSENT_STATE,
   isConsentEnabled,
-} from './config';
+} from '@/lib/consent/config';
 
 /**
  * Consent context (undefined when accessed outside provider)

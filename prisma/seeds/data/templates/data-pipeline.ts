@@ -15,7 +15,7 @@
  * parallel, evaluate.
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-data-pipeline',

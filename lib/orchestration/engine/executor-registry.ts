@@ -16,7 +16,7 @@
  */
 
 import type { StepResult, WorkflowStep, WorkflowStepType } from '@/types/orchestration';
-import type { ExecutionContext } from './context';
+import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
 /**
  * A step executor. Receives the step definition and a snapshot of the

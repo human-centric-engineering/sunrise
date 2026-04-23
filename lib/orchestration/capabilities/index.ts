@@ -6,7 +6,13 @@
  * themselves are intentionally not re-exported.
  */
 
-export * from './types';
-export { BaseCapability, CapabilityValidationError } from './base-capability';
-export { capabilityDispatcher } from './dispatcher';
-export { registerBuiltInCapabilities, getCapabilityDefinitions } from './registry';
+export * from '@/lib/orchestration/capabilities/types';
+export {
+  BaseCapability,
+  CapabilityValidationError,
+} from '@/lib/orchestration/capabilities/base-capability';
+export { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+export {
+  registerBuiltInCapabilities,
+  getCapabilityDefinitions,
+} from '@/lib/orchestration/capabilities/registry';

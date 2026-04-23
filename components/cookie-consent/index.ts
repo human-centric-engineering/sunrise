@@ -17,5 +17,5 @@
  * Phase 3.5: Landing Page & Marketing
  */
 
-export { CookieBanner } from './cookie-banner';
-export { PreferencesModal } from './preferences-modal';
+export { CookieBanner } from '@/components/cookie-consent/cookie-banner';
+export { PreferencesModal } from '@/components/cookie-consent/preferences-modal';

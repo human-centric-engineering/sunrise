@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { isRecord } from '@/lib/utils';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { AvatarCropDialog } from './avatar-crop-dialog';
+import { AvatarCropDialog } from '@/components/forms/avatar-crop-dialog';
 import { getMaxFileSizeBytes } from '@/lib/validations/storage';
 import { SUPPORTED_IMAGE_TYPES } from '@/lib/storage/constants';
 

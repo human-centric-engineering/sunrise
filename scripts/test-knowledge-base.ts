@@ -196,7 +196,7 @@ async function testVectorSearch(): Promise<void> {
   console.log(`  ${embeddingCount} chunks have embeddings`);
 
   // Dynamic import to avoid loading env validation in seed-only mode
-  const { searchKnowledge } = await import('../lib/orchestration/knowledge/search');
+  const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
 
   const query = 'how do I handle errors in my agent';
   console.log(`  Searching: "${query}"`);

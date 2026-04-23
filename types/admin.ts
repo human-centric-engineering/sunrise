@@ -5,7 +5,7 @@
  * system statistics, logs viewing, and feature flag management.
  */
 
-import type { FeatureFlag, User } from './prisma';
+import type { FeatureFlag, User } from '@/types/prisma';
 
 /**
  * System Statistics

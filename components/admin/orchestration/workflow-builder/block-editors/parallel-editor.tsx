@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { EditorProps } from './index';
+import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 
 export interface ParallelConfig extends Record<string, unknown> {
   timeoutMs?: number;

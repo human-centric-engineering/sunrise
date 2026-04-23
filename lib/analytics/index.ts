@@ -81,17 +81,17 @@ export type {
 export type { AnalyticsProvider as AnalyticsProviderInterface } from './providers/types';
 
 // PostHog provider (for type guards and feature flag access)
-export { PostHogProvider } from './providers/posthog';
+export { PostHogProvider } from '@/lib/analytics/providers/posthog';
 
 // React context and hooks (client-side only)
-export { AnalyticsProvider, AnalyticsContext } from './analytics-provider';
+export { AnalyticsProvider, AnalyticsContext } from '@/lib/analytics/analytics-provider';
 export {
   useAnalytics,
   useAnalyticsReady,
   useAnalyticsEnabled,
   usePageTracking,
   useTrackEvent,
-} from './hooks';
+} from '@/lib/analytics/hooks';
 
 // Client utilities
 export {
@@ -99,7 +99,7 @@ export {
   initAnalytics,
   isAnalyticsEnabled,
   getAnalyticsProviderName,
-} from './client';
+} from '@/lib/analytics/client';
 
 // Config utilities
 export {
@@ -107,10 +107,10 @@ export {
   isGA4Configured,
   isPostHogConfigured,
   isPlausibleConfigured,
-} from './config';
+} from '@/lib/analytics/config';
 
 // Event constants and types (for direct track() + EVENTS pattern)
-export { EVENTS } from './events/constants';
+export { EVENTS } from '@/lib/analytics/events/constants';
 export type { EventName } from './events/constants';
 export type {
   AuthMethod,
@@ -123,4 +123,4 @@ export type {
 } from './events/types';
 
 // Form analytics helper (generic form tracking)
-export { useFormAnalytics } from './events/forms';
+export { useFormAnalytics } from '@/lib/analytics/events/forms';

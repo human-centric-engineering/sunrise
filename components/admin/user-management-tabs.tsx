@@ -11,8 +11,8 @@ import Link from 'next/link';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { UserPlus } from 'lucide-react';
-import { UserTable } from './user-table';
-import { InvitationTable } from './invitation-table';
+import { UserTable } from '@/components/admin/user-table';
+import { InvitationTable } from '@/components/admin/invitation-table';
 import type { UserListItem, InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 

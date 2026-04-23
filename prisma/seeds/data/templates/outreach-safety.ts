@@ -15,7 +15,7 @@
  * human_approval (send gate).
  */
 
-import type { WorkflowTemplate } from './types';
+import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-outreach-safety',

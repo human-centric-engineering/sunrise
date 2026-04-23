@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 
-import type { EditorProps } from './index';
+import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 
 interface RouteBranch {
   label: string;

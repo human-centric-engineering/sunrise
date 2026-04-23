@@ -26,15 +26,15 @@ export interface EditorProps<TConfig extends Record<string, unknown>> {
   capabilities?: readonly CapabilityOption[];
 }
 
-export { LlmCallEditor } from './llm-call-editor';
-export { ChainEditor } from './chain-editor';
-export { RouteEditor } from './route-editor';
-export { ParallelEditor } from './parallel-editor';
-export { ReflectEditor } from './reflect-editor';
-export { ToolCallEditor } from './tool-call-editor';
-export { PlanEditor } from './plan-editor';
-export { HumanApprovalEditor } from './human-approval-editor';
-export { RagRetrieveEditor } from './rag-retrieve-editor';
-export { GuardEditor } from './guard-editor';
-export { EvaluateEditor } from './evaluate-editor';
-export { ExternalCallEditor } from './external-call-editor';
+export { LlmCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/llm-call-editor';
+export { ChainEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/chain-editor';
+export { RouteEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/route-editor';
+export { ParallelEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/parallel-editor';
+export { ReflectEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/reflect-editor';
+export { ToolCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/tool-call-editor';
+export { PlanEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/plan-editor';
+export { HumanApprovalEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/human-approval-editor';
+export { RagRetrieveEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor';
+export { GuardEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/guard-editor';
+export { EvaluateEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor';
+export { ExternalCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/external-call-editor';

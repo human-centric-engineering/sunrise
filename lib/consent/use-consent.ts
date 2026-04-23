@@ -9,8 +9,8 @@
  */
 
 import { useContext } from 'react';
-import { ConsentContext } from './consent-provider';
-import type { ConsentContextValue } from './types';
+import { ConsentContext } from '@/lib/consent/consent-provider';
+import type { ConsentContextValue } from '@/lib/consent/types';
 
 /**
  * Access the full consent context

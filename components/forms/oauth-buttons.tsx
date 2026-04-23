@@ -1,6 +1,6 @@
 'use client';
 
-import { OAuthButton } from './oauth-button';
+import { OAuthButton } from '@/components/forms/oauth-button';
 
 interface OAuthButtonsProps {
   callbackUrl?: string;

@@ -15,8 +15,8 @@ import type {
   PageProperties,
   TrackResult,
   ProviderFeatures,
-} from '../types';
-import type { AnalyticsProvider, ConsoleProviderConfig } from './types';
+} from '@/lib/analytics/types';
+import type { AnalyticsProvider, ConsoleProviderConfig } from '@/lib/analytics/providers/types';
 
 /**
  * Console Analytics Provider

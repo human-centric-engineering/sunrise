@@ -1,4 +1,4 @@
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 const unit: SeedUnit = {
   name: '001-test-users',

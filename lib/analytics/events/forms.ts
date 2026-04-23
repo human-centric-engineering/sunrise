@@ -35,9 +35,9 @@
  */
 
 import { useCallback } from 'react';
-import { useAnalytics } from '../hooks';
-import type { TrackResult } from '../types';
-import type { FormSubmittedEventProps } from './types';
+import { useAnalytics } from '@/lib/analytics/hooks';
+import type { TrackResult } from '@/lib/analytics/types';
+import type { FormSubmittedEventProps } from '@/lib/analytics/events/types';
 
 /**
  * Hook for form analytics events

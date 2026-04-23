@@ -16,8 +16,8 @@ import {
   getPostHogConfig,
   getPlausibleConfig,
   GA4_ENV,
-} from './config';
-import type { ServerTrackOptions, ServerTrackContext, TrackResult } from './types';
+} from '@/lib/analytics/config';
+import type { ServerTrackOptions, ServerTrackContext, TrackResult } from '@/lib/analytics/types';
 import { logger } from '@/lib/logging';
 
 /**

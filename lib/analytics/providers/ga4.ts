@@ -16,8 +16,8 @@ import type {
   PageProperties,
   TrackResult,
   ProviderFeatures,
-} from '../types';
-import type { AnalyticsProvider, GA4ProviderConfig } from './types';
+} from '@/lib/analytics/types';
+import type { AnalyticsProvider, GA4ProviderConfig } from '@/lib/analytics/providers/types';
 import { logger } from '@/lib/logging';
 
 // Extend Window interface for gtag

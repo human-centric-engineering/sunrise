@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 import { NextRequest } from 'next/server';
-import { ValidationError } from './errors';
+import { ValidationError } from '@/lib/api/errors';
 
 /**
  * Validate and parse request JSON body

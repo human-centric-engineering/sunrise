@@ -14,7 +14,7 @@
  */
 
 import Link from 'next/link';
-import { HeaderActions } from './header-actions';
+import { HeaderActions } from '@/components/layouts/header-actions';
 
 interface AppHeaderProps {
   /** URL for logo click (default: "/") */

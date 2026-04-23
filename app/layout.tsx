@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { headers } from 'next/headers';
-import './globals.css';
+import '@/app/globals.css';
 import { ThemeProvider } from '@/hooks/use-theme';
-import { ErrorHandlingProvider } from './error-handling-provider';
+import { ErrorHandlingProvider } from '@/app/error-handling-provider';
 import { ConsentProvider } from '@/lib/consent';
 import { CookieBanner } from '@/components/cookie-consent';
 import { AnalyticsProvider } from '@/lib/analytics';

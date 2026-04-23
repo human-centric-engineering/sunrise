@@ -10,7 +10,7 @@
 
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
-import { errorResponse } from './responses';
+import { errorResponse } from '@/lib/api/responses';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 

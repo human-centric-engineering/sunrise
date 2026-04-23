@@ -33,7 +33,12 @@
 
 import { logger } from '@/lib/logging';
 import { trackMessage, ErrorSeverity } from '@/lib/errors/sentry';
-import type { PerformanceMetric, MeasuredResult, MeasureOptions, MemoryUsage } from './types';
+import type {
+  PerformanceMetric,
+  MeasuredResult,
+  MeasureOptions,
+  MemoryUsage,
+} from '@/lib/monitoring/types';
 
 /**
  * Default threshold for slow operations (ms)

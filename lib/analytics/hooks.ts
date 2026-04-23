@@ -12,8 +12,8 @@
 
 import { useContext, useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { AnalyticsContext } from './analytics-provider';
-import type { AnalyticsContextValue, PageProperties } from './types';
+import { AnalyticsContext } from '@/lib/analytics/analytics-provider';
+import type { AnalyticsContextValue, PageProperties } from '@/lib/analytics/types';
 
 /**
  * Access the analytics context
