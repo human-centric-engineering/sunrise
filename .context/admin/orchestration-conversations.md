@@ -139,9 +139,13 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 
 ### Bulk clear (API only, no UI)
 
-- `POST /conversations/clear` with `{ olderThan?, agentId? }`.
-- `clearConversationsBodySchema` **requires at least one filter** — an empty body fails validation (400). This is the safety rail; there is no confirm dialog, no dry-run, and no UI affordance calling it.
-- `userId` is hardcoded to `session.user.id` on the server — an admin calling clear only wipes **their own** conversations, not other users'. Cross-user bulk delete is not supported through this endpoint.
+- `POST /conversations/clear` with `{ olderThan?, agentId?, userId?, allUsers? }`.
+- `clearConversationsBodySchema` **requires at least one of `olderThan` or `agentId`** — an empty body or `allUsers: true` alone fails validation (400). This is the safety rail; there is no confirm dialog, no dry-run, and no UI affordance calling it.
+- Scope:
+  - default → caller's own conversations (`session.user.id`).
+  - `userId: '<cuid>'` → that specific user's conversations.
+  - `allUsers: true` → across all users (still narrowed by `olderThan` / `agentId`). Mutually exclusive with `userId`.
+- Cross-user deletions (`userId` or `allUsers`) emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`) with scope, target, filters, and `deletedCount`. Self-scoped clears don't.
 - Rate limit: `adminLimiter` per client IP.
 
 ### Semantic search (API only, no UI)
@@ -162,7 +166,7 @@ One row per admin endpoint backing this UI.
 | `/api/v1/admin/orchestration/conversations/:id`          | DELETE | Hard delete; messages cascade via FK. 404 for cross-user. No UI caller.                                                  |
 | `/api/v1/admin/orchestration/conversations/:id/messages` | GET    | Full messages with **admin-visible metadata** (tokens, cost, latency) — consumer route strips these. Cross-user allowed. |
 | `/api/v1/admin/orchestration/conversations/export`       | GET    | JSON / CSV export, capped at 500, 1/min per admin IP.                                                                    |
-| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete **the caller's own** conversations; empty body rejected.                                                     |
+| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected.  |
 | `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings. Not wired into the UI.                                               |
 
 Ownership / scope quirks worth noting:

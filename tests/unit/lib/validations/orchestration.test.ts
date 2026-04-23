@@ -1472,6 +1472,36 @@ describe('clearConversationsBodySchema', () => {
     const result = clearConversationsBodySchema.safeParse({ olderThan: 'yesterday' });
     expect(result.success).toBe(false);
   });
+
+  it('accepts a target userId alongside a filter', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      agentId: 'clh1234567890abcdefghijkl',
+      userId: 'clh9876543210abcdefghijkl',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts allUsers:true alongside a filter', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      olderThan: '2025-01-01T00:00:00Z',
+      allUsers: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects allUsers:true alone (no narrowing filter)', () => {
+    const result = clearConversationsBodySchema.safeParse({ allUsers: true });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects userId combined with allUsers:true', () => {
+    const result = clearConversationsBodySchema.safeParse({
+      olderThan: '2025-01-01T00:00:00Z',
+      userId: 'clh1234567890abcdefghijkl',
+      allUsers: true,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('listDocumentsQuerySchema', () => {
