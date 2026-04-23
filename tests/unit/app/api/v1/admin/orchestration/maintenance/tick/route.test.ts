@@ -108,6 +108,7 @@ const DEFAULT_RETENTION_RESULT = {
   deleted: 10,
   agentsProcessed: 2,
   webhookDeliveriesDeleted: 0,
+  hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
   auditLogsDeleted: 0,
 };

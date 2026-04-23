@@ -130,6 +130,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       deleted: 10,
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
+      hookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
       auditLogsDeleted: 0,
     });
@@ -173,6 +174,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       deleted: 10,
       agentsProcessed: 2,
       webhookDeliveriesDeleted: 0,
+      hookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
       auditLogsDeleted: 0,
     });
