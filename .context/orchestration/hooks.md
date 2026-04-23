@@ -142,6 +142,16 @@ Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action
 - **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
 - **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
 
+## Retention
+
+Delivery rows persist across process restarts so admins can audit failures and manually retry. They are pruned by `pruneHookDeliveries()` in `lib/orchestration/retention.ts`, invoked from the unified maintenance tick alongside the other retention sweeps.
+
+- **Setting**: shares the `webhookRetentionDays` column on `AiOrchestrationSettings` with outbound webhook subscriptions — event-hook deliveries and subscription deliveries are the same class of dispatch-audit data.
+- **Null setting → skip**: if `webhookRetentionDays` is unset the sweep is a no-op and rows accumulate indefinitely.
+- **Target table**: `AiEventHookDelivery`. Deletes rows whose `createdAt` is older than `now - webhookRetentionDays`.
+
+See [Retention Pruning](./scheduling.md#retention-pruning) for the full list of prune sweeps.
+
 ## Related Docs
 
 - [Webhook Management UI](../admin/orchestration-webhooks.md) — the separate HMAC-signed outbound webhook subsystem
