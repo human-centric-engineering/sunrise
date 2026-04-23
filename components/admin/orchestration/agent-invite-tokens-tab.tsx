@@ -46,7 +46,7 @@ export interface AgentInviteTokensTabProps {
 function tokenStatus(t: InviteToken): 'active' | 'revoked' | 'expired' | 'exhausted' {
   if (t.revokedAt) return 'revoked';
   if (t.expiresAt && new Date(t.expiresAt) < new Date()) return 'expired';
-  if (t.maxUses && t.useCount >= t.maxUses) return 'exhausted';
+  if (t.maxUses != null && t.useCount >= t.maxUses) return 'exhausted';
   return 'active';
 }
 

@@ -317,8 +317,11 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         }
       }
       const customRateLimit = rateLimit.trim() === '' ? undefined : Number(rateLimit);
-      if (customRateLimit !== undefined && !Number.isFinite(customRateLimit)) {
-        setError('Rate limit must be a number.');
+      if (
+        customRateLimit !== undefined &&
+        (!Number.isFinite(customRateLimit) || customRateLimit < 1)
+      ) {
+        setError('Rate limit must be a positive number.');
         setSaving(false);
         return;
       }
@@ -379,6 +382,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             <Input
               id="custom-rate-limit"
               type="number"
+              min={1}
               value={rateLimit}
               onChange={(e) => setRateLimit(e.target.value)}
               placeholder="Leave blank to inherit"

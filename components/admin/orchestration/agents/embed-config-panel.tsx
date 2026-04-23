@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { escapeHtml } from '@/lib/security/sanitize';
 
 interface EmbedToken {
   id: string;
@@ -67,6 +68,20 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
         .split(',')
         .map((o) => o.trim())
         .filter(Boolean);
+
+      // Validate each origin is a valid URL
+      for (const origin of origins) {
+        try {
+          new URL(origin);
+        } catch {
+          setError(
+            `Invalid origin URL: "${origin}". Each origin must be a full URL (e.g. https://example.com).`
+          );
+          setCreating(false);
+          return;
+        }
+      }
+
       const data = await apiClient.post<EmbedToken>(endpoint, {
         body: {
           label: newLabel || undefined,
@@ -102,7 +117,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
   }
 
   function getSnippet(token: string): string {
-    return `<script src="${appUrl}/api/v1/embed/widget.js" data-token="${token}"></script>`;
+    return `<script src="${escapeHtml(appUrl)}/api/v1/embed/widget.js" data-token="${escapeHtml(token)}"></script>`;
   }
 
   function copyToClipboard(text: string, id: string): void {

@@ -203,6 +203,7 @@ export function AgentComparisonView({ agentIdA, agentIdB }: AgentComparisonViewP
             label="LLM Calls"
             valueA={a.llmCallCount}
             valueB={b.llmCallCount}
+            better="lower"
             format={fmtNum}
           />
           <ComparisonRow
@@ -216,12 +217,14 @@ export function AgentComparisonView({ agentIdA, agentIdB }: AgentComparisonViewP
             label="Output Tokens"
             valueA={a.totalOutputTokens}
             valueB={b.totalOutputTokens}
+            better="lower"
             format={fmtNum}
           />
           <ComparisonRow
             label="Conversations"
             valueA={a.conversationCount}
             valueB={b.conversationCount}
+            better="higher"
             format={fmtNum}
           />
         </CardContent>

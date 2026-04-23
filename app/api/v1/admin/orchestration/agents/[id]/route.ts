@@ -71,6 +71,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     throw new ForbiddenError('System agents cannot be deactivated');
   }
 
+  // System agent slugs are used internally — prevent mutation.
+  if (current.isSystem && body.slug !== undefined && body.slug !== current.slug) {
+    throw new ForbiddenError('System agent slugs cannot be changed');
+  }
+
   // Build the update payload. Only include fields the caller actually sent.
   const data: Prisma.AiAgentUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
@@ -151,58 +156,62 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const changedVersionedFields = VERSIONED_FIELDS.filter((f) => data[f] !== undefined);
 
   try {
-    // Auto-create version snapshot if versioned fields changed
-    if (changedVersionedFields.length > 0) {
-      // Get next version number
-      const lastVersion = await prisma.aiAgentVersion.findFirst({
-        where: { agentId: id },
-        orderBy: { version: 'desc' },
-        select: { version: true },
-      });
-      const nextVersion = (lastVersion?.version ?? 0) + 1;
+    // Auto-create version snapshot if versioned fields changed.
+    // Both the snapshot and the update run inside a transaction so an
+    // update failure doesn't leave an orphaned version entry.
+    const agent = await prisma.$transaction(async (tx) => {
+      if (changedVersionedFields.length > 0) {
+        // Get next version number
+        const lastVersion = await tx.aiAgentVersion.findFirst({
+          where: { agentId: id },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        const nextVersion = (lastVersion?.version ?? 0) + 1;
 
-      // Snapshot the current (pre-update) agent config
-      const snapshot = {
-        systemInstructions: current.systemInstructions,
-        model: current.model,
-        provider: current.provider,
-        fallbackProviders: current.fallbackProviders,
-        temperature: current.temperature,
-        maxTokens: current.maxTokens,
-        topicBoundaries: current.topicBoundaries,
-        brandVoiceInstructions: current.brandVoiceInstructions,
-        metadata: current.metadata,
-        knowledgeCategories: current.knowledgeCategories,
-        rateLimitRpm: current.rateLimitRpm,
-        visibility: current.visibility,
-        inputGuardMode: current.inputGuardMode,
-        outputGuardMode: current.outputGuardMode,
-        maxHistoryTokens: current.maxHistoryTokens,
-        retentionDays: current.retentionDays,
-        providerConfig: current.providerConfig,
-        monthlyBudgetUsd: current.monthlyBudgetUsd,
-      };
+        // Snapshot the current (pre-update) agent config
+        const snapshot = {
+          systemInstructions: current.systemInstructions,
+          model: current.model,
+          provider: current.provider,
+          fallbackProviders: current.fallbackProviders,
+          temperature: current.temperature,
+          maxTokens: current.maxTokens,
+          topicBoundaries: current.topicBoundaries,
+          brandVoiceInstructions: current.brandVoiceInstructions,
+          metadata: current.metadata,
+          knowledgeCategories: current.knowledgeCategories,
+          rateLimitRpm: current.rateLimitRpm,
+          visibility: current.visibility,
+          inputGuardMode: current.inputGuardMode,
+          outputGuardMode: current.outputGuardMode,
+          maxHistoryTokens: current.maxHistoryTokens,
+          retentionDays: current.retentionDays,
+          providerConfig: current.providerConfig,
+          monthlyBudgetUsd: current.monthlyBudgetUsd,
+        };
 
-      const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');
+        const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');
 
-      await prisma.aiAgentVersion.create({
-        data: {
+        await tx.aiAgentVersion.create({
+          data: {
+            agentId: id,
+            version: nextVersion,
+            snapshot: snapshot as unknown as Prisma.InputJsonValue,
+            changeSummary,
+            createdBy: session.user.id,
+          },
+        });
+
+        log.info('Agent version snapshot created', {
           agentId: id,
           version: nextVersion,
-          snapshot: snapshot as unknown as Prisma.InputJsonValue,
-          changeSummary,
-          createdBy: session.user.id,
-        },
-      });
+          changes: changedVersionedFields,
+        });
+      }
 
-      log.info('Agent version snapshot created', {
-        agentId: id,
-        version: nextVersion,
-        changes: changedVersionedFields,
-      });
-    }
-
-    const agent = await prisma.aiAgent.update({ where: { id }, data });
+      return tx.aiAgent.update({ where: { id }, data });
+    });
 
     log.info('Agent updated', {
       agentId: id,

@@ -451,6 +451,33 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     });
   });
 
+  describe('Duplicate slugs in bundle', () => {
+    it('returns 400 when same slug appears twice in the import bundle', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([
+            makeBundledAgent('duplicate-slug'),
+            makeBundledAgent('duplicate-slug'),
+          ]),
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{
+        success: boolean;
+        error: { message: string };
+      }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.message).toContain('Duplicate slugs');
+      expect(data.error.message).toContain('duplicate-slug');
+
+      // Must NOT have started a transaction
+      expect(vi.mocked(prisma.$transaction)).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Validation errors', () => {
     it('returns 400 for missing bundle', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

@@ -34,8 +34,8 @@ vi.mock('next/headers', () => ({
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const mock = {
     aiAgent: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
@@ -44,8 +44,11 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
-  },
-}));
+    $transaction: vi.fn(),
+  };
+  mock.$transaction.mockImplementation((fn: (tx: typeof mock) => Promise<unknown>) => fn(mock));
+  return { prisma: mock };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
@@ -170,6 +173,45 @@ describe('System agent protection', () => {
       mockUpdate.mockResolvedValue({ ...agent, isActive: false });
 
       const response = await PATCH(makePatchRequest({ isActive: false }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe('PATCH — slug protection', () => {
+    it('rejects slug change on system agents with 403', async () => {
+      mockFindUnique.mockResolvedValue(makeSystemAgent());
+
+      const response = await PATCH(makePatchRequest({ slug: 'new-slug' }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(403);
+      const json = await response.json();
+      expect(json.error.message).toContain('System agent slugs cannot be changed');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('allows slug change on non-system agents', async () => {
+      const agent = makeCustomAgent();
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue({ ...agent, slug: 'renamed-agent' });
+
+      const response = await PATCH(
+        makePatchRequest({ slug: 'renamed-agent' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('allows same slug on system agents (no-op)', async () => {
+      const agent = makeSystemAgent();
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue(agent);
+
+      const response = await PATCH(
+        makePatchRequest({ slug: 'pattern-advisor' }),
+        makeParams(AGENT_ID)
+      );
 
       expect(response.status).toBe(200);
     });

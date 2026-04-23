@@ -42,7 +42,7 @@ Header has an **Export selected** button enabled iff `selected.size > 0`. Clicki
 
 ### Import
 
-The **Import** button opens `<ImportAgentsDialog>`, which takes a `.json` bundle, parses it client-side, and POSTs `/agents/import` with `{ bundle, conflictMode }` where `conflictMode` is `"skip"` (default) or `"overwrite"`. On success the dialog shows `{ imported, skipped, warnings }` and the parent list refetches.
+The **Import** button opens `<ImportAgentsDialog>`, which takes a `.json` bundle, parses it client-side, and POSTs `/agents/import` with `{ bundle, conflictMode }` where `conflictMode` is `"skip"` (default) or `"overwrite"`. The server rejects bundles containing duplicate slugs with a 400 before starting any DB work. On success the dialog shows `{ imported, skipped, warnings }` and the parent list refetches.
 
 ### Duplicate (Clone)
 
@@ -55,8 +55,9 @@ Row Delete sends `DELETE /agents/:id`, which sets `isActive=false` server-side. 
 ### Search / sort / pagination
 
 - Search input uses a 300 ms debounce and appends `?q=` to the list fetch.
-- Sort is **client-side** over the current page, limited to `name` and `createdAt`, because Phase 3's `listAgentsQuerySchema` has no `sortBy` / `sortOrder` params.
+- Sort is **client-side** over the current page, limited to `name` and `createdAt`, because Phase 3's `listAgentsQuerySchema` has no `sortBy` / `sortOrder` params. Changing sort resets to page 1.
 - Pagination delegates to the server (`?page=&limit=`) and mirrors `UserTable`'s prev/next buttons.
+- The "Select all" checkbox applies to the current page only (indicated by its `title` attribute).
 
 ## Compare agents
 

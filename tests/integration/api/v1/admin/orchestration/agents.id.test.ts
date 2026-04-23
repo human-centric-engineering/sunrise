@@ -30,8 +30,8 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const mock = {
     aiAgent: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -40,8 +40,12 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
-  },
-}));
+    $transaction: vi.fn(),
+  };
+  // $transaction calls the callback with the mock itself as the tx client
+  mock.$transaction.mockImplementation((fn: (tx: typeof mock) => Promise<unknown>) => fn(mock));
+  return { prisma: mock };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },

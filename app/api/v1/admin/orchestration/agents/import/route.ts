@@ -33,6 +33,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { importAgentsSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { ValidationError } from '@/lib/api/errors';
 
 type ImportResults = {
   imported: number;
@@ -50,6 +51,16 @@ export const POST = withAdminAuth(async (request, session) => {
   const body = await validateRequestBody(request, importAgentsSchema);
 
   const { bundle, conflictMode } = body;
+
+  // Reject bundles that contain duplicate slugs — they would cause a P2002
+  // unique constraint violation partway through the transaction.
+  const slugs = bundle.agents.map((a) => a.slug);
+  const duplicateSlugs = [...new Set(slugs.filter((s, i) => slugs.indexOf(s) !== i))];
+  if (duplicateSlugs.length > 0) {
+    throw new ValidationError(`Duplicate slugs in import bundle: ${duplicateSlugs.join(', ')}`, {
+      bundle: [`Duplicate slugs: ${duplicateSlugs.join(', ')}`],
+    });
+  }
 
   // Resolve capability slugs → ids up front so the transaction is short.
   const allCapabilitySlugs = Array.from(

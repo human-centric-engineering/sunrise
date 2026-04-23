@@ -14,12 +14,12 @@ Shared create/edit form for `AiAgent`. Eight shadcn tabs, one underlying `<form>
 | 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
 | 3   | Instructions  | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
 | 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
-| 5   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
-| 6   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
-| 7   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
+| 5   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
+| 6   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
+| 7   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
 | 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` — create tokens, copy `<script>` snippet, toggle active, manage origins                          |
 
-Tabs 4, 5, 7, and 8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 6 additionally requires `visibility = 'invite_only'` — it is hidden or disabled for other visibility modes.
+Tabs 4–8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 5 additionally requires `visibility = 'invite_only'` — it is disabled for other visibility modes.
 
 ## Tab 1 — General
 
@@ -134,27 +134,13 @@ Mutations:
 | Toggle    | `PATCH /agents/:id/capabilities/:capId` with `{ body: { isEnabled } }`                     |
 | Configure | `PATCH /agents/:id/capabilities/:capId` with `{ body: { customConfig, customRateLimit } }` |
 
-All four refetch the left column on success. Errors surface as an inline banner above the two columns.
+All four refetch the left column on success. Errors surface as an inline banner above the two columns. The `customRateLimit` input enforces `min={1}` in the UI and rejects non-positive values on submit.
 
 ### Rate limit usage badges
 
 Each attached capability shows a live usage badge next to its name, fetched from `GET /agents/:id/capabilities/usage` (queries `AiCostLog` for `tool_call` operations in the last 60 seconds). Auto-refreshes every 15 seconds. Format: `12 / 60 /min` (amber at ≥80%, red at ≥100%). When no rate limit is configured, shows `5 calls/min` without a denominator. Zero usage with no limit renders no badge.
 
-## Tab 5 — Test
-
-Edit mode only. Embeds `<AgentTestChat agentSlug={agent.slug} minHeight="min-h-[200px]" />`. This is the **same component** the Setup Wizard's Step 4 uses — see [`setup-wizard.md`](./setup-wizard.md).
-
-### `<AgentTestChat>` contract
-
-File: `components/admin/orchestration/agent-test-chat.tsx`.
-
-- POSTs to `/chat/stream` via `fetch` with `ReadableStream.getReader()`.
-- Parses standard SSE frames (`event:` / `data:` lines separated by `\n\n`).
-- Renders `content` deltas into a growing reply; stops on `done`.
-- `error` frame → **"The agent ran into a problem. Check the server logs for details."** The raw `data.message` is never forwarded to the DOM. The wizard test pins this behaviour; any regression is caught by two unit tests (wizard + direct chat component).
-- Holds an `AbortController` and calls `.abort()` on unmount or on a new send.
-
-## Tab 6 — Invite tokens
+## Tab 5 — Invite tokens
 
 **Component:** `components/admin/orchestration/agent-invite-tokens-tab.tsx`
 
@@ -193,7 +179,7 @@ Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedA
 
 - **Invite tokens** — "Invite tokens control access to invite-only agents. Common use cases: restricting access to specific clients, gating beta features, managing partner integrations, and creating paid tiers with separate tokens per customer."
 
-## Tab 7 — Versions
+## Tab 6 — Versions
 
 **File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
 
@@ -212,7 +198,21 @@ All rows except the latest version show a **Restore** button. Clicking opens an 
 
 ### Help copy
 
-- **Version history** — "Every time you save changes to this agent, a snapshot of the full configuration is stored. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
+- **Version history** — "When you save changes to configuration fields (model, instructions, temperature, guard modes, etc.), a snapshot of the full configuration is stored. Changes to name or description alone do not create a version. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
+
+## Tab 7 — Test
+
+Edit mode only. Embeds `<AgentTestChat agentSlug={agent.slug} minHeight="min-h-[200px]" />`. This is the **same component** the Setup Wizard's Step 4 uses — see [`setup-wizard.md`](./setup-wizard.md).
+
+### `<AgentTestChat>` contract
+
+File: `components/admin/orchestration/agent-test-chat.tsx`.
+
+- POSTs to `/chat/stream` via `fetch` with `ReadableStream.getReader()`.
+- Parses standard SSE frames (`event:` / `data:` lines separated by `\n\n`).
+- Renders `content` deltas into a growing reply; stops on `done`.
+- `error` frame → **"The agent ran into a problem. Check the server logs for details."** The raw `data.message` is never forwarded to the DOM. The wizard test pins this behaviour; any regression is caught by two unit tests (wizard + direct chat component).
+- Holds an `AbortController` and calls `.abort()` on unmount or on a new send.
 
 ## Submit flow
 
@@ -226,7 +226,7 @@ await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), { bo
 reset(data); // clears dirty state
 ```
 
-Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`).
+Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. System agent slugs are protected from mutation — the PATCH handler rejects slug changes when `isSystem` is true.
 
 ## Related
 

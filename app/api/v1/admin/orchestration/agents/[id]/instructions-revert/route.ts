@@ -79,9 +79,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   const history: SystemInstructionsHistoryEntry[] = historyParse.data;
+  if (history.length === 0) {
+    throw new ValidationError('No instruction history available to revert', {
+      versionIndex: ['This agent has no previous instructions to revert to'],
+    });
+  }
   if (body.versionIndex >= history.length) {
     throw new ValidationError('versionIndex out of range', {
-      versionIndex: [`Must be between 0 and ${Math.max(history.length - 1, 0)}`],
+      versionIndex: [`Must be between 0 and ${history.length - 1}`],
     });
   }
 

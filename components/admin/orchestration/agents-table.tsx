@@ -185,9 +185,9 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         sortField === field ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'desc';
       setSortField(field);
       setSortOrder(nextOrder);
-      void fetchAgents(meta.page, { sortField: field, sortOrder: nextOrder });
+      void fetchAgents(1, { sortField: field, sortOrder: nextOrder });
     },
-    [fetchAgents, meta.page, sortField, sortOrder]
+    [fetchAgents, sortField, sortOrder]
   );
 
   const handlePage = useCallback(
@@ -202,15 +202,16 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
    * On failure, reverts.
    */
   const handleToggleStatus = useCallback(async (agent: AiAgentListItem, nextActive: boolean) => {
+    const previousActive = !nextActive; // the state we're flipping away from
     setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, isActive: nextActive } : a)));
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
         body: { isActive: nextActive },
       });
     } catch (err) {
-      // Revert
+      // Revert to the state before this specific toggle, not from a stale closure
       setAgents((prev) =>
-        prev.map((a) => (a.id === agent.id ? { ...a, isActive: agent.isActive } : a))
+        prev.map((a) => (a.id === agent.id ? { ...a, isActive: previousActive } : a))
       );
       setListError(
         err instanceof APIClientError
@@ -456,7 +457,8 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 <Checkbox
                   checked={allSelected}
                   onCheckedChange={() => toggleAll()}
-                  aria-label="Select all"
+                  aria-label="Select all on this page"
+                  title="Select all on this page"
                 />
               </TableHead>
               <TableHead>
