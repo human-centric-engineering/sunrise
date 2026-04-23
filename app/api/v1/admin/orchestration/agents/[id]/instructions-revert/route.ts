@@ -36,6 +36,7 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseAgentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -109,6 +110,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     versionIndex: body.versionIndex,
     adminId: session.user.id,
     historyLength: nextHistory.length,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.instructions_revert',
+    entityType: 'agent',
+    entityId: id,
+    entityName: agent.name,
+    metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
+    clientIp: clientIP,
   });
 
   return successResponse(agent);

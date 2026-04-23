@@ -44,9 +44,9 @@ Header has an **Export selected** button enabled iff `selected.size > 0`. Clicki
 
 The **Import** button opens `<ImportAgentsDialog>`, which takes a `.json` bundle, parses it client-side, and POSTs `/agents/import` with `{ bundle, conflictMode }` where `conflictMode` is `"skip"` (default) or `"overwrite"`. On success the dialog shows `{ imported, skipped, warnings }` and the parent list refetches.
 
-### Duplicate
+### Duplicate (Clone)
 
-Duplicate is a **client-side flow** — there is no `/duplicate` server route. `<DuplicateAgentDialog>` GETs the source agent, builds a `createAgentSchema`-shaped payload with a new name/slug (defaulting to `"<name> (copy)"` / `"<slug>-copy"`), sets `isActive: false` so the copy is dormant, and POSTs `/agents`. On success it `router.push`es to the new agent's edit page.
+Duplicate uses `<DuplicateAgentDialog>`, which receives the source agent as a prop and POSTs to `POST /agents/:id/clone` with optional `{ name, slug }` overrides (defaulting to `"<name> (Copy)"` / `"<slug>-copy"`). The server-side clone copies all fields and capability bindings in a single transaction. The clone preserves `isActive` from the source (it is **not** forced to inactive). On success it `router.push`es to the new agent's edit page.
 
 ### Delete = soft delete
 

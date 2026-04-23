@@ -193,7 +193,7 @@ Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedA
 
 - **Invite tokens** — "Invite tokens control access to invite-only agents. Common use cases: restricting access to specific clients, gating beta features, managing partner integrations, and creating paid tiers with separate tokens per customer."
 
-## Tab 6 — Versions
+## Tab 7 — Versions
 
 **File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
 

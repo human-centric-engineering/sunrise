@@ -45,6 +45,11 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { GET, POST } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-tokens/route';

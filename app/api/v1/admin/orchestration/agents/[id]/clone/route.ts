@@ -22,6 +22,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { cloneAgentBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -57,6 +58,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     include: { capabilities: true },
   });
   if (!source) throw new NotFoundError(`Agent ${id} not found`);
+
+  // Cloning a system agent is allowed — the clone gets isSystem: false
+  // (set explicitly below), so it's a safe copy with no special privileges.
 
   const name = body.name ?? `${source.name} (Copy)`;
   const baseSlug = body.slug ?? `${source.slug}-copy`;
@@ -136,6 +140,20 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     slug: newAgent.slug,
     capabilitiesCloned: source.capabilities.length,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.clone',
+    entityType: 'agent',
+    entityId: newAgent.id,
+    entityName: newAgent.name,
+    metadata: {
+      sourceId: id,
+      sourceSlug: source.slug,
+      capabilitiesCloned: source.capabilities.length,
+    },
+    clientIp: clientIP,
   });
 
   return successResponse(newAgent, undefined, { status: 201 });

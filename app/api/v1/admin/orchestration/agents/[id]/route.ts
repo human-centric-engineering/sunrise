@@ -136,6 +136,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'brandVoiceInstructions',
     'provider',
     'fallbackProviders',
+    'knowledgeCategories',
+    'rateLimitRpm',
+    'visibility',
+    'inputGuardMode',
+    'outputGuardMode',
+    'maxHistoryTokens',
+    'retentionDays',
+    'providerConfig',
+    'monthlyBudgetUsd',
+    'metadata',
   ] as const;
 
   const changedVersionedFields = VERSIONED_FIELDS.filter((f) => data[f] !== undefined);
@@ -165,6 +175,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         knowledgeCategories: current.knowledgeCategories,
         rateLimitRpm: current.rateLimitRpm,
         visibility: current.visibility,
+        inputGuardMode: current.inputGuardMode,
+        outputGuardMode: current.outputGuardMode,
+        maxHistoryTokens: current.maxHistoryTokens,
+        retentionDays: current.retentionDays,
+        providerConfig: current.providerConfig,
+        monthlyBudgetUsd: current.monthlyBudgetUsd,
       };
 
       const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');

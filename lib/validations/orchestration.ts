@@ -241,7 +241,7 @@ export const updateAgentSchema = z.object({
 
   knowledgeCategories: z
     .array(z.string().max(100))
-    .max(20, 'At most 20 knowledge categories')
+    .max(50, 'At most 50 knowledge categories')
     .optional(),
 
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
@@ -511,6 +511,28 @@ export const bulkAgentActionSchema = z.object({
 });
 
 // ============================================================================
+// Embed Token Schemas
+// ============================================================================
+
+/** Create embed token — POST /agents/:id/embed-tokens */
+export const createEmbedTokenSchema = z.object({
+  label: z.string().max(100).optional(),
+  allowedOrigins: z.array(z.string().url().max(500)).max(20).default([]),
+});
+
+/** Update embed token — PATCH /agents/:id/embed-tokens/:tokenId */
+export const updateEmbedTokenSchema = z
+  .object({
+    label: z.string().max(100).nullable().optional(),
+    allowedOrigins: z.array(z.string().url().max(500)).max(20).optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine(
+    (v) => v.label !== undefined || v.allowedOrigins !== undefined || v.isActive !== undefined,
+    { message: 'At least one field must be provided' }
+  );
+
+// ============================================================================
 // Webhook Schemas
 // ============================================================================
 
@@ -583,6 +605,16 @@ const bundledAgentSchema = z.object({
   monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   isActive: z.boolean(),
+  fallbackProviders: z.array(z.string().max(50)).max(5).default([]),
+  rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  visibility: agentVisibilitySchema.default('internal'),
+  knowledgeCategories: z.array(z.string().max(100)).max(50).default([]),
+  topicBoundaries: z.array(z.string().max(200)).max(50).default([]),
+  brandVoiceInstructions: z.string().max(10000).nullable().optional(),
   capabilities: z
     .array(
       z.object({

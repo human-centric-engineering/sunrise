@@ -32,6 +32,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { importAgentsSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type ImportResults = {
   imported: number;
@@ -76,6 +77,12 @@ export const POST = withAdminAuth(async (request, session) => {
         continue;
       }
 
+      if (existing && existing.isSystem) {
+        results.warnings.push(`Agent '${bundled.slug}': skipped — cannot overwrite system agent`);
+        results.skipped += 1;
+        continue;
+      }
+
       // Resolve this agent's capability links, warning on unknown slugs.
       const pivotCreates: Prisma.AiAgentCapabilityCreateManyAgentInput[] = [];
       for (const cap of bundled.capabilities) {
@@ -108,6 +115,16 @@ export const POST = withAdminAuth(async (request, session) => {
         monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
         metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isActive: bundled.isActive,
+        fallbackProviders: bundled.fallbackProviders ?? [],
+        rateLimitRpm: bundled.rateLimitRpm ?? null,
+        inputGuardMode: bundled.inputGuardMode ?? null,
+        outputGuardMode: bundled.outputGuardMode ?? null,
+        maxHistoryTokens: bundled.maxHistoryTokens ?? null,
+        retentionDays: bundled.retentionDays ?? null,
+        visibility: bundled.visibility ?? 'internal',
+        knowledgeCategories: bundled.knowledgeCategories ?? [],
+        topicBoundaries: bundled.topicBoundaries ?? [],
+        brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
       };
 
       if (existing) {
@@ -147,6 +164,16 @@ export const POST = withAdminAuth(async (request, session) => {
     ...results,
     conflictMode,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.import',
+    entityType: 'agent',
+    entityId: 'bulk',
+    entityName: `${results.imported} imported, ${results.overwritten} overwritten`,
+    metadata: { ...results, conflictMode },
+    clientIp: clientIP,
   });
 
   return successResponse(results);

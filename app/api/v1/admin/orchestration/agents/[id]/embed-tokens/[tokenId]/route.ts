@@ -7,7 +7,6 @@
  * Authentication: Admin role required.
  */
 
-import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -17,17 +16,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-
-const updateEmbedTokenSchema = z
-  .object({
-    label: z.string().max(100).nullable().optional(),
-    allowedOrigins: z.array(z.string().url().max(500)).max(20).optional(),
-    isActive: z.boolean().optional(),
-  })
-  .refine(
-    (v) => v.label !== undefined || v.allowedOrigins !== undefined || v.isActive !== undefined,
-    { message: 'At least one field must be provided' }
-  );
+import { updateEmbedTokenSchema } from '@/lib/validations/orchestration';
 
 type Params = { id: string; tokenId: string };
 

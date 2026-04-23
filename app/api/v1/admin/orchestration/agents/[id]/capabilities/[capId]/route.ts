@@ -25,6 +25,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { updateAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type RouteParams = { id: string; capId: string };
 
@@ -72,6 +73,15 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
       fieldsChanged: Object.keys(data),
     });
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.capability_update',
+      entityType: 'agent',
+      entityId: agentId,
+      metadata: { capabilityId, fieldsChanged: Object.keys(data) },
+      clientIp: clientIP,
+    });
+
     return successResponse(link);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
@@ -100,6 +110,15 @@ export const DELETE = withAdminAuth<RouteParams>(async (request, session, { para
       agentId,
       capabilityId,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.capability_detach',
+      entityType: 'agent',
+      entityId: agentId,
+      metadata: { capabilityId },
+      clientIp: clientIP,
     });
 
     return successResponse({ agentId, capabilityId, detached: true });

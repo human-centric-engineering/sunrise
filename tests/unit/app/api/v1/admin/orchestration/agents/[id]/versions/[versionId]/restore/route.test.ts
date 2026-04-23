@@ -43,6 +43,11 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -200,6 +205,24 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  // ── System agent protection ────────────────────────────────────────
+
+  it('returns 403 when restoring a system agent', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
+
+    const response = await POST(
+      makeRequest(AGENT_ID, VERSION_ID),
+      makeParams(AGENT_ID, VERSION_ID)
+    );
+
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('FORBIDDEN');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   // ── Not found ──────────────────────────────────────────────────────
@@ -435,6 +458,46 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     expect(callArgs[0].data).not.toHaveProperty('model');
     expect(callArgs[0].data).not.toHaveProperty('provider');
     expect(callArgs[0].data).not.toHaveProperty('temperature');
+  });
+
+  it('restores expanded snapshot fields (guard modes, budget, history tokens)', async () => {
+    const fullSnapshot = {
+      systemInstructions: 'old',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputGuardMode: 'block',
+      outputGuardMode: 'warn_and_continue',
+      maxHistoryTokens: 8000,
+      retentionDays: 30,
+      providerConfig: { timeout: 5000 },
+      monthlyBudgetUsd: 100,
+    };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
+      makeVersion({ snapshot: fullSnapshot }) as never
+    );
+
+    const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent());
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      const tx = {
+        aiAgent: { update: txAgentUpdate },
+        aiAgentVersion: {
+          findFirst: vi.fn().mockResolvedValue({ version: 1 }),
+          create: vi.fn().mockResolvedValue({}),
+        },
+      };
+      return callback(tx as never);
+    });
+
+    await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
+
+    const callArgs = txAgentUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+    expect(callArgs[0].data).toHaveProperty('inputGuardMode', 'block');
+    expect(callArgs[0].data).toHaveProperty('outputGuardMode', 'warn_and_continue');
+    expect(callArgs[0].data).toHaveProperty('maxHistoryTokens', 8000);
+    expect(callArgs[0].data).toHaveProperty('retentionDays', 30);
+    expect(callArgs[0].data).toHaveProperty('monthlyBudgetUsd', 100);
   });
 
   it('omits null temperature and maxTokens from updateData (null guard)', async () => {

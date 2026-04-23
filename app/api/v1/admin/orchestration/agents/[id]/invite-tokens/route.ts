@@ -17,6 +17,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { createInviteTokenSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string };
 
@@ -96,6 +97,15 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       expiresAt: true,
       createdAt: true,
     },
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.invite_token_create',
+    entityType: 'agent',
+    entityId: agent.id,
+    metadata: { tokenId: token.id, label: body.label },
+    clientIp: clientIP,
   });
 
   return successResponse({ token }, undefined, { status: 201 });

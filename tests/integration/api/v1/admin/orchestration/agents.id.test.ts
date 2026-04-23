@@ -413,6 +413,85 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(response.status).toBe(400);
     });
   });
+
+  describe('Version snapshot triggers', () => {
+    it('creates a version snapshot when a newly-versioned field changes (inputGuardMode)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ inputGuardMode: null }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ inputGuardMode: 'block' }) as never
+      );
+
+      const response = await PATCH(
+        makeRequest('PATCH', { inputGuardMode: 'block' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      expect(createCall.data.changeSummary).toContain('inputGuardMode changed');
+    });
+
+    it('creates a version snapshot when visibility changes', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ visibility: 'internal' }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ visibility: 'public' }) as never
+      );
+
+      const response = await PATCH(
+        makeRequest('PATCH', { visibility: 'public' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+    });
+
+    it('captures expanded fields in the snapshot object', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({
+          inputGuardMode: 'log_only',
+          outputGuardMode: 'block',
+          maxHistoryTokens: 4000,
+          retentionDays: 90,
+          providerConfig: { timeout: 3000 },
+          monthlyBudgetUsd: 50,
+        }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ monthlyBudgetUsd: 100 }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { monthlyBudgetUsd: 100 }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      expect(snapshot).toHaveProperty('inputGuardMode', 'log_only');
+      expect(snapshot).toHaveProperty('outputGuardMode', 'block');
+      expect(snapshot).toHaveProperty('maxHistoryTokens', 4000);
+      expect(snapshot).toHaveProperty('retentionDays', 90);
+      expect(snapshot).toHaveProperty('providerConfig', { timeout: 3000 });
+      expect(snapshot).toHaveProperty('monthlyBudgetUsd', 50);
+    });
+
+    it('does NOT create a version snapshot for non-versioned field changes (name)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ name: 'Renamed' }) as never);
+
+      await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('DELETE /api/v1/admin/orchestration/agents/:id', () => {

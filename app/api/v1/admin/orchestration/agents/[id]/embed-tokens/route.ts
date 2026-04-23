@@ -7,7 +7,6 @@
  * Authentication: Admin role required.
  */
 
-import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -17,11 +16,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-
-const createEmbedTokenSchema = z.object({
-  label: z.string().max(100).optional(),
-  allowedOrigins: z.array(z.string().url().max(500)).max(20).default([]),
-});
+import { createEmbedTokenSchema } from '@/lib/validations/orchestration';
 
 type Params = { id: string };
 

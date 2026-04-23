@@ -4,7 +4,7 @@ Consumer-focused HTTP reference for every admin orchestration endpoint, consolid
 
 **Base path:** `/api/v1/admin/orchestration`
 **Authentication:** Every endpoint requires a session with the `ADMIN` role (`withAdminAuth` in `lib/auth/guards.ts`). Non-admins get `403`, unauthenticated callers get `401`.
-**Rate limiting:** Every mutating handler (`POST`, `PATCH`, `DELETE`) is gated by `adminLimiter` (30 req/min per IP, see `lib/security/rate-limit.ts`). `GET` routes are unlimited.
+**Rate limiting:** Every mutating handler (`POST`, `PATCH`, `DELETE`) is gated by `adminLimiter` (30 req/min per IP, see `lib/security/rate-limit.ts`). Most `GET` routes are unlimited; some sub-resource GETs (capabilities list, capabilities usage, embed-tokens list, invite-tokens list, compare) are also rate-limited.
 **Response envelope:**
 
 ```jsonc
@@ -23,7 +23,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | ----------------------------------- | ------------------ | ------------------------------------------------------- | ------- |
 | `/agents`                           | GET, POST          | List / create agents                                    | 3.1     |
 | `/agents/:id`                       | GET, PATCH, DELETE | Read / update / soft-delete                             | 3.1     |
-| `/agents/:id/capabilities`          | POST               | Attach capability                                       | 3.1     |
+| `/agents/:id/capabilities`          | GET, POST          | List attached / attach capability                       | 3.1     |
 | `/agents/:id/capabilities/:capId`   | PATCH, DELETE      | Update / detach pivot row                               | 3.1     |
 | `/agents/:id/instructions-history`  | GET                | Read `systemInstructions` audit trail                   | 3.1     |
 | `/agents/:id/instructions-revert`   | POST               | Revert to a previous `systemInstructions`               | 3.1     |
@@ -98,8 +98,12 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/analytics/content-gaps`           | GET                | Frequently asked topics with poor coverage              | 6       |
 | `/analytics/feedback`               | GET                | Thumbs up/down aggregation and trend                    | 6       |
 | `/agents/:id/invite-tokens`         | GET, POST          | List / create invite tokens for invite_only agents      | 5.1     |
-| `/agents/:id/invite-tokens/:tid`    | PATCH, DELETE      | Update / revoke an invite token                         | 5.1     |
+| `/agents/:id/invite-tokens/:tid`    | DELETE             | Revoke an invite token                                  | 5.1     |
 | `/agents/:id/versions`              | GET                | Version history (paginated snapshots)                   | 5.1     |
+| `/agents/:id/versions/:vId`         | GET                | Get version detail (full snapshot)                      | 5.1     |
+| `/agents/:id/versions/:vId/restore` | POST               | Restore agent from a version snapshot                   | 5.1     |
+| `/agents/:id/embed-tokens`          | GET, POST          | List / create embed tokens for widget auth              | 5.1     |
+| `/agents/:id/embed-tokens/:tid`     | PATCH, DELETE      | Update / delete an embed token                          | 5.1     |
 | `/workflows/templates`              | GET                | List workflow templates (builtin + custom)              | 5.1     |
 | `/workflows/:id/save-as-template`   | POST               | Save a workflow as a reusable template                  | 5.1     |
 | `/workflows/:id/schedules`          | GET, POST          | List / create cron schedules for a workflow             | 5.1     |

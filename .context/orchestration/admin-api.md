@@ -4,7 +4,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 
 **Auth:** All routes require the `ADMIN` role via `withAdminAuth` (`lib/auth/guards.ts`). Non-admins get 403, unauthenticated callers get 401.
 
-**Rate limiting:** Every mutating handler (POST / PATCH / DELETE) is gated by `adminLimiter` (30 req/min, `lib/security/rate-limit.ts`), keyed by `getClientIP(request)`. GET routes are unlimited per house convention.
+**Rate limiting:** Every mutating handler (POST / PATCH / DELETE) is gated by `adminLimiter` (30 req/min, `lib/security/rate-limit.ts`), keyed by `getClientIP(request)`. Most GET routes are unlimited; some sub-resource GETs (capabilities list, capabilities usage, embed-tokens list, invite-tokens list, compare) are also rate-limited.
 
 **Response envelope:** Standard `{ success, data }` / `{ success, error }` shape from `lib/api/responses.ts`. Mutating endpoints throw typed errors (`NotFoundError`, `ConflictError`, `ValidationError`) which `withAdminAuth` funnels through `handleAPIError`.
 
@@ -26,6 +26,10 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/compare`                   | GET                | Compare two agents side-by-side                           |
 | `/api/v1/admin/orchestration/agents/export`                    | POST               | Export selected agents as a versioned bundle              |
 | `/api/v1/admin/orchestration/agents/import`                    | POST               | Import an agent bundle (skip / overwrite)                 |
+| `/api/v1/admin/orchestration/agents/:id/invite-tokens`         | GET, POST          | List / create invite tokens for invite_only agents        |
+| `/api/v1/admin/orchestration/agents/:id/invite-tokens/:tid`    | DELETE             | Revoke an invite token                                    |
+| `/api/v1/admin/orchestration/agents/:id/embed-tokens`          | GET, POST          | List / create embed tokens for widget auth                |
+| `/api/v1/admin/orchestration/agents/:id/embed-tokens/:tid`     | PATCH, DELETE      | Update / delete an embed token                            |
 | `/api/v1/admin/orchestration/capabilities`                     | GET, POST          | List / create capabilities                                |
 | `/api/v1/admin/orchestration/capabilities/:id`                 | GET, PATCH, DELETE | Read / update / soft-delete a capability                  |
 | `/api/v1/admin/orchestration/capabilities/:id/agents`          | GET                | Reverse-lookup — agents attaching this capability         |
@@ -265,7 +269,9 @@ Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
 POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restore
 ```
 
-Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields (systemInstructions, model, provider, fallbackProviders, temperature, maxTokens, topicBoundaries, brandVoiceInstructions, knowledgeCategories, rateLimitRpm, visibility, metadata) to the agent, and creates a new version entry recording the restore action.
+Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields to the agent, and creates a new version entry recording the restore action. System agents (`isSystem: true`) cannot be restored — returns **403**.
+
+**Snapshotted fields:** `systemInstructions`, `model`, `provider`, `fallbackProviders`, `temperature`, `maxTokens`, `topicBoundaries`, `brandVoiceInstructions`, `knowledgeCategories`, `rateLimitRpm`, `visibility`, `metadata`, `inputGuardMode`, `outputGuardMode`, `maxHistoryTokens`, `retentionDays`, `providerConfig`, `monthlyBudgetUsd`.
 
 **Response (200):**
 
@@ -282,7 +288,7 @@ Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snap
 }
 ```
 
-Returns **404** if the agent or version doesn't exist.
+Returns **404** if the agent or version doesn't exist. Returns **403** for system agents.
 
 **Key file:** `app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route.ts`
 

@@ -67,6 +67,11 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -88,12 +93,22 @@ function makeDbAgent() {
     systemInstructionsHistory: [],
     model: 'claude-sonnet-4-6',
     provider: 'anthropic',
-    providerConfig: null,
+    providerConfig: { timeout: 5000 },
     temperature: 0.7,
     maxTokens: 4096,
     monthlyBudgetUsd: 50,
     metadata: null,
     isActive: true,
+    fallbackProviders: ['openai'],
+    rateLimitRpm: 30,
+    inputGuardMode: 'block',
+    outputGuardMode: 'warn_and_continue',
+    maxHistoryTokens: 8000,
+    retentionDays: 60,
+    visibility: 'invite_only',
+    knowledgeCategories: ['finance', 'legal'],
+    topicBoundaries: ['politics'],
+    brandVoiceInstructions: 'Be formal and concise.',
     createdBy: 'admin-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -202,6 +217,18 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(created.maxTokens).toBe(4096);
     expect(created.monthlyBudgetUsd).toBe(50);
     expect(created.isActive).toBe(true);
+
+    // Step 3b: Verify expanded fields round-tripped correctly
+    expect(created.fallbackProviders).toEqual(['openai']);
+    expect(created.rateLimitRpm).toBe(30);
+    expect(created.inputGuardMode).toBe('block');
+    expect(created.outputGuardMode).toBe('warn_and_continue');
+    expect(created.maxHistoryTokens).toBe(8000);
+    expect(created.retentionDays).toBe(60);
+    expect(created.visibility).toBe('invite_only');
+    expect(created.knowledgeCategories).toEqual(['finance', 'legal']);
+    expect(created.topicBoundaries).toEqual(['politics']);
+    expect(created.brandVoiceInstructions).toBe('Be formal and concise.');
 
     // Step 4: Verify capabilities were re-attached
     expect(txMock.aiAgentCapability.createMany).toHaveBeenCalledOnce();
