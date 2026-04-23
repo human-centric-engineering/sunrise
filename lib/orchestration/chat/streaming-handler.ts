@@ -905,7 +905,14 @@ export class StreamingChatHandler {
     if (request.contextType !== undefined) data.contextType = request.contextType;
     if (request.contextId !== undefined) data.contextId = request.contextId;
 
-    return prisma.aiConversation.create({ data });
+    const conversation = await prisma.aiConversation.create({ data });
+    emitHookEvent('conversation.started', {
+      conversationId: conversation.id,
+      agentId: agent.id,
+      agentSlug: agent.slug,
+      userId: request.userId,
+    });
+    return conversation;
   }
 
   private async loadHistory(conversationId: string): Promise<AiMessage[]> {

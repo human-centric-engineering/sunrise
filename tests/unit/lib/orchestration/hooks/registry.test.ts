@@ -212,12 +212,12 @@ describe('emitHookEvent', () => {
     vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
       makeHook({
         id: 'hook-4',
-        eventType: 'budget.warning',
+        eventType: 'agent.updated',
         action: { type: 'webhook', url: 'https://example.com/fail' },
       }),
     ] as never);
 
-    emitHookEvent('budget.warning', { agentId: 'agent-1' });
+    emitHookEvent('agent.updated', { agentId: 'agent-1' });
 
     await vi.waitFor(() => {
       expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(

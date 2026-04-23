@@ -41,18 +41,14 @@ lib/orchestration/hooks/
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type               | Currently Emitted By                               |
-| ------------------------ | -------------------------------------------------- |
-| `workflow.started`       | `lib/orchestration/engine/orchestration-engine.ts` |
-| `workflow.completed`     | `lib/orchestration/engine/orchestration-engine.ts` |
-| `workflow.failed`        | `lib/orchestration/engine/orchestration-engine.ts` |
-| `message.created`        | `lib/orchestration/chat/streaming-handler.ts`      |
-| `conversation.started`   | _Not emitted anywhere in current codebase_         |
-| `conversation.completed` | _Not emitted anywhere in current codebase_         |
-| `agent.updated`          | _Not emitted anywhere in current codebase_         |
-| `budget.warning`         | _Not emitted anywhere in current codebase_         |
-
-Hooks can be configured for unemitted types — they simply never fire until a caller of `emitHookEvent()` is added.
+| Event Type             | Currently Emitted By                                  |
+| ---------------------- | ----------------------------------------------------- |
+| `workflow.started`     | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.completed`   | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.failed`      | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `message.created`      | `lib/orchestration/chat/streaming-handler.ts`         |
+| `conversation.started` | `lib/orchestration/chat/streaming-handler.ts`         |
+| `agent.updated`        | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
 
 ## Event Payload
 

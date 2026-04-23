@@ -8,13 +8,11 @@
 /** All supported hook event types */
 export const HOOK_EVENT_TYPES = [
   'conversation.started',
-  'conversation.completed',
   'message.created',
   'workflow.started',
   'workflow.completed',
   'workflow.failed',
   'agent.updated',
-  'budget.warning',
 ] as const;
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
