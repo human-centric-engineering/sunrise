@@ -21,6 +21,11 @@ import { getClientIP } from '@/lib/security/ip';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logger } from '@/lib/logging';
+import {
+  systemInstructionsHistorySchema,
+  type SystemInstructionsHistoryEntry,
+} from '@/lib/validations/orchestration';
 
 const versionSnapshotSchema = z.object({
   systemInstructions: z.string().optional(),
@@ -82,10 +87,36 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     }
     const snapshot = parsed.data;
 
-    // Build the update data from the snapshot — only apply fields that exist
+    // If the snapshot restores systemInstructions, push the current value
+    // onto the history column (same pattern as the PATCH route).
     const updateData: Prisma.AiAgentUncheckedUpdateInput = {};
-    if (snapshot.systemInstructions !== undefined)
+    if (
+      snapshot.systemInstructions !== undefined &&
+      snapshot.systemInstructions !== agent.systemInstructions
+    ) {
+      const historyParse = systemInstructionsHistorySchema.safeParse(
+        agent.systemInstructionsHistory
+      );
+      if (!historyParse.success) {
+        logger.warn('Restore: systemInstructionsHistory malformed, resetting', {
+          agentId: id,
+          issues: historyParse.error.issues,
+        });
+      }
+      const history: SystemInstructionsHistoryEntry[] = historyParse.success
+        ? historyParse.data
+        : [];
+      history.push({
+        instructions: agent.systemInstructions,
+        changedAt: new Date().toISOString(),
+        changedBy: session.user.id,
+      });
       updateData.systemInstructions = snapshot.systemInstructions;
+      updateData.systemInstructionsHistory = history as unknown as Prisma.InputJsonValue;
+    } else if (snapshot.systemInstructions !== undefined) {
+      updateData.systemInstructions = snapshot.systemInstructions;
+    }
+
     if (snapshot.model !== undefined) updateData.model = snapshot.model;
     if (snapshot.provider !== undefined) updateData.provider = snapshot.provider;
     if (snapshot.fallbackProviders !== undefined)

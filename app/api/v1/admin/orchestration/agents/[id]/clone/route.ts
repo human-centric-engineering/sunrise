@@ -89,7 +89,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             monthlyBudgetUsd: source.monthlyBudgetUsd,
             fallbackProviders: source.fallbackProviders,
             metadata: (source.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            isActive: source.isActive,
+            isActive: false,
             inputGuardMode: source.inputGuardMode,
             outputGuardMode: source.outputGuardMode,
             maxHistoryTokens: source.maxHistoryTokens,

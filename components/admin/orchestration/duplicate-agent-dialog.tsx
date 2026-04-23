@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { slugSchema } from '@/lib/validations/common';
 
 export interface DuplicateAgentDialogProps {
   /** Source agent to clone. `null` closes the dialog. */
@@ -56,6 +57,11 @@ export function DuplicateAgentDialog({ source, onOpenChange }: DuplicateAgentDia
     if (!source) return;
     if (!name.trim() || !slug.trim()) {
       setError('Name and slug are required.');
+      return;
+    }
+    const slugResult = slugSchema.safeParse(slug.trim());
+    if (!slugResult.success) {
+      setError('Slug must be lowercase alphanumeric with single hyphens (e.g. my-agent-copy).');
       return;
     }
     setSubmitting(true);

@@ -40,6 +40,7 @@ type ConflictMode = 'skip' | 'overwrite';
 
 interface ImportResult {
   imported: number;
+  overwritten: number;
   skipped: number;
   warnings?: string[];
 }
@@ -222,6 +223,8 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
             <div className="border-border rounded-md border p-3 text-sm">
               <p>
                 <strong>Imported:</strong> {result.imported}
+                <span className="text-muted-foreground"> · </span>
+                <strong>Overwritten:</strong> {result.overwritten}
                 <span className="text-muted-foreground"> · </span>
                 <strong>Skipped:</strong> {result.skipped}
               </p>

@@ -81,6 +81,10 @@ export const API = {
       agentVersions: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/versions`,
       agentVersionRestore: (id: string, versionId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}/restore`,
+      agentEmbedTokens: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/embed-tokens`,
+      agentEmbedTokenById: (id: string, tokenId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/embed-tokens/${tokenId}`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       capabilityAgents: (id: string): string =>

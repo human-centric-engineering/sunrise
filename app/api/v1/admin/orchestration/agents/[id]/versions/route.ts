@@ -25,8 +25,10 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
   if (!agent) throw new NotFoundError(`Agent ${id} not found`);
 
   const url = new URL(_request.url);
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
-  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? '20')));
+  const page = Math.floor(Math.max(1, Number(url.searchParams.get('page') ?? '1')));
+  const limit = Math.floor(
+    Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? '20')))
+  );
 
   const [versions, total] = await Promise.all([
     prisma.aiAgentVersion.findMany({

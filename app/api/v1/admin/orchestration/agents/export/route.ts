@@ -39,9 +39,10 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, exportAgentsSchema);
+  const uniqueIds = [...new Set(body.agentIds)];
 
   const agents = await prisma.aiAgent.findMany({
-    where: { id: { in: body.agentIds } },
+    where: { id: { in: uniqueIds } },
     include: {
       capabilities: {
         include: {
@@ -51,9 +52,9 @@ export const POST = withAdminAuth(async (request, session) => {
     },
   });
 
-  if (agents.length !== body.agentIds.length) {
+  if (agents.length !== uniqueIds.length) {
     const foundIds = new Set(agents.map((a) => a.id));
-    const missing = body.agentIds.filter((id) => !foundIds.has(id));
+    const missing = uniqueIds.filter((id) => !foundIds.has(id));
     throw new NotFoundError(`Agents not found: ${missing.join(', ')}`);
   }
 
@@ -113,7 +114,7 @@ export const POST = withAdminAuth(async (request, session) => {
     adminId: session.user.id,
   });
 
-  const filename = `agents-export-${bundle.exportedAt}.json`;
+  const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
   return new Response(JSON.stringify({ success: true, data: bundle }), {
     status: 200,
     headers: {

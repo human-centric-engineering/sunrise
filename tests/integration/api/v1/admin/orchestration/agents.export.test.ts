@@ -247,6 +247,34 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       expect(data.data.agents[0].capabilities[0].slug).toBe('search-web');
       expect(data.data.agents[0].capabilities[0]).not.toHaveProperty('id');
     });
+
+    it('deduplicates agentIds so duplicates do not cause false 404', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        makeDbAgent(AGENT_ID_1, 'agent-one'),
+      ] as never);
+
+      // Same ID twice — should still succeed (deduplicated before length check)
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1, AGENT_ID_1] }));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: { agents: unknown[] } }>(response);
+      expect(data.data.agents).toHaveLength(1);
+    });
+
+    it('produces a filename without colons (Windows-safe)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        makeDbAgent(AGENT_ID_1, 'agent-one'),
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+
+      const disposition = response.headers.get('Content-Disposition') ?? '';
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      expect(filenameMatch).toBeTruthy();
+      expect(filenameMatch![1]).not.toContain(':');
+    });
   });
 
   describe('Error cases', () => {

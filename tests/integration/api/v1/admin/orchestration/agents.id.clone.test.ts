@@ -263,6 +263,33 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(response.status).toBe(201);
     });
 
+    it('always creates clone with isActive: false regardless of source state', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const activeSource = makeSourceAgent();
+      expect(activeSource.isActive).toBe(true); // Confirm source is active
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(activeSource as never);
+
+      let capturedCreateData: Record<string, unknown> | null = null;
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
+        const tx = {
+          aiAgent: {
+            create: vi.fn((args: { data: Record<string, unknown> }) => {
+              capturedCreateData = args.data;
+              return Promise.resolve({ ...makeClonedAgent(), isActive: false });
+            }),
+          },
+          aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
+        };
+        return fn(tx as never);
+      });
+
+      const response = await POST(makePostRequest(), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(201);
+      expect(capturedCreateData).toBeDefined();
+      expect(capturedCreateData!.isActive).toBe(false);
+    });
+
     it('accepts custom name and slug overrides', async () => {
       const customAgent = { ...makeClonedAgent(), name: 'Custom Name', slug: 'custom-slug' };
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

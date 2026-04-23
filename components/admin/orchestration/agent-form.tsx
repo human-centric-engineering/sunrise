@@ -48,6 +48,7 @@ import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-inv
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
+import { slugSchema } from '@/lib/validations/common';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 /**
@@ -58,11 +59,7 @@ import type { AiAgent, AiProviderConfig } from '@/types/prisma';
  */
 const agentFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
-  slug: z
-    .string()
-    .min(1, 'Slug is required')
-    .max(100)
-    .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and hyphens only'),
+  slug: slugSchema.min(1, 'Slug is required').max(100),
   description: z.string().min(1, 'Description is required').max(5000),
   systemInstructions: z.string().min(1, 'System instructions are required').max(50000),
   provider: z.string().min(1, 'Provider is required'),
@@ -76,7 +73,7 @@ const agentFormSchema = z.object({
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']),
-  rateLimitRpm: z.number().int().min(1).max(100000).nullable().optional(),
+  rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
   fallbackProviders: z.array(z.string()),
   knowledgeCategories: z.string().optional(),
   topicBoundaries: z.string().optional(),
@@ -129,7 +126,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
     setValue,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<AgentFormData>({
     resolver: zodResolver(agentFormSchema),
     defaultValues: {
@@ -173,6 +170,36 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   }, [currentName, slugTouched, isEdit, setValue]);
 
   const filteredModels = models?.filter((m) => m.provider === currentProvider) ?? [];
+
+  // When provider changes, reset model if the current value doesn't belong to the new provider.
+  useEffect(() => {
+    if (modelFallback || !currentProvider) return;
+    const valid = filteredModels.some((m) => m.id === currentModel);
+    if (!valid && filteredModels.length > 0) {
+      setValue('model', filteredModels[0].id, { shouldValidate: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProvider]);
+
+  // When provider changes, remove it from fallbackProviders if it was previously a fallback.
+  useEffect(() => {
+    const current = watch('fallbackProviders');
+    const filtered = current.filter((p: string) => p !== currentProvider);
+    if (filtered.length !== current.length) {
+      setValue('fallbackProviders', filtered);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProvider]);
+
+  // Warn before navigating away with unsaved changes.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
@@ -327,8 +354,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               <Shield className="h-4 w-4 shrink-0" />
               <span>
                 This is a system agent used internally by the platform. It cannot be deleted or
-                deactivated. You can update its description but most fields are not relevant — check
-                the agent&apos;s description for how it is used.
+                deactivated. Editing instructions, model, and capabilities is supported — changes
+                are versioned and can be reverted.
               </span>
             </div>
           )}
@@ -337,7 +364,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
               Name{' '}
               <FieldHelp title="Agent name">
                 A human-readable label. This is what admins and end-users see in lists and in the
-                chat UI. Defaults to empty.
+                chat UI.
               </FieldHelp>
             </Label>
             <Input id="name" {...register('name')} placeholder="Research Assistant" />
@@ -835,9 +862,9 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             <Label htmlFor="knowledgeCategories">
               Knowledge categories{' '}
               <FieldHelp title="Knowledge base categories">
-                Comma-separated list of categories to associate with this agent. This value is saved
-                for future use but category-based filtering during retrieval is not yet active.
-                Leave blank for no restriction.
+                Comma-separated list of knowledge base categories this agent can search. When set,
+                knowledge base queries are scoped to documents in these categories only. Leave blank
+                to search all categories.
               </FieldHelp>
             </Label>
             <Input
@@ -900,18 +927,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           )}
         </TabsContent>
 
-        {/* ================= TAB 5 — TEST ================= */}
-        <TabsContent value="test" className="pt-4">
-          {isEdit && agent ? (
-            <AgentTestChat agentSlug={agent.slug} minHeight="min-h-[200px]" />
-          ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">Save the agent first to test a chat.</p>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* ================= TAB 6 — INVITE TOKENS ================= */}
+        {/* ================= TAB 5 — INVITE TOKENS ================= */}
         <TabsContent value="invite-tokens" className="pt-4">
           {isEdit && agent && currentVisibility === 'invite_only' ? (
             <AgentInviteTokensTab agentId={agent.id} />
@@ -926,20 +942,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           )}
         </TabsContent>
 
-        {/* ================= TAB 8 — EMBED ================= */}
-        <TabsContent value="embed" className="pt-4">
-          {isEdit && agent ? (
-            <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
-          ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">
-                Save the agent first, then manage embed tokens.
-              </p>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* ================= TAB 7 — VERSIONS ================= */}
+        {/* ================= TAB 6 — VERSIONS ================= */}
         <TabsContent value="versions" className="pt-4">
           {isEdit && agent ? (
             <AgentVersionHistoryTab
@@ -984,6 +987,30 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">
               <p className="text-muted-foreground">Save the agent first to view version history.</p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 7 — TEST ================= */}
+        <TabsContent value="test" className="pt-4">
+          {isEdit && agent ? (
+            <AgentTestChat agentSlug={agent.slug} minHeight="min-h-[200px]" />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">Save the agent first to test a chat.</p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 8 — EMBED ================= */}
+        <TabsContent value="embed" className="pt-4">
+          {isEdit && agent ? (
+            <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
+          ) : (
+            <div className="rounded-md border p-6 text-center text-sm">
+              <p className="text-muted-foreground">
+                Save the agent first, then manage embed tokens.
+              </p>
             </div>
           )}
         </TabsContent>

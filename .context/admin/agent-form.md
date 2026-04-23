@@ -187,7 +187,7 @@ Displays the `AiAgentVersion` timeline — every save creates a full config snap
 
 ### Restore
 
-All rows except the latest version show a **Restore** button. Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which creates a _new_ version entry so the action is auditable. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
+All rows except the latest version show a **Restore** button. Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which pushes the pre-restore `systemInstructions` onto `systemInstructionsHistory` (keeping the JSONB history in sync with the version table) and creates a _new_ version entry so the action is auditable. The restore dialog clears any previous error on close. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
 
 ### API endpoints
 
@@ -226,7 +226,7 @@ await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), { bo
 reset(data); // clears dirty state
 ```
 
-Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. System agent slugs are protected from mutation — the PATCH handler rejects slug changes when `isSystem` is true.
+Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). Version restore also pushes the pre-restore instructions onto history, keeping the JSONB trail in sync with the `AiAgentVersion` table. The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. System agent slugs are protected from mutation — the PATCH handler rejects slug changes when `isSystem` is true.
 
 ## Related
 

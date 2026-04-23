@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { escapeHtml } from '@/lib/security/sanitize';
 
 interface EmbedToken {
@@ -43,7 +44,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
   const [creating, setCreating] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
 
-  const endpoint = `/api/v1/admin/orchestration/agents/${agentId}/embed-tokens`;
+  const endpoint = API.ADMIN.ORCHESTRATION.agentEmbedTokens(agentId);
 
   const fetchTokens = React.useCallback(async () => {
     try {
@@ -100,7 +101,9 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
 
   async function handleToggle(tokenId: string, isActive: boolean): Promise<void> {
     try {
-      await apiClient.patch(`${endpoint}/${tokenId}`, { body: { isActive } });
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId), {
+        body: { isActive },
+      });
       setTokens((prev) => prev.map((t) => (t.id === tokenId ? { ...t, isActive } : t)));
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to update token');
@@ -109,7 +112,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
 
   async function handleDelete(tokenId: string): Promise<void> {
     try {
-      await apiClient.delete(`${endpoint}/${tokenId}`);
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.agentEmbedTokenById(agentId, tokenId));
       setTokens((prev) => prev.filter((t) => t.id !== tokenId));
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to delete token');

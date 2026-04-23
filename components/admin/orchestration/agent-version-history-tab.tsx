@@ -123,9 +123,10 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
         <CardTitle className="flex items-center gap-2 text-base">
           Version history{' '}
           <FieldHelp title="Agent version history">
-            Every time you save changes to this agent, a snapshot of the full configuration is
-            stored. You can view what changed and restore any previous version. Restoring creates a
-            new version entry so the action is auditable.
+            When you save changes to configuration fields (model, instructions, temperature, guard
+            modes, etc.), a snapshot of the full configuration is stored. Changes to name or
+            description alone do not create a version. You can view what changed and restore any
+            previous version. Restoring creates a new version entry so the action is auditable.
           </FieldHelp>
         </CardTitle>
       </CardHeader>
@@ -168,7 +169,13 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
         )}
       </CardContent>
 
-      <AlertDialog open={!!restoreTarget} onOpenChange={() => setRestoreTarget(null)}>
+      <AlertDialog
+        open={!!restoreTarget}
+        onOpenChange={() => {
+          setRestoreTarget(null);
+          setRestoreError(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Restore to version {restoreTarget?.version}?</AlertDialogTitle>
