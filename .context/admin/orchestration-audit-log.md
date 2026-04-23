@@ -171,13 +171,18 @@ If you add audit coverage for any of the above, extend the UI filter dropdown in
 
 ## Retention
 
-**None.** The `AiAdminAuditLog` model has no retention column (compare: `AiOrchestrationSettings.webhookRetentionDays` / `costLogRetentionDays`) and no cron job prunes it. The schema comment explicitly calls it "Immutable audit trail" — rows accumulate indefinitely. If volume becomes a problem, add a retention setting + cleanup job; today there's nothing to configure.
+Controlled by `AiOrchestrationSettings.auditLogRetentionDays` (nullable integer, days). Pruned by `pruneAuditLogs()` in `lib/orchestration/retention.ts`, which runs as part of `enforceRetentionPolicies()` on each maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`).
 
-Indexed on `userId`, `action`, `(entityType, entityId)`, and `createdAt`, so the table scales for queries but not for storage.
+- `auditLogRetentionDays = null` → **no pruning** (default — rows accumulate indefinitely, preserving the original "immutable audit trail" behaviour).
+- `auditLogRetentionDays = N` → rows with `createdAt < now - N days` are deleted. The count of pruned rows surfaces in the tick's `RetentionResult.auditLogsDeleted`.
+
+The schema comment still calls this an "immutable audit trail" — pruning is a deliberate operator choice, not automatic. Keep `null` if compliance requires the full history.
+
+Indexed on `userId`, `action`, `(entityType, entityId)`, and `createdAt`, so both queries and retention sweeps scale.
 
 ## Related docs
 
 - [Observability Dashboard](./orchestration-observability.md) — runtime traces (executions, conversations) — complements the configuration-change trail here.
 - [Admin API reference](../orchestration/admin-api.md) — full admin HTTP surface.
 - [Orchestration Endpoints](../api/orchestration-endpoints.md) — endpoint-level reference.
-- [Settings page](./orchestration-costs.md) — retention settings live here (for webhook/cost logs, not audit log).
+- [Settings page](./orchestration-costs.md) — retention settings live here (webhook, cost log, and audit log).

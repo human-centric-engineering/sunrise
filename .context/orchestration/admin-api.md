@@ -89,6 +89,8 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/conversations/search`             | POST               | Semantic search across conversation messages              |
 | `/api/v1/admin/orchestration/hooks`                            | GET, POST          | List / create event hooks                                 |
 | `/api/v1/admin/orchestration/hooks/:id`                        | GET, PATCH, DELETE | Get / update / delete an event hook                       |
+| `/api/v1/admin/orchestration/hooks/:id/deliveries`             | GET                | Paginated delivery history for an event hook              |
+| `/api/v1/admin/orchestration/hooks/deliveries/:id/retry`       | POST               | Retry a `failed` / `exhausted` event-hook delivery        |
 | `/api/v1/admin/orchestration/observability/dashboard-stats`    | GET                | Aggregated observability metrics                          |
 
 Validation schemas for every payload live in `lib/validations/orchestration.ts`.

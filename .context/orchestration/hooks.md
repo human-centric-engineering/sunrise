@@ -123,15 +123,24 @@ Dispatch behaviour (`dispatchWebhook`):
 
 All routes require admin auth (`withAdminAuth`). Mutations are rate-limited via `adminLimiter`.
 
-| Method   | Path                                    | Description                                      |
-| -------- | --------------------------------------- | ------------------------------------------------ |
-| `GET`    | `/api/v1/admin/orchestration/hooks`     | Paginated list (`?page`, `?limit`, `?eventType`) |
-| `POST`   | `/api/v1/admin/orchestration/hooks`     | Create a hook                                    |
-| `GET`    | `/api/v1/admin/orchestration/hooks/:id` | Fetch one hook                                   |
-| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id` | Update (all fields optional)                     |
-| `DELETE` | `/api/v1/admin/orchestration/hooks/:id` | Hard delete                                      |
+| Method   | Path                                                     | Description                                                  |
+| -------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| `GET`    | `/api/v1/admin/orchestration/hooks`                      | Paginated list (`?page`, `?limit`, `?eventType`)             |
+| `POST`   | `/api/v1/admin/orchestration/hooks`                      | Create a hook                                                |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id`                  | Fetch one hook                                               |
+| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id`                  | Update (all fields optional)                                 |
+| `DELETE` | `/api/v1/admin/orchestration/hooks/:id`                  | Hard delete                                                  |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id/deliveries`       | Paginated delivery history (`?page`, `?pageSize`, `?status`) |
+| `POST`   | `/api/v1/admin/orchestration/hooks/deliveries/:id/retry` | Manually re-dispatch a `failed` / `exhausted` delivery       |
 
 Validation: `createHookSchema` / `updateHookSchema` in the route files enforce `action.type === 'webhook'`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
+
+### Deliveries
+
+Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action](#webhook-action) above for the lifecycle). The two delivery routes make that history queryable:
+
+- **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
+- **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
 
 ## Related Docs
 

@@ -136,10 +136,11 @@ Full CRUD for webhooks is available at `/admin/orchestration/webhooks`. See [Web
 
 ## Retention Pruning
 
-`enforceRetentionPolicies()` in `lib/orchestration/retention.ts` handles three types of cleanup:
+`enforceRetentionPolicies()` in `lib/orchestration/retention.ts` handles four types of cleanup:
 
 1. **Conversation retention** — per-agent `retentionDays` field. Conversations whose `updatedAt` exceeds the window are cascade-deleted (messages, embeddings, cost logs).
 2. **Webhook delivery pruning** — `pruneWebhookDeliveries()` reads `webhookRetentionDays` from the global `AiOrchestrationSettings` singleton. Skips if null.
 3. **Cost log pruning** — `pruneCostLogs()` reads `costLogRetentionDays` from the same settings row. Skips if null.
+4. **Admin audit log pruning** — `pruneAuditLogs()` reads `auditLogRetentionDays` from the same settings row. Skips if null (the default — the audit trail is immutable unless operators opt in).
 
-Both prune functions accept an optional `maxAgeDays` parameter to override the settings lookup. Configure retention via the admin settings API (`PATCH /api/v1/admin/orchestration/settings`).
+All three prune functions accept an optional `maxAgeDays` parameter to override the settings lookup. Configure retention via the admin settings API (`PATCH /api/v1/admin/orchestration/settings`).
