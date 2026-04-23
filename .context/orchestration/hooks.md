@@ -8,12 +8,12 @@ In-process event dispatch for orchestration lifecycle events. Admins configure h
 
 These are two different subsystems — don't confuse them:
 
-| System                     | Model                                         | Purpose                                                      | Signing                                 | Retry                            |
-| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | --------------------------------------- | -------------------------------- |
-| **Event Hooks** (this doc) | `AiEventHook`                                 | Lightweight fire-and-forget dispatch on lifecycle events     | **None** — plain POST with user headers | **None**                         |
-| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field          | Retry queue via maintenance tick |
+| System                     | Model                                         | Purpose                                                      | Signing                                 | Retry                     |
+| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | --------------------------------------- | ------------------------- |
+| **Event Hooks** (this doc) | `AiEventHook` / `AiEventHookDelivery`         | Lightweight fire-and-forget dispatch on lifecycle events     | **None** — plain POST with user headers | 3 attempts (10s/60s/300s) |
+| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field          | 3 attempts (10s/60s/300s) |
 
-If you need HMAC signing or guaranteed delivery, use the webhook subscriptions subsystem — see [Webhook Management UI](../admin/orchestration-webhooks.md).
+If you need HMAC signing, use the webhook subscriptions subsystem — see [Webhook Management UI](../admin/orchestration-webhooks.md).
 
 ## Module Layout
 
@@ -122,11 +122,15 @@ The handler is keyed by name. An admin then creates a hook with `action: { type:
 
 Dispatch behaviour (`dispatchWebhook`):
 
-- `POST` with `Content-Type: application/json` plus any user-supplied headers
+- Creates an `AiEventHookDelivery` record per dispatch (status `pending` → `delivered` / `failed` / `exhausted`)
+- `POST` with `Content-Type: application/json`, `X-Hook-Event: <eventType>`, plus any user-supplied headers
 - Body is the full `HookEventPayload`
 - 10-second timeout via `AbortSignal.timeout(10_000)`
-- **No signing, no retry, no delivery log** — a non-2xx response is logged and discarded
+- **No HMAC signing** — use webhook subscriptions for signed delivery
+- On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)
+
+Internal-action hooks do **not** create delivery rows — they run synchronously in-process and have no retry semantics.
 
 ## Cache Behaviour
 

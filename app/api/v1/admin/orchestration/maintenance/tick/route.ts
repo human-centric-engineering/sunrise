@@ -6,10 +6,11 @@
  * Runs all periodic maintenance tasks in one call:
  * 1. processDueSchedules() — workflow cron schedules
  * 2. processPendingRetries() — webhook delivery retry queue
- * 3. reapZombieExecutions() — mark stale running executions as failed
- * 4. backfillMissingEmbeddings() — re-embed messages that failed embedding
- * 5. enforceRetentionPolicies() — delete conversations past retention window
- * 6. processPendingExecutions() — recover orphaned pending workflow executions
+ * 3. processPendingHookRetries() — event-hook delivery retry queue
+ * 4. reapZombieExecutions() — mark stale running executions as failed
+ * 5. backfillMissingEmbeddings() — re-embed messages that failed embedding
+ * 6. enforceRetentionPolicies() — delete conversations past retention window
+ * 7. processPendingExecutions() — recover orphaned pending workflow executions
  *
  * Designed to be called every ~60s by an external cron job.
  * Auth: Admin role required (session or API key with admin scope).
@@ -22,6 +23,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { logger } from '@/lib/logging';
 import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
+import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
@@ -48,10 +50,11 @@ export const POST = withAdminAuth(async (request) => {
   const startMs = Date.now();
 
   try {
-    const [schedules, retries, reaper, embeddings, retention, pendingRecovery] =
+    const [schedules, retries, hookRetries, reaper, embeddings, retention, pendingRecovery] =
       await Promise.allSettled([
         processDueSchedules(),
         processPendingRetries(),
+        processPendingHookRetries(),
         reapZombieExecutions(),
         backfillMissingEmbeddings(),
         enforceRetentionPolicies(),
@@ -65,6 +68,7 @@ export const POST = withAdminAuth(async (request) => {
     const results = {
       schedules: unwrap(schedules),
       webhookRetries: unwrap(retries),
+      hookRetries: unwrap(hookRetries),
       zombieReaper: unwrap(reaper),
       embeddingBackfill: unwrap(embeddings),
       retention: unwrap(retention),

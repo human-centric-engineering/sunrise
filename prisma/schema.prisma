@@ -477,11 +477,35 @@ model AiEventHook {
   updatedAt DateTime @updatedAt
 
   // Relations
-  creator User @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+  creator    User                  @relation("AiEventHookCreator", fields: [createdBy], references: [id])
+  deliveries AiEventHookDelivery[]
 
   @@index([eventType])
   @@index([isEnabled])
   @@map("ai_event_hook")
+}
+
+// Delivery history / retry queue for webhook-type AiEventHook dispatches.
+// Internal handlers run in-process and are not tracked here.
+model AiEventHookDelivery {
+  id               String    @id @default(cuid())
+  hookId           String
+  eventType        String
+  payload          Json
+  status           String    @default("pending") // pending, delivered, failed, exhausted
+  attempts         Int       @default(0)
+  lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  lastResponseCode Int?
+  lastError        String?   @db.Text
+  createdAt        DateTime  @default(now())
+
+  hook AiEventHook @relation(fields: [hookId], references: [id], onDelete: Cascade)
+
+  @@index([hookId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("ai_event_hook_delivery")
 }
 
 // Per-user-per-agent key-value memory (preferences, prior topics, facts)

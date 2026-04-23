@@ -56,6 +56,10 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   processPendingRetries: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  processPendingHookRetries: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/engine/execution-reaper', () => ({
   reapZombieExecutions: vi.fn(),
 }));
@@ -74,6 +78,7 @@ import { auth } from '@/lib/auth/config';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
+import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
@@ -96,6 +101,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 const DEFAULT_SCHEDULE_RESULT = { triggered: 2, skipped: 0 };
 const DEFAULT_RETRY_RESULT = 3;
+const DEFAULT_HOOK_RETRY_RESULT = 2;
 const DEFAULT_REAPER_RESULT = { reaped: 1 };
 const DEFAULT_EMBEDDER_RESULT = { backfilled: 5, failed: 0 };
 const DEFAULT_RETENTION_RESULT = {
@@ -124,6 +130,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // Default: all tasks succeed
     vi.mocked(processDueSchedules).mockResolvedValue(DEFAULT_SCHEDULE_RESULT as never);
     vi.mocked(processPendingRetries).mockResolvedValue(DEFAULT_RETRY_RESULT);
+    vi.mocked(processPendingHookRetries).mockResolvedValue(DEFAULT_HOOK_RETRY_RESULT);
     vi.mocked(reapZombieExecutions).mockResolvedValue(DEFAULT_REAPER_RESULT);
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT as never);
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
@@ -222,6 +229,13 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.webhookRetries).toBe(DEFAULT_RETRY_RESULT);
   });
 
+  it('includes hookRetries result in response data', async () => {
+    const response = await POST(makeRequest());
+    const body = await parseJson<{ data: { hookRetries: number } }>(response);
+
+    expect(body.data.hookRetries).toBe(DEFAULT_HOOK_RETRY_RESULT);
+  });
+
   it('includes zombieReaper result in response data', async () => {
     // Act
     const response = await POST(makeRequest());
@@ -259,13 +273,14 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('calls all six maintenance tasks', async () => {
+  it('calls all seven maintenance tasks', async () => {
     // Act
     await POST(makeRequest());
 
     // Assert: all tasks called exactly once
     expect(processDueSchedules).toHaveBeenCalledTimes(1);
     expect(processPendingRetries).toHaveBeenCalledTimes(1);
+    expect(processPendingHookRetries).toHaveBeenCalledTimes(1);
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
@@ -328,6 +343,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // Arrange: all tasks fail
     vi.mocked(processDueSchedules).mockRejectedValue(new Error('Error A'));
     vi.mocked(processPendingRetries).mockRejectedValue(new Error('Error B'));
+    vi.mocked(processPendingHookRetries).mockRejectedValue(new Error('Error B2'));
     vi.mocked(reapZombieExecutions).mockRejectedValue(new Error('Error C'));
     vi.mocked(backfillMissingEmbeddings).mockRejectedValue(new Error('Error D'));
     vi.mocked(enforceRetentionPolicies).mockRejectedValue(new Error('Error E'));
@@ -340,6 +356,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       data: {
         schedules: { error: string };
         webhookRetries: { error: string };
+        hookRetries: { error: string };
         zombieReaper: { error: string };
         embeddingBackfill: { error: string };
         retention: { error: string };
@@ -352,6 +369,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.success).toBe(true);
     expect(body.data.schedules).toHaveProperty('error');
     expect(body.data.webhookRetries).toHaveProperty('error');
+    expect(body.data.hookRetries).toHaveProperty('error');
     expect(body.data.zombieReaper).toHaveProperty('error');
     expect(body.data.embeddingBackfill).toHaveProperty('error');
     expect(body.data.retention).toHaveProperty('error');
