@@ -303,6 +303,25 @@ describe('POST /hooks', () => {
     expect(response.status).toBe(429);
   });
 
+  it('rejects custom action.headers that collide with reserved signing header names', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await CreateHook(
+      makeCreateRequest({
+        name: 'Reserved header',
+        eventType: 'conversation.started',
+        action: {
+          type: 'webhook',
+          url: 'https://example.com/hook',
+          headers: { 'x-sunrise-signature': 'sha256=deadbeef' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(prisma.aiEventHook.create).not.toHaveBeenCalled();
+  });
+
   it('drops admin-supplied `secret` from POST body (not persisted via create route)', async () => {
     // Arrange: body includes a `secret` field that must not reach the DB
     vi.mocked(prisma.aiEventHook.create).mockResolvedValue(makeHook() as never);

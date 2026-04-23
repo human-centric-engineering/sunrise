@@ -128,6 +128,8 @@ When `AiEventHook.secret` is set, the registry signs each outbound body with HMA
 
 The timestamp is refreshed on every attempt — retries do **not** re-send the original signature, so receivers that enforce a max-age tolerance still accept the retry. Unsigned hooks (no secret) carry the normal `Content-Type` / `X-Hook-Event` / user-custom headers and nothing else.
 
+`X-Sunrise-Signature` and `X-Sunrise-Timestamp` are reserved: the create/update routes reject `action.headers` whose keys collide (case-insensitive) with either name, and the dispatcher spreads custom headers before the computed signing headers so signing always wins as defense-in-depth.
+
 ### Receiver verification
 
 `verifyHookSignature` in `lib/orchestration/hooks/signing.ts` is the reference implementation — receivers inside this codebase can import it directly, and external receivers should mirror it:

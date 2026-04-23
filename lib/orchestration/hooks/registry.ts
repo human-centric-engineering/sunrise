@@ -219,8 +219,8 @@ async function attemptDelivery(
       headers: {
         'Content-Type': 'application/json',
         'X-Hook-Event': payload.eventType,
-        ...signingHeaders,
         ...(customHeaders ?? {}),
+        ...signingHeaders,
       },
       body,
       signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),

@@ -7,6 +7,23 @@
 
 import { z } from 'zod';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
+import { SIGNATURE_HEADER, TIMESTAMP_HEADER } from './signing';
+
+const RESERVED_HEADER_NAMES = new Set(
+  [SIGNATURE_HEADER, TIMESTAMP_HEADER].map((h) => h.toLowerCase())
+);
+
+/**
+ * True when `headers` contains a key that collides with a reserved
+ * signing header. Admin write endpoints reject these so signing always
+ * wins; the dispatch path additionally spreads signing headers last as
+ * defense-in-depth for any pre-existing bad data.
+ */
+export function hasReservedHookHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some((k) => RESERVED_HEADER_NAMES.has(k.toLowerCase()));
+}
+
+export const RESERVED_HEADER_ERROR = `Custom headers cannot override ${SIGNATURE_HEADER} or ${TIMESTAMP_HEADER} (reserved for HMAC signing)`;
 
 /** All supported hook event types */
 export const HOOK_EVENT_TYPES = [

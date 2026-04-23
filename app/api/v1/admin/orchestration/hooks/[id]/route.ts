@@ -17,7 +17,11 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
 import { toSafeHook } from '@/lib/orchestration/hooks/serialize';
-import { HOOK_EVENT_TYPES } from '@/lib/orchestration/hooks/types';
+import {
+  HOOK_EVENT_TYPES,
+  RESERVED_HEADER_ERROR,
+  hasReservedHookHeader,
+} from '@/lib/orchestration/hooks/types';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
@@ -35,7 +39,10 @@ const updateHookSchema = z.object({
           (url) => isSafeProviderUrl(url),
           'URL is not allowed (private or internal address)'
         ),
-      headers: z.record(z.string(), z.string()).optional(),
+      headers: z
+        .record(z.string(), z.string())
+        .refine((h) => !hasReservedHookHeader(h), RESERVED_HEADER_ERROR)
+        .optional(),
     })
     .optional(),
   filter: z.record(z.string(), z.unknown()).nullable().optional(),

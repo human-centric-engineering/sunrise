@@ -1030,4 +1030,35 @@ describe('HMAC signing (via dispatchWebhook)', () => {
     // Refreshed timestamp → refreshed signature
     expect(retryHeaders['X-Sunrise-Signature']).not.toBe(firstHeaders['X-Sunrise-Signature']);
   });
+
+  it('signing headers win when admin-supplied custom headers collide with reserved names', async () => {
+    const secret = 'c'.repeat(64);
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-collide',
+        eventType: 'conversation.started',
+        action: {
+          type: 'webhook',
+          url: 'https://example.com/collide',
+          headers: {
+            'X-Sunrise-Signature': 'sha256=deadbeef',
+            'X-Sunrise-Timestamp': '0',
+          },
+        },
+        secret,
+      }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-collide' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Sunrise-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+    expect(headers['X-Sunrise-Signature']).not.toBe('sha256=deadbeef');
+    expect(headers['X-Sunrise-Timestamp']).not.toBe('0');
+  });
 });
