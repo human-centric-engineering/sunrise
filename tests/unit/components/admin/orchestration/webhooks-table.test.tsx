@@ -291,9 +291,12 @@ describe('WebhooksTable', () => {
       />
     );
 
-    // Wait for mount-time refetch to settle
+    // Wait for mount-time refetch to settle — both the page text and
+    // the `loading` flag clear in the same render, but assert the
+    // enabled-state inside waitFor to avoid a CI race on React batching.
     await waitFor(() => {
       expect(screen.getByText(/page 1 of 3/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /next/i })).not.toBeDisabled();
     });
 
     // Assert — Prev and Next buttons rendered
@@ -301,8 +304,6 @@ describe('WebhooksTable', () => {
     expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
     // Assert — Prev is disabled on page 1
     expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled();
-    // Assert — Next is enabled
-    expect(screen.getByRole('button', { name: /next/i })).not.toBeDisabled();
   });
 
   it('clicking Next calls fetch with page=2 in the query string', async () => {
