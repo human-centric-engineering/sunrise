@@ -528,8 +528,21 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — fetch was NOT called again (returned early for non-webhook action)
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    // No further update calls beyond the initial failure update
-    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+    // parseDeliveryForDispatch issues an exhausted update for the invalid action row,
+    // so there are now 2 update calls total: the initial failure update + the exhausted update.
+    const allUpdates = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
+    expect(allUpdates.length).toBe(2);
+    const exhaustedCall = allUpdates.find(
+      (c) => (c[0] as { data?: { status?: string } }).data?.status === 'exhausted'
+    );
+    expect(exhaustedCall).toBeDefined();
+    expect(exhaustedCall?.[0]).toMatchObject({
+      where: { id: deliveryId },
+      data: expect.objectContaining({
+        status: 'exhausted',
+        lastError: 'invalid_action',
+      }),
+    });
   });
 });
 
@@ -603,6 +616,234 @@ describe('processPendingHookRetries', () => {
     expect(mockFetch).not.toHaveBeenCalled();
     // The function still returns the number of pending rows found
     expect(count).toBe(1);
+  });
+});
+
+describe('loadHooks (via emitHookEvent — invalid action skip)', () => {
+  it('skips a DB row whose action is missing url (fails WebhookActionSchema) and does not dispatch it', async () => {
+    // Arrange — one invalid hook (missing url) and one valid hook for the same event type
+    const validHookId = 'hook-valid';
+    const invalidHookId = 'hook-no-url';
+
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: invalidHookId,
+        eventType: 'conversation.started',
+        // Missing required `url` field — WebhookActionSchema.safeParse will fail
+        action: { type: 'webhook' },
+      }),
+      makeHook({
+        id: validHookId,
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+      }),
+    ] as never);
+
+    // Delivery created only for the valid hook
+    vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(
+      makeDelivery({ hookId: validHookId }) as never
+    );
+
+    // Act
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    // Assert — logger.warn called with the skip message for the invalid hook
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Hook skipped: invalid action shape',
+        expect.objectContaining({ hookId: invalidHookId })
+      );
+    });
+
+    // Valid hook was still dispatched (fetch called once)
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    // Delivery was created with the valid hook id, not the invalid one
+    const createCalls = vi.mocked(prisma.aiEventHookDelivery.create).mock.calls;
+    expect(createCalls.length).toBe(1);
+    expect(createCalls[0]?.[0]).toMatchObject({
+      data: expect.objectContaining({ hookId: validHookId }),
+    });
+    const invalidHookCallExists = createCalls.some(
+      (c) => (c[0] as { data?: { hookId?: string } }).data?.hookId === invalidHookId
+    );
+    expect(invalidHookCallExists).toBe(false);
+  });
+});
+
+describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
+  it('marks delivery exhausted with lastError=invalid_action when hook action is not a valid webhook', async () => {
+    // Arrange — action type is 'email', not 'webhook'; fails WebhookActionSchema
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ id: 'del-bad-action', status: 'failed' }),
+      hook: makeHook({
+        isEnabled: true,
+        action: { type: 'email', url: 'foo' },
+      }),
+    } as never);
+
+    // Act
+    const result = await retryHookDelivery('del-bad-action');
+
+    // Assert — returns false
+    expect(result).toBe(false);
+
+    // Delivery marked exhausted with the canonical lastError string
+    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-bad-action' },
+        data: expect.objectContaining({
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'invalid_action',
+        }),
+      })
+    );
+
+    // fetch was never called
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('marks delivery exhausted with lastError=invalid_payload when payload eventType is not in HOOK_EVENT_TYPES', async () => {
+    // Arrange — valid action but payload has an unknown eventType
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({
+        id: 'del-bad-payload',
+        status: 'failed',
+        // eventType in payload is not in HOOK_EVENT_TYPES — HookEventPayloadSchema will reject it
+        payload: { eventType: 'bogus.event', timestamp: '2026-04-23T00:00:00Z', data: {} },
+      }),
+      hook: makeHook({
+        isEnabled: true,
+        action: { type: 'webhook', url: 'https://example.com/hook' },
+      }),
+    } as never);
+
+    // Act
+    const result = await retryHookDelivery('del-bad-payload');
+
+    // Assert — returns false
+    expect(result).toBe(false);
+
+    // Delivery marked exhausted with the canonical lastError string
+    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-bad-payload' },
+        data: expect.objectContaining({
+          status: 'exhausted',
+          lastError: 'invalid_payload',
+        }),
+      })
+    );
+
+    // fetch was never called
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('happy path: valid action and payload reset delivery to pending then dispatch fetch', async () => {
+    // Arrange — valid webhook action, valid payload
+    const deliveryId = 'del-happy';
+    const webhookUrl = 'https://example.com/hook';
+    const validPayload = {
+      eventType: 'conversation.started',
+      timestamp: '2026-04-23T00:00:00.000Z',
+      data: { conversationId: 'conv-abc' },
+    };
+
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ id: deliveryId, status: 'failed', attempts: 1, payload: validPayload }),
+      hook: makeHook({
+        isEnabled: true,
+        action: { type: 'webhook', url: webhookUrl },
+      }),
+    } as never);
+
+    // Act
+    const result = await retryHookDelivery(deliveryId);
+
+    // Assert — returns true
+    expect(result).toBe(true);
+
+    // First update call sets status: 'pending' (the reset before re-dispatch)
+    const updateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
+    const pendingCall = updateCalls.find(
+      (c) => (c[0] as { data?: { status?: string } }).data?.status === 'pending'
+    );
+    expect(pendingCall).toBeDefined();
+    expect(pendingCall?.[0]).toMatchObject({
+      where: { id: deliveryId },
+      data: expect.objectContaining({
+        status: 'pending',
+        attempts: 0,
+        lastError: null,
+        nextRetryAt: null,
+      }),
+    });
+
+    // fetch called with the webhook URL as a POST with the JSON payload
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        webhookUrl,
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"conversation.started"'),
+        })
+      );
+    });
+  });
+});
+
+describe('processPendingHookRetries (parseDeliveryForDispatch validation in batch)', () => {
+  it('marks a malformed-action delivery exhausted without poisoning a valid peer in the same batch', async () => {
+    // Arrange — two pending deliveries: one with invalid action, one valid
+    const invalidId = 'del-invalid-action';
+    const validId = 'del-valid';
+    const validPayload = {
+      eventType: 'workflow.completed' as const,
+      timestamp: '2026-04-23T00:00:00.000Z',
+      data: { workflowId: 'wf-1' },
+    };
+
+    vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({ id: invalidId, attempts: 1, payload: validPayload }),
+        hook: makeHook({
+          id: 'hook-invalid',
+          isEnabled: true,
+          // action type 'slack' is not 'webhook' — WebhookActionSchema rejects it
+          action: { type: 'slack', url: 'https://hooks.slack.com/x' },
+        }),
+      },
+      {
+        ...makeDelivery({ id: validId, attempts: 1, payload: validPayload }),
+        hook: makeHook({
+          id: 'hook-valid',
+          isEnabled: true,
+          action: { type: 'webhook', url: 'https://example.com/hook' },
+        }),
+      },
+    ] as never);
+
+    // Act
+    await processPendingHookRetries();
+
+    // Assert — the invalid delivery was marked exhausted with invalid_action
+    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: invalidId },
+        data: expect.objectContaining({
+          status: 'exhausted',
+          lastError: 'invalid_action',
+        }),
+      })
+    );
+
+    // The valid delivery was still dispatched (fetch called exactly once)
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
