@@ -67,6 +67,11 @@ export function ImportAgentsDialog({ open, onOpenChange, onImported }: ImportAge
       setError('Pick a JSON bundle first.');
       return;
     }
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_FILE_SIZE) {
+      setError('File is too large (max 10 MB). Export fewer agents per bundle.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     setResult(null);

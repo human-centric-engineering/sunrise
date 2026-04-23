@@ -137,7 +137,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
       setCopied(id);
       setTimeout(() => setCopied(null), 2000);
     } catch {
-      // Clipboard API may be unavailable in non-secure contexts
+      setError('Could not copy to clipboard. Your browser may require a secure (HTTPS) context.');
     }
   };
 

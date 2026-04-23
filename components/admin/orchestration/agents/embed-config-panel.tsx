@@ -121,7 +121,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
 
   function getSnippet(token: string): string {
     if (!appUrl) {
-      return '<!-- NEXT_PUBLIC_APP_URL is not configured — set it in .env.local to generate a valid embed snippet -->';
+      return 'NEXT_PUBLIC_APP_URL is not configured — set it in .env.local to generate a valid embed snippet.';
     }
     return `<script src="${escapeHtml(appUrl)}/api/v1/embed/widget.js" data-token="${escapeHtml(token)}"></script>`;
   }

@@ -222,8 +222,8 @@ describe('AgentTestChat', () => {
     });
   });
 
-  it('shows connection lost error after max reconnect attempts on network failure', async () => {
-    // Arrange — fetch always rejects to exhaust all reconnect attempts
+  it('shows connection lost error immediately on network failure (no retry)', async () => {
+    // Arrange — fetch rejects; chat POSTs are not idempotent so no retry
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
@@ -232,12 +232,13 @@ describe('AgentTestChat', () => {
     // Act
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    // Assert — after retries exhausted, shows connection lost
-    await waitFor(
-      () => {
-        expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
-      },
-      { timeout: 20000 }
-    );
+    // Assert — error shown immediately without reconnect attempts
+    await waitFor(() => {
+      expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
+      expect(screen.getByText(/chat stream was interrupted/i)).toBeInTheDocument();
+    });
+
+    // Assert — fetch was only called once (no retries)
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

@@ -105,9 +105,9 @@ export function AgentComparisonView({ agentIdA, agentIdB }: AgentComparisonViewP
       setLoading(true);
       setError(null);
       try {
-        const result = await apiClient.get<ComparisonData>(
-          `${API.ADMIN.ORCHESTRATION.AGENTS_COMPARE}?agentIds=${agentIdA},${agentIdB}`
-        );
+        const result = await apiClient.get<ComparisonData>(API.ADMIN.ORCHESTRATION.AGENTS_COMPARE, {
+          params: { agentIds: `${agentIdA},${agentIdB}` },
+        });
         setData(result);
       } catch (err) {
         setError(err instanceof APIClientError ? err.message : 'Failed to load comparison data');

@@ -14,7 +14,7 @@ import { useLocalStorage } from '@/lib/hooks/use-local-storage';
  * path is programmatic (via an AI coding agent such as Claude Code) and
  * that the admin UI is primarily for visualising and managing orchestration.
  *
- * When dismissed, the banner stays hidden for 48 hours (stored in
+ * When dismissed, the banner stays hidden for 28 days (stored in
  * localStorage). All resource types share a single dismissal — dismissing
  * on the agent form also hides it on workflows and capabilities.
  */
