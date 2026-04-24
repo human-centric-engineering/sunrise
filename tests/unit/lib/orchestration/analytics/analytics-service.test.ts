@@ -411,6 +411,7 @@ describe('getFeedbackSummary', () => {
       {
         id: 'msg_1',
         content: 'Bad answer',
+        createdAt: new Date('2026-04-15T10:00:00Z'),
         ratedAt: new Date('2026-04-15T10:00:00Z'),
         conversationId: 'conv_1',
         conversation: { agentId: 'a1' },

@@ -448,6 +448,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     select: {
       id: true,
       content: true,
+      createdAt: true,
       ratedAt: true,
       conversationId: true,
       conversation: { select: { agentId: true } },
@@ -482,7 +483,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     byAgent,
     recentNegative: recentNegative.map((m) => {
       const convUserMsgs = negUserMsgsByConv.get(m.conversationId) ?? [];
-      const preceding = convUserMsgs.find((um) => m.ratedAt && um.createdAt < m.ratedAt);
+      const preceding = convUserMsgs.find((um) => um.createdAt < m.createdAt);
       return {
         messageId: m.id,
         conversationId: m.conversationId,
