@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -79,6 +80,8 @@ export function AuditLogView() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const limit = 25;
 
@@ -96,6 +99,8 @@ export function AuditLogView() {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (entityType !== 'all') params.set('entityType', entityType);
       if (debouncedSearch) params.set('q', debouncedSearch);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
       if (!res.ok) {
         setError('Failed to load audit log. Please try again.');
@@ -114,7 +119,7 @@ export function AuditLogView() {
     } finally {
       setLoading(false);
     }
-  }, [page, entityType, debouncedSearch]);
+  }, [page, entityType, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => {
     void fetchEntries();
@@ -137,7 +142,7 @@ export function AuditLogView() {
         </Button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-end gap-3">
         <Input
           placeholder="Filter by action, name, or user..."
           value={search}
@@ -162,6 +167,38 @@ export function AuditLogView() {
             ))}
           </SelectContent>
         </Select>
+        <div className="flex items-end gap-2">
+          <div>
+            <Label htmlFor="audit-date-from" className="text-muted-foreground text-xs">
+              From
+            </Label>
+            <Input
+              id="audit-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setPage(1);
+              }}
+              className="w-[140px]"
+            />
+          </div>
+          <div>
+            <Label htmlFor="audit-date-to" className="text-muted-foreground text-xs">
+              To
+            </Label>
+            <Input
+              id="audit-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setPage(1);
+              }}
+              className="w-[140px]"
+            />
+          </div>
+        </div>
       </div>
 
       {error && <p className="text-destructive text-sm">{error}</p>}
