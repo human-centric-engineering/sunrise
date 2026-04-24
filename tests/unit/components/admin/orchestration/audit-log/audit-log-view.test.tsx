@@ -300,6 +300,44 @@ describe('AuditLogView', () => {
     });
   });
 
+  it('shows error when API returns success: false', async () => {
+    const body = JSON.stringify({ success: false, error: { code: 'INTERNAL', message: 'oops' } });
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+        )
+      );
+    render(<AuditLogView />);
+    await waitFor(() => {
+      expect(screen.getByText(/server returned an error/i)).toBeInTheDocument();
+    });
+  });
+
+  it('collapses expanded row when data is re-fetched', async () => {
+    const user = userEvent.setup();
+    const changes = { name: { from: 'Old', to: 'New' } };
+    mockFetchSuccess([makeEntry({ changes })]);
+
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    // Expand the row
+    await user.click(screen.getByText('Support Bot'));
+    await waitFor(() => {
+      expect(screen.getByText(/"from": "Old"/)).toBeInTheDocument();
+    });
+
+    // Trigger a re-fetch via Refresh
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+
+    // Expanded content should disappear
+    await waitFor(() => {
+      expect(screen.queryByText(/"from": "Old"/)).not.toBeInTheDocument();
+    });
+  });
+
   it('clears stale error when a new fetch begins', async () => {
     const user = userEvent.setup();
 

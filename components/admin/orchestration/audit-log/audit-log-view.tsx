@@ -96,6 +96,7 @@ export function AuditLogView() {
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setExpandedId(null);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (entityType !== 'all') params.set('entityType', entityType);
@@ -115,7 +116,8 @@ export function AuditLogView() {
       if (json.success) {
         setEntries(json.data);
         setTotal(json.meta.total);
-        setError(null);
+      } else {
+        setError('Server returned an error. Please try again.');
       }
     } finally {
       setLoading(false);
