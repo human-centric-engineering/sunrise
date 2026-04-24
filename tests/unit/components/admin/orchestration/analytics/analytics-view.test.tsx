@@ -170,7 +170,6 @@ describe('AnalyticsView', () => {
               conversationId: 'conv_1',
               agentId: 'a1',
               content: 'This answer was wrong about pricing',
-              userMessage: 'What is the pricing?',
               ratedAt: new Date('2026-04-18'),
             },
             {
@@ -178,7 +177,6 @@ describe('AnalyticsView', () => {
               conversationId: 'conv_2',
               agentId: 'a1',
               content: 'Completely unhelpful response',
-              userMessage: 'How do I reset my password?',
               ratedAt: new Date('2026-04-17'),
             },
           ],
@@ -228,7 +226,6 @@ describe('AnalyticsView', () => {
         {...baseProps}
         unanswered={[
           {
-            messageId: 'msg_1',
             conversationId: 'c1',
             agentId: 'a1',
             userMessage: 'How do I connect to Stripe?',
