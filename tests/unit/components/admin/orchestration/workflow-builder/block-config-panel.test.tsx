@@ -52,6 +52,7 @@ const DEFAULT_PROPS = {
   onConfigChange: vi.fn(),
   onDelete: vi.fn(),
   capabilities: CAPABILITIES,
+  agents: [] as Array<{ slug: string; name: string; description: string | null }>,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

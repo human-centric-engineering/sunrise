@@ -20,6 +20,7 @@ const unit: SeedUnit = {
     './data/templates/outreach-safety.ts',
     './data/templates/research-agent.ts',
     './data/templates/saas-backend.ts',
+    './data/templates/autonomous-research.ts',
   ],
   async run({ prisma, logger }) {
     logger.info('📚 Seeding built-in workflow templates...');

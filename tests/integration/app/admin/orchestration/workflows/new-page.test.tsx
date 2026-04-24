@@ -145,9 +145,10 @@ describe('NewWorkflowPage', () => {
     vi.clearAllMocks();
     vi.mocked(apiClient.get).mockResolvedValue([]);
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    // Page calls getCapabilities() + getTemplates() in parallel — both use parseApiResponse
+    // Page calls getCapabilities() + getAgents() + getTemplates() in parallel — all use parseApiResponse
     vi.mocked(parseApiResponse)
       .mockResolvedValueOnce({ success: true, data: [] }) // capabilities
+      .mockResolvedValueOnce({ success: true, data: [] }) // agents
       .mockResolvedValueOnce({ success: true, data: [MOCK_TEMPLATE] }); // templates
   });
 

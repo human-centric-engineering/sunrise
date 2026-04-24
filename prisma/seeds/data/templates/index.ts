@@ -11,6 +11,7 @@
  * will flag invalid DAGs on save.
  */
 
+import { AUTONOMOUS_RESEARCH_TEMPLATE } from '@/prisma/seeds/data/templates/autonomous-research';
 import { CODE_REVIEW_TEMPLATE } from '@/prisma/seeds/data/templates/code-review';
 import { CONTENT_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/content-pipeline';
 import { CONVERSATIONAL_LEARNING_TEMPLATE } from '@/prisma/seeds/data/templates/conversational-learning';
@@ -36,4 +37,5 @@ export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   DATA_PIPELINE_TEMPLATE,
   OUTREACH_SAFETY_TEMPLATE,
   CODE_REVIEW_TEMPLATE,
+  AUTONOMOUS_RESEARCH_TEMPLATE,
 ];

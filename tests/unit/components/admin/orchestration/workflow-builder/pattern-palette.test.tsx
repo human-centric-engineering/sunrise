@@ -30,13 +30,13 @@ describe('PatternPalette', () => {
     }
   });
 
-  it('renders exactly 14 palette blocks (one per step type)', () => {
+  it('renders exactly 15 palette blocks (one per step type)', () => {
     render(<PatternPalette />);
 
-    // STEP_REGISTRY has 14 entries
-    expect(STEP_REGISTRY.length).toBe(14);
+    // STEP_REGISTRY has 15 entries (14 original + orchestrator)
+    expect(STEP_REGISTRY.length).toBe(15);
     const blocks = document.querySelectorAll('[data-testid^="palette-block-"]');
-    expect(blocks.length).toBe(14);
+    expect(blocks.length).toBe(15);
   });
 
   it('all palette blocks have draggable attribute', () => {

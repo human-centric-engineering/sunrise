@@ -13,6 +13,9 @@ import type { AiCapability } from '@/types/orchestration';
 /** Minimal capability shape the tool-call editor needs. */
 export type CapabilityOption = Pick<AiCapability, 'id' | 'slug' | 'name' | 'description'>;
 
+/** Minimal agent shape the orchestrator editor needs. */
+export type AgentOption = { slug: string; name: string; description: string | null };
+
 /**
  * Shared props contract for every editor. Extended per step type with a
  * specific `config` shape via intersection.
@@ -38,3 +41,4 @@ export { RagRetrieveEditor } from '@/components/admin/orchestration/workflow-bui
 export { GuardEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/guard-editor';
 export { EvaluateEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor';
 export { ExternalCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/external-call-editor';
+export { OrchestratorEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor';

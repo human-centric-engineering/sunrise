@@ -89,7 +89,7 @@ export function BuilderToolbar({
   return (
     <div
       data-testid="builder-toolbar"
-      className="bg-background/95 flex items-center gap-3 border-b px-4 py-2 backdrop-blur"
+      className="bg-background/95 flex flex-wrap items-center gap-2 border-b px-4 py-2 backdrop-blur sm:gap-3"
     >
       <Button asChild variant="ghost" size="sm">
         <Link href="/admin/orchestration/workflows">
@@ -98,7 +98,7 @@ export function BuilderToolbar({
         </Link>
       </Button>
 
-      <div className="flex-1">
+      <div className="min-w-0 flex-1 basis-48">
         <Input
           aria-label="Workflow name"
           value={workflowName}
@@ -108,114 +108,123 @@ export function BuilderToolbar({
         />
       </div>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm">
-            <FileText className="mr-2 h-4 w-4" />
-            Use template
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-72">
-          <DropdownMenuLabel>Templates</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {templatesDisabled && (
-            <p className="text-muted-foreground px-2 py-1.5 text-xs">
-              Templates can only be loaded on a new workflow.
-            </p>
-          )}
-          {templates.map((template) => (
-            <DropdownMenuItem
-              key={template.slug}
-              disabled={templatesDisabled}
-              onSelect={(event) => {
-                event.preventDefault();
-                onTemplateSelect(template);
-              }}
-              className="flex-col items-start gap-0.5"
-            >
-              <span className="text-sm font-medium">{template.name}</span>
-              <span className="text-muted-foreground text-xs">{template.description}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <FileText className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Use template</span>
+              <span className="sm:hidden">Template</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72">
+            <DropdownMenuLabel>Templates</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {templatesDisabled && (
+              <p className="text-muted-foreground px-2 py-1.5 text-xs">
+                Templates can only be loaded on a new workflow.
+              </p>
+            )}
+            {templates.map((template) => (
+              <DropdownMenuItem
+                key={template.slug}
+                disabled={templatesDisabled}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  onTemplateSelect(template);
+                }}
+                className="flex-col items-start gap-0.5"
+              >
+                <span className="text-sm font-medium">{template.name}</span>
+                <span className="text-muted-foreground text-xs">{template.description}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onCopyJson}
-        title="Copy workflow definition as JSON to clipboard"
-      >
-        <ClipboardCopy className="mr-2 h-4 w-4" />
-        Copy JSON
-      </Button>
-
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onValidate}
-        title="Check for disconnected nodes, missing config, and cycle errors"
-      >
-        <CheckCircle2 className="mr-2 h-4 w-4" />
-        Validate
-      </Button>
-
-      {mode === 'edit' && (
         <Button
           variant="outline"
           size="sm"
-          onClick={onSaveAsTemplate}
-          disabled={savingAsTemplate || savedAsTemplate}
-          title="Clone this workflow into a reusable template"
+          onClick={onCopyJson}
+          title="Copy workflow definition as JSON to clipboard"
         >
-          {savingAsTemplate ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : savedAsTemplate ? (
-            <Check className="mr-2 h-4 w-4" />
-          ) : (
-            <BookmarkPlus className="mr-2 h-4 w-4" />
-          )}
-          {savedAsTemplate ? 'Template saved' : 'Save as template'}
+          <ClipboardCopy className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Copy JSON</span>
         </Button>
-      )}
 
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onExecute}
-        disabled={executeDisabled}
-        title={executeDisabled ? EXECUTE_CREATE_TOOLTIP : 'Run this workflow now with a test input'}
-      >
-        <Play className="mr-2 h-4 w-4" />
-        Execute
-      </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onValidate}
+          title="Check for disconnected nodes, missing config, and cycle errors"
+        >
+          <CheckCircle2 className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Validate</span>
+        </Button>
 
-      <Button
-        size="sm"
-        onClick={onSave}
-        disabled={saving || saved}
-        aria-label={
-          hasErrors ? 'Save (validation errors present — click Validate to see details)' : undefined
-        }
-        className={cn(hasErrors && !saved && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
-      >
-        {saving ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Saving…
-          </>
-        ) : saved ? (
-          <>
-            <Check className="mr-2 h-4 w-4" />
-            Saved
-          </>
-        ) : (
-          <>
-            <Save className="mr-2 h-4 w-4" />
-            {mode === 'create' ? 'Create workflow' : 'Save changes'}
-          </>
+        {mode === 'edit' && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSaveAsTemplate}
+            disabled={savingAsTemplate || savedAsTemplate}
+            title="Clone this workflow into a reusable template"
+          >
+            {savingAsTemplate ? (
+              <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
+            ) : savedAsTemplate ? (
+              <Check className="h-4 w-4 sm:mr-2" />
+            ) : (
+              <BookmarkPlus className="h-4 w-4 sm:mr-2" />
+            )}
+            <span className="hidden sm:inline">
+              {savedAsTemplate ? 'Template saved' : 'Save as template'}
+            </span>
+          </Button>
         )}
-      </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onExecute}
+          disabled={executeDisabled}
+          title={
+            executeDisabled ? EXECUTE_CREATE_TOOLTIP : 'Run this workflow now with a test input'
+          }
+        >
+          <Play className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Execute</span>
+        </Button>
+
+        <Button
+          size="sm"
+          onClick={onSave}
+          disabled={saving || saved}
+          aria-label={
+            hasErrors
+              ? 'Save (validation errors present — click Validate to see details)'
+              : undefined
+          }
+          className={cn(hasErrors && !saved && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
+        >
+          {saving ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <span className="hidden sm:inline">Saving…</span>
+            </>
+          ) : saved ? (
+            <>
+              <Check className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Saved</span>
+            </>
+          ) : (
+            <>
+              <Save className="mr-2 h-4 w-4" />
+              {mode === 'create' ? 'Create workflow' : 'Save changes'}
+            </>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

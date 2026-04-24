@@ -33,6 +33,7 @@ import { PatternLearnMoreDialog } from '@/components/admin/orchestration/workflo
 
 /** Short descriptions shown under each category heading in the palette. */
 const CATEGORY_HINTS: Record<StepCategory, string> = {
+  orchestration: 'AI-driven multi-agent coordination',
   agent: 'LLM calls, tool use, and reasoning steps',
   decision: 'Routing, evaluation, and branching logic',
   input: 'Data sources that feed into the workflow',
@@ -96,6 +97,7 @@ export function PatternPalette() {
   const [learnMorePattern, setLearnMorePattern] = useState<number | null>(null);
 
   const byCategory: Record<StepCategory, StepRegistryEntry[]> = {
+    orchestration: [],
     agent: [],
     decision: [],
     input: [],

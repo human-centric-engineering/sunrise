@@ -5,7 +5,10 @@ import {
   WorkflowBuilder,
   type WorkflowBuilderProps,
 } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type {
+  AgentOption,
+  CapabilityOption,
+} from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { WorkflowSchedulesTab } from '@/components/admin/orchestration/workflow-schedules-tab';
 import { VersionHistoryPanel } from '@/components/admin/orchestration/workflows/version-history-panel';
 import { API } from '@/lib/api/endpoints';
@@ -63,6 +66,22 @@ async function getCapabilities(): Promise<CapabilityOption[]> {
   }
 }
 
+async function getAgents(): Promise<AgentOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&isActive=true`);
+    if (!res.ok) return [];
+    const body =
+      await parseApiResponse<Array<{ slug: string; name: string; description: string | null }>>(
+        res
+      );
+    if (!body.success) return [];
+    return body.data.map((a) => ({ slug: a.slug, name: a.name, description: a.description }));
+  } catch (err) {
+    logger.error('edit workflow page: agents fetch failed', err);
+    return [];
+  }
+}
+
 async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates']> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`);
@@ -79,9 +98,10 @@ async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates']>
 
 export default async function EditWorkflowPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [workflow, capabilities, templates] = await Promise.all([
+  const [workflow, capabilities, agents, templates] = await Promise.all([
     getWorkflow(id),
     getCapabilities(),
+    getAgents(),
     getTemplates(),
   ]);
   if (!workflow) notFound();
@@ -92,6 +112,7 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
         mode="edit"
         workflow={workflow}
         initialCapabilities={capabilities}
+        initialAgents={agents}
         initialTemplates={templates}
       />
       <hr />
