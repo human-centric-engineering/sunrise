@@ -145,6 +145,30 @@ describe('BlockConfigPanel', () => {
       expect(document.getElementById('ext-url')).toBeInTheDocument();
     });
 
+    it('orchestrator: renders the planner prompt textarea', () => {
+      const node = makeNode('orchestrator', {
+        plannerPrompt: '',
+        availableAgentSlugs: [],
+      });
+      const agents = [{ slug: 'researcher', name: 'Researcher', description: 'Finds info' }];
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} agents={agents} />);
+      expect(document.getElementById('orchestrator-prompt')).toBeInTheDocument();
+    });
+
+    it('orchestrator: passes agents to the editor and renders agent checkboxes', () => {
+      const node = makeNode('orchestrator', {
+        plannerPrompt: '',
+        availableAgentSlugs: [],
+      });
+      const agents = [
+        { slug: 'researcher', name: 'Researcher', description: 'Finds info' },
+        { slug: 'analyst', name: 'Analyst', description: 'Analyzes data' },
+      ];
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} agents={agents} />);
+      expect(screen.getByText('Researcher')).toBeInTheDocument();
+      expect(screen.getByText('Analyst')).toBeInTheDocument();
+    });
+
     it('unknown block type: renders the fallback "no editor" message', () => {
       // Cast through unknown to bypass TS — simulates a runtime type unknown to
       // the switch (e.g. a new type added to the registry not yet in the editor).

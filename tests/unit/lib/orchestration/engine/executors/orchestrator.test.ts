@@ -54,7 +54,7 @@ vi.mock('@/lib/orchestration/engine/executors/agent-call', () => ({
 
 import { executeOrchestrator } from '@/lib/orchestration/engine/executors/orchestrator';
 import { prisma } from '@/lib/db/client';
-import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -121,13 +121,14 @@ function makePlannerResponse(data: {
 
 function setupDefaultMocks(): void {
   vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(MOCK_AGENTS as never);
+  vi.mocked(interpolatePrompt).mockImplementation((s: string) => s);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('executeOrchestrator', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -409,6 +410,93 @@ describe('executeOrchestrator', () => {
     const callArgs = vi.mocked(executeAgentCall).mock.calls[0];
     const passedCtx = callArgs[1] as ExecutionContext;
     expect(passedCtx.variables.agentCallDepth).toBe(2);
+  });
+
+  it('stops with "timeout" when AbortSignal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    // Planner would return delegations, but abort should be checked first
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'Research' }],
+      })
+    );
+
+    const result = await executeOrchestrator(makeStep(), makeCtx({ signal: controller.signal }));
+
+    expect(result.output).toMatchObject({
+      stopReason: 'timeout',
+      totalDelegations: 0,
+    });
+    // No LLM calls should happen since abort is checked before calling planner
+    expect(runLlmCall).not.toHaveBeenCalled();
+  });
+
+  it('stops with "timeout" when timeoutMs is exceeded between rounds', async () => {
+    // Use the minimum valid timeout (5000ms) and mock Date.now to simulate elapsed time
+    const step = makeStep({ timeoutMs: 5000 });
+
+    // Mock Date.now: first two calls return startTime (capture + first check),
+    // all subsequent calls return past the timeout
+    let callCount = 0;
+    const startTime = 1000000;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      callCount++;
+      // Call 1: startTime capture, Call 2: round 0 timeout check → both within timeout
+      // Call 3+: round 1 timeout check → past timeout
+      return callCount <= 2 ? startTime : startTime + 6000;
+    });
+
+    // Round 1: planner delegates
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'Research' }],
+      })
+    );
+
+    vi.mocked(executeAgentCall).mockResolvedValueOnce({
+      output: 'Done',
+      tokensUsed: 100,
+      costUsd: 0.003,
+    });
+
+    const result = await executeOrchestrator(step, makeCtx());
+
+    expect(result.output).toMatchObject({
+      stopReason: 'timeout',
+    });
+    // Planner was called once (round 0), but should not be called for round 1
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+
+    dateNowSpy.mockRestore();
+  });
+
+  it('stops with "budget_exceeded" when workflow-level budget is exceeded', async () => {
+    // Round 1: planner delegates
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'Research' }],
+      })
+    );
+
+    // Delegation costs more than the workflow budget allows
+    vi.mocked(executeAgentCall).mockResolvedValueOnce({
+      output: 'Result',
+      tokensUsed: 100,
+      costUsd: 0.5,
+    });
+
+    // Workflow-level budget is on the context, not the step config
+    // ctx.totalCostUsd (already spent) + step cost should exceed budgetLimitUsd
+    const result = await executeOrchestrator(
+      makeStep(),
+      makeCtx({ budgetLimitUsd: 0.1, totalCostUsd: 0 })
+    );
+
+    expect(result.output).toMatchObject({
+      stopReason: 'budget_exceeded',
+    });
   });
 
   it('stops with "no_delegations" when planner returns empty delegations', async () => {

@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **8 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel. **Phase 5 additions:** step time estimates in palette, Copy JSON toolbar button, per-step error strategy overrides, execution cancellation, workflow definition version history.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **9 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel. **Phase 5 additions:** step time estimates in palette, Copy JSON toolbar button, per-step error strategy overrides, execution cancellation, workflow definition version history.
 
 **Core files:**
 
@@ -59,7 +59,7 @@ interface StepRegistryEntry {
   type: WorkflowStepType;
   label: string;
   description: string;
-  category: 'agent' | 'decision' | 'input' | 'output';
+  category: 'orchestration' | 'agent' | 'decision' | 'input' | 'output';
   icon: LucideIcon;
   inputs: number; // handle count on target side
   outputs: number; // handle count on source side (route: 2, parallel: 3, rest: 1)
@@ -71,22 +71,25 @@ interface StepRegistryEntry {
 
 Each entry carries an `estimatedDuration` hint displayed in the palette below the description (e.g. `"~2-5s"`, `"varies"`, `"manual"`).
 
-**Twelve entries:**
+**Fifteen entries:**
 
-| Type             | Label          | Category | Outputs | Pattern |
-| ---------------- | -------------- | -------- | ------- | ------- |
-| `llm_call`       | LLM Call       | agent    | 1       | 1       |
-| `chain`          | Chain Step     | agent    | 1       | 2       |
-| `route`          | Route          | decision | 2       | 3       |
-| `parallel`       | Parallel       | output   | 3       | 4       |
-| `reflect`        | Reflect        | agent    | 1       | 5       |
-| `tool_call`      | Tool Call      | input    | 1       | 6       |
-| `plan`           | Plan           | agent    | 1       | 7       |
-| `human_approval` | Human Approval | decision | 1       | 8       |
-| `rag_retrieve`   | RAG Retrieve   | input    | 1       | 9       |
-| `guard`          | Guard          | decision | 2       | 18      |
-| `evaluate`       | Evaluate       | decision | 1       | 19      |
-| `external_call`  | External Call  | input    | 1       | 15      |
+| Type                | Label             | Category      | Outputs | Pattern |
+| ------------------- | ----------------- | ------------- | ------- | ------- |
+| `llm_call`          | LLM Call          | agent         | 1       | 1       |
+| `chain`             | Chain Step        | agent         | 1       | 1       |
+| `route`             | Route             | decision      | 2       | 2       |
+| `parallel`          | Parallel          | output        | 3       | 3       |
+| `reflect`           | Reflect           | agent         | 1       | 4       |
+| `tool_call`         | Tool Call         | input         | 1       | 5       |
+| `plan`              | Plan              | agent         | 1       | 6       |
+| `human_approval`    | Human Approval    | decision      | 1       | 13      |
+| `rag_retrieve`      | RAG Retrieve      | input         | 1       | 14      |
+| `guard`             | Guard             | decision      | 2       | 18      |
+| `evaluate`          | Evaluate          | decision      | 1       | 19      |
+| `external_call`     | External Call     | input         | 1       | 15      |
+| `agent_call`        | Agent Call        | agent         | 1       | 8       |
+| `send_notification` | Send Notification | output        | 1       | —       |
+| `orchestrator`      | Orchestrator      | orchestration | 1       | —       |
 
 **Adding a new step type:** append an entry to `STEP_REGISTRY`. The palette, the `PatternNode`, and any future registry-driven consumer will pick it up automatically — no new component, no new JSX.
 
@@ -94,14 +97,15 @@ Each entry carries an `estimatedDuration` hint displayed in the palette below th
 
 ### Category → colour map
 
-All four categories have a matching entry in `STEP_CATEGORY_COLOURS` driving the node and palette chip Tailwind classes:
+All five categories have a matching entry in `STEP_CATEGORY_COLOURS` driving the node and palette chip Tailwind classes:
 
-| Category   | Tailwind palette                                              | Intent                             |
-| ---------- | ------------------------------------------------------------- | ---------------------------------- |
-| `agent`    | blue (`bg-blue-50` / `border-blue-300` / `text-blue-900`)     | LLM-facing work                    |
-| `decision` | amber (`bg-amber-50` / `border-amber-300` / `text-amber-900`) | Branching or human-gated decisions |
-| `input`    | slate (`bg-slate-50` / `border-slate-300` / `text-slate-900`) | Inputs and retrieval               |
-| `output`   | emerald (`bg-emerald-50` / `border-emerald-300` / `text-…`)   | Fan-out / join steps               |
+| Category        | Tailwind palette                                                  | Intent                              |
+| --------------- | ----------------------------------------------------------------- | ----------------------------------- |
+| `orchestration` | purple (`bg-purple-50` / `border-purple-300` / `text-purple-900`) | Meta-level multi-agent coordination |
+| `agent`         | blue (`bg-blue-50` / `border-blue-300` / `text-blue-900`)         | LLM-facing work                     |
+| `decision`      | amber (`bg-amber-50` / `border-amber-300` / `text-amber-900`)     | Branching or human-gated decisions  |
+| `input`         | slate (`bg-slate-50` / `border-slate-300` / `text-slate-900`)     | Inputs and retrieval                |
+| `output`        | emerald (`bg-emerald-50` / `border-emerald-300` / `text-…`)       | Fan-out / join steps                |
 
 ## Custom node type
 
@@ -149,22 +153,23 @@ Structure (top to bottom):
 
 ### Block editors
 
-All twelve editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
+All editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
 
-| Type             | Editor                      | Fields (default)                                                                                                                     |
-| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                  |
-| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                        |
-| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                              |
-| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` only; `first-success` reserved for future use)                  |
-| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                             |
-| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                      |
-| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                    |
-| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)   |
-| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                               |
-| `guard`          | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                        |
-| `evaluate`       | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 0), `scaleMax` (number, 10), `threshold` (number, 7)                                        |
-| `external_call`  | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input) |
+| Type             | Editor                      | Fields (default)                                                                                                                                                                                                                                                                                                                            |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                                                                                                                                                                                                                         |
+| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                                                                                                                                                                                                                               |
+| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                                                                                                                                                                                                                                     |
+| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` only; `first-success` reserved for future use)                                                                                                                                                                                                                         |
+| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                                                                                                                                                                                                                                    |
+| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                                                                                                                                                                                                                             |
+| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                                                                                                                                                                                                                           |
+| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)                                                                                                                                                                                                          |
+| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                                                                                                                                                                                                                                      |
+| `guard`          | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                                                                                                                                                                                                                               |
+| `evaluate`       | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 0), `scaleMax` (number, 10), `threshold` (number, 7)                                                                                                                                                                                                                                               |
+| `external_call`  | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input)                                                                                                                                                                                                        |
+| `orchestrator`   | `orchestrator-editor.tsx`   | `plannerPrompt` (Textarea), `availableAgentSlugs` (multi-checkbox from agents list), `selectionMode` (Select: auto/all), `maxRounds` (number, 3), `maxDelegationsPerRound` (number, 5), `timeoutMs` (number displayed as seconds, 120), `budgetLimitUsd` (number, optional), `modelOverride` (Input, optional), `temperature` (number, 0.3) |
 
 **Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
 
@@ -250,7 +255,7 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ## Templates
 
-8 built-in composition recipes are seeded into the database via `prisma/seeds/004-builtin-templates.ts` and served to the UI through the existing workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). The builder pages prefetch templates server-side and pass them as `initialTemplates` props — the same pattern used for capabilities.
+9 built-in composition recipes are seeded into the database via `prisma/seeds/004-builtin-templates.ts` and served to the UI through the existing workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). The builder pages prefetch templates server-side and pass them as `initialTemplates` props — the same pattern used for capabilities.
 
 **Seed data** (all under `prisma/seeds/data/templates/`):
 
@@ -265,6 +270,7 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 | `code-review.ts`             | Code Review Agent                                | Parallelisation (3), Guard (18), Reflection (1), Evaluate (19)     |
 | `data-pipeline.ts`           | Data Pipeline + Quality Gate                     | External Call (15), Guard (18), Parallelisation (3), Evaluate (19) |
 | `outreach-safety.ts`         | Multi-Channel Outreach                           | Guard (18), Routing (2), Evaluate (19), HITL (7)                   |
+| `autonomous-research.ts`     | Autonomous Research                              | RAG Retrieve (14), Orchestrator, Guard (18), Evaluate (19)         |
 | `index.ts`                   | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                  |
 
 **Template shape** (seed-side `WorkflowTemplate` in `types/orchestration.ts`):
@@ -322,10 +328,10 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - Full list table with search, pagination, active switch, delete.
 - Drag from palette, drop, snap-to-grid, connect handles, click-to-select, rename, delete.
 - Hydrated builder on `/[id]` from the stored `WorkflowDefinition`, including layout.
-- Per-step config editors for all twelve step types (5.1b).
+- Per-step config editors for all fifteen step types (5.1b).
 - Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
 - Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
-- 8 built-in templates loadable from the toolbar dropdown (served via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
+- 9 built-in templates loadable from the toolbar dropdown (served via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
 
 **Deferred:**
 

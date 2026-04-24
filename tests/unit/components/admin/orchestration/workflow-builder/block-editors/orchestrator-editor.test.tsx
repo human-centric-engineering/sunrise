@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { OrchestratorEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor';
@@ -144,5 +144,107 @@ describe('OrchestratorEditor', () => {
     // The Select component renders a combobox
     const comboboxes = screen.getAllByRole('combobox');
     expect(comboboxes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  describe('number input onChange handlers', () => {
+    it('maxRounds: fires onChange with numeric value', () => {
+      const onChange = vi.fn();
+      render(<OrchestratorEditor config={defaultConfig} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-rounds') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '5' } });
+
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ maxRounds: 5 }));
+    });
+
+    it('timeout: converts seconds to milliseconds in onChange', () => {
+      const onChange = vi.fn();
+      render(<OrchestratorEditor config={defaultConfig} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-timeout') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '60' } });
+
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 60000 }));
+    });
+
+    it('budget: passes undefined when cleared (empty value)', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const configWithBudget: OrchestratorConfig = {
+        ...populatedConfig,
+        budgetLimitUsd: 1.5,
+      };
+      render(<OrchestratorEditor config={configWithBudget} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-budget') as HTMLInputElement;
+      await user.clear(input);
+
+      // Clearing the input should fire onChange with budgetLimitUsd: undefined
+      const calls = onChange.mock.calls.filter(
+        (c) => 'budgetLimitUsd' in (c[0] as Record<string, unknown>)
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall[0]).toMatchObject({ budgetLimitUsd: undefined });
+    });
+
+    it('budget: passes numeric value when set', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<OrchestratorEditor config={defaultConfig} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-budget') as HTMLInputElement;
+      await user.type(input, '2.5');
+
+      const calls = onChange.mock.calls.filter(
+        (c) => 'budgetLimitUsd' in (c[0] as Record<string, unknown>)
+      );
+      expect(calls.length).toBeGreaterThan(0);
+    });
+
+    it('model override: passes undefined when cleared', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const configWithModel: OrchestratorConfig = {
+        ...defaultConfig,
+        modelOverride: 'gpt-4o',
+      };
+      render(<OrchestratorEditor config={configWithModel} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-model') as HTMLInputElement;
+      await user.clear(input);
+
+      const calls = onChange.mock.calls.filter(
+        (c) => 'modelOverride' in (c[0] as Record<string, unknown>)
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall[0]).toMatchObject({ modelOverride: undefined });
+    });
+
+    it('temperature: fires onChange with clamped numeric value', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<OrchestratorEditor config={defaultConfig} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-temperature') as HTMLInputElement;
+      await user.clear(input);
+      await user.type(input, '0.8');
+
+      const calls = onChange.mock.calls.filter(
+        (c) => (c[0] as Record<string, unknown>).temperature !== undefined
+      );
+      expect(calls.length).toBeGreaterThan(0);
+    });
+
+    it('delegations per round: fires onChange with numeric value', () => {
+      const onChange = vi.fn();
+      render(<OrchestratorEditor config={defaultConfig} onChange={onChange} agents={AGENTS} />);
+
+      const input = document.getElementById('orchestrator-delegations') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '8' } });
+
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ maxDelegationsPerRound: 8 }));
+    });
   });
 });
