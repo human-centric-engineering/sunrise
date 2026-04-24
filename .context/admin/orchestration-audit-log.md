@@ -27,10 +27,10 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 ┌────────────────────────────────────────────────────────────────┐
 │ Heading + Refresh button                                       │
 ├────────────────────────────────────────────────────────────────┤
-│ [ Search input (debounced, server-side) ] [ Entity type ▼ ]    │
+│ [ Search input ] [ Entity type ▼ ]  From [ date ] To [ date ]  │
 ├────────────────────────────────────────────────────────────────┤
 │ Table: Timestamp │ Action │ Entity │ User │ IP                 │
-│   (row click → expands `changes` JSON inline below entity cell)│
+│   (row click → expands changes + metadata JSON inline)         │
 ├────────────────────────────────────────────────────────────────┤
 │ Total count       · Pager (prev / "page / totalPages" / next)  │
 └────────────────────────────────────────────────────────────────┘
