@@ -8,8 +8,13 @@
  */
 
 import { Prisma } from '@prisma/client';
+import type { McpAuditLog, McpApiKey } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+
+export type McpAuditLogWithKey = McpAuditLog & {
+  apiKey: Pick<McpApiKey, 'name' | 'keyPrefix'> | null;
+};
 
 const MAX_PARAMS_BYTES = 10_000; // 10KB
 
@@ -96,7 +101,7 @@ export async function queryMcpAuditLogs(filters: {
   responseCode?: string;
   dateFrom?: Date;
   dateTo?: Date;
-}): Promise<{ items: unknown[]; total: number }> {
+}): Promise<{ items: McpAuditLogWithKey[]; total: number }> {
   const where: Record<string, unknown> = {};
 
   if (filters.method) where.method = filters.method;

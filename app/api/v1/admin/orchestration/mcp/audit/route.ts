@@ -26,7 +26,7 @@ export const GET = withAdminAuth(async (request) => {
   const { items, total } = await queryMcpAuditLogs(filters);
 
   log.info('MCP audit logs queried', { count: items.length, total });
-  return paginatedResponse(items as Record<string, unknown>[], {
+  return paginatedResponse(items, {
     page: filters.page,
     limit: filters.limit,
     total,
