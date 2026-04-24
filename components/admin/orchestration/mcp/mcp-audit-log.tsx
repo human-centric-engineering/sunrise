@@ -80,6 +80,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
   const [loading, setLoading] = useState(false);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [method, setMethod] = useState('');
@@ -98,6 +99,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
       }
     ) => {
       setLoading(true);
+      setError(null);
       try {
         const params: Record<string, string | number> = { page, limit: 50 };
         const f = filters ?? { method, responseCode, dateFrom, dateTo };
@@ -121,7 +123,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
           setMeta(envelope.meta);
         }
       } catch {
-        // silent
+        setError('Failed to load audit entries.');
       } finally {
         setLoading(false);
       }
@@ -154,8 +156,8 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
           ? `Purged ${String(deleted)} log entries`
           : (data.message ?? 'No old entries to purge')
       );
-      // Refresh current page
-      void fetchEntries(meta?.page ?? 1);
+      // Reset to page 1 — purge may have removed enough rows to make the current page empty
+      void fetchEntries(1);
     } catch {
       setPurgeResult('Purge failed');
     } finally {
@@ -245,6 +247,8 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
           </div>
         </CardContent>
       </Card>
+
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       {/* Purge + info */}
       <div className="flex items-center gap-3">

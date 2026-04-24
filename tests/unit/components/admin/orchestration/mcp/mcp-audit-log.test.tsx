@@ -423,6 +423,52 @@ describe('McpAuditLog', () => {
     });
   });
 
+  describe('Error handling', () => {
+    it('shows error message when fetchEntries fails', async () => {
+      vi.mocked(apiClient.get).mockRejectedValue(new Error('Network error'));
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Trigger a fetch
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
+      });
+    });
+
+    it('clears error on next successful fetch', async () => {
+      // First fetch fails
+      vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('Network error'));
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
+      });
+
+      // Second fetch succeeds
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [ENTRY],
+        meta: META,
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Failed to load audit entries.')).not.toBeInTheDocument();
+      });
+    });
+  });
+
   describe('Empty state with active filters', () => {
     it('shows filter-specific empty message when entries are empty and hasFilters is true', async () => {
       // Arrange: fetch returns empty after applying filter
