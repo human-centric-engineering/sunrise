@@ -244,26 +244,36 @@ export function AnalyticsView({
       {feedback && (
         <Card data-testid="feedback-summary">
           <CardHeader>
-            <CardTitle className="text-base font-medium">Feedback Summary</CardTitle>
+            <CardTitle className="flex items-center gap-1 text-base font-medium">
+              Feedback Summary
+              <FieldHelp title="Feedback summary">
+                Based on thumbs-up / thumbs-down ratings on individual agent responses. Satisfaction
+                rate = thumbs-up / total ratings.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-6 text-sm">
-              <div>
-                <span className="text-muted-foreground">Satisfaction:</span>{' '}
-                <span className="font-medium">
-                  {formatPercent(feedback.overall.satisfactionRate)}
-                </span>
+            {feedback.overall.total === 0 ? (
+              <p className="text-muted-foreground text-sm">No feedback ratings in this period.</p>
+            ) : (
+              <div className="flex items-center gap-6 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Satisfaction:</span>{' '}
+                  <span className="font-medium">
+                    {formatPercent(feedback.overall.satisfactionRate)}
+                  </span>
+                </div>
+                <div>
+                  <Badge variant="default" className="bg-green-600">
+                    {feedback.overall.thumbsUp} up
+                  </Badge>
+                </div>
+                <div>
+                  <Badge variant="destructive">{feedback.overall.thumbsDown} down</Badge>
+                </div>
+                <div className="text-muted-foreground">{feedback.overall.total} total ratings</div>
               </div>
-              <div>
-                <Badge variant="default" className="bg-green-600">
-                  {feedback.overall.thumbsUp} up
-                </Badge>
-              </div>
-              <div>
-                <Badge variant="destructive">{feedback.overall.thumbsDown} down</Badge>
-              </div>
-              <div className="text-muted-foreground">{feedback.overall.total} total ratings</div>
-            </div>
+            )}
             {feedback.byAgent.length > 0 && (
               <Table>
                 <TableHeader>
@@ -296,14 +306,18 @@ export function AnalyticsView({
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Message Content</TableHead>
+                      <TableHead>User Asked</TableHead>
+                      <TableHead>Agent Response</TableHead>
                       <TableHead>Date</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {feedback.recentNegative.slice(0, 10).map((n) => (
                       <TableRow key={n.messageId}>
-                        <TableCell className="max-w-[500px] truncate">{n.content}</TableCell>
+                        <TableCell className="text-muted-foreground max-w-[300px] truncate">
+                          {n.userMessage || '\u2014'}
+                        </TableCell>
+                        <TableCell className="max-w-[300px] truncate">{n.content}</TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           {new Date(n.ratedAt).toLocaleDateString()}
                         </TableCell>
@@ -321,7 +335,13 @@ export function AnalyticsView({
         {/* Popular topics */}
         <Card data-testid="popular-topics">
           <CardHeader>
-            <CardTitle className="text-base font-medium">Popular Topics</CardTitle>
+            <CardTitle className="flex items-center gap-1 text-base font-medium">
+              Popular Topics
+              <FieldHelp title="Popular topics">
+                Most frequently asked user messages, grouped case-insensitively. Shows the top 15
+                topics in the selected period.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {!topics || topics.length === 0 ? (
@@ -335,8 +355,8 @@ export function AnalyticsView({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {topics.slice(0, 15).map((t, i) => (
-                    <TableRow key={i}>
+                  {topics.slice(0, 15).map((t) => (
+                    <TableRow key={t.content}>
                       <TableCell className="max-w-[300px] truncate">{t.content}</TableCell>
                       <TableCell className="text-right">{t.count}</TableCell>
                     </TableRow>
@@ -354,7 +374,8 @@ export function AnalyticsView({
               Content Gaps
               <FieldHelp title="Content gaps">
                 Topics where a high proportion of questions go unanswered, indicating missing
-                knowledge base content
+                knowledge base content. Based on the 500 most recent conversations in the selected
+                period using heuristic phrase detection.
               </FieldHelp>
             </CardTitle>
           </CardHeader>
@@ -367,14 +388,16 @@ export function AnalyticsView({
                   <TableRow>
                     <TableHead>Topic</TableHead>
                     <TableHead className="text-right">Queries</TableHead>
+                    <TableHead className="text-right">Unanswered</TableHead>
                     <TableHead className="text-right">Gap Ratio</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {contentGaps.slice(0, 15).map((g, i) => (
-                    <TableRow key={i}>
+                  {contentGaps.slice(0, 15).map((g) => (
+                    <TableRow key={g.topic}>
                       <TableCell className="max-w-[300px] truncate">{g.topic}</TableCell>
                       <TableCell className="text-right">{g.queryCount}</TableCell>
+                      <TableCell className="text-right">{g.unansweredCount}</TableCell>
                       <TableCell className="text-right">{formatPercent(g.gapRatio)}</TableCell>
                     </TableRow>
                   ))}
@@ -391,7 +414,9 @@ export function AnalyticsView({
           <CardTitle className="flex items-center gap-1 text-base font-medium">
             Unanswered Questions
             <FieldHelp title="Unanswered questions">
-              Recent user messages where the assistant replied with an apology or uncertainty signal
+              Conversations where the assistant responded with hedging phrases like &quot;I
+              don&apos;t know&quot;, &quot;I&apos;m not sure&quot;, or &quot;I cannot find&quot;.
+              Uses exact phrase matching to detect uncertainty.
             </FieldHelp>
           </CardTitle>
         </CardHeader>
@@ -409,7 +434,7 @@ export function AnalyticsView({
               </TableHeader>
               <TableBody>
                 {unanswered.slice(0, 20).map((u) => (
-                  <TableRow key={u.conversationId}>
+                  <TableRow key={u.messageId}>
                     <TableCell className="max-w-[300px] truncate">{u.userMessage}</TableCell>
                     <TableCell className="text-muted-foreground max-w-[300px] truncate">
                       {u.assistantReply}

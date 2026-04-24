@@ -26,7 +26,11 @@ export function resolveAnalyticsDateRange(
   query: { from?: string; to?: string },
   now: Date = new Date()
 ): AnalyticsDateRange {
-  const to = query.to ? new Date(query.to) : now;
+  const to = query.to
+    ? query.to.length === 10
+      ? new Date(query.to + 'T23:59:59.999Z')
+      : new Date(query.to)
+    : now;
   const from = query.from
     ? new Date(query.from)
     : new Date(to.getTime() - ANALYTICS_DEFAULT_RANGE_DAYS * MS_PER_DAY);

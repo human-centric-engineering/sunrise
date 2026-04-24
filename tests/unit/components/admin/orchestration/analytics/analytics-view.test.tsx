@@ -157,7 +157,7 @@ describe('AnalyticsView', () => {
     expect(screen.getByText('FAQ Bot')).toBeInTheDocument();
   });
 
-  it('renders recent negative feedback table', () => {
+  it('renders recent negative feedback table with user context', () => {
     render(
       <AnalyticsView
         {...baseProps}
@@ -170,6 +170,7 @@ describe('AnalyticsView', () => {
               conversationId: 'conv_1',
               agentId: 'a1',
               content: 'This answer was wrong about pricing',
+              userMessage: 'What is the pricing?',
               ratedAt: new Date('2026-04-18'),
             },
             {
@@ -177,6 +178,7 @@ describe('AnalyticsView', () => {
               conversationId: 'conv_2',
               agentId: 'a1',
               content: 'Completely unhelpful response',
+              userMessage: 'How do I cancel?',
               ratedAt: new Date('2026-04-17'),
             },
           ],
@@ -188,6 +190,8 @@ describe('AnalyticsView', () => {
     expect(screen.getByText('Recent Negative Feedback')).toBeInTheDocument();
     expect(screen.getByText('This answer was wrong about pricing')).toBeInTheDocument();
     expect(screen.getByText('Completely unhelpful response')).toBeInTheDocument();
+    expect(screen.getByText('What is the pricing?')).toBeInTheDocument();
+    expect(screen.getByText('How do I cancel?')).toBeInTheDocument();
   });
 
   it('renders popular topics table', () => {
@@ -206,7 +210,7 @@ describe('AnalyticsView', () => {
     expect(screen.getByText('Billing questions')).toBeInTheDocument();
   });
 
-  it('renders content gaps table', () => {
+  it('renders content gaps table with unanswered count', () => {
     render(
       <AnalyticsView
         {...baseProps}
@@ -218,6 +222,7 @@ describe('AnalyticsView', () => {
 
     expect(screen.getByText('integrations')).toBeInTheDocument();
     expect(screen.getByText('75.0%')).toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
   });
 
   it('renders unanswered questions', () => {
@@ -226,6 +231,7 @@ describe('AnalyticsView', () => {
         {...baseProps}
         unanswered={[
           {
+            messageId: 'msg_1',
             conversationId: 'c1',
             agentId: 'a1',
             userMessage: 'How do I connect to Stripe?',
@@ -241,6 +247,21 @@ describe('AnalyticsView', () => {
   });
 
   // ── New tests ───────────────────────────────────────────────────────────────
+
+  it('shows "No feedback ratings" when total is 0', () => {
+    render(
+      <AnalyticsView
+        {...baseProps}
+        feedback={{
+          overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: null },
+          byAgent: [],
+          recentNegative: [],
+        }}
+      />
+    );
+
+    expect(screen.getByText('No feedback ratings in this period.')).toBeInTheDocument();
+  });
 
   it('From date filter change calls router.push with from= query param', () => {
     // Arrange
