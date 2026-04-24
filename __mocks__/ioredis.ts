@@ -18,16 +18,24 @@ export interface IoredisState {
   onHandlers: Record<string, (err: Error) => void>;
   /** When true, the Redis constructor throws instead of returning a client. */
   constructorShouldThrow: boolean;
+  /** When set, the next eval() call rejects with this error instead of resolving. */
+  evalShouldReject: Error | null;
 }
 
 export const ioredisState: IoredisState = {
   evalResults: [],
   onHandlers: {},
   constructorShouldThrow: false,
+  evalShouldReject: null,
 };
 
 const mockClient = {
   eval: (..._args: unknown[]) => {
+    if (ioredisState.evalShouldReject) {
+      const err = ioredisState.evalShouldReject;
+      ioredisState.evalShouldReject = null;
+      return Promise.reject(err);
+    }
     const result = ioredisState.evalResults.length > 0 ? ioredisState.evalResults.shift() : 1;
     return Promise.resolve(result);
   },

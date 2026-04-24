@@ -140,10 +140,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      // If authenticated, should NOT redirect to login (should proceed)
-      expect(response.status).not.toBe(307); // 307 is redirect status
-      // Should be a NextResponse.next() or similar
+      // Assert: authenticated user accessing a protected route proceeds (200)
+      expect(response.status).toBe(200);
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -156,8 +154,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: NextResponse.next() yields 200, not a redirect
+      expect(response.status).toBe(200);
     });
   });
 
@@ -171,9 +169,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      // If authenticated, should NOT redirect to login
-      expect(response.status).not.toBe(307);
+      // Assert: authenticated user proceeds to the protected route (200)
+      expect(response.status).toBe(200);
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
@@ -186,8 +183,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: NextResponse.next() → 200, no redirect
+      expect(response.status).toBe(200);
     });
 
     it('should allow access to /profile with HTTPS cookie', () => {
@@ -199,8 +196,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: NextResponse.next() → 200, no redirect
+      expect(response.status).toBe(200);
     });
   });
 
@@ -217,8 +214,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: authenticated with either cookie → proceeds (200)
+      expect(response.status).toBe(200);
     });
   });
 
@@ -317,8 +314,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: public route → NextResponse.next() → 200
+      expect(response.status).toBe(200);
     });
 
     it('should allow unauthenticated access to /about', () => {
@@ -328,8 +325,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(307); // No redirect
+      // Assert: public route → NextResponse.next() → 200
+      expect(response.status).toBe(200);
     });
   });
 
@@ -345,8 +342,11 @@ describe('proxy middleware', () => {
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should use existing request ID from header if present', () => {
-      // Arrange
+    it('should reuse the existing request ID from the header without generating a new one', async () => {
+      // Import the mocked module to assert on its call count
+      const { generateRequestId } = await import('@/lib/logging/context');
+
+      // Arrange: request already carries an ID (e.g. propagated from the client)
       const request = createMockRequest('/', {
         cookies: {},
         headers: { 'x-request-id': 'existing-request-id' },
@@ -355,9 +355,10 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      // The proxy should use the existing ID (though our mock always returns the same)
-      expect(response.headers.get('x-request-id')).toBeDefined();
+      // Assert: the pre-existing ID is echoed back, and generateRequestId is NOT called
+      // (source: `const requestId = request.headers.get('x-request-id') || generateRequestId()`)
+      expect(response.headers.get('x-request-id')).toBe('existing-request-id');
+      expect(generateRequestId).not.toHaveBeenCalled();
     });
   });
 
@@ -392,8 +393,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(403);
+      // Assert: origin matches host → request proceeds, rate-limit headers present
+      expect(response.status).toBe(200);
     });
 
     it('should allow GET requests without origin validation', () => {
@@ -409,8 +410,8 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
-      expect(response.status).not.toBe(403);
+      // Assert: GET skips origin check → NextResponse.next() → 200
+      expect(response.status).toBe(200);
     });
   });
 
@@ -716,10 +717,10 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert - both checks happen in sequence
+      // Assert - both checks happen in sequence and request proceeds
       expect(adminLimiter.check).toHaveBeenCalledTimes(1);
       expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(response.status).not.toBe(429);
+      expect(response.status).toBe(200);
     });
 
     it('should return 429 when adminLimiter passes but apiLimiter fails', async () => {
@@ -923,9 +924,9 @@ describe('proxy middleware', () => {
       // Act
       const response = proxy(request);
 
-      // Assert
+      // Assert: auth limiter passes → request proceeds (200)
       expect(authLimiter.check).toHaveBeenCalledTimes(1);
-      expect(response.status).not.toBe(429);
+      expect(response.status).toBe(200);
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 

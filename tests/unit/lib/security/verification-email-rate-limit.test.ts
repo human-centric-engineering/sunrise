@@ -37,6 +37,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result3 = verificationEmailLimiter.check(ip);
 
       // Assert: All 3 should succeed
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies sliding-window allow/block contract
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
       expect(result3.success).toBe(true);
@@ -84,6 +85,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result = verificationEmailLimiter.check(ip);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies sliding-window allow/block contract
       expect(result.success).toBe(true);
       expect(result.limit).toBe(3);
       expect(result.remaining).toBe(2);
@@ -149,6 +151,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
 
       // Assert
       expect(result1.success).toBe(false); // ip1 blocked
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies token isolation contract
       expect(result2.success).toBe(true); // ip2 allowed
       expect(result2.remaining).toBe(2);
     });
@@ -176,6 +179,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const results = ips.map((ip) => verificationEmailLimiter.check(ip));
 
       // Assert: All should succeed independently
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies per-token isolation
       results.forEach((result) => {
         expect(result.success).toBe(true);
         expect(result.remaining).toBe(2);
@@ -184,6 +188,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
   });
 
   describe('success flag', () => {
+    // test-review:accept tobe_true — structural assertion on rate limiter success field; this test's entire purpose is verifying the success flag
     it('should return success=true when under limit', () => {
       // Arrange
       const ip = 'test-ip-success';
@@ -251,6 +256,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const afterResetResult = verificationEmailLimiter.check(ip);
 
       // Assert: Should be allowed again
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies reset restores allow state
       expect(afterResetResult.success).toBe(true);
       expect(afterResetResult.remaining).toBe(2);
     });
@@ -275,6 +281,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result2 = verificationEmailLimiter.check(ip2);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies selective reset
       expect(result1.success).toBe(true); // ip1 reset, allowed
       expect(result2.success).toBe(false); // ip2 still blocked
     });
@@ -298,6 +305,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const checkResult = verificationEmailLimiter.check(ip);
 
       // Assert: Peek should show 3 remaining, check should consume one
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies peek and check both report allow state
       expect(peekResult.success).toBe(true);
       expect(peekResult.remaining).toBe(3);
       expect(checkResult.success).toBe(true);
@@ -332,11 +340,13 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const peekResult = verificationEmailLimiter.peek(ip);
 
       // Assert: Should show 1 remaining
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies peek shows allow while requests remain
       expect(peekResult.success).toBe(true);
       expect(peekResult.remaining).toBe(1);
 
       // Act: Now consume the last request
       const checkResult = verificationEmailLimiter.check(ip);
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies last allowed request succeeds
       expect(checkResult.success).toBe(true);
       expect(checkResult.remaining).toBe(0);
     });
@@ -364,6 +374,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result = verificationEmailLimiter.check(ip);
 
       // Assert: Should work (treats empty string as valid token)
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies edge-case token is accepted
       expect(result.success).toBe(true);
       expect(result.limit).toBe(3);
     });
@@ -376,6 +387,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result = verificationEmailLimiter.check(ip);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies edge-case token is accepted
       expect(result.success).toBe(true);
       expect(result.limit).toBe(3);
     });
@@ -388,6 +400,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const result = verificationEmailLimiter.check(ip);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies edge-case token is accepted
       expect(result.success).toBe(true);
       expect(result.limit).toBe(3);
     });
@@ -421,6 +434,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const request3 = verificationEmailLimiter.check(userIP);
 
       // Assert: All 3 should succeed
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies endpoint rate-limit contract
       expect(request1.success).toBe(true);
       expect(request2.success).toBe(true);
       expect(request3.success).toBe(true);
@@ -483,6 +497,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const attempt5 = verificationEmailLimiter.check(attackerIP);
 
       // Assert: First 3 succeed, rest blocked
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies bombing prevention contract
       expect(attempt1.success).toBe(true);
       expect(attempt2.success).toBe(true);
       expect(attempt3.success).toBe(true);
@@ -500,6 +515,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
       const request3 = verificationEmailLimiter.check(userIP); // Retry 2
 
       // Assert: All 3 retries allowed
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies legitimate retry contract
       expect(request1.success).toBe(true);
       expect(request2.success).toBe(true);
       expect(request3.success).toBe(true);
@@ -521,6 +537,7 @@ describe('lib/security/rate-limit - verificationEmailLimiter', () => {
 
       // Assert
       expect(adminBlocked.success).toBe(false);
+      // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies per-token isolation
       expect(userAllowed.success).toBe(true);
     });
   });

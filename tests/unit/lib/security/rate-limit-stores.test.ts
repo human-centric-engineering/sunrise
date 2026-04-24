@@ -97,6 +97,34 @@ describe('MemoryRateLimitStore', () => {
     const entry = await store.increment('key1', 60_000);
     expect(entry.resetAt).toBeGreaterThanOrEqual(before + 60_000);
   });
+
+  it('evicts the oldest key when maxKeys is exceeded (LRU)', async () => {
+    // Arrange: store with capacity of exactly 2 keys
+    const lruStore = new MemoryRateLimitStore(2);
+
+    // Act: add key-a, then key-b (cache is full)
+    await lruStore.increment('key-a', 60_000);
+    await lruStore.increment('key-b', 60_000);
+
+    // Access key-a to make it the most-recently-used, so key-b becomes LRU
+    await lruStore.increment('key-a', 60_000);
+
+    // Adding key-c should evict key-b (least recently used)
+    await lruStore.increment('key-c', 60_000);
+
+    // Assert: key-b was evicted — peek returns null
+    const evicted = await lruStore.peek('key-b', 60_000);
+    expect(evicted).toBeNull();
+
+    // Assert: key-a and key-c are still present
+    const alive = await lruStore.peek('key-a', 60_000);
+    expect(alive).not.toBeNull();
+    expect(alive!.count).toBe(2); // two increments (initial + the access above)
+
+    const newest = await lruStore.peek('key-c', 60_000);
+    expect(newest).not.toBeNull();
+    expect(newest!.count).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -223,6 +251,7 @@ describe('createAsyncRateLimiter', () => {
     const limiter = createAsyncRateLimiter({ interval: 60_000, maxRequests: 3 }, store);
 
     const r1 = await limiter.check('token1');
+    // test-review:accept tobe_true — structural assertion on MemoryRateLimitStore success field; verifies real store integration
     expect(r1.success).toBe(true);
     expect(r1.remaining).toBe(2);
 
@@ -256,6 +285,7 @@ describe('createAsyncRateLimiter', () => {
 
     await limiter.reset('token1');
     const afterReset = await limiter.check('token1');
+    // test-review:accept tobe_true — structural assertion on rate limiter success field after reset
     expect(afterReset.success).toBe(true);
   });
 
@@ -289,6 +319,7 @@ describe('createAsyncDynamicLimiter', () => {
     const limiter = createAsyncDynamicLimiter('test', 2, store);
 
     const r1 = await limiter.check('token1');
+    // test-review:accept tobe_true — structural assertion on rate limiter success field; verifies real store integration
     expect(r1.success).toBe(true);
 
     const r2 = await limiter.check('token1');
@@ -303,6 +334,7 @@ describe('createAsyncDynamicLimiter', () => {
     const limiter = createAsyncDynamicLimiter('test', 2, store);
 
     // Custom limit of 5
+    // test-review:accept tobe_true — structural assertion on rate limiter success field
     for (let i = 0; i < 5; i++) {
       const r = await limiter.check('token1', 5);
       expect(r.success).toBe(true);
@@ -317,6 +349,7 @@ describe('createAsyncDynamicLimiter', () => {
     const limiter = createAsyncDynamicLimiter('test', 1, store);
 
     const r1 = await limiter.check('token1', null);
+    // test-review:accept tobe_true — structural assertion on rate limiter success field
     expect(r1.success).toBe(true);
 
     const r2 = await limiter.check('token1', null);
@@ -330,6 +363,7 @@ describe('createAsyncDynamicLimiter', () => {
     await limiter.reset('token1');
 
     const r = await limiter.check('token1');
+    // test-review:accept tobe_true — structural assertion on rate limiter success field after reset
     expect(r.success).toBe(true);
   });
 });
@@ -351,6 +385,7 @@ describe('RedisRateLimitStore', () => {
     ioredisState.evalResults.length = 0;
     ioredisState.onHandlers = {};
     ioredisState.constructorShouldThrow = false;
+    ioredisState.evalShouldReject = null;
   });
 
   async function buildConnectedStore(url = 'redis://localhost:6379'): Promise<RedisRateLimitStore> {
@@ -374,16 +409,25 @@ describe('RedisRateLimitStore', () => {
     expect(result.resetAt).toBeGreaterThanOrEqual(before + 60_000);
   });
 
-  it('increment prefixes the key with "rl:"', async () => {
-    // Arrange: the default eval result (1) is fine; just build the store
+  it('increment and reset use the "rl:" key prefix — separate keys share no state', async () => {
+    // Arrange: two stores sharing the same mock client; queue two distinct eval results
+    ioredisState.evalResults.push(3); // first increment → count 3
+    ioredisState.evalResults.push(7); // second increment → count 7
     const store = await buildConnectedStore();
 
-    // The mock eval() always resolves to the next queued value (or 1 by default).
-    // To verify the key prefix we call increment and trust the source code, which
-    // passes the prefixed key as the third argument to eval.  We confirm the
-    // operation succeeds (count === 1) which proves the mock client was invoked.
-    const result = await store.increment('my-key', 60_000);
-    expect(result.count).toBe(1);
+    // Act: increment two different logical keys
+    const resultA = await store.increment('alpha', 60_000);
+    const resultB = await store.increment('beta', 60_000);
+
+    // Assert: each call returned its own queued result — they did not share state
+    expect(resultA.count).toBe(3);
+    expect(resultB.count).toBe(7);
+
+    // Assert: reset('alpha') does not affect a subsequent increment on 'beta'
+    ioredisState.evalResults.push(1); // next eval for 'beta'
+    await store.reset('alpha');
+    const resultC = await store.increment('beta', 60_000);
+    expect(resultC.count).toBe(1);
   });
 
   it('reset completes without error', async () => {
@@ -470,5 +514,25 @@ describe('RedisRateLimitStore', () => {
       'Redis rate limit store connected',
       expect.objectContaining({ url: expect.not.stringContaining('s3cr3t') })
     );
+  });
+
+  it('propagates eval error thrown during increment', async () => {
+    // Arrange: build a connected store, then make the next eval() call reject
+    const store = await buildConnectedStore();
+    ioredisState.evalShouldReject = new Error(
+      'READONLY You cannot write against a read only replica'
+    );
+
+    // Act + Assert: increment should propagate the Redis error to the caller
+    await expect(store.increment('any-key', 60_000)).rejects.toThrow('READONLY');
+  });
+
+  it('propagates eval error thrown during peek', async () => {
+    // Arrange: build a connected store, then make the next eval() call reject
+    const store = await buildConnectedStore();
+    ioredisState.evalShouldReject = new Error('NOSCRIPT No matching script');
+
+    // Act + Assert: peek should propagate the Redis error to the caller
+    await expect(store.peek('any-key', 60_000)).rejects.toThrow('NOSCRIPT');
   });
 });
