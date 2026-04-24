@@ -16,6 +16,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -90,6 +91,16 @@ export const POST = withAdminAuth(async (request, session) => {
     url: webhook.url,
     events: webhook.events,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook_subscription.create',
+    entityType: 'webhook',
+    entityId: webhook.id,
+    entityName: webhook.url,
+    metadata: { events: webhook.events },
+    clientIp: clientIP,
   });
 
   return successResponse(webhook, undefined, { status: 201 });
