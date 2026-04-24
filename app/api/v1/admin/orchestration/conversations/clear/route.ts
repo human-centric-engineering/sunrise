@@ -14,9 +14,9 @@
  *   - `allUsers: true`: across all users (still narrowed by the
  *     `olderThan` / `agentId` filters)
  *
- * Cross-user deletions (`userId` or `allUsers: true`) are recorded in
- * the admin audit log so there's an immutable trail. `AiMessage` rows
- * cascade via the foreign-key relation.
+ * All deletions (including self-scoped) are recorded in the admin audit
+ * log so there's an immutable trail. `AiMessage` rows cascade via the
+ * foreign-key relation.
  *
  * Authentication: Admin role required.
  */
@@ -59,21 +59,19 @@ export const POST = withAdminAuth(async (request, session) => {
     olderThan: body.olderThan,
   });
 
-  if (scope !== 'self') {
-    logAdminAction({
-      userId: session.user.id,
-      action: 'conversation.bulk_clear',
-      entityType: 'conversation',
-      metadata: {
-        scope,
-        targetUserId: scope === 'user' ? body.userId : null,
-        agentId: body.agentId ?? null,
-        olderThan: body.olderThan ?? null,
-        deletedCount: result.count,
-      },
-      clientIp: clientIP,
-    });
-  }
+  logAdminAction({
+    userId: session.user.id,
+    action: 'conversation.bulk_clear',
+    entityType: 'conversation',
+    metadata: {
+      scope,
+      targetUserId: scope === 'user' ? body.userId : null,
+      agentId: body.agentId ?? null,
+      olderThan: body.olderThan ?? null,
+      deletedCount: result.count,
+    },
+    clientIp: clientIP,
+  });
 
   return successResponse({ deletedCount: result.count });
 });
