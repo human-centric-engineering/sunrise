@@ -38,13 +38,13 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 
 ### Filters
 
-| Control        | Behaviour                                                                                                                                                                                       |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1. |
-| Entity type    | Server-side filter. Options: `agent`, `workflow`, `capability`, `knowledge_document`, `settings`, `webhook`. Selecting one resets to page 1.                                                    |
-| Refresh button | Re-fetches the current page.                                                                                                                                                                    |
+| Control        | Behaviour                                                                                                                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1.                                       |
+| Entity type    | Server-side filter. Options include `agent`, `workflow`, `capability`, `provider`, `mcp_api_key`, `knowledge_document`, `settings`, `experiment`, `embed_token`, `backup`, `webhook`, `conversation`. Selecting one resets to page 1. |
+| Refresh button | Re-fetches the current page.                                                                                                                                                                                                          |
 
-Known gaps in the dropdown (present in the data, absent from the filter UI): `experiment`, `embed_token`, `backup`. The `webhook` option appears in the dropdown but **no call site currently emits `entityType: 'webhook'`** — it will always return zero results until webhook writes are wired up. To filter by any of these, hit the API directly with `?entityType=experiment` etc.
+Entity types present in the data but absent from the filter dropdown: `webhook` (for `hook.secret.*` and webhook CRUD events) and `conversation` (for `conversation.bulk_clear`). All other entity types with actual audit data have corresponding dropdown entries. To filter by any missing type, hit the API directly with `?entityType=webhook` etc.
 
 ### Row detail
 
@@ -112,7 +112,7 @@ interface AdminAuditEntry {
 
 ### Secret redaction
 
-Fields whose name matches `/password|secret|token|key|credential/i` (case-insensitive) have their `from`/`to` values replaced with `"[REDACTED]"` before the insert. Applied to `changes` only — **not** to `metadata`, so never push raw secrets into `metadata`.
+Fields whose name matches `/password|secret|token|key|credential/i` (case-insensitive) have their `from`/`to` values replaced with `"[REDACTED]"` before the insert. Applied to both `changes` (field-level redaction of `from`/`to` values) and `metadata` (recursive key-matching redaction via `sanitizeMetadata()`). Safe to include metadata in audit entries without leaking secrets.
 
 ### Fire-and-forget semantics
 
@@ -139,35 +139,52 @@ logAdminAction({
 
 Every `logAdminAction()` call site (as of grep at write time):
 
-| Route                                         | Action                                                          | entityType           |
-| --------------------------------------------- | --------------------------------------------------------------- | -------------------- |
-| `agents/route.ts`                             | `agent.create`                                                  | `agent`              |
-| `agents/[id]/route.ts`                        | `agent.update`, `agent.delete`                                  | `agent`              |
-| `agents/[id]/embed-tokens/route.ts`           | `embed_token.create`                                            | `embed_token`        |
-| `agents/[id]/embed-tokens/[tokenId]/route.ts` | `embed_token.update`, `embed_token.delete`                      | `embed_token`        |
-| `workflows/route.ts`                          | `workflow.create`                                               | `workflow`           |
-| `workflows/[id]/route.ts`                     | `workflow.update`, `workflow.delete`                            | `workflow`           |
-| `capabilities/route.ts`                       | `capability.create`                                             | `capability`         |
-| `knowledge/documents/route.ts`                | `knowledge_document.create` (×2 — file upload and text paste)   | `knowledge_document` |
-| `knowledge/documents/bulk/route.ts`           | `knowledge_document.bulk_create` (only when `successCount > 0`) | `knowledge_document` |
-| `knowledge/documents/fetch-url/route.ts`      | `knowledge_document.create`                                     | `knowledge_document` |
-| `knowledge/documents/[id]/route.ts`           | `knowledge_document.delete`                                     | `knowledge_document` |
-| `settings/route.ts`                           | `settings.update`                                               | `settings`           |
-| `experiments/route.ts`                        | `experiment.create`                                             | `experiment`         |
-| `experiments/[id]/route.ts`                   | `experiment.update`, `experiment.delete`                        | `experiment`         |
-| `experiments/[id]/run/route.ts`               | `experiment.run`                                                | `experiment`         |
-| `backup/export/route.ts`                      | `backup.export`                                                 | `backup`             |
-| `backup/import/route.ts`                      | `backup.import`                                                 | `backup`             |
+| Route                                               | Action                                                              | entityType           |
+| --------------------------------------------------- | ------------------------------------------------------------------- | -------------------- |
+| `agents/route.ts`                                   | `agent.create`                                                      | `agent`              |
+| `agents/[id]/route.ts`                              | `agent.update`, `agent.delete`                                      | `agent`              |
+| `agents/[id]/clone/route.ts`                        | `agent.clone`                                                       | `agent`              |
+| `agents/[id]/instructions-revert/route.ts`          | `agent.instructions_revert`                                         | `agent`              |
+| `agents/[id]/versions/[versionId]/restore/route.ts` | `agent.version_restore`                                             | `agent`              |
+| `agents/[id]/capabilities/route.ts`                 | `agent.capability_attach`                                           | `agent`              |
+| `agents/[id]/capabilities/[capId]/route.ts`         | `agent.capability_update`, `agent.capability_detach`                | `agent`              |
+| `agents/[id]/invite-tokens/route.ts`                | `agent.invite_token_create`                                         | `agent`              |
+| `agents/[id]/invite-tokens/[tokenId]/route.ts`      | `agent.invite_token_revoke`                                         | `agent`              |
+| `agents/[id]/embed-tokens/route.ts`                 | `embed_token.create`                                                | `embed_token`        |
+| `agents/[id]/embed-tokens/[tokenId]/route.ts`       | `embed_token.update`, `embed_token.delete`                          | `embed_token`        |
+| `agents/import/route.ts`                            | `agent.import`                                                      | `agent`              |
+| `agents/bulk/route.ts`                              | `agent.bulk.activate`, `agent.bulk.deactivate`, `agent.bulk.delete` | `agent`              |
+| `workflows/route.ts`                                | `workflow.create`                                                   | `workflow`           |
+| `workflows/[id]/route.ts`                           | `workflow.update`, `workflow.delete`                                | `workflow`           |
+| `capabilities/route.ts`                             | `capability.create`                                                 | `capability`         |
+| `capabilities/[id]/route.ts`                        | `capability.update`, `capability.delete`                            | `capability`         |
+| `providers/route.ts`                                | `provider.create`                                                   | `provider`           |
+| `providers/[id]/route.ts`                           | `provider.update`, `provider.delete`                                | `provider`           |
+| `mcp/keys/route.ts`                                 | `mcp_api_key.create`                                                | `mcp_api_key`        |
+| `mcp/keys/[id]/route.ts`                            | `mcp_api_key.update`, `mcp_api_key.delete`                          | `mcp_api_key`        |
+| `mcp/keys/[id]/rotate/route.ts`                     | `mcp_api_key.rotate`                                                | `mcp_api_key`        |
+| `knowledge/documents/route.ts`                      | `knowledge_document.create` (×2 — file upload and text paste)       | `knowledge_document` |
+| `knowledge/documents/bulk/route.ts`                 | `knowledge_document.bulk_create` (only when `successCount > 0`)     | `knowledge_document` |
+| `knowledge/documents/fetch-url/route.ts`            | `knowledge_document.create`                                         | `knowledge_document` |
+| `knowledge/documents/[id]/route.ts`                 | `knowledge_document.delete`                                         | `knowledge_document` |
+| `settings/route.ts`                                 | `settings.update`                                                   | `settings`           |
+| `experiments/route.ts`                              | `experiment.create`                                                 | `experiment`         |
+| `experiments/[id]/route.ts`                         | `experiment.update`, `experiment.delete`                            | `experiment`         |
+| `experiments/[id]/run/route.ts`                     | `experiment.run`                                                    | `experiment`         |
+| `backup/export/route.ts`                            | `backup.export`                                                     | `backup`             |
+| `backup/import/route.ts`                            | `backup.import`                                                     | `backup`             |
+| `hooks/route.ts`                                    | `webhook.create`                                                    | `webhook`            |
+| `hooks/[id]/route.ts`                               | `webhook.update`, `webhook.delete`                                  | `webhook`            |
+| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `webhook`            |
+| `webhooks/route.ts`                                 | `webhook_subscription.create`                                       | `webhook`            |
+| `webhooks/[id]/route.ts`                            | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook`            |
+| `conversations/clear/route.ts`                      | `conversation.bulk_clear`                                           | `conversation`       |
 
-### Unsupported / absent
+Note: bulk agent actions write a **single** audit entry per operation (not per-agent). The `metadata` field records affected agent IDs.
 
-- **Capability update, delete** — no audit writes in `capabilities/[id]/route.ts` today; only `capability.create` lands. If you edit a capability the audit log will not show it.
-- **Provider config changes** — provider CRUD endpoints do not call `logAdminAction`.
-- **Webhook CRUD** — the UI exposes `webhook` as a filter value but no route emits `entityType: 'webhook'`. Filter will return zero rows.
-- **API-key lifecycle** (`AiApiKey`, `McpApiKey`) — not audited via this logger.
-- **Bulk agent actions** (`agents/bulk/route.ts`) — the route takes an `action: 'activate' | 'deactivate' | 'delete'` body but does not write per-agent audit entries.
+### Not yet audited
 
-If you add audit coverage for any of the above, extend the UI filter dropdown in `audit-log-view.tsx` (`ENTITY_TYPES`) to match.
+- **AiApiKey lifecycle** — no admin CRUD routes exist for this model; not audited via this logger.
 
 ## Retention
 
