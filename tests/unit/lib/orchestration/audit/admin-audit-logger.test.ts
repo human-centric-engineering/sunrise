@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -165,7 +166,7 @@ describe('logAdminAction', () => {
     logAdminAction({ userId: 'u2', action: 'settings.update', entityType: 'settings' });
     await flushPromises();
 
-    // Assert — each optional field coerced to null at the DB boundary
+    // Assert — each optional field coerced to null/JsonNull at the DB boundary
     expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -174,8 +175,8 @@ describe('logAdminAction', () => {
           entityType: 'settings',
           entityId: null,
           entityName: null,
-          changes: null,
-          metadata: null,
+          changes: Prisma.JsonNull,
+          metadata: Prisma.JsonNull,
           clientIp: null,
         }),
       })
@@ -251,10 +252,10 @@ describe('logAdminAction', () => {
     });
     await flushPromises();
 
-    // Assert
+    // Assert — null changes stored as Prisma.JsonNull
     expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ changes: null }),
+        data: expect.objectContaining({ changes: Prisma.JsonNull }),
       })
     );
   });

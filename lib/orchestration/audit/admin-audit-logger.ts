@@ -8,6 +8,7 @@
  * Follows the same pattern as `lib/orchestration/mcp/audit-logger.ts`.
  */
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
@@ -114,8 +115,14 @@ export function logAdminAction(entry: AdminAuditEntry): void {
         entityType: entry.entityType,
         entityId: entry.entityId ?? null,
         entityName: entry.entityName ?? null,
-        changes: sanitizeChanges(entry.changes) as never,
-        metadata: sanitizeMetadata(entry.metadata) as never,
+        changes: (() => {
+          const s = sanitizeChanges(entry.changes);
+          return s === null ? Prisma.JsonNull : (s as Prisma.InputJsonValue);
+        })(),
+        metadata: (() => {
+          const s = sanitizeMetadata(entry.metadata);
+          return s === null ? Prisma.JsonNull : (s as Prisma.InputJsonValue);
+        })(),
         clientIp: entry.clientIp ?? null,
       },
     })
