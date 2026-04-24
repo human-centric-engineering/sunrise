@@ -80,6 +80,15 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     throw new ForbiddenError('System agent slugs cannot be changed');
   }
 
+  // System agent instructions are read-only to preserve rollback consistency.
+  if (
+    current.isSystem &&
+    body.systemInstructions !== undefined &&
+    body.systemInstructions !== current.systemInstructions
+  ) {
+    throw new ForbiddenError('System agent instructions cannot be modified');
+  }
+
   // Build the update payload. Only include fields the caller actually sent.
   const data: Prisma.AiAgentUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
@@ -242,17 +251,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       fieldsChanged: Object.keys(data),
     });
 
-    const response = successResponse(agent);
-
-    // Warn callers when system agent instructions are modified.
-    if (current.isSystem && data.systemInstructions !== undefined) {
-      response.headers.set(
-        'X-System-Warning',
-        'System agent instructions have been modified. Use instructions-revert to restore if needed.'
-      );
-    }
-
-    return response;
+    return successResponse(agent);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {

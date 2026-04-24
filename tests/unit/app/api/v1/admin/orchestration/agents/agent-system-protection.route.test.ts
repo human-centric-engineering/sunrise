@@ -10,8 +10,8 @@
  * - DELETE allows non-system agents
  * - PATCH rejects isActive: false on system agents with 403
  * - PATCH allows isActive: false on non-system agents
- * - PATCH returns X-System-Warning header when editing system agent instructions
- * - PATCH does not return X-System-Warning for non-system agents
+ * - PATCH rejects systemInstructions changes on system agents with 403
+ * - PATCH allows systemInstructions changes on non-system agents
  *
  * @see app/api/v1/admin/orchestration/agents/[id]/route.ts
  */
@@ -217,31 +217,25 @@ describe('System agent protection', () => {
     });
   });
 
-  describe('PATCH — system instruction warning', () => {
-    it('returns X-System-Warning header when editing system agent instructions', async () => {
-      const agent = makeSystemAgent();
-      mockFindUnique.mockResolvedValue(agent);
-      mockUpdate.mockResolvedValue({
-        ...agent,
-        systemInstructions: 'Updated instructions.',
-      });
+  describe('PATCH — system instruction guard', () => {
+    it('rejects systemInstructions changes on system agents with 403', async () => {
+      mockFindUnique.mockResolvedValue(makeSystemAgent());
 
       const response = await PATCH(
         makePatchRequest({ systemInstructions: 'Updated instructions.' }),
         makeParams(AGENT_ID)
       );
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get('X-System-Warning')).toBeTruthy();
+      expect(response.status).toBe(403);
+      const json = await response.json();
+      expect(json.error.message).toContain('System agent instructions cannot be modified');
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
 
-    it('does not return X-System-Warning for non-system agents', async () => {
+    it('allows systemInstructions changes on non-system agents', async () => {
       const agent = makeCustomAgent();
       mockFindUnique.mockResolvedValue(agent);
-      mockUpdate.mockResolvedValue({
-        ...agent,
-        systemInstructions: 'Updated instructions.',
-      });
+      mockUpdate.mockResolvedValue({ ...agent, systemInstructions: 'Updated instructions.' });
 
       const response = await PATCH(
         makePatchRequest({ systemInstructions: 'Updated instructions.' }),
@@ -249,7 +243,19 @@ describe('System agent protection', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(response.headers.get('X-System-Warning')).toBeNull();
+    });
+
+    it('allows no-op systemInstructions patch on system agents (same value)', async () => {
+      const agent = makeSystemAgent();
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue(agent);
+
+      const response = await PATCH(
+        makePatchRequest({ systemInstructions: agent.systemInstructions }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
     });
   });
 });

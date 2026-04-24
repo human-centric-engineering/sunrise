@@ -32,6 +32,8 @@ import {
 } from '@/lib/validations/orchestration';
 
 const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
+const guardModeSchema = z.enum(['log_only', 'warn_and_continue', 'block']).nullable();
+const visibilitySchema = z.enum(['internal', 'public', 'invite_only']);
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -93,11 +95,11 @@ export const POST = withAdminAuth(async (request, session) => {
         isActive: agent.isActive,
         fallbackProviders: agent.fallbackProviders,
         rateLimitRpm: agent.rateLimitRpm,
-        inputGuardMode: agent.inputGuardMode as 'log_only' | 'warn_and_continue' | 'block' | null,
-        outputGuardMode: agent.outputGuardMode as 'log_only' | 'warn_and_continue' | 'block' | null,
+        inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
+        outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
         maxHistoryTokens: agent.maxHistoryTokens,
         retentionDays: agent.retentionDays,
-        visibility: agent.visibility as 'internal' | 'public' | 'invite_only',
+        visibility: visibilitySchema.parse(agent.visibility),
         knowledgeCategories: agent.knowledgeCategories,
         topicBoundaries: agent.topicBoundaries,
         brandVoiceInstructions: agent.brandVoiceInstructions,

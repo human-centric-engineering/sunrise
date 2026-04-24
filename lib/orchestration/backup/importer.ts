@@ -40,6 +40,12 @@ export async function importOrchestrationConfig(
     for (const agent of parsed.data.agents) {
       const existing = await tx.aiAgent.findUnique({ where: { slug: agent.slug } });
       if (existing) {
+        if (existing.isSystem) {
+          result.warnings.push(
+            `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
+          );
+          continue;
+        }
         await tx.aiAgent.update({
           where: { slug: agent.slug },
           data: {
