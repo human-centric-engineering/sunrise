@@ -85,10 +85,15 @@ export function computeChanges(
 
   const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const key of allKeys) {
-    const a = JSON.stringify(before[key]);
-    const b = JSON.stringify(after[key]);
-    if (a !== b) {
-      changes[key] = { from: before[key], to: after[key] };
+    try {
+      const a = JSON.stringify(before[key]);
+      const b = JSON.stringify(after[key]);
+      if (a !== b) {
+        changes[key] = { from: before[key], to: after[key] };
+      }
+    } catch {
+      // Non-serializable value (circular ref, BigInt, etc.) — record as changed
+      changes[key] = { from: '[unserializable]', to: '[unserializable]' };
     }
   }
 

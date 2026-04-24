@@ -87,6 +87,33 @@ describe('computeChanges', () => {
     // Assert
     expect(result).toBeNull();
   });
+
+  it('handles non-serializable values (BigInt) without throwing', () => {
+    // Arrange — BigInt throws on JSON.stringify
+    const before = { count: BigInt(1) } as unknown as Record<string, unknown>;
+    const after = { count: BigInt(2) } as unknown as Record<string, unknown>;
+
+    // Act — must not throw
+    const result = computeChanges(before, after);
+
+    // Assert — captured as [unserializable]
+    expect(result).toEqual({ count: { from: '[unserializable]', to: '[unserializable]' } });
+  });
+
+  it('handles circular references without throwing', () => {
+    // Arrange — circular ref throws on JSON.stringify
+    const circular: Record<string, unknown> = { name: 'test' };
+    circular.self = circular;
+
+    const before = { config: circular };
+    const after = { config: { name: 'updated' } };
+
+    // Act — must not throw
+    const result = computeChanges(before, after);
+
+    // Assert — captured as [unserializable]
+    expect(result).toEqual({ config: { from: '[unserializable]', to: '[unserializable]' } });
+  });
 });
 
 // ─── logAdminAction ───────────────────────────────────────────────────────────
