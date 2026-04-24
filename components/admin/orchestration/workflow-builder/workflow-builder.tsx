@@ -156,6 +156,15 @@ function WorkflowBuilderInner({
   const [workflowName, setWorkflowName] = useState(seed.name);
   const [details, setDetails] = useState<WorkflowDetails | null>(seed.details);
 
+  const nodeTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const node of nodes) {
+      const t = node.data.type;
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return counts;
+  }, [nodes]);
+
   // Live validation state.
   const [validationErrors, setValidationErrors] = useState<CombinedError[]>([]);
   const summaryPanelRef = useRef<HTMLDivElement | null>(null);
@@ -577,7 +586,7 @@ function WorkflowBuilderInner({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        <PatternPalette />
+        <PatternPalette typeCounts={nodeTypeCounts} />
         <WorkflowCanvas
           nodes={nodes}
           edges={edges}

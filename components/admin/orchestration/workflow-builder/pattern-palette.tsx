@@ -47,13 +47,16 @@ function onDragStart(event: React.DragEvent<HTMLDivElement>, type: string) {
 
 function PaletteBlock({
   entry,
+  usageCount = 0,
   onLearnMore,
 }: {
   entry: StepRegistryEntry;
+  usageCount?: number;
   onLearnMore?: (patternNumber: number) => void;
 }) {
   const colours = STEP_CATEGORY_COLOURS[entry.category];
   const Icon = entry.icon;
+  const inUse = usageCount > 0;
 
   return (
     <div
@@ -65,7 +68,8 @@ function PaletteBlock({
         'group cursor-grab rounded-md border p-2 transition-shadow hover:shadow-sm active:cursor-grabbing',
         colours.bg,
         colours.border,
-        colours.text
+        colours.text,
+        !inUse && 'opacity-60'
       )}
     >
       <div className="flex items-center gap-2">
@@ -73,6 +77,17 @@ function PaletteBlock({
           <Icon className="h-3.5 w-3.5" />
         </div>
         <div className="flex-1 text-sm font-medium">{entry.label}</div>
+        {inUse && (
+          <span
+            data-testid={`palette-count-${entry.type}`}
+            className={cn(
+              'flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold',
+              colours.iconBg
+            )}
+          >
+            {usageCount}
+          </span>
+        )}
       </div>
       <p className="text-muted-foreground mt-1 line-clamp-2 text-[11px]">{entry.description}</p>
       <span className="text-muted-foreground/60 mt-0.5 text-[10px]">{entry.estimatedDuration}</span>
@@ -92,7 +107,12 @@ function PaletteBlock({
   );
 }
 
-export function PatternPalette() {
+export interface PatternPaletteProps {
+  /** Map of step type → count of nodes on the canvas using that type. */
+  typeCounts?: Readonly<Record<string, number>>;
+}
+
+export function PatternPalette({ typeCounts = {} }: PatternPaletteProps) {
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [learnMorePattern, setLearnMorePattern] = useState<number | null>(null);
 
@@ -138,7 +158,12 @@ export function PatternPalette() {
               </p>
               <div className="space-y-2">
                 {entries.map((entry) => (
-                  <PaletteBlock key={entry.type} entry={entry} onLearnMore={setLearnMorePattern} />
+                  <PaletteBlock
+                    key={entry.type}
+                    entry={entry}
+                    usageCount={typeCounts[entry.type] ?? 0}
+                    onLearnMore={setLearnMorePattern}
+                  />
                 ))}
               </div>
             </section>
