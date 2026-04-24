@@ -18,7 +18,6 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { escapeHtml } from '@/lib/security/sanitize';
 
 interface EmbedToken {
   id: string;
@@ -123,7 +122,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
     if (!appUrl) {
       return 'NEXT_PUBLIC_APP_URL is not configured — set it in .env.local to generate a valid embed snippet.';
     }
-    return `<script src="${escapeHtml(appUrl)}/api/v1/embed/widget.js" data-token="${escapeHtml(token)}"></script>`;
+    return `<script src="${appUrl}/api/v1/embed/widget.js" data-token="${token}"></script>`;
   }
 
   function copyToClipboard(text: string, id: string): void {
