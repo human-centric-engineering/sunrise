@@ -48,7 +48,7 @@ Entity types present in the data but absent from the filter dropdown: `webhook` 
 
 ### Row detail
 
-Clicking a row toggles an inline `<pre>` block (under the entity cell) containing `JSON.stringify(entry.changes, null, 2)`. If `changes` is null (create/delete events) nothing expands. `metadata` is fetched by the API but **not rendered** in the UI.
+Clicking a row toggles an inline detail block (under the entity cell) showing `changes` and `metadata` as labelled JSON sections. If both are null (some create/delete events) nothing expands.
 
 ### Action badges
 

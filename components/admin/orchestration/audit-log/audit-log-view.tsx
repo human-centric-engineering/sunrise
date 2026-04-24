@@ -237,11 +237,24 @@ export function AuditLogView() {
                   <TableCell>
                     <span className="font-medium">{entry.entityName ?? entry.entityId ?? '—'}</span>
                     <span className="text-muted-foreground ml-2 text-xs">{entry.entityType}</span>
-                    {expandedId === entry.id && entry.changes && (
-                      <div className="bg-muted mt-2 rounded p-2 text-xs">
-                        <pre className="overflow-x-auto whitespace-pre-wrap">
-                          {JSON.stringify(entry.changes, null, 2)}
-                        </pre>
+                    {expandedId === entry.id && (entry.changes || entry.metadata) && (
+                      <div className="bg-muted mt-2 space-y-2 rounded p-2 text-xs">
+                        {entry.changes && (
+                          <div>
+                            <span className="text-muted-foreground font-medium">Changes</span>
+                            <pre className="overflow-x-auto whitespace-pre-wrap">
+                              {JSON.stringify(entry.changes, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                        {entry.metadata && (
+                          <div>
+                            <span className="text-muted-foreground font-medium">Metadata</span>
+                            <pre className="overflow-x-auto whitespace-pre-wrap">
+                              {JSON.stringify(entry.metadata, null, 2)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     )}
                   </TableCell>
