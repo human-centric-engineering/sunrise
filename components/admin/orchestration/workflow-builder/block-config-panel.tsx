@@ -47,12 +47,14 @@ import {
   GuardEditor,
   HumanApprovalEditor,
   LlmCallEditor,
+  OrchestratorEditor,
   ParallelEditor,
   PlanEditor,
   RagRetrieveEditor,
   ReflectEditor,
   RouteEditor,
   ToolCallEditor,
+  type AgentOption,
   type CapabilityOption,
 } from '@/components/admin/orchestration/workflow-builder/block-editors';
 
@@ -62,6 +64,7 @@ export interface BlockConfigPanelProps {
   onConfigChange: (nodeId: string, partial: Record<string, unknown>) => void;
   onDelete: (nodeId: string) => void;
   capabilities: readonly CapabilityOption[];
+  agents: readonly AgentOption[];
 }
 
 export function BlockConfigPanel({
@@ -70,6 +73,7 @@ export function BlockConfigPanel({
   onConfigChange,
   onDelete,
   capabilities,
+  agents,
 }: BlockConfigPanelProps) {
   const [copied, setCopied] = useState(false);
   const meta = getStepMetadata(node.data.type);
@@ -168,7 +172,12 @@ export function BlockConfigPanel({
         <h3 className="text-muted-foreground mb-3 text-xs font-semibold tracking-wide uppercase">
           Configuration
         </h3>
-        <BlockEditor node={node} onChange={handleChange} capabilities={capabilities} />
+        <BlockEditor
+          node={node}
+          onChange={handleChange}
+          capabilities={capabilities}
+          agents={agents}
+        />
       </div>
 
       {/* Error handling overrides */}
@@ -265,10 +274,12 @@ function BlockEditor({
   node,
   onChange,
   capabilities,
+  agents,
 }: {
   node: PatternNode;
   onChange: (partial: Record<string, unknown>) => void;
   capabilities: readonly CapabilityOption[];
+  agents: readonly AgentOption[];
 }) {
   const config = node.data.config;
 
@@ -303,6 +314,10 @@ function BlockEditor({
       return <EvaluateEditor config={config as never} onChange={onChange as never} />;
     case 'external_call':
       return <ExternalCallEditor config={config as never} onChange={onChange as never} />;
+    case 'orchestrator':
+      return (
+        <OrchestratorEditor config={config as never} onChange={onChange as never} agents={agents} />
+      );
     default:
       return (
         <p className="text-muted-foreground text-xs italic">

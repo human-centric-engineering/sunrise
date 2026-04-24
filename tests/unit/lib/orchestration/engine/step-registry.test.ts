@@ -34,7 +34,7 @@ describe('STEP_REGISTRY', () => {
     }
   });
 
-  it('has 13 entries matching the known step types count', () => {
+  it('has 15 entries matching the known step types count', () => {
     expect(STEP_REGISTRY.length).toBe(KNOWN_STEP_TYPES.length);
   });
 
@@ -118,21 +118,33 @@ describe('getStepMetadata', () => {
 });
 
 describe('STEP_CATEGORY_ORDER', () => {
-  const expectedCategories: StepCategory[] = ['agent', 'decision', 'input', 'output'];
+  const expectedCategories: StepCategory[] = [
+    'orchestration',
+    'agent',
+    'decision',
+    'input',
+    'output',
+  ];
 
-  it('contains all four category values', () => {
+  it('contains all five category values', () => {
     for (const cat of expectedCategories) {
       expect(STEP_CATEGORY_ORDER).toContain(cat);
     }
   });
 
-  it('has exactly 4 categories', () => {
-    expect(STEP_CATEGORY_ORDER.length).toBe(4);
+  it('has exactly 5 categories', () => {
+    expect(STEP_CATEGORY_ORDER.length).toBe(5);
   });
 });
 
 describe('STEP_CATEGORY_COLOURS', () => {
-  const expectedCategories: StepCategory[] = ['agent', 'decision', 'input', 'output'];
+  const expectedCategories: StepCategory[] = [
+    'orchestration',
+    'agent',
+    'decision',
+    'input',
+    'output',
+  ];
 
   it('has a colour mapping for each category', () => {
     for (const cat of expectedCategories) {

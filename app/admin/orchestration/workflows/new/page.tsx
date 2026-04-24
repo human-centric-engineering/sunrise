@@ -4,7 +4,10 @@ import {
   WorkflowBuilder,
   type WorkflowBuilderProps,
 } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
-import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type {
+  AgentOption,
+  CapabilityOption,
+} from '@/components/admin/orchestration/workflow-builder/block-editors';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -36,6 +39,22 @@ async function getCapabilities(): Promise<CapabilityOption[]> {
     return body.success ? body.data : [];
   } catch (err) {
     logger.error('new workflow page: capabilities fetch failed', err);
+    return [];
+  }
+}
+
+async function getAgents(): Promise<AgentOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&isActive=true`);
+    if (!res.ok) return [];
+    const body =
+      await parseApiResponse<Array<{ slug: string; name: string; description: string | null }>>(
+        res
+      );
+    if (!body.success) return [];
+    return body.data.map((a) => ({ slug: a.slug, name: a.name, description: a.description }));
+  } catch (err) {
+    logger.error('new workflow page: agents fetch failed', err);
     return [];
   }
 }
@@ -81,13 +100,18 @@ export default async function NewWorkflowPage({
     }
   }
 
-  const [capabilities, templates] = await Promise.all([getCapabilities(), getTemplates()]);
+  const [capabilities, agents, templates] = await Promise.all([
+    getCapabilities(),
+    getAgents(),
+    getTemplates(),
+  ]);
 
   return (
     <WorkflowBuilder
       mode="create"
       initialDefinition={initialDefinition}
       initialCapabilities={capabilities}
+      initialAgents={agents}
       initialTemplates={templates}
     />
   );

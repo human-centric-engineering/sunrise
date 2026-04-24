@@ -1836,6 +1836,44 @@ export const agentCallConfigSchema = stepErrorConfigSchema.extend({
   maxTurns: z.number().int().min(1).max(10).optional(),
 });
 
+// ---------- Orchestrator ─────────────────────────────────────────────────
+
+export const orchestratorConfigSchema = stepErrorConfigSchema.extend({
+  /** System instructions for the planner LLM that coordinates agents. */
+  plannerPrompt: z.string().min(1).max(10000),
+  /** Agent slugs the planner can delegate to. */
+  availableAgentSlugs: z.array(z.string().min(1)).min(1).max(50),
+  /** 'auto' — planner picks agents per round. 'all' — fan out to every listed agent. */
+  selectionMode: z.enum(['auto', 'all']).default('auto'),
+  /** Maximum plan→delegate→replan cycles. */
+  maxRounds: z.number().int().min(1).max(10).default(3),
+  /** Maximum agent calls per round. */
+  maxDelegationsPerRound: z.number().int().min(1).max(20).default(5),
+  /** Override the default model for the planner LLM. */
+  modelOverride: z.string().optional(),
+  /** Temperature for the planner LLM (lower = more deterministic). */
+  temperature: z.number().min(0).max(2).default(0.3),
+  /** Hard timeout for the entire orchestration step (ms). */
+  timeoutMs: z.number().int().min(5000).max(600000).default(120000),
+  /** Optional sub-budget for this orchestrator step (USD). */
+  budgetLimitUsd: z.number().min(0).optional(),
+});
+
+/** Schema for validating the planner LLM's structured JSON response. */
+export const orchestratorPlannerResponseSchema = z.object({
+  /** Agent delegations the planner wants to make this round. */
+  delegations: z.array(
+    z.object({
+      agentSlug: z.string(),
+      message: z.string(),
+    })
+  ),
+  /** If present, the planner is done — this is the synthesized answer. */
+  finalAnswer: z.string().optional(),
+  /** Optional reasoning the planner provides about its decisions. */
+  reasoning: z.string().optional(),
+});
+
 // ---------- Workflow Schedule ─────────────────────────────────────────────
 
 export const createScheduleSchema = z.object({

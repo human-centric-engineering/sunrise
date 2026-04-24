@@ -236,6 +236,16 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         }
         break;
       }
+      case 'orchestrator': {
+        if (!isNonEmptyString(config.plannerPrompt)) {
+          emit(`Orchestrator "${label}" needs a planner prompt`);
+        }
+        const slugs = Array.isArray(config.availableAgentSlugs) ? config.availableAgentSlugs : [];
+        if (slugs.length === 0) {
+          emit(`Orchestrator "${label}" needs at least one available agent`);
+        }
+        break;
+      }
       default:
         // chain / parallel have no required config.
         break;

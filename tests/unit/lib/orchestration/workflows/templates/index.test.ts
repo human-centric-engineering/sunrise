@@ -32,8 +32,8 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
 ]);
 
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
-  it('exports eight built-in templates', () => {
-    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(8);
+  it('exports nine built-in templates', () => {
+    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(9);
   });
 
   it('has unique slugs across all templates', () => {

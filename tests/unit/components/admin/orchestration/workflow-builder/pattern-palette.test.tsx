@@ -30,13 +30,13 @@ describe('PatternPalette', () => {
     }
   });
 
-  it('renders exactly 14 palette blocks (one per step type)', () => {
+  it('renders exactly 15 palette blocks (one per step type)', () => {
     render(<PatternPalette />);
 
-    // STEP_REGISTRY has 14 entries
-    expect(STEP_REGISTRY.length).toBe(14);
+    // STEP_REGISTRY has 15 entries (14 original + orchestrator)
+    expect(STEP_REGISTRY.length).toBe(15);
     const blocks = document.querySelectorAll('[data-testid^="palette-block-"]');
-    expect(blocks.length).toBe(14);
+    expect(blocks.length).toBe(15);
   });
 
   it('all palette blocks have draggable attribute', () => {
@@ -170,6 +170,52 @@ describe('PatternPalette', () => {
           `${entry.type} should link to pattern ${expectedMapping[entry.type]}`
         ).toBe(expectedMapping[entry.type]);
       }
+    });
+  });
+
+  describe('Orchestration category', () => {
+    it('renders an "Orchestration" section header', () => {
+      render(<PatternPalette />);
+      expect(screen.getByText('Orchestration')).toBeInTheDocument();
+    });
+
+    it('renders category hint for orchestration', () => {
+      render(<PatternPalette />);
+      expect(screen.getByText(/AI-driven multi-agent coordination/)).toBeInTheDocument();
+    });
+  });
+
+  describe('usage counts (typeCounts prop)', () => {
+    it('shows a count badge when a step type has usage > 0', () => {
+      render(<PatternPalette typeCounts={{ llm_call: 3 }} />);
+      const badge = screen.getByTestId('palette-count-llm_call');
+      expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toBe('3');
+    });
+
+    it('does not show a count badge when usage is 0', () => {
+      render(<PatternPalette typeCounts={{ llm_call: 0 }} />);
+      expect(screen.queryByTestId('palette-count-llm_call')).not.toBeInTheDocument();
+    });
+
+    it('applies opacity-60 to unused blocks (no typeCounts entry)', () => {
+      render(<PatternPalette typeCounts={{ llm_call: 2 }} />);
+
+      // llm_call is in use — should NOT have opacity-60
+      const usedBlock = screen.getByTestId('palette-block-llm_call');
+      expect(usedBlock.className).not.toContain('opacity-60');
+
+      // chain is not in use — should have opacity-60
+      const unusedBlock = screen.getByTestId('palette-block-chain');
+      expect(unusedBlock.className).toContain('opacity-60');
+    });
+
+    it('shows multiple count badges for multiple used types', () => {
+      render(<PatternPalette typeCounts={{ llm_call: 2, route: 1, guard: 4 }} />);
+
+      expect(screen.getByTestId('palette-count-llm_call').textContent).toBe('2');
+      expect(screen.getByTestId('palette-count-route').textContent).toBe('1');
+      expect(screen.getByTestId('palette-count-guard').textContent).toBe('4');
     });
   });
 

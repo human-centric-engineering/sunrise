@@ -52,6 +52,7 @@ const DEFAULT_PROPS = {
   onConfigChange: vi.fn(),
   onDelete: vi.fn(),
   capabilities: CAPABILITIES,
+  agents: [] as Array<{ slug: string; name: string; description: string | null }>,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -142,6 +143,30 @@ describe('BlockConfigPanel', () => {
       const node = makeNode('external_call', { url: '', method: 'POST' });
       render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
       expect(document.getElementById('ext-url')).toBeInTheDocument();
+    });
+
+    it('orchestrator: renders the planner prompt textarea', () => {
+      const node = makeNode('orchestrator', {
+        plannerPrompt: '',
+        availableAgentSlugs: [],
+      });
+      const agents = [{ slug: 'researcher', name: 'Researcher', description: 'Finds info' }];
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} agents={agents} />);
+      expect(document.getElementById('orchestrator-prompt')).toBeInTheDocument();
+    });
+
+    it('orchestrator: passes agents to the editor and renders agent checkboxes', () => {
+      const node = makeNode('orchestrator', {
+        plannerPrompt: '',
+        availableAgentSlugs: [],
+      });
+      const agents = [
+        { slug: 'researcher', name: 'Researcher', description: 'Finds info' },
+        { slug: 'analyst', name: 'Analyst', description: 'Analyzes data' },
+      ];
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} agents={agents} />);
+      expect(screen.getByText('Researcher')).toBeInTheDocument();
+      expect(screen.getByText('Analyst')).toBeInTheDocument();
     });
 
     it('unknown block type: renders the fallback "no editor" message', () => {

@@ -49,7 +49,10 @@ lib/orchestration/engine/
     ├── rag-retrieve.ts
     ├── guard.ts
     ├── evaluate.ts
-    └── external-call.ts
+    ├── external-call.ts
+    ├── agent-call.ts
+    ├── notification.ts
+    └── orchestrator.ts
 ```
 
 Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `prisma` from `@/lib/db/client`; nothing reaches for `next/*` or React. That makes the engine unit-testable without spinning up a server.
@@ -136,24 +139,27 @@ getRegisteredTypes(): readonly WorkflowStepType[];
 __resetRegistryForTests(): void;
 ```
 
-Each executor self-registers at module import. The barrel at `executors/index.ts` pulls in every executor file for its side effect, which means importing **the engine** (which imports the barrel) is enough to guarantee all twelve executors are registered.
+Each executor self-registers at module import. The barrel at `executors/index.ts` pulls in every executor file for its side effect, which means importing **the engine** (which imports the barrel) is enough to guarantee all fifteen executors are registered.
 
-Twelve executors:
+Fifteen executors:
 
-| Type             | File                | Reuses                                                                    |
-| ---------------- | ------------------- | ------------------------------------------------------------------------- |
-| `llm_call`       | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                |
-| `tool_call`      | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                         |
-| `chain`          | `chain.ts`          | pass-through — real work is on child steps                                |
-| `route`          | `route.ts`          | classifier LLM + DAG branch selection                                     |
-| `parallel`       | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled |
-| `reflect`        | `reflect.ts`        | inner step + critic loop up to N iterations                               |
-| `plan`           | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                              |
-| `human_approval` | `human-approval.ts` | throws `PausedForApproval`                                                |
-| `rag_retrieve`   | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                             |
-| `guard`          | `guard.ts`          | LLM or regex safety check, routes pass/fail                               |
-| `evaluate`       | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                  |
-| `external_call`  | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers      |
+| Type                | File                | Reuses                                                                    |
+| ------------------- | ------------------- | ------------------------------------------------------------------------- |
+| `llm_call`          | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                |
+| `tool_call`         | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                         |
+| `chain`             | `chain.ts`          | pass-through — real work is on child steps                                |
+| `route`             | `route.ts`          | classifier LLM + DAG branch selection                                     |
+| `parallel`          | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled |
+| `reflect`           | `reflect.ts`        | inner step + critic loop up to N iterations                               |
+| `plan`              | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                              |
+| `human_approval`    | `human-approval.ts` | throws `PausedForApproval`                                                |
+| `rag_retrieve`      | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                             |
+| `guard`             | `guard.ts`          | LLM or regex safety check, routes pass/fail                               |
+| `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                  |
+| `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers      |
+| `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`          |
+| `send_notification` | `notification.ts`   | email or webhook notification with templated content                      |
+| `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`           |
 
 ## Error strategies
 

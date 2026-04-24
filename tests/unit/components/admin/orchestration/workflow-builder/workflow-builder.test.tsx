@@ -433,11 +433,12 @@ describe('WorkflowBuilder', () => {
       render(<WorkflowBuilder mode="create" />);
 
       await waitFor(() => {
-        expect(apiClient.get).toHaveBeenCalledTimes(1);
+        // capabilities + agents fetches
+        expect(apiClient.get).toHaveBeenCalledTimes(2);
       });
 
-      const [url] = vi.mocked(apiClient.get).mock.calls[0];
-      expect(url).toContain('capabilities');
+      const urls = vi.mocked(apiClient.get).mock.calls.map(([url]) => url);
+      expect(urls.some((u) => u.includes('capabilities'))).toBe(true);
     });
   });
 
@@ -724,7 +725,7 @@ describe('WorkflowBuilder', () => {
       });
     });
 
-    it('skips the client-side fetch when initialCapabilities is non-empty', () => {
+    it('skips the capabilities fetch when initialCapabilities is non-empty', () => {
       // Arrange: prefetch provided — fallback effect should bail out immediately
       const caps: CapabilityOption[] = [
         { id: 'cap-1', slug: 'search', name: 'Search', description: '' },
@@ -734,8 +735,11 @@ describe('WorkflowBuilder', () => {
       // Act
       render(<WorkflowBuilder mode="create" initialCapabilities={caps} />);
 
-      // Assert: no GET call made — the early-return branch was taken
-      expect(apiClient.get).not.toHaveBeenCalled();
+      // Assert: no capabilities GET call — agents fetch may still fire
+      const capsCalls = vi
+        .mocked(apiClient.get)
+        .mock.calls.filter(([url]) => url.includes('capabilities'));
+      expect(capsCalls).toHaveLength(0);
     });
   });
 
@@ -985,16 +989,24 @@ describe('WorkflowBuilder', () => {
         />
       );
 
-      // TemplateBanner renders a "Template" badge when both conditions are met
-      expect(screen.getByText('Template')).toBeInTheDocument();
+      // TemplateBanner renders with the template name when both conditions are met.
+      // The banner shows the workflow name alongside a badge, so look for the name
+      // inside the banner's distinctive blue styling.
+      expect(screen.getByText('Template WF')).toBeInTheDocument();
     });
 
     it('does not render TemplateBanner when workflow.isTemplate=false', () => {
-      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ isTemplate: false })} />);
-      // TemplateBanner renders a "Template" badge — absent here
-      // Use queryAllByText since toolbar also has buttons with unrelated text
-      const templateBadges = screen.queryAllByText('Template');
-      expect(templateBadges).toHaveLength(0);
+      render(
+        <WorkflowBuilder
+          mode="edit"
+          workflow={makeWorkflow({ isTemplate: false, name: 'Plain WF' })}
+        />
+      );
+      // TemplateBanner renders a BookOpen icon inside a distinctive banner.
+      // When isTemplate=false the entire banner is absent — check for the
+      // banner's unique border colour class which no palette block uses.
+      const bannerEl = document.querySelector('.border-blue-200');
+      expect(bannerEl).toBeNull();
     });
   });
 

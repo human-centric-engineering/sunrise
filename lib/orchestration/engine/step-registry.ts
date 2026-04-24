@@ -25,6 +25,7 @@ import {
   Globe,
   Link as LinkIcon,
   MessageSquareCode,
+  Network,
   Search,
   ShieldCheck,
   Sparkles,
@@ -37,7 +38,7 @@ import {
 import type { WorkflowStepType } from '@/types/orchestration';
 
 /** Visual category — drives node background colour in the canvas. */
-export type StepCategory = 'agent' | 'decision' | 'output' | 'input';
+export type StepCategory = 'agent' | 'decision' | 'output' | 'input' | 'orchestration';
 
 export interface StepRegistryEntry {
   /** Matches a `WorkflowStepType` string. */
@@ -235,6 +236,24 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     },
     estimatedDuration: '~1-3s',
   },
+  {
+    type: 'orchestrator',
+    label: 'Orchestrator',
+    description: 'AI planner dynamically delegates tasks to agents and synthesizes results.',
+    category: 'orchestration',
+    icon: Network,
+    inputs: 1,
+    outputs: 1,
+    defaultConfig: {
+      plannerPrompt: '',
+      availableAgentSlugs: [],
+      selectionMode: 'auto',
+      maxRounds: 3,
+      maxDelegationsPerRound: 5,
+      timeoutMs: 120000,
+    },
+    estimatedDuration: '~30-120s',
+  },
 ] as const;
 
 /** Look up a registry entry by step type. Returns undefined for unknown types. */
@@ -244,6 +263,7 @@ export function getStepMetadata(type: WorkflowStepType): StepRegistryEntry | und
 
 /** Ordered list of categories for grouping in the palette. */
 export const STEP_CATEGORY_ORDER: readonly StepCategory[] = [
+  'orchestration',
   'agent',
   'decision',
   'input',
@@ -252,6 +272,7 @@ export const STEP_CATEGORY_ORDER: readonly StepCategory[] = [
 
 /** Human-readable category labels shown as section headers in the palette. */
 export const STEP_CATEGORY_LABELS: Record<StepCategory, string> = {
+  orchestration: 'Orchestration',
   agent: 'Agents',
   decision: 'Decisions',
   input: 'Inputs',
@@ -263,6 +284,12 @@ export const STEP_CATEGORY_COLOURS: Record<
   StepCategory,
   { bg: string; border: string; text: string; iconBg: string }
 > = {
+  orchestration: {
+    bg: 'bg-purple-50 dark:bg-purple-950/40',
+    border: 'border-purple-300 dark:border-purple-800',
+    text: 'text-purple-900 dark:text-purple-100',
+    iconBg: 'bg-purple-100 dark:bg-purple-900/60',
+  },
   agent: {
     bg: 'bg-blue-50 dark:bg-blue-950/40',
     border: 'border-blue-300 dark:border-blue-800',

@@ -65,7 +65,10 @@ import {
   workflowDefinitionToFlow,
   type PatternNode,
 } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
-import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type {
+  AgentOption,
+  CapabilityOption,
+} from '@/components/admin/orchestration/workflow-builder/block-editors';
 import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
 import {
   templateMetadataSchema,
@@ -82,6 +85,8 @@ export interface WorkflowBuilderProps {
   initialDefinition?: WorkflowDefinition;
   /** Server-prefetched capabilities for the Tool Call block editor. */
   initialCapabilities?: CapabilityOption[];
+  /** Server-prefetched agents for the Orchestrator block editor. */
+  initialAgents?: AgentOption[];
   /** Server-prefetched templates for the "Use template" dropdown. */
   initialTemplates?: Array<{
     slug: string;
@@ -136,6 +141,7 @@ function WorkflowBuilderInner({
   workflow,
   initialDefinition,
   initialCapabilities,
+  initialAgents,
   initialTemplates,
 }: WorkflowBuilderProps) {
   const router = useRouter();
@@ -149,6 +155,15 @@ function WorkflowBuilderInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [workflowName, setWorkflowName] = useState(seed.name);
   const [details, setDetails] = useState<WorkflowDetails | null>(seed.details);
+
+  const nodeTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const node of nodes) {
+      const t = node.data.type;
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return counts;
+  }, [nodes]);
 
   // Live validation state.
   const [validationErrors, setValidationErrors] = useState<CombinedError[]>([]);
@@ -165,6 +180,10 @@ function WorkflowBuilderInner({
   const [capabilities, setCapabilities] = useState<readonly CapabilityOption[]>(
     initialCapabilities ?? []
   );
+
+  // Agents for the Orchestrator editor — server-prefetched via props,
+  // with a client-side fallback if the page didn't provide them.
+  const [agents, setAgents] = useState<readonly AgentOption[]>(initialAgents ?? []);
 
   // Execution flow state.
   const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -206,6 +225,32 @@ function WorkflowBuilderInner({
       cancelled = true;
     };
   }, [initialCapabilities]);
+
+  // Fallback: fetch agents client-side only if not prefetched.
+  useEffect(() => {
+    if (initialAgents && initialAgents.length > 0) return;
+    let cancelled = false;
+    void apiClient
+      .get<Array<{ slug: string; name: string; description: string | null }>>(
+        API.ADMIN.ORCHESTRATION.AGENTS,
+        { params: { limit: 100, isActive: true } }
+      )
+      .then((result) => {
+        if (!cancelled) {
+          setAgents(
+            result.map((a) => ({ slug: a.slug, name: a.name, description: a.description }))
+          );
+        }
+      })
+      .catch((err) => {
+        logger.error('Failed to load agents for workflow builder', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialAgents]);
 
   // Debounced live validation. Runs both the authoritative backend-aligned
   // validator and the FE-only extra checks, merges their errors, and
@@ -541,7 +586,7 @@ function WorkflowBuilderInner({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        <PatternPalette />
+        <PatternPalette typeCounts={nodeTypeCounts} />
         <WorkflowCanvas
           nodes={nodes}
           edges={edges}
@@ -558,6 +603,7 @@ function WorkflowBuilderInner({
             onConfigChange={handleConfigChange}
             onDelete={handleNodeDelete}
             capabilities={capabilities}
+            agents={agents}
           />
         )}
         {executionPanelOpen && executionInput && workflow && (
