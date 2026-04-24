@@ -77,6 +77,7 @@ describe('templateMetadataSchema', () => {
   describe('valid input', () => {
     it('parses a complete valid metadata object successfully', () => {
       const result = templateMetadataSchema.safeParse(VALID_METADATA);
+      // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion, not a degenerate "operation succeeded" check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.flowSummary).toBe(VALID_METADATA.flowSummary);
@@ -90,6 +91,7 @@ describe('templateMetadataSchema', () => {
         ...VALID_METADATA,
         useCases: [],
       });
+      // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion
       expect(result.success).toBe(true);
     });
 
@@ -98,6 +100,7 @@ describe('templateMetadataSchema', () => {
         ...VALID_METADATA,
         patterns: [],
       });
+      // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion
       expect(result.success).toBe(true);
     });
   });
@@ -157,6 +160,7 @@ describe('toTemplateItem', () => {
       expect(result.name).toBe('Customer Support');
       expect(result.description).toBe('Multi-channel support automation');
       expect(result.patternsUsed).toEqual([1, 5]);
+      // test-review:accept tobe_true — passthrough field check: isTemplate is explicitly set to true in the input fixture and verified as-is; structural, not a degenerate "operation succeeded" check
       expect(result.isTemplate).toBe(true);
     });
   });

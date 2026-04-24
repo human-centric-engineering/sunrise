@@ -156,7 +156,50 @@ describe('WorkflowDetailsDialog', () => {
       />
     );
 
+    // Arrange: all four initial fields should be reflected in the UI
     expect(screen.getByRole('textbox', { name: /slug/i })).toHaveValue('existing-slug');
     expect(screen.getByRole('textbox', { name: /description/i })).toHaveValue('Existing desc');
+    // errorStrategy: the Select trigger should display the label for 'retry'
+    expect(screen.getByRole('combobox', { name: /error strategy/i })).toHaveTextContent(
+      'Retry step'
+    );
+    // isTemplate: the checkbox should be checked
+    expect(screen.getByRole('checkbox', { name: /save as template/i })).toBeChecked();
+  });
+
+  it('shows a validation error and disables Confirm when slug is cleared', async () => {
+    const user = userEvent.setup();
+    render(<WorkflowDetailsDialog {...defaultProps} />);
+
+    const slugInput = screen.getByRole('textbox', { name: /slug/i });
+
+    // Arrange: fill description so only slug is the blocking issue
+    await user.type(screen.getByRole('textbox', { name: /description/i }), 'Some description');
+
+    // Act: clear the slug — empty string fails SLUG_REGEX
+    await user.clear(slugInput);
+
+    // Assert: validation error is visible and confirm button is disabled
+    expect(screen.getByText(/lowercase alphanumeric with hyphens/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save workflow/i })).toBeDisabled();
+  });
+
+  it('does not call onConfirm when form is invalid and confirm button is clicked', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<WorkflowDetailsDialog {...defaultProps} onConfirm={onConfirm} />);
+
+    // Arrange: leave description empty (canConfirm = false) and clear the auto-derived slug
+    const slugInput = screen.getByRole('textbox', { name: /slug/i });
+    await user.clear(slugInput);
+
+    // Act: attempt to click the disabled confirm button
+    const confirmBtn = screen.getByRole('button', { name: /save workflow/i });
+    expect(confirmBtn).toBeDisabled();
+    // userEvent respects the disabled attribute — the click is a no-op
+    await user.click(confirmBtn);
+
+    // Assert: onConfirm must never have been invoked
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

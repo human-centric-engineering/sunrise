@@ -4,6 +4,7 @@
  * Test Coverage:
  * - Renders with default config (empty prompt)
  * - Typing in prompt textarea calls onChange({ prompt })
+ * - Typing in modelOverride input calls onChange({ modelOverride })
  * - Temperature input binds to config.temperature
  * - FieldHelp ⓘ popover present (at least one info button)
  *
@@ -47,9 +48,7 @@ describe('LlmCallEditor', () => {
     const textarea = document.getElementById('llm-prompt')!;
     await user.type(textarea, 'A');
 
-    expect(onChange).toHaveBeenCalled();
-    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastCall).toHaveProperty('prompt');
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'A' }));
   });
 
   it('calls onChange with { prompt } partial containing the full typed value', async () => {
@@ -63,6 +62,19 @@ describe('LlmCallEditor', () => {
 
     const calls = onChange.mock.calls;
     expect(calls[calls.length - 1][0]).toEqual({ prompt: 'Existing!' });
+  });
+
+  it('calls onChange with { modelOverride } when user types in the model override field', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<LlmCallEditor config={defaultConfig} onChange={onChange} />);
+
+    const modelInput = document.getElementById('llm-model-override')!;
+    // Type a single character so e.target.value reflects that character (controlled
+    // component — the test does not re-render with updated props between keystrokes).
+    await user.type(modelInput, 'x');
+
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'x' });
   });
 
   it('shows the current temperature value', () => {
