@@ -30,6 +30,12 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         knowledgeCategories: true,
         topicBoundaries: true,
         brandVoiceInstructions: true,
+        rateLimitRpm: true,
+        inputGuardMode: true,
+        outputGuardMode: true,
+        maxHistoryTokens: true,
+        retentionDays: true,
+        providerConfig: true,
       },
     }),
     prisma.aiCapability.findMany({

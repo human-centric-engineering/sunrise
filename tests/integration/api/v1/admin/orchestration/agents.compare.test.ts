@@ -128,7 +128,7 @@ describe('Agent Comparison', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 400 when agent is not found', async () => {
+  it('returns 404 when agent is not found', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgent.findUnique)
       .mockResolvedValueOnce(null as never)
@@ -139,7 +139,7 @@ describe('Agent Comparison', () => {
     vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(0 as never);
 
     const res = await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
   });
 
   it('returns comparison data for two valid agents', async () => {

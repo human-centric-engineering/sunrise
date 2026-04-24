@@ -46,6 +46,11 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -53,10 +58,7 @@ import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET as ListVersions } from '@/app/api/v1/admin/orchestration/agents/[id]/versions/route';
-import {
-  GET as GetVersion,
-  POST as RestoreVersion,
-} from '@/app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/route';
+import { GET as GetVersion } from '@/app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/route';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -222,184 +224,4 @@ describe('GET /agents/:id/versions/:versionId (detail)', () => {
   });
 });
 
-describe('POST /agents/:id/versions/:versionId (restore)', () => {
-  it('returns 404 when agent does not exist', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
-    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(makeVersion() as never);
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-    expect(response.status).toBe(404);
-  });
-
-  it('returns 404 when version does not exist', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
-    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(null);
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-    expect(response.status).toBe(404);
-  });
-
-  it('restores agent from version and creates restore snapshot', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique)
-      .mockResolvedValueOnce({
-        id: AGENT_ID,
-        systemInstructions: 'current instructions',
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
-        fallbackProviders: [],
-        temperature: 0.7,
-        maxTokens: 4096,
-        topicBoundaries: [],
-        brandVoiceInstructions: null,
-        metadata: null,
-        knowledgeCategories: [],
-        rateLimitRpm: null,
-        visibility: 'internal',
-      } as never)
-      .mockResolvedValueOnce({ id: AGENT_ID, systemInstructions: 'old instructions' } as never);
-
-    vi.mocked(prisma.aiAgentVersion.findFirst)
-      .mockResolvedValueOnce(makeVersion() as never) // for the version lookup
-      .mockResolvedValueOnce(makeVersion({ version: 2 }) as never); // for lastVersion
-
-    vi.mocked(prisma.$transaction).mockResolvedValue([{}, {}] as never);
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-    expect(response.status).toBe(200);
-
-    const data = await parseJson<{
-      data: { restoredFromVersion: number; newVersion: number };
-    }>(response);
-    expect(data.data.restoredFromVersion).toBe(1);
-    expect(data.data.newVersion).toBe(3);
-
-    // Verify transaction was called
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns 400 when version snapshot is malformed', async () => {
-    // Arrange: snapshot is missing required 'model' field
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
-      id: AGENT_ID,
-      systemInstructions: 'current',
-      model: 'claude-sonnet-4-6',
-      provider: 'anthropic',
-      fallbackProviders: [],
-      temperature: null,
-      maxTokens: null,
-      topicBoundaries: [],
-      brandVoiceInstructions: null,
-      metadata: null,
-      knowledgeCategories: [],
-      rateLimitRpm: null,
-      visibility: 'internal',
-    } as never);
-    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
-      makeVersion({
-        snapshot: { /* missing model and provider */ systemInstructions: 'old' },
-      }) as never
-    );
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-
-    expect(response.status).toBe(400);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('returns 429 when rate limited on POST restore', async () => {
-    // Arrange: rate limit exceeded
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(adminLimiter.check).mockReturnValue({
-      success: false,
-      limit: 10,
-      remaining: 0,
-      reset: Date.now() + 60_000,
-    } as never);
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-
-    expect(response.status).toBe(429);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('returns 400 for invalid agent id on POST restore', async () => {
-    // Arrange: non-CUID agent id
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-
-    const response = await RestoreVersion(
-      makeDetailRequest('bad-agent', VERSION_ID),
-      makeDetailParams('bad-agent', VERSION_ID)
-    );
-
-    expect(response.status).toBe(400);
-  });
-
-  it('returns 400 for invalid version id on POST restore', async () => {
-    // Arrange: non-CUID version id
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, 'bad-version'),
-      makeDetailParams(AGENT_ID, 'bad-version')
-    );
-
-    expect(response.status).toBe(400);
-  });
-
-  it('uses version number 1 when no prior versions exist (lastVersion is null)', async () => {
-    // Arrange: no prior versions — nextVersion should be 1
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique)
-      .mockResolvedValueOnce({
-        id: AGENT_ID,
-        systemInstructions: 'current',
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
-        fallbackProviders: [],
-        temperature: null,
-        maxTokens: null,
-        topicBoundaries: [],
-        brandVoiceInstructions: null,
-        metadata: null,
-        knowledgeCategories: [],
-        rateLimitRpm: null,
-        visibility: 'internal',
-      } as never)
-      .mockResolvedValueOnce({ id: AGENT_ID } as never);
-
-    vi.mocked(prisma.aiAgentVersion.findFirst)
-      .mockResolvedValueOnce(makeVersion() as never) // version lookup
-      .mockResolvedValueOnce(null); // lastVersion: no prior versions
-
-    vi.mocked(prisma.$transaction).mockResolvedValue([{}, {}] as never);
-
-    const response = await RestoreVersion(
-      makeDetailRequest(AGENT_ID, VERSION_ID),
-      makeDetailParams(AGENT_ID, VERSION_ID)
-    );
-    expect(response.status).toBe(200);
-
-    const data = await parseJson<{ data: { newVersion: number } }>(response);
-    // nextVersion = (null?.version ?? 0) + 1 = 1
-    expect(data.data.newVersion).toBe(1);
-  });
-});
+// POST restore tests are in [id]/versions/[versionId]/restore/route.test.ts

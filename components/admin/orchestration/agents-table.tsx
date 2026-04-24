@@ -87,6 +87,12 @@ import type { AiAgent } from '@/types/orchestration';
 import { DuplicateAgentDialog } from '@/components/admin/orchestration/duplicate-agent-dialog';
 import { ImportAgentsDialog } from '@/components/admin/orchestration/import-agents-dialog';
 
+const VISIBILITY_BADGE: Record<string, { label: string; icon: React.ReactNode } | null> = {
+  internal: null,
+  public: { label: 'Public', icon: <Eye className="h-3 w-3" /> },
+  invite_only: { label: 'Invite', icon: <Link2 className="h-3 w-3" /> },
+};
+
 export interface AgentsTableProps {
   initialAgents: AiAgentListItem[];
   initialMeta: PaginationMeta;
@@ -185,9 +191,9 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         sortField === field ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'desc';
       setSortField(field);
       setSortOrder(nextOrder);
-      void fetchAgents(meta.page, { sortField: field, sortOrder: nextOrder });
+      void fetchAgents(1, { sortField: field, sortOrder: nextOrder });
     },
-    [fetchAgents, meta.page, sortField, sortOrder]
+    [fetchAgents, sortField, sortOrder]
   );
 
   const handlePage = useCallback(
@@ -202,15 +208,16 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
    * On failure, reverts.
    */
   const handleToggleStatus = useCallback(async (agent: AiAgentListItem, nextActive: boolean) => {
+    const previousActive = !nextActive; // the state we're flipping away from
     setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, isActive: nextActive } : a)));
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
         body: { isActive: nextActive },
       });
     } catch (err) {
-      // Revert
+      // Revert to the state before this specific toggle, not from a stale closure
       setAgents((prev) =>
-        prev.map((a) => (a.id === agent.id ? { ...a, isActive: agent.isActive } : a))
+        prev.map((a) => (a.id === agent.id ? { ...a, isActive: previousActive } : a))
       );
       setListError(
         err instanceof APIClientError
@@ -337,12 +344,6 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     return `${diffMonths}mo ago`;
   }
 
-  const VISIBILITY_BADGE: Record<string, { label: string; icon: React.ReactNode } | null> = {
-    internal: null,
-    public: { label: 'Public', icon: <Eye className="h-3 w-3" /> },
-    invite_only: { label: 'Invite', icon: <Link2 className="h-3 w-3" /> },
-  };
-
   return (
     <div className="space-y-4">
       {/* Header / toolbar */}
@@ -448,7 +449,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       )}
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className={`rounded-md border ${isLoading && agents.length > 0 ? 'opacity-60' : ''}`}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -456,11 +457,12 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 <Checkbox
                   checked={allSelected}
                   onCheckedChange={() => toggleAll()}
-                  aria-label="Select all"
+                  aria-label="Select all on this page"
+                  title="Select all on this page"
                 />
               </TableHead>
               <TableHead>
-                <Tip label="Sort by agent name">
+                <Tip label="Sort this page by agent name">
                   <Button variant="ghost" className="-ml-4 h-8" onClick={() => handleSort('name')}>
                     Name
                     {renderSortIcon('name')}
@@ -588,10 +590,22 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                       {agent.model}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {agent.monthlyBudgetUsd ? `$${agent.monthlyBudgetUsd.toFixed(2)}` : '—'}
+                      {agent.monthlyBudgetUsd ? (
+                        `$${agent.monthlyBudgetUsd.toFixed(2)}`
+                      ) : (
+                        <Tip label="No budget cap set">
+                          <span className="text-muted-foreground">—</span>
+                        </Tip>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {agent._budget ? `$${agent._budget.spent.toFixed(2)}` : '—'}
+                      {agent._budget ? (
+                        `$${agent._budget.spent.toFixed(2)}`
+                      ) : (
+                        <Tip label="Spend data not available">
+                          <span className="text-muted-foreground">—</span>
+                        </Tip>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">
                       <Tip
@@ -607,12 +621,23 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                       </Tip>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Switch
-                        checked={agent.isActive}
-                        onCheckedChange={(v) => void handleToggleStatus(agent, v)}
-                        disabled={agent.isSystem}
-                        aria-label={`Toggle ${agent.name} active`}
-                      />
+                      {agent.isSystem ? (
+                        <Tip label="System agents cannot be deactivated">
+                          <span className="inline-block">
+                            <Switch
+                              checked={agent.isActive}
+                              disabled
+                              aria-label={`${agent.name} is a system agent and cannot be deactivated`}
+                            />
+                          </span>
+                        </Tip>
+                      ) : (
+                        <Switch
+                          checked={agent.isActive}
+                          onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+                          aria-label={`Toggle ${agent.name} active`}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -723,6 +748,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               default lists, but their history is preserved. System agents are excluded.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {listError && <p className="text-destructive text-sm">{listError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction

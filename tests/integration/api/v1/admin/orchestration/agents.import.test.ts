@@ -68,6 +68,11 @@ vi.mock('@/lib/orchestration/capabilities', () => ({
   capabilityDispatcher: { clearCache: vi.fn() },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -346,6 +351,33 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       );
       expect(tx.aiAgentCapability.createMany).toHaveBeenCalled();
     });
+
+    it('skips system agents with a warning instead of overwriting', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const systemAgent = { ...makeDbAgent(AGENT_ID, 'system-agent'), isSystem: true };
+      const tx = getTxMock();
+      tx.aiAgent.findUnique.mockResolvedValue(systemAgent);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('system-agent')]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { overwritten: number; skipped: number; warnings: string[] };
+      }>(response);
+      expect(data.data.overwritten).toBe(0);
+      expect(data.data.skipped).toBe(1);
+      expect(data.data.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('cannot overwrite system agent')])
+      );
+
+      // Must NOT have updated the system agent
+      expect(tx.aiAgent.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('Unknown capability slugs → warnings, not failures', () => {
@@ -416,6 +448,33 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       await POST(makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) }));
 
       expect(vi.mocked(capabilityDispatcher.clearCache)).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('Duplicate slugs in bundle', () => {
+    it('returns 400 when same slug appears twice in the import bundle', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([
+            makeBundledAgent('duplicate-slug'),
+            makeBundledAgent('duplicate-slug'),
+          ]),
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{
+        success: boolean;
+        error: { message: string };
+      }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.message).toContain('Duplicate slugs');
+      expect(data.error.message).toContain('duplicate-slug');
+
+      // Must NOT have started a transaction
+      expect(vi.mocked(prisma.$transaction)).not.toHaveBeenCalled();
     });
   });
 

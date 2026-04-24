@@ -257,16 +257,84 @@ describe('WebhookForm', () => {
     // Act — submit without typing a new secret
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
-    // Assert — PATCH was called and the body has no `secret` key (stripped by onSubmit)
+    // Assert — PATCH was called with the correct URL and a body that omits `secret`
     await waitFor(() => {
-      expect(apiClient.patch).toHaveBeenCalled();
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/orchestration/webhooks/wh-1',
+        expect.objectContaining({
+          body: expect.not.objectContaining({ secret: expect.anything() }),
+        })
+      );
     });
-    const firstCall = vi.mocked(apiClient.patch).mock.calls[0];
-    expect(firstCall).toBeDefined();
-    const options = firstCall?.[1];
-    expect(options?.body).not.toHaveProperty('secret');
-    expect(options?.body).toMatchObject({ url: 'https://x.com', isActive: true });
+    // Assert — body carries through the other fields unchanged
+    const patchBody = vi.mocked(apiClient.patch).mock.calls[0]?.[1]?.body as Record<
+      string,
+      unknown
+    >;
+    expect(patchBody).toMatchObject({ url: 'https://x.com', isActive: true });
     expect(pushMock).toHaveBeenCalledWith('/admin/orchestration/webhooks');
+  });
+
+  it('edit mode: includes new secret in PATCH body when the user changes it', async () => {
+    // Arrange
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+    const webhook = {
+      id: 'wh-2',
+      url: 'https://y.com',
+      events: ['workflow_failed'],
+      isActive: true,
+      description: null,
+    };
+    const user = userEvent.setup();
+    render(<WebhookForm mode="edit" webhook={webhook} />);
+
+    // Act — type a new secret (≥16 chars to pass edit-mode validation)
+    const secretInput = document.getElementById('secret')!;
+    await user.type(secretInput, 'new-secret-value-abc123');
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // Assert — PATCH was called with the correct URL and the new secret in the body
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/orchestration/webhooks/wh-2',
+        expect.objectContaining({
+          body: expect.objectContaining({
+            secret: 'new-secret-value-abc123',
+            url: 'https://y.com',
+          }),
+        })
+      );
+    });
+    expect(pushMock).toHaveBeenCalledWith('/admin/orchestration/webhooks');
+  });
+
+  it('edit mode: surfaces APIClientError message in error banner when PATCH fails', async () => {
+    // Arrange
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(
+      new APIClientError('Webhook endpoint rejected the request', 'WEBHOOK_REJECTED', 422)
+    );
+    const webhook = {
+      id: 'wh-3',
+      url: 'https://z.com',
+      events: ['budget_exceeded'],
+      isActive: true,
+      description: null,
+    };
+    const user = userEvent.setup();
+    render(<WebhookForm mode="edit" webhook={webhook} />);
+
+    // Act — submit (no new secret, so it goes through immediately)
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // Assert — inline error banner shows the API error message
+    await waitFor(() => {
+      expect(screen.getByText('Webhook endpoint rejected the request')).toBeInTheDocument();
+    });
+    // Assert — no navigation occurred after an error
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it('surfaces APIClientError message in error banner on submit failure', async () => {

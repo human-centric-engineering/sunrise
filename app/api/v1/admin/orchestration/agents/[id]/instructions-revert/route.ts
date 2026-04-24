@@ -24,7 +24,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -36,6 +36,7 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseAgentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -60,11 +61,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     where: { id },
     select: {
       id: true,
+      isSystem: true,
       systemInstructions: true,
       systemInstructionsHistory: true,
     },
   });
   if (!current) throw new NotFoundError(`Agent ${id} not found`);
+
+  if (current.isSystem) {
+    throw new ForbiddenError('Cannot revert instructions on system agents');
+  }
 
   const historyParse = systemInstructionsHistorySchema.safeParse(current.systemInstructionsHistory);
   if (!historyParse.success) {
@@ -78,9 +84,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   const history: SystemInstructionsHistoryEntry[] = historyParse.data;
+  if (history.length === 0) {
+    throw new ValidationError('No instruction history available to revert', {
+      versionIndex: ['This agent has no previous instructions to revert to'],
+    });
+  }
   if (body.versionIndex >= history.length) {
     throw new ValidationError('versionIndex out of range', {
-      versionIndex: [`Must be between 0 and ${Math.max(history.length - 1, 0)}`],
+      versionIndex: [`Must be between 0 and ${history.length - 1}`],
     });
   }
 
@@ -109,6 +120,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     versionIndex: body.versionIndex,
     adminId: session.user.id,
     historyLength: nextHistory.length,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.instructions_revert',
+    entityType: 'agent',
+    entityId: id,
+    entityName: agent.name,
+    metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
+    clientIp: clientIP,
   });
 
   return successResponse(agent);

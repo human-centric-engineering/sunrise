@@ -98,6 +98,7 @@ describe('GuardEditor', () => {
 
     await user.type(document.getElementById('guard-rules')!, 'A');
 
+    // test-review:accept no_arg_called — immediately followed by mock.calls inspection asserting the `rules` key is present; the bare call is a redundant sentinel, arg shape is effectively verified on the next lines
     expect(onChange).toHaveBeenCalled();
     const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
       string,

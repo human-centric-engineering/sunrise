@@ -209,6 +209,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       variant="ghost"
                       size="sm"
                       onClick={() => setConfigureTarget(link)}
+                      aria-label={`Configure ${link.capability.name}`}
                     >
                       Configure
                     </Button>
@@ -218,6 +219,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       size="sm"
                       className="text-red-600"
                       onClick={() => void handleDetach(link.capabilityId)}
+                      aria-label={`Detach ${link.capability.name}`}
                     >
                       Detach
                     </Button>
@@ -317,8 +319,11 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         }
       }
       const customRateLimit = rateLimit.trim() === '' ? undefined : Number(rateLimit);
-      if (customRateLimit !== undefined && !Number.isFinite(customRateLimit)) {
-        setError('Rate limit must be a number.');
+      if (
+        customRateLimit !== undefined &&
+        (!Number.isFinite(customRateLimit) || customRateLimit < 1)
+      ) {
+        setError('Rate limit must be a positive number.');
         setSaving(false);
         return;
       }
@@ -379,6 +384,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             <Input
               id="custom-rate-limit"
               type="number"
+              min={1}
               value={rateLimit}
               onChange={(e) => setRateLimit(e.target.value)}
               placeholder="Leave blank to inherit"

@@ -219,10 +219,71 @@ describe('AgentVersionHistoryTab', () => {
     await user.click(confirmBtn);
 
     await waitFor(() => {
-      expect(mockPost).toHaveBeenCalled();
+      expect(mockPost).toHaveBeenCalledWith(
+        `/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2/restore`,
+        {}
+      );
     });
     // onRestored should NOT have been called since the post failed
     expect(onRestored).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke onRestored when restore fails with APIClientError', async () => {
+    // BUG: The restoreError state (set in the catch block of handleRestore) can never be
+    // displayed in the UI. AlertDialogAction triggers Radix's onOpenChange(false) synchronously
+    // on click, which calls setRestoreTarget(null) and setRestoreError(null), closing the dialog
+    // before the async POST rejects. The {restoreError && <p>} inside AlertDialogContent is
+    // therefore unreachable in practice.
+    //
+    // This test verifies the correct API call was made and that onRestored was not invoked on
+    // APIClientError. The error message display path is not testable without fixing the source.
+    const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
+    const user = userEvent.setup();
+    const onRestored = vi.fn();
+    mockPost.mockRejectedValue(
+      new MockAPIClientError('Version snapshot not found', 'NOT_FOUND', 404)
+    );
+
+    render(<AgentVersionHistoryTab agentId={AGENT_ID} onRestored={onRestored} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('v2')).toBeInTheDocument();
+    });
+
+    const restoreButtons = screen.getAllByRole('button', { name: /restore/i });
+    await user.click(restoreButtons[0]);
+
+    // Dialog opens — confirm the restore
+    await waitFor(() => {
+      expect(screen.getByText('Restore to version 2?')).toBeInTheDocument();
+    });
+    const confirmBtn = screen.getByRole('button', { name: 'Restore' });
+    await user.click(confirmBtn);
+
+    // POST was called with the correct endpoint and body
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        `/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2/restore`,
+        {}
+      );
+    });
+
+    // onRestored must NOT fire when the POST failed
+    expect(onRestored).not.toHaveBeenCalled();
+  });
+
+  it('shows APIClientError message when initial fetch fails with APIClientError', async () => {
+    const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
+    mockGet.mockRejectedValue(
+      new MockAPIClientError('Forbidden: insufficient permissions', 'FORBIDDEN', 403)
+    );
+
+    render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+    // APIClientError.message is shown verbatim; generic Error shows the fallback
+    await waitFor(() => {
+      expect(screen.getByText('Forbidden: insufficient permissions')).toBeInTheDocument();
+    });
   });
 
   it('cancel button closes dialog without restoring', async () => {

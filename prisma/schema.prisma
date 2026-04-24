@@ -201,8 +201,7 @@ model AiAgent {
 
   @@index([createdBy])
   @@index([provider])
-  @@index([isActive])
-  @@index([visibility])
+  @@index([isActive, visibility])
   @@map("ai_agent")
 }
 
@@ -223,7 +222,6 @@ model AiAgentInviteToken {
   creator User    @relation("InviteTokenCreator", fields: [createdBy], references: [id])
 
   @@index([agentId])
-  @@index([token])
   @@map("ai_agent_invite_token")
 }
 
@@ -241,7 +239,6 @@ model AiAgentVersion {
   creator User    @relation("AgentVersionCreator", fields: [createdBy], references: [id])
 
   @@unique([agentId, version])
-  @@index([agentId])
   @@map("ai_agent_version")
 }
 
@@ -261,7 +258,6 @@ model AiAgentEmbedToken {
   creator User    @relation("EmbedTokenCreator", fields: [createdBy], references: [id])
 
   @@index([agentId])
-  @@index([token])
   @@map("ai_agent_embed_token")
 }
 

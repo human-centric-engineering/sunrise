@@ -254,7 +254,7 @@ describe('AgentComparisonView', () => {
 
   // ── API call params ────────────────────────────────────────────────────────
 
-  it('calls the compare endpoint with both agent IDs', async () => {
+  it('calls the compare endpoint with both agent IDs via params', async () => {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockResolvedValue(COMPARISON_DATA);
 
@@ -262,7 +262,10 @@ describe('AgentComparisonView', () => {
 
     await waitFor(() => {
       expect(apiClient.get).toHaveBeenCalledWith(
-        expect.stringContaining('agentIds=agent-a,agent-b')
+        expect.any(String),
+        expect.objectContaining({
+          params: { agentIds: 'agent-a,agent-b' },
+        })
       );
     });
   });

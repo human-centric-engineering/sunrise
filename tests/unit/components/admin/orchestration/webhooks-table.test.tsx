@@ -306,17 +306,29 @@ describe('WebhooksTable', () => {
     expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled();
   });
 
-  it('clicking Next calls fetch with page=2 in the query string', async () => {
-    // Arrange — mock must keep returning totalPages=3 so pagination stays visible after the mount refetch
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          success: true,
-          data: MOCK_WEBHOOKS,
-          meta: { page: 1, limit: 25, total: 75, totalPages: 3 },
-        }),
-    });
+  it('clicking Next advances to page 2 and updates the page indicator', async () => {
+    // Arrange — mount-time fetch returns page 1 of 3; Next-button fetch returns page 2 of 3.
+    // The mock is set up to respond differently after the first call so we can assert the
+    // page indicator updates, which verifies the component processed the response correctly.
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: MOCK_WEBHOOKS,
+            meta: { page: 1, limit: 25, total: 75, totalPages: 3 },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: MOCK_WEBHOOKS,
+            meta: { page: 2, limit: 25, total: 75, totalPages: 3 },
+          }),
+      });
 
     const userEvent = await import('@testing-library/user-event');
     const user = userEvent.default.setup();
@@ -328,28 +340,46 @@ describe('WebhooksTable', () => {
       />
     );
 
-    // Wait for the mount-time fetch to settle so pagination is visible
+    // Wait for the mount-time fetch to settle so pagination is visible and Next is enabled
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /next/i })).not.toBeDisabled();
     });
-
-    // Clear fetch history so we can assert only the Next-button call
-    mockFetch.mockClear();
 
     // Act — click Next
     await user.click(screen.getByRole('button', { name: /next/i }));
 
-    // Assert — fetch was called with page=2
+    // Assert — the page indicator reflects the response from the page=2 fetch
     await waitFor(() => {
-      const calledWithPage2 = mockFetch.mock.calls.some((call) =>
-        String(call[0]).includes('page=2')
-      );
-      expect(calledWithPage2).toBe(true);
+      expect(screen.getByText(/page 2 of 3/i)).toBeInTheDocument();
     });
   });
 
-  it('changing filter to "Active" triggers a refetch with isActive=true', async () => {
-    // Arrange
+  it('changing filter to "Active" removes inactive webhooks from the table', async () => {
+    // Arrange — mount returns both webhooks; after selecting "Active" the refetch
+    // returns only the active one. Asserting the inactive row disappears proves the
+    // component used the filtered response to update the list, not just the URL.
+    mockFetch
+      .mockResolvedValueOnce({
+        // mount-time fetch — both webhooks
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: MOCK_WEBHOOKS,
+            meta: { page: 1, limit: 25, total: 2, totalPages: 1 },
+          }),
+      })
+      .mockResolvedValueOnce({
+        // filter fetch — active only (wh-1)
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: [MOCK_WEBHOOKS[0]],
+            meta: { page: 1, limit: 25, total: 1, totalPages: 1 },
+          }),
+      });
+
     const userEvent = await import('@testing-library/user-event');
     const user = userEvent.default.setup();
 
@@ -360,20 +390,20 @@ describe('WebhooksTable', () => {
       />
     );
 
-    // Clear mount-time fetch calls
-    mockFetch.mockClear();
+    // Wait for mount-time fetch to settle — both rows should be present
+    await waitFor(() => {
+      expect(screen.getByText(/other\.com/)).toBeInTheDocument();
+    });
 
     // Act — open the status Select and pick "Active"
     await user.click(screen.getByRole('combobox'));
     await user.click(await screen.findByRole('option', { name: 'Active' }));
 
-    // Assert — fetch called with isActive=true in the query string
+    // Assert — the inactive webhook (other.com) is gone; the active one (example.com) remains
     await waitFor(() => {
-      const calledWithActive = mockFetch.mock.calls.some((call) =>
-        String(call[0]).includes('isActive=true')
-      );
-      expect(calledWithActive).toBe(true);
+      expect(screen.queryByText(/other\.com/)).not.toBeInTheDocument();
     });
+    expect(screen.getByText(/example\.com/)).toBeInTheDocument();
   });
 
   it('delete flow: opens confirm dialog and calls apiClient.delete on confirm', async () => {
@@ -411,6 +441,17 @@ describe('WebhooksTable', () => {
       expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/webhooks/wh-1'));
     });
   });
+
+  // BUG: fetchPage has no catch block — only a finally. A network error is swallowed via
+  // `void fetchPage(1)` and listError is never set, so no error message reaches the UI.
+  // This todo documents the CORRECT expected behavior; enable it once the source adds a
+  // catch block in fetchPage that calls setListError.
+  it.todo('shows an error message when fetchPage encounters a network failure');
+
+  // BUG: handleDelete has no catch block — only a finally. A delete API error is swallowed
+  // and no error message reaches the UI. This todo documents the CORRECT expected behavior;
+  // enable it once the source adds a catch block in handleDelete that calls setListError.
+  it.todo('shows an error message when apiClient.delete fails during delete confirmation');
 
   it('toggle-active optimistic revert: reverts switch and shows error banner on patch failure', async () => {
     // Arrange

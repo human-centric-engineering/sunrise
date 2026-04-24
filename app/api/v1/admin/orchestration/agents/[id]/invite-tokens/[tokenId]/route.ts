@@ -14,10 +14,11 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string; tokenId: string };
 
-export const DELETE = withAdminAuth<Params>(async (request, _session, { params }) => {
+export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -44,6 +45,15 @@ export const DELETE = withAdminAuth<Params>(async (request, _session, { params }
   await prisma.aiAgentInviteToken.update({
     where: { id: token.id },
     data: { revokedAt: new Date() },
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.invite_token_revoke',
+    entityType: 'agent',
+    entityId: agentId.data,
+    metadata: { tokenId: tokenId.data, label: token.label },
+    clientIp: clientIP,
   });
 
   return successResponse({ message: 'Token revoked' });

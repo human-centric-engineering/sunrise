@@ -32,6 +32,8 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { importAgentsSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { ValidationError } from '@/lib/api/errors';
 
 type ImportResults = {
   imported: number;
@@ -49,6 +51,16 @@ export const POST = withAdminAuth(async (request, session) => {
   const body = await validateRequestBody(request, importAgentsSchema);
 
   const { bundle, conflictMode } = body;
+
+  // Reject bundles that contain duplicate slugs — they would cause a P2002
+  // unique constraint violation partway through the transaction.
+  const slugs = bundle.agents.map((a) => a.slug);
+  const duplicateSlugs = [...new Set(slugs.filter((s, i) => slugs.indexOf(s) !== i))];
+  if (duplicateSlugs.length > 0) {
+    throw new ValidationError(`Duplicate slugs in import bundle: ${duplicateSlugs.join(', ')}`, {
+      bundle: [`Duplicate slugs: ${duplicateSlugs.join(', ')}`],
+    });
+  }
 
   // Resolve capability slugs → ids up front so the transaction is short.
   const allCapabilitySlugs = Array.from(
@@ -72,6 +84,12 @@ export const POST = withAdminAuth(async (request, session) => {
       const existing = await tx.aiAgent.findUnique({ where: { slug: bundled.slug } });
 
       if (existing && conflictMode === 'skip') {
+        results.skipped += 1;
+        continue;
+      }
+
+      if (existing && existing.isSystem) {
+        results.warnings.push(`Agent '${bundled.slug}': skipped — cannot overwrite system agent`);
         results.skipped += 1;
         continue;
       }
@@ -108,6 +126,16 @@ export const POST = withAdminAuth(async (request, session) => {
         monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
         metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isActive: bundled.isActive,
+        fallbackProviders: bundled.fallbackProviders ?? [],
+        rateLimitRpm: bundled.rateLimitRpm ?? null,
+        inputGuardMode: bundled.inputGuardMode ?? null,
+        outputGuardMode: bundled.outputGuardMode ?? null,
+        maxHistoryTokens: bundled.maxHistoryTokens ?? null,
+        retentionDays: bundled.retentionDays ?? null,
+        visibility: bundled.visibility ?? 'internal',
+        knowledgeCategories: bundled.knowledgeCategories ?? [],
+        topicBoundaries: bundled.topicBoundaries ?? [],
+        brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
       };
 
       if (existing) {
@@ -147,6 +175,16 @@ export const POST = withAdminAuth(async (request, session) => {
     ...results,
     conflictMode,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.import',
+    entityType: 'agent',
+    entityId: 'bulk',
+    entityName: `${results.imported} imported, ${results.overwritten} overwritten`,
+    metadata: { ...results, conflictMode },
+    clientIp: clientIP,
   });
 
   return successResponse(results);

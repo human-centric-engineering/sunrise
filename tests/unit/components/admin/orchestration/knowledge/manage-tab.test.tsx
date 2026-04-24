@@ -265,6 +265,7 @@ describe('ManageTab', () => {
     await user.click(actionButton!);
 
     await waitFor(() => {
+      // test-review:accept no_arg_called — onRefresh is () => void by contract; zero-arg callback, no shape to verify
       expect(onRefresh).toHaveBeenCalled();
     });
   });
@@ -703,6 +704,7 @@ describe('ManageTab', () => {
         expect.stringContaining('/knowledge/documents/doc-user'),
         expect.objectContaining({ method: 'DELETE' })
       );
+      // test-review:accept no_arg_called — onRefresh is () => void by contract; zero-arg callback, no shape to verify
       expect(onRefresh).toHaveBeenCalled();
     });
   });

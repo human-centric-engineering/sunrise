@@ -100,6 +100,16 @@ beforeEach(() => {
 });
 
 describe('GET /agents/:id/embed-tokens', () => {
+  it('returns 400 when agent id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET(makeGetRequest(), makeParams('not-a-cuid'));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
@@ -140,6 +150,14 @@ describe('GET /agents/:id/embed-tokens', () => {
 });
 
 describe('POST /agents/:id/embed-tokens', () => {
+  it('returns 400 when agent id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await POST(makePostRequest({ allowedOrigins: [] }), makeParams('bad-id'));
+
+    expect(response.status).toBe(400);
+  });
+
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 

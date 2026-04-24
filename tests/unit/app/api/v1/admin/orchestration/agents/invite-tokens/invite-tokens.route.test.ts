@@ -45,6 +45,11 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { GET, POST } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-tokens/route';
@@ -170,6 +175,7 @@ describe('Invite Token Endpoints', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'invite_only',
+        isActive: true,
       } as never);
       vi.mocked(prisma.aiAgentInviteToken.create).mockResolvedValue({
         id: TOKEN_ID,
@@ -195,6 +201,7 @@ describe('Invite Token Endpoints', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'public',
+        isActive: true,
       } as never);
 
       const res = await POST(makePostRequest({}), makeAgentParams());
@@ -237,6 +244,7 @@ describe('Invite Token Endpoints', () => {
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: AGENT_ID,
         visibility: 'invite_only',
+        isActive: true,
       } as never);
       vi.mocked(prisma.aiAgentInviteToken.create).mockResolvedValue({
         id: TOKEN_ID,

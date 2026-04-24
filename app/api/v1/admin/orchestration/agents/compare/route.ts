@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ValidationError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -89,9 +89,7 @@ export const GET = withAdminAuth(async (request) => {
   if (!agentA) missing.push(idA);
   if (!agentB) missing.push(idB);
   if (missing.length > 0) {
-    throw new ValidationError('Agent(s) not found', {
-      agentIds: missing.map((id) => `Agent ${id} not found`),
-    });
+    throw new NotFoundError(`Agent(s) not found: ${missing.join(', ')}`);
   }
 
   return successResponse({ agents: [agentA, agentB] });

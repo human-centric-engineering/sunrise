@@ -241,7 +241,7 @@ export const updateAgentSchema = z.object({
 
   knowledgeCategories: z
     .array(z.string().max(100))
-    .max(20, 'At most 20 knowledge categories')
+    .max(50, 'At most 50 knowledge categories')
     .optional(),
 
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
@@ -479,17 +479,23 @@ export const attachAgentCapabilitySchema = z.object({
  * Update an agent↔capability link — PATCH /agents/[id]/capabilities/[capId]
  * All fields optional. The pivot is identified by the URL params, not the body.
  */
-export const updateAgentCapabilitySchema = z.object({
-  isEnabled: z.boolean().optional(),
-  customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
-  customRateLimit: z
-    .number()
-    .int('Custom rate limit must be an integer')
-    .min(1, 'Custom rate limit must be at least 1')
-    .max(10000, 'Custom rate limit must be at most 10000')
-    .nullable()
-    .optional(),
-});
+export const updateAgentCapabilitySchema = z
+  .object({
+    isEnabled: z.boolean().optional(),
+    customConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+    customRateLimit: z
+      .number()
+      .int('Custom rate limit must be an integer')
+      .min(1, 'Custom rate limit must be at least 1')
+      .max(10000, 'Custom rate limit must be at most 10000')
+      .nullable()
+      .optional(),
+  })
+  .refine(
+    (v) =>
+      v.isEnabled !== undefined || v.customConfig !== undefined || v.customRateLimit !== undefined,
+    { message: 'At least one field must be provided' }
+  );
 
 // ============================================================================
 // Agent Export / Import Schemas
@@ -509,6 +515,28 @@ export const bulkAgentActionSchema = z.object({
   action: z.enum(['activate', 'deactivate', 'delete']),
   agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
 });
+
+// ============================================================================
+// Embed Token Schemas
+// ============================================================================
+
+/** Create embed token — POST /agents/:id/embed-tokens */
+export const createEmbedTokenSchema = z.object({
+  label: z.string().min(1, 'Label must not be empty').max(100).optional(),
+  allowedOrigins: z.array(z.string().url().max(500)).max(20).default([]),
+});
+
+/** Update embed token — PATCH /agents/:id/embed-tokens/:tokenId */
+export const updateEmbedTokenSchema = z
+  .object({
+    label: z.string().max(100).nullable().optional(),
+    allowedOrigins: z.array(z.string().url().max(500)).max(20).optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine(
+    (v) => v.label !== undefined || v.allowedOrigins !== undefined || v.isActive !== undefined,
+    { message: 'At least one field must be provided' }
+  );
 
 // ============================================================================
 // Webhook Schemas
@@ -572,6 +600,7 @@ export const listWebhooksQuerySchema = paginationQuerySchema.extend({
 const bundledAgentSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100),
+  isSystem: z.boolean().default(false),
   description: z.string().min(1).max(5000),
   systemInstructions: z.string().min(1).max(50000),
   systemInstructionsHistory: systemInstructionsHistorySchema.default([]),
@@ -583,6 +612,16 @@ const bundledAgentSchema = z.object({
   monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   isActive: z.boolean(),
+  fallbackProviders: z.array(z.string().max(50)).max(5).default([]),
+  rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  visibility: agentVisibilitySchema.default('internal'),
+  knowledgeCategories: z.array(z.string().max(100)).max(50).default([]),
+  topicBoundaries: z.array(z.string().max(200)).max(50).default([]),
+  brandVoiceInstructions: z.string().max(10000).nullable().optional(),
   capabilities: z
     .array(
       z.object({
@@ -1838,8 +1877,8 @@ export const rateMessageSchema = z.object({
 
 /** Create an invite token for an invite_only agent */
 export const createInviteTokenSchema = z.object({
-  label: z.string().max(200).optional(),
-  maxUses: z.number().int().min(1).optional(),
+  label: z.string().min(1, 'Label must not be empty').max(200).optional(),
+  maxUses: z.number().int().min(1).max(1_000_000).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 

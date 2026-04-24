@@ -45,6 +45,11 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -230,7 +235,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 when history is empty', async () => {
+    it('returns 400 with clear message when history is empty', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
         makeAgentRow({ systemInstructionsHistory: [] }) as never
@@ -240,6 +245,11 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
       const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
 
       expect(response.status).toBe(400);
+      const data = await parseJson(response);
+      expect(data).toMatchObject({
+        success: false,
+        error: { message: expect.stringContaining('No instruction history') },
+      });
     });
   });
 

@@ -17,6 +17,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { createInviteTokenSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string };
 
@@ -67,9 +68,15 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
 
   const agent = await prisma.aiAgent.findFirst({
     where: { id: parsed.data },
-    select: { id: true, visibility: true },
+    select: { id: true, visibility: true, isActive: true },
   });
   if (!agent) throw new NotFoundError('Agent not found');
+
+  if (!agent.isActive) {
+    throw new ValidationError('Cannot create invite tokens for a deactivated agent', {
+      isActive: ['Agent must be active'],
+    });
+  }
 
   if (agent.visibility !== 'invite_only') {
     throw new ValidationError('Agent must have visibility set to invite_only', {
@@ -96,6 +103,15 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       expiresAt: true,
       createdAt: true,
     },
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'agent.invite_token_create',
+    entityType: 'agent',
+    entityId: agent.id,
+    metadata: { tokenId: token.id, label: body.label },
+    clientIp: clientIP,
   });
 
   return successResponse({ token }, undefined, { status: 201 });

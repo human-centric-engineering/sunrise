@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError } from '@/lib/api/errors';
+import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -31,6 +32,8 @@ import {
 } from '@/lib/validations/orchestration';
 
 const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
+const guardModeSchema = z.enum(['log_only', 'warn_and_continue', 'block']).nullable();
+const visibilitySchema = z.enum(['internal', 'public', 'invite_only']);
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -39,9 +42,10 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, exportAgentsSchema);
+  const uniqueIds = [...new Set(body.agentIds)];
 
   const agents = await prisma.aiAgent.findMany({
-    where: { id: { in: body.agentIds } },
+    where: { id: { in: uniqueIds } },
     include: {
       capabilities: {
         include: {
@@ -51,9 +55,9 @@ export const POST = withAdminAuth(async (request, session) => {
     },
   });
 
-  if (agents.length !== body.agentIds.length) {
+  if (agents.length !== uniqueIds.length) {
     const foundIds = new Set(agents.map((a) => a.id));
-    const missing = body.agentIds.filter((id) => !foundIds.has(id));
+    const missing = uniqueIds.filter((id) => !foundIds.has(id));
     throw new NotFoundError(`Agents not found: ${missing.join(', ')}`);
   }
 
@@ -77,6 +81,7 @@ export const POST = withAdminAuth(async (request, session) => {
       return {
         name: agent.name,
         slug: agent.slug,
+        isSystem: agent.isSystem,
         description: agent.description,
         systemInstructions: agent.systemInstructions,
         systemInstructionsHistory: history,
@@ -88,6 +93,16 @@ export const POST = withAdminAuth(async (request, session) => {
         monthlyBudgetUsd: agent.monthlyBudgetUsd,
         metadata: jsonRecord.parse(agent.metadata),
         isActive: agent.isActive,
+        fallbackProviders: agent.fallbackProviders,
+        rateLimitRpm: agent.rateLimitRpm,
+        inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
+        outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
+        maxHistoryTokens: agent.maxHistoryTokens,
+        retentionDays: agent.retentionDays,
+        visibility: visibilitySchema.parse(agent.visibility),
+        knowledgeCategories: agent.knowledgeCategories,
+        topicBoundaries: agent.topicBoundaries,
+        brandVoiceInstructions: agent.brandVoiceInstructions,
         capabilities: agent.capabilities.map((link) => ({
           slug: link.capability.slug,
           isEnabled: link.isEnabled,
@@ -103,12 +118,8 @@ export const POST = withAdminAuth(async (request, session) => {
     adminId: session.user.id,
   });
 
-  const filename = `agents-export-${bundle.exportedAt}.json`;
-  return new Response(JSON.stringify({ success: true, data: bundle }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
+  const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
+  return successResponse(bundle, undefined, {
+    headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
   });
 });

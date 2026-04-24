@@ -27,6 +27,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 function parseAgentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -93,6 +94,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       capabilityId: body.capabilityId,
       linkId: link.id,
       adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.capability_attach',
+      entityType: 'agent',
+      entityId: agentId,
+      entityName: agent.name,
+      metadata: { capabilityId: body.capabilityId, capabilitySlug: capability.slug },
+      clientIp: clientIP,
     });
 
     return successResponse(link, undefined, { status: 201 });

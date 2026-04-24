@@ -15,11 +15,17 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logger } from '@/lib/logging';
+import {
+  systemInstructionsHistorySchema,
+  type SystemInstructionsHistoryEntry,
+} from '@/lib/validations/orchestration';
 
 const versionSnapshotSchema = z.object({
   systemInstructions: z.string().optional(),
@@ -34,6 +40,12 @@ const versionSnapshotSchema = z.object({
   knowledgeCategories: z.array(z.string()).optional(),
   rateLimitRpm: z.number().int().nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']).optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z.number().int().nullable().optional(),
+  retentionDays: z.number().int().nullable().optional(),
+  providerConfig: z.unknown().optional(),
+  monthlyBudgetUsd: z.number().nullable().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(
@@ -58,6 +70,10 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     const agent = await prisma.aiAgent.findUnique({ where: { id } });
     if (!agent) throw new NotFoundError(`Agent ${id} not found`);
 
+    if (agent.isSystem) {
+      throw new ForbiddenError('Cannot restore versions on system agents');
+    }
+
     const version = await prisma.aiAgentVersion.findFirst({
       where: { id: versionId, agentId: id },
     });
@@ -71,10 +87,36 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     }
     const snapshot = parsed.data;
 
-    // Build the update data from the snapshot — only apply fields that exist
+    // If the snapshot restores systemInstructions, push the current value
+    // onto the history column (same pattern as the PATCH route).
     const updateData: Prisma.AiAgentUncheckedUpdateInput = {};
-    if (snapshot.systemInstructions !== undefined)
+    if (
+      snapshot.systemInstructions !== undefined &&
+      snapshot.systemInstructions !== agent.systemInstructions
+    ) {
+      const historyParse = systemInstructionsHistorySchema.safeParse(
+        agent.systemInstructionsHistory
+      );
+      if (!historyParse.success) {
+        logger.warn('Restore: systemInstructionsHistory malformed, resetting', {
+          agentId: id,
+          issues: historyParse.error.issues,
+        });
+      }
+      const history: SystemInstructionsHistoryEntry[] = historyParse.success
+        ? historyParse.data
+        : [];
+      history.push({
+        instructions: agent.systemInstructions,
+        changedAt: new Date().toISOString(),
+        changedBy: session.user.id,
+      });
       updateData.systemInstructions = snapshot.systemInstructions;
+      updateData.systemInstructionsHistory = history as unknown as Prisma.InputJsonValue;
+    } else if (snapshot.systemInstructions !== undefined) {
+      updateData.systemInstructions = snapshot.systemInstructions;
+    }
+
     if (snapshot.model !== undefined) updateData.model = snapshot.model;
     if (snapshot.provider !== undefined) updateData.provider = snapshot.provider;
     if (snapshot.fallbackProviders !== undefined)
@@ -93,6 +135,16 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     if (snapshot.visibility !== undefined) updateData.visibility = snapshot.visibility;
     if (snapshot.metadata !== undefined)
       updateData.metadata = snapshot.metadata as Prisma.InputJsonValue;
+    if (snapshot.inputGuardMode !== undefined) updateData.inputGuardMode = snapshot.inputGuardMode;
+    if (snapshot.outputGuardMode !== undefined)
+      updateData.outputGuardMode = snapshot.outputGuardMode;
+    if (snapshot.maxHistoryTokens !== undefined)
+      updateData.maxHistoryTokens = snapshot.maxHistoryTokens;
+    if (snapshot.retentionDays !== undefined) updateData.retentionDays = snapshot.retentionDays;
+    if (snapshot.providerConfig !== undefined)
+      updateData.providerConfig = snapshot.providerConfig as Prisma.InputJsonValue;
+    if (snapshot.monthlyBudgetUsd !== undefined)
+      updateData.monthlyBudgetUsd = snapshot.monthlyBudgetUsd;
 
     // Wrap in a transaction to prevent race conditions on version numbering
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {
@@ -122,6 +174,15 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       agentId: id,
       restoredFromVersion: version.version,
       newVersion: nextVersion,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.version_restore',
+      entityType: 'agent',
+      entityId: id,
+      metadata: { restoredFromVersion: version.version, newVersion: nextVersion },
+      clientIp: clientIP,
     });
 
     return successResponse({

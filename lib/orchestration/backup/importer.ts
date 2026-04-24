@@ -40,6 +40,12 @@ export async function importOrchestrationConfig(
     for (const agent of parsed.data.agents) {
       const existing = await tx.aiAgent.findUnique({ where: { slug: agent.slug } });
       if (existing) {
+        if (existing.isSystem) {
+          result.warnings.push(
+            `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
+          );
+          continue;
+        }
         await tx.aiAgent.update({
           where: { slug: agent.slug },
           data: {
@@ -58,6 +64,12 @@ export async function importOrchestrationConfig(
             knowledgeCategories: agent.knowledgeCategories,
             topicBoundaries: agent.topicBoundaries,
             brandVoiceInstructions: agent.brandVoiceInstructions,
+            rateLimitRpm: agent.rateLimitRpm,
+            inputGuardMode: agent.inputGuardMode,
+            outputGuardMode: agent.outputGuardMode,
+            maxHistoryTokens: agent.maxHistoryTokens,
+            retentionDays: agent.retentionDays,
+            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
         });
         result.agents.updated++;
@@ -66,6 +78,7 @@ export async function importOrchestrationConfig(
           data: {
             ...agent,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             createdBy: userId,
           },
         });

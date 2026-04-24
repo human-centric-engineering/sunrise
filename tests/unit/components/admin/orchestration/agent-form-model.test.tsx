@@ -240,7 +240,7 @@ describe('AgentForm — Model tab', () => {
 
       // Assert: amber warning banner visible
       await waitFor(() => {
-        expect(screen.getByText(/couldn't load the provider or model list/i)).toBeInTheDocument();
+        expect(screen.getByText(/couldn't load the provider and model lists/i)).toBeInTheDocument();
       });
     });
 

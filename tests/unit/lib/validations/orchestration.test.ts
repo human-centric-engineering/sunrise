@@ -1080,8 +1080,8 @@ describe('attachAgentCapabilitySchema', () => {
 });
 
 describe('updateAgentCapabilitySchema', () => {
-  it('should accept an empty object', () => {
-    expect(updateAgentCapabilitySchema.safeParse({}).success).toBe(true);
+  it('should reject an empty object (at least one field required)', () => {
+    expect(updateAgentCapabilitySchema.safeParse({}).success).toBe(false);
   });
 
   it('should accept a partial update', () => {

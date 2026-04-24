@@ -213,6 +213,62 @@ describe('PdfPreviewModal', () => {
     expect(onConfirmed).not.toHaveBeenCalled();
   });
 
+  it('shows fallback error message when non-ok response has no parseable body', async () => {
+    // Simulate a 500 response whose JSON parse fails — exercises the `.catch(() => null)` branch
+    // that produces the "Confirmation failed (500)" fallback message.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new Error('invalid json')),
+    });
+
+    const user = userEvent.setup();
+    render(
+      <PdfPreviewModal
+        data={mockPreviewData}
+        open={true}
+        onOpenChange={onOpenChange}
+        onConfirmed={onConfirmed}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
+
+    // The component constructs "Confirmation failed (500)" when body is null
+    await waitFor(() => {
+      expect(screen.getByText('Confirmation failed (500)')).toBeInTheDocument();
+    });
+
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('shows error message when fetch throws a network error', async () => {
+    // Simulate a hard network failure (fetch rejects entirely — no response object)
+    mockFetch.mockRejectedValue(new Error('Network request failed'));
+
+    const user = userEvent.setup();
+    render(
+      <PdfPreviewModal
+        data={mockPreviewData}
+        open={true}
+        onOpenChange={onOpenChange}
+        onConfirmed={onConfirmed}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
+
+    // The catch block propagates err.message directly
+    await waitFor(() => {
+      expect(screen.getByText('Network request failed')).toBeInTheDocument();
+    });
+
+    // onConfirmed and onOpenChange must not be called — the dialog stays open
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
   it('does not render when data is null', () => {
     render(
       <PdfPreviewModal

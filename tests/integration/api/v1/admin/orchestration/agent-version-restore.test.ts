@@ -69,6 +69,11 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
