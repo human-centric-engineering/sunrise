@@ -3,6 +3,22 @@ allowed-tools: Bash, Glob, Grep, Read, Write, Edit, Agent
 description: Ledger-driven triage for codebase-wide test remediation — grade files as Clean/Minor/Bad/Rotten, prioritise fixes
 ---
 
+## Concurrency Policy
+
+Enforced whenever fix paths (A or B) are executed across multiple files.
+
+| Path                                | Mechanism                      | Max parallel agents | Batch rule                                    |
+| ----------------------------------- | ------------------------------ | ------------------- | --------------------------------------------- |
+| Path 0 (annotation-only)            | Inline Edit tool — no subagent | —                   | Do all at once                                |
+| Path A (`/test-fix from-rescan`)    | Worktree subagent              | **3**               | Launch 3, wait for all to finish, then next 3 |
+| Path B (`/test-review → /test-fix`) | Two-stage worktree subagent    | **1**               | Strictly sequential                           |
+
+**Key rule**: cap worktree-spawning agents at 3 concurrently. For a 23-file worklist that means 5–6 rounds instead of 1 wave. Longer wall-clock time, but stays within CPU/memory headroom.
+
+**Never "do it all" in one command.** When a user asks to fix an entire worklist, ask: _"I'll do 3 Rotten files first — run `/test-triage worklist` to see the queue, then we can continue in batches."_ This is the correct default response.
+
+---
+
 Triage tool for remediating the legacy "green-bar" problem across the codebase. This is NOT an audit tool — it grades files fast and cheap, writes to a persistent ledger, and lets you work through the worst files first.
 
 Supports both **unit** and **integration** tests. Type is auto-detected per file from the path (`tests/integration/**` → integration, else unit). A single scan of a folder like `app/api/v1/users` picks up both test types and grades each against the rubric that matches its type.
@@ -377,7 +393,13 @@ Hard-stop with "Ledger not found — run `/test-triage scan <folder>` first" if 
 (collapsed — use `worklist --verbose` to expand) or list if N ≤ 10
 
 ### Suggested next
-Start with: `/test-triage fix {first Rotten file}`
+Start with the first 1–3 Rotten files — **do not launch all at once**:
+
+- Path A files (Bad/Minor with clear notes): pick up to 3 and run `/test-fix from-rescan` on each in parallel.
+- Path B files (Rotten or vague notes): run one at a time with `/test-review → /test-fix`.
+- Path 0 files (annotation-only): can all be done inline without agents.
+
+Typical flow: `/test-triage fix {file1}`, `/test-triage fix {file2}`, `/test-triage fix {file3}` → wait → rescan → continue.
 ```
 
 Cap each section at 20 rows in chat output; full list is in the ledger.
@@ -443,6 +465,8 @@ If any path reports deviations or new source findings, decide whether to capture
 ```
 
 No subagent spawn in this mode — it's a user-facing instruction print. Keeps the triage/BAU boundary clean.
+
+> **Batch note**: if you're running this path across multiple files, cap at 3 concurrent Path A agents or 1 Path B agent at a time. Wait for results before launching the next batch. See **Concurrency Policy** at the top of this file.
 
 ---
 
