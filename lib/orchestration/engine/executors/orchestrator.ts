@@ -315,6 +315,7 @@ export async function executeOrchestrator(
         });
         totalTokensUsed += retryResult.tokensUsed;
         totalCostUsd += retryResult.costUsd;
+        plannerResult = retryResult;
 
         const retryParsed: unknown = JSON.parse(retryResult.content);
         plannerResponse = orchestratorPlannerResponseSchema.parse(retryParsed);
