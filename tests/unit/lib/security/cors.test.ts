@@ -277,6 +277,32 @@ describe('CORS', () => {
       expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
       expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT');
     });
+
+    it('should NOT set Access-Control-Allow-Origin when preflight origin is not in the allowed list', () => {
+      // Arrange: preflight from a disallowed origin
+      const request = createMockRequest('https://app.example.com/api/test', {
+        method: 'OPTIONS',
+      });
+
+      vi.spyOn(request.headers, 'get').mockImplementation((name: string) => {
+        if (name.toLowerCase() === 'origin') return 'https://evil.com';
+        return null;
+      });
+
+      // Act
+      const response = handlePreflight(request, {
+        origin: ['https://allowed.com'],
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['Content-Type'],
+        exposedHeaders: [],
+        credentials: false,
+        maxAge: 0,
+      });
+
+      // Assert: 204 still returned but no ACAO header (fail-secure fallthrough)
+      expect(response.status).toBe(204);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    });
   });
 
   describe('withCORS', () => {
@@ -322,12 +348,12 @@ describe('CORS', () => {
   });
 
   describe('Development mode', () => {
-    it('should allow localhost in development', () => {
-      vi.stubEnv('NODE_ENV', 'development');
-
-      // In development, localhost should be allowed by default
-      // This test verifies the behavior when isOriginAllowed is called
-      // with development localhost origins
+    it('should recognise localhost origins as allowed when passed in an array', () => {
+      // getDefaultOrigins() adds localhost variants when NODE_ENV=development, but
+      // DEFAULT_CORS_OPTIONS is evaluated once at module load time — the runtime env
+      // value at that point determines the defaults. This test verifies isOriginAllowed
+      // correctly accepts localhost URLs when they appear in the allowed list, which is
+      // the precise contract getDefaultOrigins() relies on.
       const devOrigins = [
         'http://localhost:3000',
         'http://localhost:3001',
@@ -429,22 +455,25 @@ describe('CORS', () => {
       const response = await wrapped.POST(request);
       const body = await response.json();
 
+      // test-review:accept tobe_true — structural assertion on response body boolean field from test endpoint
       expect(body.created).toBe(true);
       expect(body.id).toBe(123);
     });
   });
 
   describe('ALLOWED_ORIGINS environment variable', () => {
-    it('should work with configured origins', () => {
+    it('should accept origins from a comma-separated list and reject origins not in that list', () => {
+      // Arrange: simulate parsing of ALLOWED_ORIGINS the same way getDefaultOrigins() does
+      // (DEFAULT_CORS_OPTIONS is module-level, so we verify the parsing contract directly)
       vi.stubEnv('ALLOWED_ORIGINS', 'https://app.example.com,https://mobile.example.com');
 
-      // Parse origins like the CORS module does
       const envValue = process.env.ALLOWED_ORIGINS ?? '';
       const origins = envValue
         .split(',')
         .map((o) => o.trim())
         .filter(Boolean);
 
+      // Act + Assert: configured origins are accepted; unlisted origins are rejected
       expect(isOriginAllowed('https://app.example.com', origins)).toBe(true);
       expect(isOriginAllowed('https://mobile.example.com', origins)).toBe(true);
       expect(isOriginAllowed('https://other.com', origins)).toBe(false);

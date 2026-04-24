@@ -464,6 +464,7 @@ export function createAsyncRateLimiter(
   return {
     async check(token: string): Promise<RateLimitResult> {
       const entry = await resolvedStore.increment(token, interval);
+      // <= not < because increment() returns count-after-add; sync path uses < on count-before-add
       const success = entry.count <= maxRequests;
       const remaining = Math.max(0, maxRequests - entry.count);
 
@@ -520,6 +521,7 @@ export function createAsyncDynamicLimiter(
     async check(token: string, customRpm?: number | null): Promise<RateLimitResult> {
       const maxRequests = customRpm ?? defaultRpm;
       const entry = await resolvedStore.increment(token, interval);
+      // <= not < because increment() returns count-after-add; sync path uses < on count-before-add
       const success = entry.count <= maxRequests;
       const remaining = Math.max(0, maxRequests - entry.count);
 
