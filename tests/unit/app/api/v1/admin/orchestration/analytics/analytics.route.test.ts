@@ -102,12 +102,12 @@ describe('Analytics API', () => {
     it('passes query params to service', async () => {
       vi.mocked(getPopularTopics).mockResolvedValue([]);
 
-      await getTopics(makeGetRequest('?from=2026-04-01T00:00:00Z&to=2026-04-19T00:00:00Z&limit=5'));
+      await getTopics(makeGetRequest('?from=2026-04-01&to=2026-04-19&limit=5'));
 
       expect(getPopularTopics).toHaveBeenCalledWith(
         expect.objectContaining({
-          from: '2026-04-01T00:00:00Z',
-          to: '2026-04-19T00:00:00Z',
+          from: '2026-04-01',
+          to: '2026-04-19',
           limit: 5,
         })
       );
@@ -141,6 +141,7 @@ describe('Analytics API', () => {
     it('returns unanswered questions', async () => {
       vi.mocked(getUnansweredQuestions).mockResolvedValue([
         {
+          messageId: 'msg_1',
           conversationId: 'conv_1',
           agentId: 'agent_1',
           userMessage: 'What is X?',
@@ -311,24 +312,24 @@ describe('Analytics API', () => {
 
     it('passes date range query params to feedback service', async () => {
       vi.mocked(getFeedbackSummary).mockResolvedValue({
-        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: null },
         byAgent: [],
         recentNegative: [],
       });
 
-      await getFeedback(makeGetRequest('?from=2026-04-01T00:00:00Z&to=2026-04-19T00:00:00Z'));
+      await getFeedback(makeGetRequest('?from=2026-04-01&to=2026-04-19'));
 
       expect(getFeedbackSummary).toHaveBeenCalledWith(
         expect.objectContaining({
-          from: '2026-04-01T00:00:00Z',
-          to: '2026-04-19T00:00:00Z',
+          from: '2026-04-01',
+          to: '2026-04-19',
         })
       );
     });
 
     it('passes agentId filter to feedback service', async () => {
       vi.mocked(getFeedbackSummary).mockResolvedValue({
-        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: null },
         byAgent: [],
         recentNegative: [],
       });
@@ -342,7 +343,7 @@ describe('Analytics API', () => {
 
     it('returns empty feedback when no ratings exist', async () => {
       vi.mocked(getFeedbackSummary).mockResolvedValue({
-        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: 0 },
+        overall: { thumbsUp: 0, thumbsDown: 0, total: 0, satisfactionRate: null },
         byAgent: [],
         recentNegative: [],
       });
@@ -391,12 +392,12 @@ describe('Analytics API', () => {
         conversationsByDay: [],
       });
 
-      await getEngagement(makeGetRequest('?from=2026-03-01T00:00:00Z&to=2026-04-01T00:00:00Z'));
+      await getEngagement(makeGetRequest('?from=2026-03-01&to=2026-04-01'));
 
       expect(getEngagementMetrics).toHaveBeenCalledWith(
         expect.objectContaining({
-          from: '2026-03-01T00:00:00Z',
-          to: '2026-04-01T00:00:00Z',
+          from: '2026-03-01',
+          to: '2026-04-01',
         })
       );
     });

@@ -45,6 +45,8 @@ export async function getPopularTopics(query: AnalyticsQuery): Promise<TopicEntr
       conversation: { ...agentFilter(query.agentId) },
     },
     select: { content: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+    take: 10_000,
   });
 
   // Group case-insensitively
@@ -78,6 +80,7 @@ export async function getPopularTopics(query: AnalyticsQuery): Promise<TopicEntr
 // ─── Unanswered Questions ────────────────────────────────────────────────────
 
 export interface UnansweredEntry {
+  messageId: string;
   conversationId: string;
   agentId: string;
   userMessage: string;
@@ -147,9 +150,10 @@ export async function getUnansweredQuestions(query: AnalyticsQuery): Promise<Una
     // Find the latest user message before this hedging reply
     const preceding = convUserMsgs.find((um) => um.createdAt < msg.createdAt);
     return {
+      messageId: msg.id,
       conversationId: msg.conversationId,
       agentId: msg.conversation.agentId,
-      userMessage: preceding?.content ?? '(no preceding user message)',
+      userMessage: preceding?.content ?? '',
       assistantReply: msg.content.slice(0, 500),
       createdAt: msg.createdAt,
     };
@@ -178,49 +182,53 @@ export async function getEngagementMetrics(query: AnalyticsQuery): Promise<Engag
   const { from, to } = resolveDateRange(query);
   const af = agentFilter(query.agentId);
 
-  // Total conversations in range
-  const totalConversations = await prisma.aiConversation.count({
-    where: { createdAt: { gte: from, lte: to }, ...af },
-  });
+  const [totalConversations, totalMessages, uniqueUsersResult, userConvCounts, conversations] =
+    await Promise.all([
+      // Total conversations in range
+      prisma.aiConversation.count({
+        where: { createdAt: { gte: from, lte: to }, ...af },
+      }),
 
-  // Total user messages in range
-  const totalMessages = await prisma.aiMessage.count({
-    where: {
-      role: 'user',
-      createdAt: { gte: from, lte: to },
-      conversation: { ...af },
-    },
-  });
+      // Total messages in range (user + assistant)
+      prisma.aiMessage.count({
+        where: {
+          createdAt: { gte: from, lte: to },
+          conversation: { ...af },
+        },
+      }),
 
-  // Unique users
-  const uniqueUsersResult = await prisma.aiConversation.findMany({
-    where: { createdAt: { gte: from, lte: to }, ...af },
-    select: { userId: true },
-    distinct: ['userId'],
-  });
+      // Unique users
+      prisma.aiConversation.findMany({
+        where: { createdAt: { gte: from, lte: to }, ...af },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+
+      // Returning users (users with >1 conversation in the period)
+      prisma.aiConversation.groupBy({
+        by: ['userId'],
+        where: { createdAt: { gte: from, lte: to }, ...af },
+        _count: { id: true },
+        having: { id: { _count: { gt: 1 } } },
+      }),
+
+      // Daily conversation counts
+      prisma.aiConversation.findMany({
+        where: { createdAt: { gte: from, lte: to }, ...af },
+        select: { createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
   const uniqueUsers = uniqueUsersResult.length;
 
   // Average messages per conversation
   const avgMessagesPerConversation =
     totalConversations > 0 ? Math.round((totalMessages / totalConversations) * 10) / 10 : 0;
 
-  // Returning users (users with >1 conversation in the period)
-  const userConvCounts = await prisma.aiConversation.groupBy({
-    by: ['userId'],
-    where: { createdAt: { gte: from, lte: to }, ...af },
-    _count: { id: true },
-    having: { id: { _count: { gt: 1 } } },
-  });
   const returningUsers = userConvCounts.length;
   const returningUserRate =
     uniqueUsers > 0 ? Math.round((returningUsers / uniqueUsers) * 1000) / 1000 : 0;
-
-  // Daily conversation counts
-  const conversations = await prisma.aiConversation.findMany({
-    where: { createdAt: { gte: from, lte: to }, ...af },
-    select: { createdAt: true },
-    orderBy: { createdAt: 'asc' },
-  });
 
   const dayMap = new Map<string, number>();
   for (const c of conversations) {
@@ -264,25 +272,28 @@ export async function getContentGaps(query: AnalyticsQuery): Promise<ContentGap[
   const limit = query.limit ?? 20;
   const af = agentFilter(query.agentId);
 
-  // Get conversations with their message counts and hedging counts
+  // Get conversations with user activity in the date range
   const conversations = await prisma.aiConversation.findMany({
-    where: { createdAt: { gte: from, lte: to }, ...af },
+    where: {
+      ...af,
+      messages: { some: { createdAt: { gte: from, lte: to }, role: 'user' } },
+    },
     select: {
       id: true,
       title: true,
       messages: {
         select: { role: true, content: true },
         orderBy: { createdAt: 'asc' },
-        take: 10,
+        take: 50,
       },
     },
     take: 500, // cap for performance
-    orderBy: { createdAt: 'desc' },
+    orderBy: { updatedAt: 'desc' },
   });
 
   // Extract first user message as the "topic" and check if any assistant
   // message contains hedging language
-  const topicStats = new Map<string, { total: number; unanswered: number }>();
+  const topicStats = new Map<string, { display: string; total: number; unanswered: number }>();
 
   for (const conv of conversations) {
     const firstUserMsg = conv.messages.find((m) => m.role === 'user');
@@ -290,6 +301,7 @@ export async function getContentGaps(query: AnalyticsQuery): Promise<ContentGap[
 
     // Use conversation title if available, otherwise truncate first user message
     const topic = conv.title ?? firstUserMsg.content.slice(0, 100);
+    const topicKey = topic.toLowerCase().trim();
 
     const hasHedging = conv.messages.some(
       (m) =>
@@ -298,24 +310,26 @@ export async function getContentGaps(query: AnalyticsQuery): Promise<ContentGap[
           m.content.includes("I'm not sure") ||
           m.content.includes("I don't have information") ||
           m.content.includes('I cannot find') ||
-          m.content.includes('beyond my knowledge'))
+          m.content.includes('beyond my knowledge') ||
+          m.content.includes("I'm unable to") ||
+          m.content.includes('I do not have'))
     );
 
-    const existing = topicStats.get(topic) ?? { total: 0, unanswered: 0 };
+    const existing = topicStats.get(topicKey) ?? { display: topic, total: 0, unanswered: 0 };
     existing.total++;
     if (hasHedging) existing.unanswered++;
-    topicStats.set(topic, existing);
+    topicStats.set(topicKey, existing);
   }
 
   // Only include topics with at least 1 unanswered query, sorted by gap ratio
   const gaps: ContentGap[] = [];
-  for (const [topic, stats] of topicStats) {
+  for (const [, stats] of topicStats) {
     if (stats.unanswered > 0) {
       gaps.push({
-        topic,
+        topic: stats.display,
         queryCount: stats.total,
         unansweredCount: stats.unanswered,
-        gapRatio: Math.round((stats.unanswered / stats.total) * 100) / 100,
+        gapRatio: stats.unanswered / stats.total,
       });
     }
   }
@@ -332,7 +346,7 @@ export interface AgentFeedback {
   thumbsUp: number;
   thumbsDown: number;
   total: number;
-  satisfactionRate: number;
+  satisfactionRate: number | null;
 }
 
 export interface FeedbackSummary {
@@ -340,7 +354,7 @@ export interface FeedbackSummary {
     thumbsUp: number;
     thumbsDown: number;
     total: number;
-    satisfactionRate: number;
+    satisfactionRate: number | null;
   };
   byAgent: AgentFeedback[];
   recentNegative: Array<{
@@ -348,6 +362,7 @@ export interface FeedbackSummary {
     conversationId: string;
     agentId: string;
     content: string;
+    userMessage: string;
     ratedAt: Date;
   }>;
 }
@@ -380,7 +395,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
   ]);
 
   const total = thumbsUp + thumbsDown;
-  const satisfactionRate = total > 0 ? Math.round((thumbsUp / total) * 1000) / 1000 : 0;
+  const satisfactionRate = total > 0 ? Math.round((thumbsUp / total) * 1000) / 1000 : null;
 
   // Per-agent breakdown
   const ratedMessages = await prisma.aiMessage.findMany({
@@ -398,6 +413,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
         },
       },
     },
+    take: 5_000,
   });
 
   const agentMap = new Map<string, { name: string; up: number; down: number }>();
@@ -417,7 +433,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
       thumbsUp: stats.up,
       thumbsDown: stats.down,
       total: agentTotal,
-      satisfactionRate: agentTotal > 0 ? Math.round((stats.up / agentTotal) * 1000) / 1000 : 0,
+      satisfactionRate: agentTotal > 0 ? Math.round((stats.up / agentTotal) * 1000) / 1000 : null,
     };
   });
   byAgent.sort((a, b) => b.total - a.total);
@@ -432,6 +448,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     select: {
       id: true,
       content: true,
+      createdAt: true,
       ratedAt: true,
       conversationId: true,
       conversation: { select: { agentId: true } },
@@ -440,15 +457,41 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     take: limit,
   });
 
+  // Batch-fetch preceding user messages for negative feedback context
+  const negConversationIds = [...new Set(recentNegative.map((m) => m.conversationId))];
+  const negUserMessages =
+    negConversationIds.length > 0
+      ? await prisma.aiMessage.findMany({
+          where: {
+            conversationId: { in: negConversationIds },
+            role: 'user',
+          },
+          select: { conversationId: true, content: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+
+  const negUserMsgsByConv = new Map<string, Array<{ content: string; createdAt: Date }>>();
+  for (const um of negUserMessages) {
+    const list = negUserMsgsByConv.get(um.conversationId) ?? [];
+    list.push({ content: um.content, createdAt: um.createdAt });
+    negUserMsgsByConv.set(um.conversationId, list);
+  }
+
   return {
     overall: { thumbsUp, thumbsDown, total, satisfactionRate },
     byAgent,
-    recentNegative: recentNegative.map((m) => ({
-      messageId: m.id,
-      conversationId: m.conversationId,
-      agentId: m.conversation.agentId,
-      content: m.content.slice(0, 500),
-      ratedAt: m.ratedAt!,
-    })),
+    recentNegative: recentNegative.map((m) => {
+      const convUserMsgs = negUserMsgsByConv.get(m.conversationId) ?? [];
+      const preceding = convUserMsgs.find((um) => um.createdAt < m.createdAt);
+      return {
+        messageId: m.id,
+        conversationId: m.conversationId,
+        agentId: m.conversation.agentId,
+        content: m.content.slice(0, 500),
+        userMessage: preceding?.content ?? '',
+        ratedAt: m.ratedAt ?? new Date(0),
+      };
+    }),
   };
 }

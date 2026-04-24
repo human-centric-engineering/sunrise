@@ -7,6 +7,7 @@ Analytics dashboard and API for understanding how users interact with AI agents.
 ```
 lib/orchestration/analytics/
 ├── analytics-service.ts   # Query functions for all analytics dimensions
+├── date-range.ts          # Date resolution helpers and default date inputs
 └── index.ts               # barrel exports
 
 components/admin/orchestration/analytics/
@@ -36,12 +37,12 @@ The analytics dashboard at `/admin/orchestration/analytics` provides:
 
 All endpoints require admin auth and accept the same query parameters:
 
-| Param     | Type     | Default     | Description                    |
-| --------- | -------- | ----------- | ------------------------------ |
-| `from`    | ISO date | 30 days ago | Start of range (inclusive)     |
-| `to`      | ISO date | now         | End of range (inclusive)       |
-| `agentId` | CUID     | all agents  | Filter to a specific agent     |
-| `limit`   | 1-100    | 20          | Max results (where applicable) |
+| Param     | Type         | Default     | Description                          |
+| --------- | ------------ | ----------- | ------------------------------------ |
+| `from`    | `YYYY-MM-DD` | 30 days ago | Start of range (inclusive)           |
+| `to`      | `YYYY-MM-DD` | now         | End of range (inclusive, end-of-day) |
+| `agentId` | CUID         | all agents  | Filter to a specific agent           |
+| `limit`   | 1-100        | 20          | Max results (where applicable)       |
 
 ### `GET /api/v1/admin/orchestration/analytics/topics`
 
@@ -53,7 +54,7 @@ Returns: `{ topics: [{ content, count, lastAsked }] }`
 
 Conversations where the assistant likely couldn't answer, identified by hedging phrases ("I don't know", "I'm not sure", etc.).
 
-Returns: `{ questions: [{ conversationId, agentId, userMessage, assistantReply, createdAt }] }`
+Returns: `{ questions: [{ messageId, conversationId, agentId, userMessage, assistantReply, createdAt }] }`
 
 ### `GET /api/v1/admin/orchestration/analytics/engagement`
 
@@ -109,12 +110,15 @@ Returns:
         "conversationId": "...",
         "agentId": "...",
         "content": "...",
+        "userMessage": "...",
         "ratedAt": "..."
       }
     ]
   }
 }
 ```
+
+`satisfactionRate` is `null` (not `0`) when there are no ratings, both in `overall` and per-agent entries.
 
 ## Consumer Feedback Endpoint
 
@@ -156,8 +160,8 @@ This heuristic is complemented by the `rating` field on `AiMessage` — when use
 
 ### Content Gap Detection
 
-Examines conversation titles (or first user messages) and checks whether any assistant replies in that conversation contain hedging language. The gap ratio = unanswered / total queries for each topic.
+Examines the 500 most recent conversations (by `updatedAt`) with user activity in the date range. Uses the conversation title (or first user message, truncated to 100 chars) as the topic key, case-normalized. Checks whether any of the first 50 messages in that conversation contain hedging language. The gap ratio = unanswered / total queries for each topic. Only topics with at least one unanswered query are returned, sorted by gap ratio descending.
 
 ### Validation Schema
 
-`analyticsQuerySchema` in `lib/validations/orchestration.ts` validates all query parameters with Zod coercion for `limit`.
+`analyticsQuerySchema` in `lib/validations/orchestration.ts` validates all query parameters. Uses `z.string().date()` for `from`/`to` (accepts `YYYY-MM-DD` only, not full ISO datetime). Uses `z.coerce.number()` for `limit`. Bare `YYYY-MM-DD` `to` dates are resolved to end-of-day (`T23:59:59.999Z`) by `resolveAnalyticsDateRange` in `date-range.ts`.

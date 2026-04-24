@@ -31,6 +31,16 @@ describe('resolveAnalyticsDateRange', () => {
     expect(from.toISOString()).toBe('2026-01-01T00:00:00.000Z');
     expect(to.toISOString()).toBe('2026-02-01T00:00:00.000Z');
   });
+
+  it('sets end-of-day when `to` is a bare YYYY-MM-DD date', () => {
+    const { to } = resolveAnalyticsDateRange({ to: '2026-04-20' }, FIXED_NOW);
+    expect(to.toISOString()).toBe('2026-04-20T23:59:59.999Z');
+  });
+
+  it('parses `from` as midnight UTC when it is a bare YYYY-MM-DD date', () => {
+    const { from } = resolveAnalyticsDateRange({ from: '2026-04-01' }, FIXED_NOW);
+    expect(from.toISOString()).toBe('2026-04-01T00:00:00.000Z');
+  });
 });
 
 describe('getAnalyticsDefaultDateInputs', () => {

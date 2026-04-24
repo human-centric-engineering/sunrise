@@ -43,8 +43,8 @@ import { prisma } from '@/lib/db/client';
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const baseQuery = {
-  from: '2026-04-01T00:00:00Z',
-  to: '2026-04-19T00:00:00Z',
+  from: '2026-04-01',
+  to: '2026-04-19',
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -161,6 +161,7 @@ describe('getUnansweredQuestions', () => {
     const result = await getUnansweredQuestions(baseQuery);
 
     expect(result).toHaveLength(1);
+    expect(result[0].messageId).toBe('msg_1');
     expect(result[0].userMessage).toBe('What is the meaning of life?');
     expect(result[0].assistantReply).toContain("I don't know");
     expect(result[0].conversationId).toBe('conv_1');
@@ -193,7 +194,7 @@ describe('getUnansweredQuestions', () => {
 
     const result = await getUnansweredQuestions(baseQuery);
 
-    expect(result[0].userMessage).toBe('(no preceding user message)');
+    expect(result[0].userMessage).toBe('');
   });
 
   it('finds the correct preceding user message when multiple exist', async () => {
@@ -410,9 +411,19 @@ describe('getFeedbackSummary', () => {
       {
         id: 'msg_1',
         content: 'Bad answer',
-        ratedAt: new Date(),
+        createdAt: new Date('2026-04-15T10:00:00Z'),
+        ratedAt: new Date('2026-04-15T10:00:00Z'),
         conversationId: 'conv_1',
         conversation: { agentId: 'a1' },
+      },
+    ] as never);
+
+    // Batch user messages for negative feedback context
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValueOnce([
+      {
+        conversationId: 'conv_1',
+        content: 'What is the pricing?',
+        createdAt: new Date('2026-04-15T09:59:00Z'),
       },
     ] as never);
 
@@ -431,16 +442,17 @@ describe('getFeedbackSummary', () => {
 
     expect(result.recentNegative).toHaveLength(1);
     expect(result.recentNegative[0].content).toBe('Bad answer');
+    expect(result.recentNegative[0].userMessage).toBe('What is the pricing?');
   });
 
-  it('returns zeros when no ratings exist', async () => {
+  it('returns null satisfactionRate when no ratings exist', async () => {
     vi.mocked(prisma.aiMessage.count).mockResolvedValue(0);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     const result = await getFeedbackSummary(baseQuery);
 
     expect(result.overall.total).toBe(0);
-    expect(result.overall.satisfactionRate).toBe(0);
+    expect(result.overall.satisfactionRate).toBeNull();
     expect(result.byAgent).toEqual([]);
     expect(result.recentNegative).toEqual([]);
   });

@@ -1894,10 +1894,10 @@ export const updateScheduleSchema = z.object({
 
 /** Shared date-range + agent filter for analytics endpoints */
 export const analyticsQuerySchema = z.object({
-  /** ISO date string — start of range (inclusive). Defaults to 30 days ago. */
-  from: z.string().datetime().optional(),
-  /** ISO date string — end of range (inclusive). Defaults to now. */
-  to: z.string().datetime().optional(),
+  /** YYYY-MM-DD date string — start of range (inclusive). Defaults to 30 days ago. */
+  from: z.string().date().optional(),
+  /** YYYY-MM-DD date string — end of range (inclusive). Defaults to today. */
+  to: z.string().date().optional(),
   /** Filter to a specific agent by ID. */
   agentId: cuidSchema.optional(),
   /** Max results to return (default 20, max 100). */
