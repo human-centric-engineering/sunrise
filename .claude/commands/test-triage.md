@@ -11,12 +11,12 @@ Enforced across all modes that spawn subagents.
 | ----------------------------------- | ------------------------------ | ------------------- | --------------------------------------------- |
 | Scan (Step 6 Sonnet confirmation)   | Sonnet subagent per hit file   | **5**               | Launch 5, wait for all to finish, then next 5 |
 | Path 0 (annotation-only)            | Inline Edit tool — no subagent | —                   | Do all at once                                |
-| Path A (`/test-fix from-rescan`)    | Worktree subagent              | **3**               | Launch 3, wait for all to finish, then next 3 |
+| Path A (`/test-fix from-rescan`)    | Worktree subagent              | **5**               | Launch 5, wait for all to finish, then next 5 |
 | Path B (`/test-review → /test-fix`) | Two-stage worktree subagent    | **1**               | Strictly sequential                           |
 
-**Key rule**: cap worktree-spawning agents at 3 concurrently, Sonnet subagents at 5. For a 23-file worklist that means 5–6 rounds of fixes instead of 1 wave. Longer wall-clock time, but stays within CPU/memory headroom.
+**Key rule**: cap worktree-spawning agents at 5 concurrently, Sonnet subagents at 5. For a 23-file worklist that means ~5 rounds of fixes instead of 1 wave. Longer wall-clock time, but stays within CPU/memory headroom.
 
-**Never "do it all" in one command.** When a user asks to fix an entire worklist, ask: _"I'll do 3 Rotten files first — run `/test-triage worklist` to see the queue, then we can continue in batches."_ This is the correct default response.
+**Never "do it all" in one command.** When a user asks to fix an entire worklist, ask: _"I'll do 5 Rotten files first — run `/test-triage worklist` to see the queue, then we can continue in batches."_ This is the correct default response.
 
 ---
 
