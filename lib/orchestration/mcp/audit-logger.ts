@@ -30,17 +30,18 @@ interface AuditEntry {
  * Truncate and sanitize request params for audit storage.
  * Strips any keys that look like secrets and caps total size.
  */
+/**
+ * Matches field names that are likely secrets. For common words (`key`,
+ * `token`) requires them to END the field name to avoid over-redacting
+ * fields like `apiKeyCount` or `tokenizeInput`.
+ */
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s?$)/i;
+
 function sanitizeParams(params: unknown): unknown {
   if (params === undefined || params === null) return null;
 
   const json = JSON.stringify(params, (key, value) => {
-    const lower = key.toLowerCase();
-    if (
-      lower.includes('password') ||
-      lower.includes('secret') ||
-      lower.includes('token') ||
-      lower.includes('key')
-    ) {
+    if (key && SECRET_PATTERN.test(key)) {
       return '[REDACTED]';
     }
     return value as unknown;

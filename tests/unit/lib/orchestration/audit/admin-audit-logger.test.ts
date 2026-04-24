@@ -185,6 +185,32 @@ describe('logAdminAction', () => {
     expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
   });
 
+  it('does not redact fields where key/token are prefixes of longer words', async () => {
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+
+    logAdminAction({
+      userId: 'u-noredact',
+      action: 'agent.update',
+      entityType: 'agent',
+      changes: {
+        apiKeyCount: { from: 3, to: 5 },
+        tokenizeInput: { from: false, to: true },
+        encryptionKeyRotation: { from: 'weekly', to: 'daily' },
+        displayName: { from: 'Alice', to: 'Bob' },
+      },
+    });
+    await flushPromises();
+
+    const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
+    const storedChanges = call.data.changes as Record<string, { from: unknown; to: unknown }>;
+
+    // 'key' and 'token' as prefixes of longer words should NOT be redacted
+    expect(storedChanges.apiKeyCount).toEqual({ from: 3, to: 5 });
+    expect(storedChanges.tokenizeInput).toEqual({ from: false, to: true });
+    expect(storedChanges.encryptionKeyRotation).toEqual({ from: 'weekly', to: 'daily' });
+    expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
+  });
+
   it('stores null in the changes column when changes is null', async () => {
     // Arrange
     vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);

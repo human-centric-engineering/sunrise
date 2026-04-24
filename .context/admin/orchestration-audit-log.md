@@ -112,7 +112,7 @@ interface AdminAuditEntry {
 
 ### Secret redaction
 
-Fields whose name matches `/password|secret|token|key|credential/i` (case-insensitive) have their `from`/`to` values replaced with `"[REDACTED]"` before the insert. Applied to both `changes` (field-level redaction of `from`/`to` values) and `metadata` (recursive key-matching redaction via `sanitizeMetadata()`). Safe to include metadata in audit entries without leaking secrets.
+Fields whose name matches `/password|secret|credential|(?:key|token)(?:s?$)/i` have their `from`/`to` values replaced with `"[REDACTED]"` before the insert. The pattern matches `password`, `secret`, and `credential` anywhere in the field name, but `key` and `token` only when they end the field name — so `apiKey` and `refreshToken` are redacted but `apiKeyCount` and `tokenizeInput` are not. Applied to both `changes` (field-level redaction) and `metadata` (recursive key-matching via `sanitizeMetadata()`). Safe to include metadata in audit entries without leaking secrets.
 
 ### Fire-and-forget semantics
 

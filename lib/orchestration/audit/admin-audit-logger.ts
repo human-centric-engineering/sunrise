@@ -26,7 +26,13 @@ export interface AdminAuditEntry {
 
 // ─── Secret sanitisation ────────────────────────────────────────────────────
 
-const SECRET_PATTERN = /password|secret|token|key|credential/i;
+/**
+ * Matches field names that are likely secrets. For common words (`key`,
+ * `token`) requires them to END the field name (or the whole name) to
+ * avoid over-redacting fields like `apiKeyCount` or `tokenizeInput`.
+ * Longer words (`password`, `secret`, `credential`) are matched anywhere.
+ */
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s?$)/i;
 
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined
