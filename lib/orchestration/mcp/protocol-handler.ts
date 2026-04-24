@@ -70,6 +70,8 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
+      toolSlug: extractToolSlug(request),
+      resourceUri: extractResourceUri(request),
       responseCode: 'rate_limited',
       durationMs: Date.now() - startedAt,
       clientIp: auth.clientIp,
