@@ -5,6 +5,10 @@ description: Apply findings from a /test-review report (or /test-triage ledger N
 
 Fast-path executor for quality-fix passes. Reads a confidence-scored `/test-review` report (or a `/test-triage` ledger row) and spawns a single test-engineer subagent to apply the findings.
 
+## Concurrency
+
+Each invocation spawns one worktree subagent. When running multiple `from-rescan` fixes as part of a `/test-triage` worklist, **cap at 3 concurrent invocations** — launch 3, wait for all to finish, then launch the next 3. This matches the concurrency policy in `/test-triage`. For review mode (which is heavier — two-stage with `/test-review` first), run **1 at a time**.
+
 Two input modes:
 
 - **Review mode (default)** — reads the latest (or named) report at `.reviews/tests-{slug}.md` produced by `/test-review`. User picks which findings to action (`--all` or `--findings=1,3,5`). Source findings surface first with explicit per-finding confirmation before any refactor lands.

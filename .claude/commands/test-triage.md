@@ -5,15 +5,16 @@ description: Ledger-driven triage for codebase-wide test remediation — grade f
 
 ## Concurrency Policy
 
-Enforced whenever fix paths (A or B) are executed across multiple files.
+Enforced across all modes that spawn subagents.
 
-| Path                                | Mechanism                      | Max parallel agents | Batch rule                                    |
+| Mode / Path                         | Mechanism                      | Max parallel agents | Batch rule                                    |
 | ----------------------------------- | ------------------------------ | ------------------- | --------------------------------------------- |
+| Scan (Step 6 Sonnet confirmation)   | Sonnet subagent per hit file   | **5**               | Launch 5, wait for all to finish, then next 5 |
 | Path 0 (annotation-only)            | Inline Edit tool — no subagent | —                   | Do all at once                                |
 | Path A (`/test-fix from-rescan`)    | Worktree subagent              | **3**               | Launch 3, wait for all to finish, then next 3 |
 | Path B (`/test-review → /test-fix`) | Two-stage worktree subagent    | **1**               | Strictly sequential                           |
 
-**Key rule**: cap worktree-spawning agents at 3 concurrently. For a 23-file worklist that means 5–6 rounds instead of 1 wave. Longer wall-clock time, but stays within CPU/memory headroom.
+**Key rule**: cap worktree-spawning agents at 3 concurrently, Sonnet subagents at 5. For a 23-file worklist that means 5–6 rounds of fixes instead of 1 wave. Longer wall-clock time, but stays within CPU/memory headroom.
 
 **Never "do it all" in one command.** When a user asks to fix an entire worklist, ask: _"I'll do 3 Rotten files first — run `/test-triage worklist` to see the queue, then we can continue in batches."_ This is the correct default response.
 
@@ -213,7 +214,7 @@ Partition into:
 
 ### Step 6: Sonnet confirmation pass (parallel subagents)
 
-For each hit file, spawn ONE Sonnet subagent using the Agent tool with `model: "sonnet"`. Send all calls in a single message for parallelism.
+For each hit file, spawn ONE Sonnet subagent using the Agent tool with `model: "sonnet"`. **Cap at 5 concurrent subagents** — send up to 5 in a single message, wait for all to complete, then send the next batch of up to 5. If the batch has ≤5 hit files, send them all at once.
 
 Two prompt variants — pick by the file's type.
 
