@@ -29,6 +29,17 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import {
@@ -237,9 +248,31 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
 
       {/* Purge + info */}
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => void handlePurge()} disabled={purging}>
-          {purging ? 'Purging...' : 'Purge Old Logs'}
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" disabled={purging}>
+              {purging ? 'Purging...' : 'Purge Old Logs'}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Purge old audit logs?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete audit log entries older than the configured retention
+                period. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => void handlePurge()}
+              >
+                Purge
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <FieldHelp title="Purge Old Logs">
           Deletes audit log entries older than the retention period configured in Settings. This
           action is irreversible.
