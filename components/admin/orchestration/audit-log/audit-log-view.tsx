@@ -48,6 +48,8 @@ const ENTITY_TYPES = [
   { value: 'experiment', label: 'Experiments' },
   { value: 'embed_token', label: 'Embed tokens' },
   { value: 'backup', label: 'Backups' },
+  { value: 'webhook', label: 'Webhooks' },
+  { value: 'conversation', label: 'Conversations' },
 ];
 
 function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
