@@ -42,9 +42,10 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1.                                       |
 | Entity type    | Server-side filter. Options include `agent`, `workflow`, `capability`, `provider`, `mcp_api_key`, `knowledge_document`, `settings`, `experiment`, `embed_token`, `backup`, `webhook`, `conversation`. Selecting one resets to page 1. |
+| Date range     | Server-side — `dateFrom` / `dateTo` sent as query params, coerced to `Date` by Zod. Inclusive on both ends (`gte` / `lte`). Changing either value resets the page to 1.                                                               |
 | Refresh button | Re-fetches the current page.                                                                                                                                                                                                          |
 
-Entity types present in the data but absent from the filter dropdown: `webhook` (for `hook.secret.*` and webhook CRUD events) and `conversation` (for `conversation.bulk_clear`). All other entity types with actual audit data have corresponding dropdown entries. To filter by any missing type, hit the API directly with `?entityType=webhook` etc.
+All entity types with audit data have corresponding entries in the filter dropdown.
 
 ### Row detail
 
