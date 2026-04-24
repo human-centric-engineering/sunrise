@@ -26,7 +26,7 @@ import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
   hydrateSettings,
@@ -149,6 +149,10 @@ export const PATCH = withAdminAuth(async (request, session) => {
     action: 'settings.update',
     entityType: 'settings',
     entityId: 'global',
+    changes: computeChanges(
+      (existing ?? {}) as Record<string, unknown>,
+      row as unknown as Record<string, unknown>
+    ),
     metadata: { changedKeys: Object.keys(body) },
     clientIp: clientIP,
   });
