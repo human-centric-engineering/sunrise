@@ -300,6 +300,28 @@ describe('AuditLogView', () => {
     });
   });
 
+  it('clears stale error when a new fetch begins', async () => {
+    const user = userEvent.setup();
+
+    // First fetch fails → error visible
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 500 })));
+    render(<AuditLogView />);
+    await waitFor(() => {
+      expect(screen.getByText(/failed to load audit log/i)).toBeInTheDocument();
+    });
+
+    // Next fetch succeeds — swap mock and trigger via Refresh
+    mockFetchSuccess([makeEntry()]);
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+
+    // Error should disappear once the new fetch starts (before response arrives)
+    await waitFor(() => {
+      expect(screen.queryByText(/failed to load audit log/i)).not.toBeInTheDocument();
+    });
+  });
+
   // ── formatDate ────────────────────────────────────────────────────────────
 
   it('renders formatted timestamp in a human-readable form', async () => {

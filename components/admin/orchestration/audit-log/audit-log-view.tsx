@@ -95,6 +95,7 @@ export function AuditLogView() {
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (entityType !== 'all') params.set('entityType', entityType);
