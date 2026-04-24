@@ -78,6 +78,7 @@ export function AuditLogView() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const limit = 25;
 
@@ -96,7 +97,10 @@ export function AuditLogView() {
       if (entityType !== 'all') params.set('entityType', entityType);
       if (debouncedSearch) params.set('q', debouncedSearch);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError('Failed to load audit log. Please try again.');
+        return;
+      }
       const json = (await res.json()) as {
         success: boolean;
         data: AuditEntry[];
@@ -105,6 +109,7 @@ export function AuditLogView() {
       if (json.success) {
         setEntries(json.data);
         setTotal(json.meta.total);
+        setError(null);
       }
     } finally {
       setLoading(false);
@@ -158,6 +163,8 @@ export function AuditLogView() {
           </SelectContent>
         </Select>
       </div>
+
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <div className="rounded-md border">
         <Table>
