@@ -144,6 +144,11 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
 /**
  * Aggregate an agent's costs over a date range into an `AgentCostSummary`
  * matching the shape already defined in `types/orchestration.ts`.
+ *
+ * Both `from` and `to` are **exclusive upper-bound** style: `from` is
+ * inclusive (`>=`), `to` is exclusive (`<`). Pass a midnight boundary
+ * for full-day coverage (e.g. `to: nextMidnight`), matching the pattern
+ * used by `getCostBreakdown` in `cost-reports.ts`.
  */
 export async function getAgentCosts(
   agentId: string,
@@ -155,7 +160,7 @@ export async function getAgentCosts(
       ? {
           createdAt: {
             ...(dateRange.from ? { gte: dateRange.from } : {}),
-            ...(dateRange.to ? { lte: dateRange.to } : {}),
+            ...(dateRange.to ? { lt: dateRange.to } : {}),
           },
         }
       : {}),
@@ -321,7 +326,7 @@ export async function calculateLocalSavings(opts: {
   let rows: LocalRow[];
   try {
     rows = await prisma.aiCostLog.findMany({
-      where: { isLocal: true, createdAt: { gte: dateFrom, lte: dateTo } },
+      where: { isLocal: true, createdAt: { gte: dateFrom, lt: dateTo } },
       select: { model: true, inputTokens: true, outputTokens: true },
     });
   } catch (err) {
