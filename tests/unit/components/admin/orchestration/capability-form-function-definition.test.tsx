@@ -304,6 +304,51 @@ describe('CapabilityForm — Function Definition tab', () => {
         ).toBeInTheDocument();
       });
     });
+
+    it('"Reset to Builder" button re-enables visual mode after complex JSON', async () => {
+      const user = userEvent.setup();
+      await openFunctionTab(user);
+
+      // Switch to JSON editor and enter complex schema with enum
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
+
+      const complexSchema = JSON.stringify({
+        name: 'test_fn',
+        description: 'A test function',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['a', 'b'], description: 'Status' },
+          },
+          required: [],
+        },
+      });
+
+      const textarea = screen.getByRole('textbox', { name: /json editor/i });
+      fireEvent.change(textarea, { target: { value: complexSchema } });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // Try to switch back — banner should appear
+      await user.click(screen.getByRole('button', { name: /^builder$/i }));
+      await waitFor(() => {
+        expect(
+          screen.getByText(/schema has features the builder can't represent/i)
+        ).toBeInTheDocument();
+      });
+
+      // Click "Reset to Builder" button
+      await user.click(screen.getByRole('button', { name: /reset to builder/i }));
+
+      // Visual mode should be re-enabled — "Add parameter" button visible, banner gone
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add parameter/i })).toBeInTheDocument();
+        expect(
+          screen.queryByText(/schema has features the builder can't represent/i)
+        ).not.toBeInTheDocument();
+      });
+    });
   });
 
   // ── Submit payload ─────────────────────────────────────────────────────────

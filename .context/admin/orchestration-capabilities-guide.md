@@ -4,13 +4,13 @@ Capabilities are tools an agent can call during conversation — function defini
 
 ## Quick Reference
 
-| Concept           | Detail                                                                                                                              |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Base class        | `BaseCapability<TArgs, TData>` in `lib/orchestration/capabilities/base-capability.ts`                                               |
-| Registration      | `capabilityDispatcher.register(instance)` in `lib/orchestration/capabilities/registry.ts`                                           |
-| Built-in count    | 3 (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`)                                                         |
-| Dispatch pipeline | 9 steps: load registry, handler lookup, registry lookup, agent binding, rate limit, approval gate, validate args, execute, log cost |
-| Result shape      | `CapabilityResult<T>` — `{ success, data?, error?, skipFollowup? }`                                                                 |
+| Concept           | Detail                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Base class        | `BaseCapability<TArgs, TData>` in `lib/orchestration/capabilities/base-capability.ts`                                                     |
+| Registration      | `capabilityDispatcher.register(instance)` in `lib/orchestration/capabilities/registry.ts`                                                 |
+| Built-in count    | 6 (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`) |
+| Dispatch pipeline | 9 steps: load registry, handler lookup, registry lookup, agent binding, rate limit, approval gate, validate args, execute, log cost       |
+| Result shape      | `CapabilityResult<T>` — `{ success, data?, error?, skipFollowup? }`                                                                       |
 
 ## Step-by-Step: Create a Custom Capability
 
@@ -113,7 +113,7 @@ Registration is idempotent — repeated calls (HMR, multiple entrypoints) are sa
 
 ### Step 4: Create the database row
 
-Create an `AiCapability` row via the API or Prisma Studio:
+Create an `AiCapability` row via the admin UI or API. The `executionType` must be `internal` and the `executionHandler` must match the class name so the dispatcher can route to it:
 
 ```
 POST /api/v1/admin/orchestration/capabilities
@@ -122,12 +122,16 @@ POST /api/v1/admin/orchestration/capabilities
   "slug": "lookup_order",
   "description": "Look up an order by ID",
   "category": "internal",
+  "executionType": "internal",
+  "executionHandler": "LookupOrderCapability",
   "functionDefinition": { ... },   // Same object as Step 2
   "requiresApproval": false,
   "rateLimit": 30,
   "isActive": true
 }
 ```
+
+For `api` and `webhook` execution types, `executionHandler` must be a valid URL (validated on both client and server).
 
 Then attach it to an agent:
 

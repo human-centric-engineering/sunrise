@@ -11,6 +11,8 @@
  * - Error state: submit with invalid function definition JSON (jsonError guard)
  * - Error state: submit with invalid executionConfig JSON (execConfigError guard)
  * - Error state: submit with missing/unparsed function definition (parsedFn guard)
+ * - Edit mode: PATCH success resets form, PATCH failure shows API error
+ * - Metadata: rejects non-primitive values, accepts valid primitives
  *
  * @see components/admin/orchestration/capability-form.tsx
  */
@@ -517,6 +519,218 @@ describe('CapabilityForm — Basic tab', () => {
       );
 
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+  });
+
+  // ── Metadata field ────────────────────────────────────────────────────────
+
+  describe('metadata field', () => {
+    it('renders the metadata textarea', () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      expect(screen.getByPlaceholderText(/"team"/)).toBeInTheDocument();
+    });
+
+    it('pre-fills metadata in edit mode', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ metadata: { env: 'staging' } })}
+          availableCategories={['api']}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText<HTMLTextAreaElement>(/"team"/);
+      expect(textarea.value).toContain('"env"');
+      expect(textarea.value).toContain('"staging"');
+    });
+
+    it('shows error for invalid metadata JSON and blocks submit', async () => {
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      // Enter invalid JSON into metadata
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, { target: { value: '{ not valid }' } });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // Fill ALL required fields (name, description, category, execution handler,
+      // and add a parameter so parsedFn is set)
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Test');
+      await user.type(screen.getByRole('textbox', { name: /^description/i }), 'Description');
+      const categoryTriggers = screen.getAllByRole('combobox');
+      const categoryTrigger =
+        categoryTriggers.find((t) => t.id === 'category') ?? categoryTriggers[0];
+      await user.click(categoryTrigger);
+      const listbox = await screen.findByRole('listbox');
+      await user.click(within(listbox).getByRole('option', { name: /^api$/i }));
+
+      // Add a parameter so parsedFn is non-null
+      await user.click(screen.getByRole('tab', { name: /function definition/i }));
+      await user.click(screen.getByRole('button', { name: /add parameter/i }));
+
+      // Fill execution handler
+      await user.click(screen.getByRole('tab', { name: /execution/i }));
+      await user.type(
+        screen.getByRole('textbox', { name: /execution handler/i }),
+        'SearchCapability'
+      );
+
+      // Go back to basic and submit
+      await user.click(screen.getByRole('tab', { name: /basic/i }));
+      await user.click(screen.getByRole('button', { name: /create capability/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/metadata is not valid json/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Edit mode save flow ────────────────────────────────────────────────────
+
+  describe('edit mode save', () => {
+    it('PATCHes and shows "Saved" confirmation on success', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'cap-edit-1',
+        name: 'Updated Capability',
+        slug: 'existing-capability',
+      });
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      // Modify the name
+      const nameInput = screen.getByRole('textbox', { name: /^name/i });
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Capability');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/capabilities/cap-edit-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({ name: 'Updated Capability' }),
+          })
+        );
+      });
+    });
+
+    it('shows API error message when PATCH fails', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Slug already taken', 'CONFLICT', 409)
+      );
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/slug already taken/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Metadata validation ──────────────────────────────────────────────────
+
+  describe('metadata validation', () => {
+    it('rejects metadata with non-primitive values (arrays, objects)', async () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, {
+        target: { value: JSON.stringify({ tags: ['a', 'b'] }) },
+      });
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      const errorEl = document.querySelector('p.text-destructive');
+      expect(errorEl).toBeTruthy();
+      expect(errorEl?.textContent).toMatch(/must be a string, number, boolean, or null/i);
+    });
+
+    it('accepts metadata with valid primitive values', async () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, {
+        target: {
+          value: JSON.stringify({ team: 'platform', version: 2, active: true, deprecated: null }),
+        },
+      });
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // No error should appear
+      const errorEl = document.querySelector('p.text-destructive');
+      expect(errorEl).toBeNull();
+    });
+  });
+
+  // ── System capability banner ──────────────────────────────────────────────
+
+  describe('system capability banner', () => {
+    it('shows info banner when editing a system capability', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ isSystem: true } as Partial<AiCapability>)}
+          availableCategories={['api']}
+        />
+      );
+
+      expect(screen.getByText(/system capability managed by seed data/i)).toBeInTheDocument();
+    });
+
+    it('does not show info banner for non-system capabilities', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ isSystem: false } as Partial<AiCapability>)}
+          availableCategories={['api']}
+        />
+      );
+
+      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
+    });
+
+    it('does not show info banner in create mode', () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
     });
   });
 });

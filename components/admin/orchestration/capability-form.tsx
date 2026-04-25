@@ -32,7 +32,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
+import { AlertCircle, Check, Info, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -82,28 +82,45 @@ const parameterRowSchema = z.object({
 
 type ParameterRow = z.infer<typeof parameterRowSchema>;
 
-const capabilityFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
-  slug: z
-    .string()
-    .min(1, 'Slug is required')
-    .max(100)
-    .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and hyphens only'),
-  description: z.string().min(1, 'Description is required').max(5000),
-  category: z.string().min(1, 'Category is required').max(50),
-  executionType: z.enum(['internal', 'api', 'webhook']),
-  executionHandler: z.string().min(1, 'Execution handler is required').max(500),
-  requiresApproval: z.boolean(),
-  approvalTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
-    .nullable()
-    .optional(),
-  rateLimit: z.number().int().min(1).max(10000).optional(),
-  isActive: z.boolean(),
-});
+const capabilityFormSchema = z
+  .object({
+    name: z.string().min(1, 'Name is required').max(100),
+    slug: z
+      .string()
+      .min(1, 'Slug is required')
+      .max(100)
+      .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and hyphens only'),
+    description: z.string().min(1, 'Description is required').max(5000),
+    category: z.string().min(1, 'Category is required').max(50),
+    executionType: z.enum(['internal', 'api', 'webhook']),
+    executionHandler: z.string().min(1, 'Execution handler is required').max(500),
+    requiresApproval: z.boolean(),
+    approvalTimeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
+      .nullable()
+      .optional(),
+    rateLimit: z.number().int().min(1).max(10000).optional(),
+    isActive: z.boolean(),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      (data.executionType === 'api' || data.executionType === 'webhook') &&
+      data.executionHandler
+    ) {
+      try {
+        new URL(data.executionHandler);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Must be a valid URL for api and webhook types',
+          path: ['executionHandler'],
+        });
+      }
+    }
+  });
 
 type CapabilityFormData = z.infer<typeof capabilityFormSchema>;
 
@@ -296,6 +313,23 @@ export function CapabilityForm({
       return parsed.success ? parsed.data : undefined;
     }
   );
+
+  // --- metadata JSON textarea state ----------------------------------------
+  const [metadataText, setMetadataText] = useState<string>(() =>
+    capability?.metadata ? JSON.stringify(capability.metadata, null, 2) : ''
+  );
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataParsed, setMetadataParsed] = useState<
+    Record<string, string | number | boolean | null> | undefined
+  >(() => {
+    if (!capability?.metadata) return undefined;
+    const parsed = z
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+      .safeParse(capability.metadata);
+    return parsed.success ? parsed.data : undefined;
+  });
+  const metadataTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const execConfigTimerRef = useRef<NodeJS.Timeout | null>(null);
   const jsonTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -303,6 +337,7 @@ export function CapabilityForm({
     return () => {
       if (execConfigTimerRef.current) clearTimeout(execConfigTimerRef.current);
       if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+      if (metadataTimerRef.current) clearTimeout(metadataTimerRef.current);
     };
   }, []);
 
@@ -404,6 +439,43 @@ export function CapabilityForm({
     }, 200);
   };
 
+  // metadata JSON editor (debounced).
+  const handleMetadataChange = (value: string) => {
+    setMetadataText(value);
+    if (metadataTimerRef.current) clearTimeout(metadataTimerRef.current);
+    metadataTimerRef.current = setTimeout(() => {
+      if (value.trim() === '') {
+        setMetadataParsed(undefined);
+        setMetadataError(null);
+        return;
+      }
+      try {
+        const parsed: unknown = JSON.parse(value);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Must be a JSON object');
+        }
+        const entries = Object.entries(parsed as Record<string, unknown>);
+        if (entries.length > 100) {
+          throw new Error('Maximum 100 keys allowed');
+        }
+        for (const [key, val] of entries) {
+          if (
+            typeof val !== 'string' &&
+            typeof val !== 'number' &&
+            typeof val !== 'boolean' &&
+            val !== null
+          ) {
+            throw new Error(`Value for "${key}" must be a string, number, boolean, or null`);
+          }
+        }
+        setMetadataParsed(parsed as Record<string, string | number | boolean | null>);
+        setMetadataError(null);
+      } catch (err) {
+        setMetadataError(err instanceof Error ? err.message : 'Invalid JSON');
+      }
+    }, 200);
+  };
+
   const switchToJsonMode = () => {
     // Serialize the current compiled JSON into the textarea.
     if (parsedFn) setJsonText(JSON.stringify(parsedFn, null, 2));
@@ -445,8 +517,8 @@ export function CapabilityForm({
   };
 
   const onSubmit = async (data: CapabilityFormData) => {
-    if (!parsedFn) {
-      setError('Function definition is required. Add at least one parameter or JSON body.');
+    if (!parsedFn?.name) {
+      setError('Function definition requires at least a function name.');
       return;
     }
     if (execConfigError) {
@@ -455,6 +527,10 @@ export function CapabilityForm({
     }
     if (jsonError) {
       setError('Function definition JSON is not valid. Fix the editor first.');
+      return;
+    }
+    if (metadataError) {
+      setError('Metadata is not valid JSON. Fix the editor first.');
       return;
     }
 
@@ -466,12 +542,16 @@ export function CapabilityForm({
         ...data,
         functionDefinition: parsedFn,
         executionConfig: execConfigParsed,
+        metadata: metadataParsed,
       };
       if (isEdit && capability) {
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
           body: payload,
         });
         reset(data);
+        // Reset non-RHF state to match what was saved
+        setMetadataText(metadataParsed ? JSON.stringify(metadataParsed, null, 2) : '');
+        setMetadataError(null);
         setSaved(true);
         setTimeout(() => setSaved(false), 2500);
       } else {
@@ -515,6 +595,11 @@ export function CapabilityForm({
               <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
                 <Shield className="h-3 w-3" />
                 System
+                <FieldHelp title="System capability">
+                  System capabilities are managed by seed data and cannot be deleted or deactivated.
+                  Their core configuration is restored on each deployment. You can still edit
+                  non-protected fields like description and safety settings.
+                </FieldHelp>
               </Badge>
             )}
           </div>
@@ -551,6 +636,14 @@ export function CapabilityForm({
         <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {isEdit && capability?.isSystem && (
+        <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300">
+          <Info className="h-4 w-4 shrink-0" />
+          This is a system capability managed by seed data. It cannot be deleted or deactivated. You
+          can edit its description, safety settings, and execution config.
         </div>
       )}
 
@@ -697,6 +790,26 @@ export function CapabilityForm({
             )}
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="metadata">
+              Metadata (JSON, optional){' '}
+              <FieldHelp title="Custom key-value data" contentClassName="w-80">
+                Arbitrary key-value pairs for tagging or external system references (e.g. external
+                IDs, feature flags, notes). Values must be strings, numbers, booleans, or null.
+                Maximum 100 keys. Leave empty if not needed.
+              </FieldHelp>
+            </Label>
+            <Textarea
+              id="metadata"
+              className="font-mono text-sm"
+              rows={4}
+              placeholder='{ "team": "platform", "priority": "high" }'
+              value={metadataText}
+              onChange={(e) => handleMetadataChange(e.target.value)}
+            />
+            {metadataError && <p className="text-destructive text-xs">{metadataError}</p>}
+          </div>
+
           <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="space-y-0.5">
               <Label htmlFor="isActive">
@@ -779,9 +892,34 @@ export function CapabilityForm({
           </div>
 
           {visualDisabled && (
-            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              This schema has features the Builder can&apos;t represent (nested objects, enums,
-              etc.). Simplify the schema to switch back, or stay in JSON mode to edit.
+            <div className="flex items-start justify-between gap-3 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              <span>
+                This schema has features the Builder can&apos;t represent (nested objects, enums,
+                etc.). Simplify the schema to switch back, or stay in JSON mode to edit.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => {
+                  let parsed: Record<string, unknown> = {};
+                  try {
+                    parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>;
+                  } catch {
+                    // Fall through with empty
+                  }
+                  setFnName(typeof parsed.name === 'string' ? parsed.name : '');
+                  setFnDescription(
+                    typeof parsed.description === 'string' ? parsed.description : ''
+                  );
+                  setRows([]);
+                  setVisualDisabled(false);
+                  setFnMode('visual');
+                }}
+              >
+                Reset to Builder
+              </Button>
             </div>
           )}
 
@@ -949,23 +1087,22 @@ export function CapabilityForm({
                   triggers it.
                 </p>
                 <p className="mt-2">
-                  <strong>Internal</strong> — built-in code that runs inside this application. Use
-                  this for capabilities that are part of Sunrise itself, like searching the
-                  knowledge base or estimating costs. You enter the name of the code class (e.g.{' '}
-                  <code>SearchKnowledgeCapability</code>).
+                  <strong>Internal</strong> — built-in code that runs inside this application.
+                  Choose this for capabilities backed by TypeScript classes in the codebase, like
+                  searching the knowledge base or estimating costs. You enter the name of the code
+                  class (e.g. <code>SearchKnowledgeCapability</code>).
                 </p>
                 <p className="mt-2">
                   <strong>API</strong> — sends a request to an external web service and waits for
-                  the response. Use this when you need data back — for example, calling a CRM to
-                  look up a customer, or querying a weather service. You enter the full URL (e.g.{' '}
-                  <code>https://api.example.com/lookup</code>).
+                  the response. Choose this for synchronous calls where you need data back — for
+                  example, calling a CRM to look up a customer, or querying a weather service. You
+                  enter the full URL (e.g. <code>https://api.example.com/lookup</code>).
                 </p>
                 <p className="mt-2">
                   <strong>Webhook</strong> — sends a request to an external URL but does{' '}
-                  <em>not</em> wait for a reply. Use this for notifications or triggers where you
-                  just need to tell another system that something happened — for example, posting a
-                  message to Slack or starting a background job. The AI continues the conversation
-                  immediately without waiting.
+                  <em>not</em> wait for a reply. Choose this for fire-and-forget notifications where
+                  you don&apos;t need a response — for example, posting a message to Slack or
+                  starting a background job. The AI continues the conversation immediately.
                 </p>
               </FieldHelp>
             </Label>

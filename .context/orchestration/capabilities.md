@@ -228,7 +228,7 @@ Signals that the current conversation needs human attention. Dispatches a `conve
 }
 ```
 
-Returns `{ escalated: true, reason, priority }`. The webhook payload includes `agentId`, `userId`, `conversationId`, `reason`, `priority`, and `metadata`.
+Returns `{ escalated: true, reason, priority, metadata? }`. The `metadata` parameter is optional and passed through to the webhook payload, which also includes `agentId`, `userId`, `conversationId`, `reason`, and `priority`.
 
 ## Consumer Contract (Chat Handler)
 
