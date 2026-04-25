@@ -519,4 +519,104 @@ describe('CapabilityForm — Basic tab', () => {
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
     });
   });
+
+  // ── Metadata field ────────────────────────────────────────────────────────
+
+  describe('metadata field', () => {
+    it('renders the metadata textarea', () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      expect(screen.getByPlaceholderText(/"team"/)).toBeInTheDocument();
+    });
+
+    it('pre-fills metadata in edit mode', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ metadata: { env: 'staging' } })}
+          availableCategories={['api']}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText<HTMLTextAreaElement>(/"team"/);
+      expect(textarea.value).toContain('"env"');
+      expect(textarea.value).toContain('"staging"');
+    });
+
+    it('shows error for invalid metadata JSON and blocks submit', async () => {
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      // Enter invalid JSON into metadata
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, { target: { value: '{ not valid }' } });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // Fill ALL required fields (name, description, category, execution handler,
+      // and add a parameter so parsedFn is set)
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Test');
+      await user.type(screen.getByRole('textbox', { name: /^description/i }), 'Description');
+      const categoryTriggers = screen.getAllByRole('combobox');
+      const categoryTrigger =
+        categoryTriggers.find((t) => t.id === 'category') ?? categoryTriggers[0];
+      await user.click(categoryTrigger);
+      const listbox = await screen.findByRole('listbox');
+      await user.click(within(listbox).getByRole('option', { name: /^api$/i }));
+
+      // Add a parameter so parsedFn is non-null
+      await user.click(screen.getByRole('tab', { name: /function definition/i }));
+      await user.click(screen.getByRole('button', { name: /add parameter/i }));
+
+      // Fill execution handler
+      await user.click(screen.getByRole('tab', { name: /execution/i }));
+      await user.type(
+        screen.getByRole('textbox', { name: /execution handler/i }),
+        'SearchCapability'
+      );
+
+      // Go back to basic and submit
+      await user.click(screen.getByRole('tab', { name: /basic/i }));
+      await user.click(screen.getByRole('button', { name: /create capability/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/metadata is not valid json/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── System capability banner ──────────────────────────────────────────────
+
+  describe('system capability banner', () => {
+    it('shows info banner when editing a system capability', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ isSystem: true } as Partial<AiCapability>)}
+          availableCategories={['api']}
+        />
+      );
+
+      expect(screen.getByText(/system capability managed by seed data/i)).toBeInTheDocument();
+    });
+
+    it('does not show info banner for non-system capabilities', () => {
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ isSystem: false } as Partial<AiCapability>)}
+          availableCategories={['api']}
+        />
+      );
+
+      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
+    });
+
+    it('does not show info banner in create mode', () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
+    });
+  });
 });

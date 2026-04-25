@@ -62,6 +62,22 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   const body = await validateRequestBody(request, updateCapabilitySchema);
 
+  // When executionHandler is changed without executionType in the body,
+  // validate URL format against the existing executionType from the DB.
+  if (body.executionHandler && !body.executionType) {
+    const effectiveType = current.executionType;
+    if (effectiveType === 'api' || effectiveType === 'webhook') {
+      try {
+        new URL(body.executionHandler);
+      } catch {
+        throw new ValidationError(
+          'Execution handler must be a valid URL for api and webhook types',
+          { executionHandler: ['Must be a valid URL'] }
+        );
+      }
+    }
+  }
+
   // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
   if (current.isSystem && body.isActive === false) {
     throw new ForbiddenError('System capabilities cannot be deactivated');

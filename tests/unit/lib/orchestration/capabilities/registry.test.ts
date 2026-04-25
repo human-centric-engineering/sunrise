@@ -110,4 +110,36 @@ describe('getCapabilityDefinitions', () => {
     const defs = await getCapabilityDefinitions('agent-empty');
     expect(defs).toEqual([]);
   });
+
+  it('matches on capability slug, not function definition name', async () => {
+    // Capability slug matches a registered handler, but the function definition
+    // name is different — should still be included because we check slug.
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'aac-3',
+        agentId: 'agent-1',
+        capabilityId: 'cap-3',
+        isEnabled: true,
+        customRateLimit: null,
+        capability: {
+          id: 'cap-3',
+          slug: 'search_knowledge_base', // matches registered handler
+          name: 'Custom KB Search',
+          category: 'knowledge',
+          isActive: true,
+          requiresApproval: false,
+          rateLimit: null,
+          functionDefinition: {
+            name: 'custom_kb_search', // different from slug
+            description: 'Search with custom name',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      },
+    ]);
+
+    const defs = await getCapabilityDefinitions('agent-1');
+    expect(defs).toHaveLength(1);
+    expect(defs[0]?.name).toBe('custom_kb_search');
+  });
 });

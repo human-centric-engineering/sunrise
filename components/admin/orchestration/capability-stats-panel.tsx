@@ -134,7 +134,7 @@ export function CapabilityStatsPanel({ capabilityId }: CapabilityStatsPanelProps
           <CardTitle className="text-base">Execution Metrics</CardTitle>
           <CardDescription>
             {stats.invocations === 0
-              ? 'No invocations recorded yet'
+              ? 'No invocations recorded yet. Metrics appear here when an AI agent uses this capability during a chat conversation.'
               : `${stats.invocations} invocations over the last ${period}`}
           </CardDescription>
         </div>

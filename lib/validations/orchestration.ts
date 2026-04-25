@@ -314,134 +314,169 @@ const executionTypeSchema = z.enum(['internal', 'api', 'webhook']);
 /**
  * Create capability schema (POST /api/v1/admin/orchestration/capabilities)
  */
-export const createCapabilitySchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+export const createCapabilitySchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .max(100, 'Name must be less than 100 characters')
+      .trim(),
 
-  slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
+    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
 
-  description: z
-    .string()
-    .min(1, 'Description is required')
-    .max(5000, 'Description must be less than 5000 characters')
-    .trim(),
+    description: z
+      .string()
+      .min(1, 'Description is required')
+      .max(5000, 'Description must be less than 5000 characters')
+      .trim(),
 
-  category: z
-    .string()
-    .min(1, 'Category is required')
-    .max(50, 'Category must be less than 50 characters')
-    .trim(),
+    category: z
+      .string()
+      .min(1, 'Category is required')
+      .max(50, 'Category must be less than 50 characters')
+      .trim(),
 
-  functionDefinition: z
-    .object({
-      name: z.string().min(1),
-      description: z.string().optional(),
-      parameters: z.record(z.string(), z.unknown()).optional(),
-    })
-    .passthrough(),
+    functionDefinition: z
+      .object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        parameters: z.record(z.string(), z.unknown()).optional(),
+      })
+      .passthrough(),
 
-  executionType: executionTypeSchema,
+    executionType: executionTypeSchema,
 
-  executionHandler: z
-    .string()
-    .min(1, 'Execution handler is required')
-    .max(500, 'Execution handler must be less than 500 characters'),
+    executionHandler: z
+      .string()
+      .min(1, 'Execution handler is required')
+      .max(500, 'Execution handler must be less than 500 characters'),
 
-  executionConfig: z.record(z.string(), z.unknown()).optional(),
+    executionConfig: z.record(z.string(), z.unknown()).optional(),
 
-  requiresApproval: z.boolean().default(false),
+    requiresApproval: z.boolean().default(false),
 
-  approvalTimeoutMs: z
-    .number()
-    .int('Approval timeout must be an integer')
-    .positive('Approval timeout must be positive')
-    .max(3_600_000, 'Approval timeout must be at most 1 hour')
-    .nullable()
-    .optional(),
+    approvalTimeoutMs: z
+      .number()
+      .int('Approval timeout must be an integer')
+      .positive('Approval timeout must be positive')
+      .max(3_600_000, 'Approval timeout must be at most 1 hour')
+      .nullable()
+      .optional(),
 
-  rateLimit: z
-    .number()
-    .int('Rate limit must be an integer')
-    .min(1, 'Rate limit must be at least 1')
-    .max(10000, 'Rate limit must be at most 10000')
-    .optional(),
+    rateLimit: z
+      .number()
+      .int('Rate limit must be an integer')
+      .min(1, 'Rate limit must be at least 1')
+      .max(10000, 'Rate limit must be at most 10000')
+      .nullable()
+      .optional(),
 
-  isActive: z.boolean().default(true),
+    isActive: z.boolean().default(true),
 
-  metadata: metadataSchema,
-});
+    metadata: metadataSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (
+      (data.executionType === 'api' || data.executionType === 'webhook') &&
+      data.executionHandler
+    ) {
+      try {
+        new URL(data.executionHandler);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Execution handler must be a valid URL for api and webhook types',
+          path: ['executionHandler'],
+        });
+      }
+    }
+  });
 
 /**
  * Update capability schema (PATCH /api/v1/admin/orchestration/capabilities/[id])
  */
-export const updateCapabilitySchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Name cannot be empty')
-    .max(100, 'Name must be less than 100 characters')
-    .trim()
-    .optional(),
+export const updateCapabilitySchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name cannot be empty')
+      .max(100, 'Name must be less than 100 characters')
+      .trim()
+      .optional(),
 
-  slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
+    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
 
-  description: z
-    .string()
-    .min(1, 'Description cannot be empty')
-    .max(5000, 'Description must be less than 5000 characters')
-    .trim()
-    .optional(),
+    description: z
+      .string()
+      .min(1, 'Description cannot be empty')
+      .max(5000, 'Description must be less than 5000 characters')
+      .trim()
+      .optional(),
 
-  category: z
-    .string()
-    .min(1, 'Category cannot be empty')
-    .max(50, 'Category must be less than 50 characters')
-    .trim()
-    .optional(),
+    category: z
+      .string()
+      .min(1, 'Category cannot be empty')
+      .max(50, 'Category must be less than 50 characters')
+      .trim()
+      .optional(),
 
-  functionDefinition: z
-    .object({
-      name: z.string().min(1),
-      description: z.string().optional(),
-      parameters: z.record(z.string(), z.unknown()).optional(),
-    })
-    .passthrough()
-    .optional(),
+    functionDefinition: z
+      .object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        parameters: z.record(z.string(), z.unknown()).optional(),
+      })
+      .passthrough()
+      .optional(),
 
-  executionType: executionTypeSchema.optional(),
+    executionType: executionTypeSchema.optional(),
 
-  executionHandler: z
-    .string()
-    .min(1, 'Execution handler cannot be empty')
-    .max(500, 'Execution handler must be less than 500 characters')
-    .optional(),
+    executionHandler: z
+      .string()
+      .min(1, 'Execution handler cannot be empty')
+      .max(500, 'Execution handler must be less than 500 characters')
+      .optional(),
 
-  executionConfig: z.record(z.string(), z.unknown()).optional(),
+    executionConfig: z.record(z.string(), z.unknown()).optional(),
 
-  requiresApproval: z.boolean().optional(),
+    requiresApproval: z.boolean().optional(),
 
-  approvalTimeoutMs: z
-    .number()
-    .int('Approval timeout must be an integer')
-    .positive('Approval timeout must be positive')
-    .max(3_600_000, 'Approval timeout must be at most 1 hour')
-    .nullable()
-    .optional(),
+    approvalTimeoutMs: z
+      .number()
+      .int('Approval timeout must be an integer')
+      .positive('Approval timeout must be positive')
+      .max(3_600_000, 'Approval timeout must be at most 1 hour')
+      .nullable()
+      .optional(),
 
-  rateLimit: z
-    .number()
-    .int('Rate limit must be an integer')
-    .min(1, 'Rate limit must be at least 1')
-    .max(10000, 'Rate limit must be at most 10000')
-    .nullable()
-    .optional(),
+    rateLimit: z
+      .number()
+      .int('Rate limit must be an integer')
+      .min(1, 'Rate limit must be at least 1')
+      .max(10000, 'Rate limit must be at most 10000')
+      .nullable()
+      .optional(),
 
-  isActive: z.boolean().optional(),
+    isActive: z.boolean().optional(),
 
-  metadata: metadataSchema,
-});
+    metadata: metadataSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (
+      (data.executionType === 'api' || data.executionType === 'webhook') &&
+      data.executionHandler
+    ) {
+      try {
+        new URL(data.executionHandler);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Execution handler must be a valid URL for api and webhook types',
+          path: ['executionHandler'],
+        });
+      }
+    }
+  });
 
 /**
  * List capabilities query schema — GET /api/v1/admin/orchestration/capabilities

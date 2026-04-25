@@ -10,14 +10,14 @@ Shared create/edit form for `AiCapability`. Four shadcn tabs, one underlying `<f
 
 | #   | Tab                 | Create | Edit | Notes                                                               |
 | --- | ------------------- | ------ | ---- | ------------------------------------------------------------------- |
-| 1   | Basic               | ✅     | ✅   | Name, slug, description, category, active                           |
+| 1   | Basic               | ✅     | ✅   | Name, slug, description, category, metadata (JSON), active          |
 | 2   | Function definition | ✅     | ✅   | Builder ⟷ JSON editor with live preview                             |
 | 3   | Execution           | ✅     | ✅   | Execution type, handler, optional execution config                  |
 | 4   | Safety              | ✅     | ✅   | Requires approval, rate limit, "used by N agents" panel (edit only) |
 
 ## Tab 1 — Basic
 
-Fields: `name`, `slug`, `description`, `category`, `isActive`.
+Fields: `name`, `slug`, `description`, `category`, `metadata` (optional JSON), `isActive`.
 
 **Slug auto-generation** — identical to `agent-form.tsx`: typing into `name` auto-fills `slug` via `toSlug()` until the user types into the slug input, at which point a local `slugTouched` flag turns off auto-gen. Slug is disabled in edit mode.
 
@@ -31,7 +31,12 @@ Populated from the `availableCategories` prop (derived server-side from the curr
 - **Slug** — "The stable identifier used by agents and API calls. Auto-generated from the name on first type, but you can edit it. Lowercase letters, numbers, and hyphens only."
 - **Description** — "One or two sentences explaining what this capability does. Shown on the list page and next to the attach button in the agent form — keep it short."
 - **Category** — "Tag used to group capabilities in the agent form's Capabilities tab. Free-text on the backend, so it's OK to invent new ones — the dropdown lists what's already in use."
+- **Metadata** — "Arbitrary key-value pairs for tagging or external system references (e.g. external IDs, feature flags, notes). Values must be strings, numbers, booleans, or null. Maximum 100 keys. Leave empty if not needed."
 - **Active** — "Inactive capabilities are not offered to agents on new chats. Execution history is preserved. Default: on."
+
+### System capability banner
+
+When editing a system capability (`isSystem: true`), a blue info banner appears below the sticky header: "This is a system capability managed by seed data. It cannot be deleted or deactivated. You can edit its description, safety settings, and execution config." The System badge in the header also has a FieldHelp popover explaining the protection.
 
 ## Tab 2 — Function definition
 
@@ -71,7 +76,7 @@ Every keystroke recompiles the rows into the OpenAI shape via `compileFunctionDe
 
 - `<Textarea rows=20 class="font-mono">` with a **debounced 200 ms parse**. Valid JSON → writes to `parsedFn` and updates the live preview. Invalid JSON → inline red error, `parsedFn` is not touched, submit is blocked.
 - Switching Builder → JSON serializes the current compiled shape into the textarea.
-- Switching JSON → Builder attempts `tryReverseCompile()`. If the shape uses features the Builder can't represent (nested objects, `oneOf`, enums, etc.), the Builder toggle is **disabled** and an amber banner explains why. If the admin simplifies the schema, the toggle re-enables automatically. If JSON is simply invalid (syntax error), the switch is blocked with an inline error instead of permanently disabling the toggle.
+- Switching JSON → Builder attempts `tryReverseCompile()`. If the shape uses features the Builder can't represent (nested objects, `oneOf`, enums, etc.), the Builder toggle is **disabled** and an amber banner explains why. The banner includes a **"Reset to Builder"** button that discards advanced schema features and returns to visual mode with just the function name and description (parameters are cleared). If the admin simplifies the schema in JSON instead, the toggle re-enables automatically. If JSON is simply invalid (syntax error), the switch is blocked with an inline error instead of permanently disabling the toggle.
 
 Both modes parse through `capabilityFunctionDefinitionSchema` (defined in `lib/validations/orchestration.ts:31`) before touching form state — no `as` casts. The `visualDisabled` flag is re-evaluated on every successful JSON parse, so simplifying a complex schema back to a Builder-compatible shape re-enables the toggle without a page reload.
 
@@ -96,8 +101,8 @@ Fields: `executionType`, `executionHandler`, `executionConfig` (optional).
 Single text input. The FieldHelp copy **changes with the selected type**:
 
 - `internal` → "Class name registered in `lib/orchestration/capabilities/built-in/index.ts` (e.g. `SearchKnowledgeCapability`)."
-- `api` → "Full HTTPS URL the dispatcher will POST to. Must be reachable from the Sunrise server."
-- `webhook` → "Full HTTPS URL that will receive the payload. The dispatcher never waits for a response body."
+- `api` → "Full HTTPS URL the dispatcher will POST to. Must be reachable from the Sunrise server." Validated as a URL on both client and server.
+- `webhook` → "Full HTTPS URL that will receive the payload. The dispatcher never waits for a response body." Validated as a URL on both client and server.
 
 ### Execution config (optional JSON)
 
@@ -138,13 +143,19 @@ const created = await apiClient.post<AiCapability>(API.ADMIN.ORCHESTRATION.CAPAB
     ...formData,
     functionDefinition: parsedFn, // compiled from visual builder OR parsed from JSON editor
     executionConfig: execConfigParsed, // parsed from the optional JSON textarea
+    metadata: metadataParsed, // parsed from the optional JSON textarea
   },
 });
 router.push(`/admin/orchestration/capabilities/${created.id}`);
 
 // Edit
 await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
-  body: { ...formData, functionDefinition: parsedFn, executionConfig: execConfigParsed },
+  body: {
+    ...formData,
+    functionDefinition: parsedFn,
+    executionConfig: execConfigParsed,
+    metadata: metadataParsed,
+  },
 });
 reset(formData); // clears dirty state
 ```
@@ -158,7 +169,7 @@ Errors from `apiClient` are caught and rendered as a banner at the top of the fo
 - **Data source:** `GET /capabilities/:id/stats?period=<7d|30d|90d>`. The period selector in the card header re-fetches on change; default is `30d`.
 - **Metrics rendered:** Invocations, Success Rate, Avg Latency (with `p50` / `p95` subline), Total Cost (USD, 4dp).
 - **Colour rules:** Success rate badges green ≥ 95%, amber ≥ 80%, red otherwise. Cost, latency, and invocations use fixed brand colours.
-- **Empty state:** when `invocations === 0`, the description reads "No invocations recorded yet" but all metric cards still render (with zeroes).
+- **Empty state:** when `invocations === 0`, the description reads "No invocations recorded yet. Metrics appear here when an AI agent uses this capability during a chat conversation." All metric cards still render (with zeroes).
 - **Error state:** fetch failures render a generic "Failed to load metrics" inline — the form below still mounts.
 
 ## Related

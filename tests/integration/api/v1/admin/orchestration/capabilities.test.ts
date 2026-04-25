@@ -307,6 +307,49 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
       const data = await parseJson(response);
       expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
     });
+
+    it('returns 400 when executionType is api but executionHandler is not a URL', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makeBodyRequest('POST', {
+          ...VALID_CAPABILITY,
+          executionType: 'api',
+          executionHandler: 'not-a-url',
+        })
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('returns 400 when executionType is webhook but executionHandler is not a URL', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makeBodyRequest('POST', {
+          ...VALID_CAPABILITY,
+          executionType: 'webhook',
+          executionHandler: 'not-a-url',
+        })
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('accepts valid URL for api executionType', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.create).mockResolvedValue(makeCapability() as never);
+
+      const response = await POST(
+        makeBodyRequest('POST', {
+          ...VALID_CAPABILITY,
+          executionType: 'api',
+          executionHandler: 'https://api.example.com/lookup',
+        })
+      );
+
+      expect(response.status).toBe(201);
+    });
   });
 });
 
@@ -483,6 +526,57 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
       );
 
       expect(response.status).toBe(404);
+    });
+
+    it('returns 400 when PATCH changes executionHandler to non-URL for existing api capability', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(
+        makeCapability({
+          executionType: 'api',
+          executionHandler: 'https://api.example.com',
+        }) as never
+      );
+
+      const response = await PATCH(
+        makeByIdRequest('PATCH', { executionHandler: 'not-a-url' }),
+        makeParams(CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('returns 400 when PATCH changes executionHandler to non-URL for existing webhook capability', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(
+        makeCapability({
+          executionType: 'webhook',
+          executionHandler: 'https://hooks.example.com',
+        }) as never
+      );
+
+      const response = await PATCH(
+        makeByIdRequest('PATCH', { executionHandler: 'not-a-url' }),
+        makeParams(CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('allows non-URL executionHandler for internal capability', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(
+        makeCapability({ executionType: 'internal' }) as never
+      );
+      vi.mocked(prisma.aiCapability.update).mockResolvedValue(
+        makeCapability({ executionHandler: 'MyNewCapability' }) as never
+      );
+
+      const response = await PATCH(
+        makeByIdRequest('PATCH', { executionHandler: 'MyNewCapability' }),
+        makeParams(CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(200);
     });
 
     it('returns 400 for P2002 slug conflict on PATCH', async () => {

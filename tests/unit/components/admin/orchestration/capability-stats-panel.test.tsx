@@ -182,7 +182,7 @@ describe('CapabilityStatsPanel', () => {
     render(<CapabilityStatsPanel capabilityId={CAP_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByText('No invocations recorded yet')).toBeInTheDocument();
+      expect(screen.getByText(/No invocations recorded yet/)).toBeInTheDocument();
     });
   });
 

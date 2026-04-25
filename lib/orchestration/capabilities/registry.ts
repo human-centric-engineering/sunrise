@@ -89,7 +89,7 @@ export async function getCapabilityDefinitions(
       });
       continue;
     }
-    if (capabilityDispatcher.has(parsed.data.name)) {
+    if (capabilityDispatcher.has(row.capability.slug)) {
       definitions.push(parsed.data);
     }
   }
