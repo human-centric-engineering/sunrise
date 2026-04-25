@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionEvent, WorkflowStepType } from '@/types/orchestration';
+import { logger } from '@/lib/logging';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 export function workflowStarted(executionId: string, workflowId: string): ExecutionEvent {
@@ -36,7 +37,12 @@ export function stepFailed(stepId: string, error: string, willRetry: boolean): E
 }
 
 export function approvalRequired(stepId: string, payload: unknown): ExecutionEvent {
-  void dispatchWebhookEvent('approval_required', { stepId, payload });
+  dispatchWebhookEvent('approval_required', { stepId, payload }).catch((err) => {
+    logger.warn('Webhook dispatch failed for approval_required', {
+      stepId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
   return { type: 'approval_required', stepId, payload };
 }
 
@@ -53,6 +59,11 @@ export function workflowCompleted(
 }
 
 export function workflowFailed(error: string, failedStepId?: string): ExecutionEvent {
-  void dispatchWebhookEvent('workflow_failed', { error, failedStepId });
+  dispatchWebhookEvent('workflow_failed', { error, failedStepId }).catch((err) => {
+    logger.warn('Webhook dispatch failed for workflow_failed', {
+      failedStepId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
   return { type: 'workflow_failed', error, failedStepId };
 }

@@ -589,26 +589,22 @@ describe('OrchestrationEngine', () => {
 
   // ─── finalize() DB failure ────────────────────────────────────────
 
-  it('finalize DB failure is logged but generator still completes cleanly', async () => {
+  it('finalize DB failure re-throws so the SSE stream surfaces the error', async () => {
     // Arrange — all checkpoint updates succeed; only the final finalize update
-    // (which sets status + completedAt) throws. This exercises the catch/log
-    // path in finalize() (source line ~1138).
+    // (which sets status + completedAt) throws. The generator re-throws so the
+    // SSE consumer sees an error rather than a clean workflow_completed.
     registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
 
-    // The mock impl echoes data for checkpoint calls (those include
-    // executionTrace). When the finalize call arrives (data includes
-    // completedAt), we throw to simulate DB failure.
     vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
       const { data } = args as { data: Record<string, unknown> };
       if ('completedAt' in data) throw new Error('finalize DB down');
       return {};
     }) as never);
 
-    // Act
-    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
-
-    // Assert — workflow_completed is still yielded; finalize failure is non-fatal.
-    expect(events.map((e) => e.type)).toContain('workflow_completed');
+    // Act & Assert — collecting events should throw because finalize re-throws.
+    await expect(
+      collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()))
+    ).rejects.toThrow('finalize DB down');
   });
 
   // ─── pauseForApproval() DB failure ────────────────────────────────
