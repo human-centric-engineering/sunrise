@@ -7,7 +7,7 @@ Fast-path executor for quality-fix passes. Reads a confidence-scored `/test-revi
 
 ## Concurrency
 
-Each invocation spawns one worktree subagent. When running multiple `from-rescan` fixes as part of a `/test-triage` worklist, **cap at 5 concurrent invocations** — launch 5, wait for all to finish, then launch the next 5. This matches the concurrency policy in `/test-triage`. For review mode (which is heavier — two-stage with `/test-review` first), run **1 at a time**.
+Each invocation spawns one worktree subagent. When running multiple `from-rescan` fixes as part of a `/test-triage` worklist, **cap at 3 concurrent invocations** — launch 3, wait for all to finish, then launch the next 3. This matches the concurrency policy in `/test-triage`. For review mode (which is heavier — two-stage with `/test-review` first), run **1 at a time**.
 
 Two input modes:
 

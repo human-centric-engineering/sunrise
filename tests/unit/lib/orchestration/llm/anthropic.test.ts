@@ -161,7 +161,8 @@ describe('AnthropicProvider.chat', () => {
     });
 
     const provider = makeProvider();
-    await provider.chat([{ role: 'user', content: 'go' }], {
+    // Act: call chat with a tool definition
+    const response = await provider.chat([{ role: 'user', content: 'go' }], {
       model: 'claude-sonnet-4-6',
       tools: [
         {
@@ -173,9 +174,14 @@ describe('AnthropicProvider.chat', () => {
       toolChoice: 'auto',
     });
 
+    // Assert: SDK params contain the tool
     const callArgs = createMock.mock.calls[0][0];
-    expect(callArgs.tools).toBeDefined();
+    expect(callArgs.tools).toHaveLength(1);
     expect(callArgs.tools[0].name).toBe('calc');
+    expect(callArgs.tools[0].description).toBe('calculator');
+    // Assert: response is also correct (mock-proving — not only arg checks)
+    expect(response.content).toBe('done');
+    expect(response.finishReason).toBe('stop');
   });
 
   it('passes temperature when specified', async () => {
@@ -187,13 +193,17 @@ describe('AnthropicProvider.chat', () => {
     });
 
     const provider = makeProvider();
-    await provider.chat([{ role: 'user', content: 'hi' }], {
+    // Act: call chat with temperature set
+    const response = await provider.chat([{ role: 'user', content: 'hi' }], {
       model: 'claude-haiku-4-5',
       temperature: 0.7,
     });
 
+    // Assert: SDK params carry temperature AND response output is correct
     const callArgs = createMock.mock.calls[0][0];
     expect(callArgs.temperature).toBe(0.7);
+    expect(response.content).toBe('cool');
+    expect(response.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
   });
 });
 
@@ -402,6 +412,7 @@ describe('AnthropicProvider.chatStream', () => {
     }
 
     const callArgs = createMock.mock.calls[0][0];
+    // test-review:accept tobe_true — structural assertion on stream boolean parameter passed to Anthropic SDK
     expect(callArgs.stream).toBe(true);
   });
 
@@ -487,6 +498,7 @@ describe('AnthropicProvider.testConnection', () => {
     const provider = makeProvider();
     const result = await provider.testConnection();
 
+    // test-review:accept tobe_true — structural assertion on ok boolean field of ProviderTestResult
     expect(result.ok).toBe(true);
     expect(result.models).toContain('claude-haiku-4-5');
     expect(result.models).toContain('claude-sonnet-4-6');
@@ -1094,6 +1106,7 @@ describe('AnthropicProvider.chat — SDK status-bearing error mapping', () => {
     const pe = thrown as InstanceType<typeof ProviderError>;
     // toProviderError reads .status and marks it retriable when status is 429
     expect(pe.status).toBe(429);
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ProviderError (429 maps to retriable)
     expect(pe.retriable).toBe(true);
     expect(pe.code).toBe('http_429');
   });
@@ -1200,6 +1213,216 @@ describe('AnthropicProvider.chat — structured output extraction (json_schema r
     expect(callArgs.tools[0].name).toBe('__structured_result');
     // Tool choice must be forced to the extraction tool
     expect(callArgs.tool_choice).toEqual({ type: 'tool', name: '__structured_result' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toAnthropicBlocks — multimodal content branch coverage (hpo=4)
+// ---------------------------------------------------------------------------
+
+describe('toAnthropicBlocks — multimodal content conversion (via splitSystemMessages)', () => {
+  beforeEach(() => {
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: 'claude-haiku-4-5',
+      stop_reason: 'end_turn',
+    });
+  });
+
+  it('converts a base64 image ContentPart to an Anthropic image block with source.type=base64', async () => {
+    // Arrange: user message with a base64 image content part
+    const provider = makeProvider();
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                mediaType: 'image/png',
+                data: 'abc123==',
+              },
+            },
+          ],
+        },
+      ],
+      { model: 'claude-haiku-4-5' }
+    );
+
+    // Assert: the SDK received an image block with source.type 'base64'
+    const callArgs = createMock.mock.calls[0][0];
+    const block = callArgs.messages[0].content[0] as {
+      type: string;
+      source: { type: string; media_type: string; data: string };
+    };
+    expect(block.type).toBe('image');
+    expect(block.source.type).toBe('base64');
+    expect(block.source.media_type).toBe('image/png');
+    expect(block.source.data).toBe('abc123==');
+  });
+
+  it('converts a URL image ContentPart to an Anthropic image block with source.type=url', async () => {
+    // Arrange: user message with a URL image content part
+    const provider = makeProvider();
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'url',
+                url: 'https://example.com/photo.jpg',
+              },
+            },
+          ],
+        },
+      ],
+      { model: 'claude-haiku-4-5' }
+    );
+
+    // Assert: the SDK received an image block with source.type 'url'
+    const callArgs = createMock.mock.calls[0][0];
+    const block = callArgs.messages[0].content[0] as {
+      type: string;
+      source: { type: string; url: string };
+    };
+    expect(block.type).toBe('image');
+    expect(block.source.type).toBe('url');
+    expect(block.source.url).toBe('https://example.com/photo.jpg');
+  });
+
+  it('converts a PDF document ContentPart to an Anthropic document block', async () => {
+    // Arrange: user message with a PDF document content part
+    const pdfData = Buffer.from('fake-pdf-bytes').toString('base64');
+    const provider = makeProvider();
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              name: 'report.pdf',
+              source: {
+                type: 'base64',
+                mediaType: 'application/pdf',
+                data: pdfData,
+              },
+            },
+          ],
+        },
+      ],
+      { model: 'claude-haiku-4-5' }
+    );
+
+    // Assert: the SDK received a document block (native PDF support)
+    const callArgs = createMock.mock.calls[0][0];
+    const block = callArgs.messages[0].content[0] as {
+      type: string;
+      source: { type: string; media_type: string; data: string };
+    };
+    expect(block.type).toBe('document');
+    expect(block.source.type).toBe('base64');
+    expect(block.source.media_type).toBe('application/pdf');
+    expect(block.source.data).toBe(pdfData);
+  });
+
+  it('converts a non-PDF document ContentPart to a text block with extracted content', async () => {
+    // Arrange: user message with a non-PDF document (e.g. plain text encoded as base64)
+    // The source encodes "extracted text content"
+    const textContent = 'extracted text content';
+    const base64Data = Buffer.from(textContent).toString('base64');
+    const provider = makeProvider();
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              name: 'notes.txt',
+              source: {
+                type: 'base64',
+                mediaType: 'text/plain',
+                data: base64Data,
+              },
+            },
+          ],
+        },
+      ],
+      { model: 'claude-haiku-4-5' }
+    );
+
+    // Assert: non-PDF falls back to a text block with the decoded content
+    const callArgs = createMock.mock.calls[0][0];
+    const block = callArgs.messages[0].content[0] as { type: string; text: string };
+    expect(block.type).toBe('text');
+    expect(block.text).toContain('[Document: notes.txt]');
+    expect(block.text).toContain(textContent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// embed() error paths (me=2)
+// ---------------------------------------------------------------------------
+
+describe('AnthropicProvider.embed — error path coverage', () => {
+  it('rejects with code not_supported and retriable:false regardless of input', async () => {
+    // Arrange
+    const provider = makeProvider();
+
+    // Act
+    const error = await provider.embed('some text').catch((e: unknown) => e);
+
+    // Assert: ProviderError with the correct fields
+    expect(error).toBeInstanceOf(ProviderError);
+    const pe = error as InstanceType<typeof ProviderError>;
+    expect(pe.code).toBe('not_supported');
+    expect(pe.retriable).toBe(false);
+  });
+
+  it('rejects even for empty-string input', async () => {
+    // Arrange
+    const provider = makeProvider();
+
+    // Act + Assert: embed always rejects, not just on non-empty strings
+    await expect(provider.embed('')).rejects.toBeInstanceOf(ProviderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chatStream mid-stream abort (me=2)
+// ---------------------------------------------------------------------------
+
+describe('AnthropicProvider.chatStream — mid-stream abort', () => {
+  it('throws a ProviderError with code aborted when signal is aborted after the first event', async () => {
+    // Arrange: abort controller fired after stream creation so we hit the mid-loop check
+    const controller = new AbortController();
+
+    async function* abortAfterFirstEvent() {
+      yield { type: 'message_start', message: { usage: { input_tokens: 1 } } };
+      // Abort between events — the next iteration will see signal.aborted = true
+      controller.abort();
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+    }
+    createMock.mockResolvedValue(abortAfterFirstEvent());
+
+    const provider = makeProvider();
+
+    // Act + Assert
+    await expect(async () => {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'hi' }], {
+        model: 'claude-haiku-4-5',
+        signal: controller.signal,
+      })) {
+        // drain
+      }
+    }).rejects.toMatchObject({ code: 'aborted', retriable: false });
   });
 });
 

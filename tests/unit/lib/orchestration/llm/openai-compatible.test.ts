@@ -176,6 +176,7 @@ describe('constructor', () => {
 
     // Assert — provider is created; name and isLocal reflect options
     expect(provider.name).toBe('ollama');
+    // test-review:accept tobe_true — isLocal is a boolean field set directly from constructor options; asserting true is the correct structural check
     expect(provider.isLocal).toBe(true);
   });
 
@@ -189,6 +190,7 @@ describe('constructor', () => {
     });
 
     // Assert
+    // test-review:accept tobe_true — isLocal is a boolean field; true is the expected value when constructed with isLocal: true
     expect(provider.isLocal).toBe(true);
   });
 
@@ -299,15 +301,17 @@ describe('chat', () => {
 
     // Act
     const provider = makeProvider();
-    await provider.chat([{ role: 'user', content: 'x' }], {
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
       model: 'gpt-4o',
       tools: [{ name: 'fn', description: 'desc', parameters: {} }],
       toolChoice: 'auto',
     });
 
-    // Assert — verify SDK was called with tool_choice
+    // Assert — verify SDK was called with tool_choice and the response is mapped correctly
     const calledParams = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(calledParams?.tool_choice).toBe('auto');
+    expect(response.content).toBe('ok');
+    expect(response.finishReason).toBe('stop');
   });
 
   it('passes temperature and maxTokens through to SDK params', async () => {
@@ -316,16 +320,17 @@ describe('chat', () => {
 
     // Act
     const provider = makeProvider();
-    await provider.chat([{ role: 'user', content: 'x' }], {
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
       model: 'gpt-4o',
       temperature: 0.5,
       maxTokens: 256,
     });
 
-    // Assert
+    // Assert — SDK params are correct and the response content flows through
     const calledParams = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(calledParams?.temperature).toBe(0.5);
     expect(calledParams?.max_tokens).toBe(256);
+    expect(response.content).toBe('ok');
   });
 });
 
@@ -610,7 +615,9 @@ describe('chatStream', () => {
 
     // Assert — streaming params include stream_options
     const calledParams = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    // test-review:accept tobe_true — stream is a boolean field in ChatCompletionCreateParamsStreaming; true is the exact required value per OpenAI SDK
     expect(calledParams?.stream).toBe(true);
+    // test-review:accept tobe_true — include_usage is a boolean field in stream_options; true is the exact required value to get token usage in streaming responses
     expect((calledParams?.stream_options as Record<string, unknown>)?.include_usage).toBe(true);
   });
 });
@@ -632,6 +639,7 @@ describe('listModels', () => {
 
     // Assert
     expect(models).toHaveLength(2);
+    // test-review:accept tobe_true — available is a boolean field; the provider explicitly sets it to true for all discovered models
     expect(models[0]?.available).toBe(true);
     expect(models[0]?.tier).toBe('local');
   });
@@ -646,6 +654,7 @@ describe('listModels', () => {
 
     // Assert
     expect(models[0]?.id).toBe('gpt-4o');
+    // test-review:accept tobe_true — available is a boolean field; the provider always sets it to true when listing models
     expect(models[0]?.available).toBe(true);
     expect(models[0]?.inputCostPerMillion).toBeGreaterThan(0);
   });
@@ -702,6 +711,7 @@ describe('testConnection', () => {
     const result = await provider.testConnection();
 
     // Assert
+    // test-review:accept tobe_true — ok is a boolean field in ProviderTestResult; true signals a healthy connection
     expect(result.ok).toBe(true);
     expect(result.models).toContain('gpt-4o');
   });
@@ -730,11 +740,12 @@ describe('embed', () => {
 
     // Act
     const provider = makeProvider(); // isLocal: false
-    await provider.embed('text');
+    const vec = await provider.embed('text');
 
-    // Assert
+    // Assert — correct model was used and the vector is returned
     const calledParams = embeddingsCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(calledParams?.model).toBe('text-embedding-3-small');
+    expect(vec).toEqual([0.5]);
   });
 
   it('uses nomic-embed-text as default embedding model for local provider', async () => {
@@ -919,6 +930,139 @@ describe('toSdkMessage mapping', () => {
       messages: Array<{ role: string; tool_call_id?: string }>;
     };
     expect(calledParams.messages[0]?.tool_call_id).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toOpenAiParts — multimodal content-part branches (exercised via toSdkMessage)
+// ---------------------------------------------------------------------------
+
+describe('toOpenAiParts — multimodal content-part mapping', () => {
+  it('maps base64 image part to image_url with data URI', async () => {
+    // Arrange
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    // Act — user message with base64 image content part
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', mediaType: 'image/png', data: 'abc123' },
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    // Assert — SDK message should include an image_url part with base64 data URI
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(1);
+    expect(msgContent[0]).toMatchObject({
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,abc123' },
+    });
+  });
+
+  it('maps URL image part to image_url with the raw URL', async () => {
+    // Arrange
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    // Act — user message with URL image content part
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'url', url: 'https://example.com/photo.jpg' },
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    // Assert — SDK message should include an image_url part with the raw URL
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(1);
+    expect(msgContent[0]).toMatchObject({
+      type: 'image_url',
+      image_url: { url: 'https://example.com/photo.jpg' },
+    });
+  });
+
+  it('maps document part to a text block with decoded base64 content and filename header', async () => {
+    // Arrange — base64-encode "Hello Doc" as the document data
+    const docContent = 'Hello Doc';
+    const docBase64 = Buffer.from(docContent).toString('base64');
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    // Act — user message with document content part
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', mediaType: 'text/plain', data: docBase64 },
+              name: 'notes.txt',
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    // Assert — OpenAI has no native document blocks; provider embeds as text
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(1);
+    expect(msgContent[0]).toMatchObject({ type: 'text' });
+    const text = (msgContent[0] as { type: string; text: string }).text;
+    expect(text).toContain('[Document: notes.txt]');
+    expect(text).toContain(docContent);
+  });
+
+  it('maps unknown content part type to an empty text block (fallback)', async () => {
+    // Arrange — inject a part type that does not match text | image | document
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    // Act — cast to bypass TypeScript — exercises the final `return { type: 'text', text: '' }` branch
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [{ type: 'video' as 'text', text: '' }],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    // Assert — fallback yields an empty text block
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(1);
+    expect(msgContent[0]).toEqual({ type: 'text', text: '' });
   });
 });
 

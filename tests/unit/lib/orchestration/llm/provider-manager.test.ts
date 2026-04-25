@@ -29,6 +29,10 @@ vi.mock('@anthropic-ai/sdk', () => {
   return { default: MockAnthropic };
 });
 
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('openai', () => {
   class MockOpenAI {
     public chat = { completions: { create: vi.fn() } };
@@ -52,7 +56,10 @@ const {
   registerProvider,
   registerProviderInstance,
   testProvider,
+  getProviderWithFallbacks,
 } = await import('@/lib/orchestration/llm/provider-manager');
+
+const { getBreaker, resetAllBreakers } = await import('@/lib/orchestration/llm/circuit-breaker');
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,6 +79,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   clearCache();
+  resetAllBreakers();
   vi.clearAllMocks();
   process.env.ANTHROPIC_API_KEY = 'test-key';
   process.env.OPENAI_API_KEY = 'test-key';
@@ -250,6 +258,7 @@ describe('listProviders', () => {
     ]);
     const list = await listProviders();
     expect(list).toHaveLength(2);
+    // test-review:accept tobe_true — `.every()` returns a boolean; `.toBe(true)` is the only idiomatic assertion here. Using `.toEqual(true)` would be equivalent but more surprising to readers. The predicate is narrow enough that a false-positive is not a realistic concern.
     expect(list.every((p) => p.status === 'unknown')).toBe(true);
   });
 });
@@ -488,6 +497,80 @@ describe('isApiKeyEnvVarSet', () => {
   });
 });
 
+describe('getProviderWithFallbacks', () => {
+  it('throws all_providers_exhausted when every candidate is unavailable', async () => {
+    // Arrange: both primary and fallback are not in cache and not in DB
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    // Act + Assert
+    await expect(getProviderWithFallbacks('primary-slug', ['fallback-slug'])).rejects.toMatchObject(
+      {
+        code: 'all_providers_exhausted',
+        retriable: true,
+      }
+    );
+  });
+
+  it('skips a provider whose circuit breaker is open and throws all_providers_exhausted when no candidates remain', async () => {
+    // Arrange: trip the circuit breaker on primary by recording enough failures
+    const breaker = getBreaker('cb-primary', {
+      failureThreshold: 1,
+      windowMs: 60_000,
+      cooldownMs: 60_000,
+    });
+    breaker.recordFailure(); // threshold=1 → now open
+
+    // DB is not reached for the open-breaker slot; fallback is also absent
+    (prisma.aiProviderConfig.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    // Act + Assert: primary skipped (breaker open), fallback not found → exhausted
+    await expect(getProviderWithFallbacks('cb-primary', ['cb-fallback'])).rejects.toMatchObject({
+      code: 'all_providers_exhausted',
+      retriable: true,
+    });
+
+    // The primary was never asked to resolve because the breaker was open
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ OR: expect.arrayContaining([{ slug: 'cb-primary' }]) }),
+      })
+    );
+  });
+
+  it('returns the fallback provider when primary circuit breaker is open', async () => {
+    // Arrange: trip the circuit breaker on primary
+    const breaker = getBreaker('cb-primary-2', {
+      failureThreshold: 1,
+      windowMs: 60_000,
+      cooldownMs: 60_000,
+    });
+    breaker.recordFailure(); // open
+
+    // Register a working fallback in-memory (no DB needed)
+    const fallbackProvider = {
+      name: 'cb-fallback-2',
+      isLocal: false,
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+    };
+    registerProviderInstance('cb-fallback-2', fallbackProvider);
+
+    // Act
+    const { provider, usedSlug } = await getProviderWithFallbacks('cb-primary-2', [
+      'cb-fallback-2',
+    ]);
+
+    // Assert: fallback was used
+    expect(usedSlug).toBe('cb-fallback-2');
+    expect(provider).toBe(fallbackProvider);
+    // DB was not consulted (both providers resolved from cache/in-memory)
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
+  });
+});
+
 describe('listProvidersWithStatus', () => {
   it('hydrates each row with apiKeyPresent and status=unknown', async () => {
     process.env.ANTHROPIC_API_KEY = 'real-key';
@@ -506,19 +589,36 @@ describe('listProvidersWithStatus', () => {
 
     const rows = await listProvidersWithStatus();
     expect(rows).toHaveLength(3);
+    // test-review:accept tobe_true — structural assertion on apiKeyPresent boolean field of ProviderStatusRow
     expect(rows[0]?.apiKeyPresent).toBe(true);
     expect(rows[0]?.status).toBe('unknown');
     expect(rows[1]?.apiKeyPresent).toBe(false);
     expect(rows[2]?.apiKeyPresent).toBe(false);
   });
 
-  it('never exposes the env var value on the returned rows', async () => {
+  it('never exposes the env var value — apiKeyPresent is a boolean, not the raw secret', async () => {
+    // Arrange: env var is set to a known secret value
     process.env.SECRET_THING = 'super-secret-value-do-not-leak';
     (prisma.aiProviderConfig.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       makeRow({ apiKeyEnvVar: 'SECRET_THING' }),
     ]);
+
+    // Act
     const rows = await listProvidersWithStatus();
+
+    // Assert: the returned object carries only a boolean presence flag,
+    // not the raw env-var string. Checking the concrete type and value of
+    // apiKeyPresent ensures this test fails if the implementation were ever
+    // changed to return the raw key (or any other truthy non-boolean).
+    expect(rows).toHaveLength(1);
+    expect(typeof rows[0]?.apiKeyPresent).toBe('boolean');
+    // test-review:accept tobe_true — structural assertion on apiKeyPresent boolean field; test above verifies type
+    expect(rows[0]?.apiKeyPresent).toBe(true);
+    // Verify the raw secret does not appear anywhere in the serialized output
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toContain('super-secret-value-do-not-leak');
+
+    // Cleanup
+    delete process.env.SECRET_THING;
   });
 });

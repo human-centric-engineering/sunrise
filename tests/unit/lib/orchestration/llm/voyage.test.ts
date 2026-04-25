@@ -160,6 +160,7 @@ describe('VoyageProvider constructor', () => {
     // Assert
     expect(caught).toBeInstanceOf(ProviderError);
     expect((caught as ProviderError).code).toBe('missing_api_key');
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ProviderError
     expect((caught as ProviderError).retriable).toBe(false);
   });
 
@@ -507,6 +508,7 @@ describe('VoyageProvider delegation', () => {
     const result = await provider.listModels();
 
     // Assert
+    // test-review:accept no_arg_called — delegate method takes no arguments; result assertion below proves real delegation
     expect(mockInnerListModels).toHaveBeenCalled();
     expect(result).toBe(mockModels);
   });
@@ -520,6 +522,7 @@ describe('VoyageProvider delegation', () => {
     const result = await provider.testConnection();
 
     // Assert
+    // test-review:accept no_arg_called — delegate method takes no arguments; result assertion below proves real delegation
     expect(mockInnerTestConnection).toHaveBeenCalled();
     expect(result).toBe(mockResult);
   });

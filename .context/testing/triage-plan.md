@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** Not started (Phase 1 ready to begin)
+**Status:** In progress (Step 1a + 3b complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -58,8 +58,16 @@
 
 - **Triage:** `/test-triage scan lib/security`
 - **Ceiling pass:** YES — run `/test-coverage lib/security` after triage to find untested security code
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-24, PR #90)
 - **Notes:**
+  - Grade distribution: 1 Rotten, 3 Bad, 5 Clean → all 9 Clean after fixes
+  - Rotten: rate-limit.test.ts — async surface entirely untested, Date.now() token drift, off-by-one between sync/async semantics (intentional, documented)
+  - Bad: cors (mock-proving, missing !allowed path), proxy (12 weak negative assertions), rate-limit-stores (Redis error paths, LRU untested)
+  - Path 0 (annotations) effective for structural `toBe(true)` false positives — used on 4 files
+  - Path A (3 concurrent worktree agents) validated — ran smoothly on battery, cap subsequently bumped to 5
+  - Path B (rate-limit review+fix) caught async/sync off-by-one as source finding S1 — agent attempted fix, reverted when it broke semantics
+  - proxy.test.ts imports from `@/proxy` (root), not `lib/security/` — source path mapping friction
+  - Ceiling pass still pending — do after triage is further along
 
 ### Step 1b — `lib/auth/` (9 test files, 7 already in ledger)
 
@@ -149,8 +157,19 @@
 
 - **Path:** `tests/unit/lib/orchestration/llm/`
 - **Triage:** `/test-triage scan lib/orchestration/llm`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25, triage/orchestration-llm branch)
 - **Notes:**
+  - Grade distribution: 2 Rotten, 3 Bad, 4 Minor, 11 Clean → all 20 Clean after fixes
+  - Rotten: cost-tracker.global-cap (8 tests, block hpo+me), openai-compatible (67 tests, block hpo+mp)
+  - Bad: anthropic (block hpo+mp+me), cost-tracker (sig-only, 10 tbt + 1 nac), embedding-models (sig-only, 14 tbt)
+  - Minor: model-registry (1 tbt + block me=1), provider-manager (2 tbt + 1 nac + block mp=1), provider-retry (3 tbt), voyage (1 tbt + 2 nac)
+  - 5 Path 0 (annotations only): cost-tracker, embedding-models, cost-tracker.global-cap, voyage, provider-retry
+  - 4 Path A (worktree agents): anthropic (+7 tests), openai-compatible (+4 tests), model-registry (+1 test), provider-manager (+3 tests)
+  - 0 Path B needed — all findings had specific enough NOTES for from-rescan
+  - Concurrency: scan batching (5 Sonnet agents) smooth. Fix stage had only 4 Path A agents — not enough to stress-test the cap of 5. Need a larger folder for that.
+  - Split test files (e.g., cost-tracker.global-cap.test.ts → cost-tracker.ts) required manual source mapping — read test imports to resolve
+  - provider-retry.test.ts maps to provider.ts (not provider-retry.ts which doesn't exist) — similar to proxy.test.ts mapping issue from Step 1a
+  - Agent-written tests sometimes miss adding accept annotations for their own structural `toBe(true)` assertions — caught 5 post-fix, added manually
 
 ### Step 3c — `mcp/` (13 test files)
 
@@ -379,49 +398,49 @@ Each phase above will surface files with zero test coverage via `/test-coverage`
 
 Update this table after completing each step.
 
-| Step | Target                           | Files | Grade Distribution      | Ceiling Pass? | Status      |
-| ---- | -------------------------------- | ----- | ----------------------- | ------------- | ----------- |
-| 1a   | lib/security                     | 9     |                         | YES           | NOT STARTED |
-| 1b   | lib/auth                         | 9     | 2C, 1M, 2B (from prior) | YES           | PARTIAL     |
-| 1c   | Auth API routes                  | ~10   |                         | No            | NOT STARTED |
-| 1d   | lib/validations                  | 8     |                         | No            | NOT STARTED |
-| 2a   | lib/api                          | 10    |                         | No            | NOT STARTED |
-| 2b   | lib/errors                       | 2     |                         | No            | NOT STARTED |
-| 2c   | lib/logging                      | 2     |                         | No            | NOT STARTED |
-| 2d   | lib/db                           | 1     |                         | No            | NOT STARTED |
-| 2e   | lib/utils                        | 6     |                         | No            | NOT STARTED |
-| 2f   | lib/hooks                        | 4     |                         | No            | NOT STARTED |
-| 2g   | lib/constants + feature-flags    | 2     |                         | No            | NOT STARTED |
-| 3a   | orchestration/engine             | 23    |                         | YES           | NOT STARTED |
-| 3b   | orchestration/llm                | 20    |                         | No            | NOT STARTED |
-| 3c   | orchestration/mcp                | 13    |                         | No            | NOT STARTED |
-| 3d   | orchestration/knowledge          | 12    |                         | No            | NOT STARTED |
-| 3e   | orchestration/chat               | 10    |                         | YES           | NOT STARTED |
-| 3f   | orchestration/capabilities       | 9     |                         | No            | NOT STARTED |
-| 3g   | orchestration/workflows          | 4     |                         | No            | NOT STARTED |
-| 3h   | orchestration/remaining          | 14    |                         | No            | NOT STARTED |
-| 4a   | Admin orch API routes            | ~130  |                         | After triage  | NOT STARTED |
-| 4b   | Chat API routes                  | ~15   |                         | No            | NOT STARTED |
-| 4c   | Embed API routes                 | ~5    |                         | No            | NOT STARTED |
-| 4d   | Remaining API routes             | ~10   |                         | No            | NOT STARTED |
-| 5a   | Workflow builder components      | 29    |                         | No            | NOT STARTED |
-| 5b   | Costs components                 | 10    |                         | No            | NOT STARTED |
-| 5c   | Knowledge components             | 10    |                         | No            | NOT STARTED |
-| 5d   | Learn components                 | 9     |                         | No            | NOT STARTED |
-| 5e   | MCP components                   | 8     |                         | No            | NOT STARTED |
-| 5f   | Remaining admin orch components  | ~67   |                         | No            | NOT STARTED |
-| 6a   | forms components                 | 15    |                         | No            | NOT STARTED |
-| 6b   | ui components                    | 9     |                         | No            | NOT STARTED |
-| 6c   | Remaining components             | 9     |                         | No            | PARTIAL     |
-| 6d   | App page tests                   | 13    |                         | No            | NOT STARTED |
-| 7a   | email                            | 6     |                         | No            | NOT STARTED |
-| 7b   | lib/analytics                    | 10    |                         | No            | NOT STARTED |
-| 7c   | lib/consent                      | 4     |                         | No            | NOT STARTED |
-| 7d   | lib/storage + monitoring + embed | 10    |                         | No            | NOT STARTED |
-| 7e   | Integration tests                | 120   |                         | No            | NOT STARTED |
-| 8.1  | Coverage gaps: API routes        | —     |                         | N/A           | NOT STARTED |
-| 8.2  | Coverage gaps: orchestration     | —     |                         | N/A           | NOT STARTED |
-| 8.3  | Coverage gaps: components/pages  | —     |                         | N/A           | NOT STARTED |
+| Step | Target                           | Files | Grade Distribution        | Ceiling Pass? | Status      |
+| ---- | -------------------------------- | ----- | ------------------------- | ------------- | ----------- |
+| 1a   | lib/security                     | 9     | 9C (was 1R, 3B, 5C)       | YES (pending) | DONE        |
+| 1b   | lib/auth                         | 9     | 2C, 1M, 2B (from prior)   | YES           | PARTIAL     |
+| 1c   | Auth API routes                  | ~10   |                           | No            | NOT STARTED |
+| 1d   | lib/validations                  | 8     |                           | No            | NOT STARTED |
+| 2a   | lib/api                          | 10    |                           | No            | NOT STARTED |
+| 2b   | lib/errors                       | 2     |                           | No            | NOT STARTED |
+| 2c   | lib/logging                      | 2     |                           | No            | NOT STARTED |
+| 2d   | lib/db                           | 1     |                           | No            | NOT STARTED |
+| 2e   | lib/utils                        | 6     |                           | No            | NOT STARTED |
+| 2f   | lib/hooks                        | 4     |                           | No            | NOT STARTED |
+| 2g   | lib/constants + feature-flags    | 2     |                           | No            | NOT STARTED |
+| 3a   | orchestration/engine             | 23    |                           | YES           | NOT STARTED |
+| 3b   | orchestration/llm                | 20    | 20C (was 2R, 3B, 4M, 11C) | No            | DONE        |
+| 3c   | orchestration/mcp                | 13    |                           | No            | NOT STARTED |
+| 3d   | orchestration/knowledge          | 12    |                           | No            | NOT STARTED |
+| 3e   | orchestration/chat               | 10    |                           | YES           | NOT STARTED |
+| 3f   | orchestration/capabilities       | 9     |                           | No            | NOT STARTED |
+| 3g   | orchestration/workflows          | 4     |                           | No            | NOT STARTED |
+| 3h   | orchestration/remaining          | 14    |                           | No            | NOT STARTED |
+| 4a   | Admin orch API routes            | ~130  |                           | After triage  | NOT STARTED |
+| 4b   | Chat API routes                  | ~15   |                           | No            | NOT STARTED |
+| 4c   | Embed API routes                 | ~5    |                           | No            | NOT STARTED |
+| 4d   | Remaining API routes             | ~10   |                           | No            | NOT STARTED |
+| 5a   | Workflow builder components      | 29    |                           | No            | NOT STARTED |
+| 5b   | Costs components                 | 10    |                           | No            | NOT STARTED |
+| 5c   | Knowledge components             | 10    |                           | No            | NOT STARTED |
+| 5d   | Learn components                 | 9     |                           | No            | NOT STARTED |
+| 5e   | MCP components                   | 8     |                           | No            | NOT STARTED |
+| 5f   | Remaining admin orch components  | ~67   |                           | No            | NOT STARTED |
+| 6a   | forms components                 | 15    |                           | No            | NOT STARTED |
+| 6b   | ui components                    | 9     |                           | No            | NOT STARTED |
+| 6c   | Remaining components             | 9     |                           | No            | PARTIAL     |
+| 6d   | App page tests                   | 13    |                           | No            | NOT STARTED |
+| 7a   | email                            | 6     |                           | No            | NOT STARTED |
+| 7b   | lib/analytics                    | 10    |                           | No            | NOT STARTED |
+| 7c   | lib/consent                      | 4     |                           | No            | NOT STARTED |
+| 7d   | lib/storage + monitoring + embed | 10    |                           | No            | NOT STARTED |
+| 7e   | Integration tests                | 120   |                           | No            | NOT STARTED |
+| 8.1  | Coverage gaps: API routes        | —     |                           | N/A           | NOT STARTED |
+| 8.2  | Coverage gaps: orchestration     | —     |                           | N/A           | NOT STARTED |
+| 8.3  | Coverage gaps: components/pages  | —     |                           | N/A           | NOT STARTED |
 
 ---
 
@@ -462,4 +481,11 @@ Record observations in the step-level Notes fields as they happen. At the end of
 
 Record anything useful discovered during the triage process that future sessions should know.
 
-- (Add entries here as phases complete)
+- **Step 1a (2026-04-24):** Path 0 (accept annotations) is the cheapest fix for structural `toBe(true)` hits — no test code changes needed. Use it first, then Path A/B for block patterns.
+- **Step 1a:** Source finding S1 (async/sync off-by-one) looked like a bug but was intentional. Agent reverted correctly after testing. Lesson: always check if `<=` vs `<` is compensating for increment-before vs increment-after semantics before "fixing" it.
+- **Step 1a:** proxy.test.ts imports from `@/proxy` (root-level file), not from `lib/security/`. The source path mapping in `/test-triage` assumes test path mirrors source path — this broke for proxy. Watch for similar mismatches in other areas.
+- **Step 1a:** Concurrency cap of 3 worktree agents was initially too conservative — bumped to 5 (PR #87). But Step 3b showed 4 concurrent worktree agents caused noticeable laptop slowdown. Reverted to cap of 3 for worktree agents; Sonnet scan agents stay at 5 (lightweight, read-only).
+- **Step 3b (2026-04-25):** Split test files (e.g., `cost-tracker.global-cap.test.ts`) don't have matching source filenames — read test imports to map them. Same class of issue as proxy.test.ts from 1a.
+- **Step 3b:** Agents that write new tests with `toBe(true)` structural assertions don't always add accept annotations for their own assertions. Post-fix annotation pass needed — caught 5 un-annotated hits.
+- **Step 3b:** 4 concurrent worktree agents caused noticeable laptop slowdown. Cap reduced back to 3 — Sonnet scan agents (lightweight) stay at 5.
+- **Step 3b:** Path 0 (annotation-only) continues to be the cheapest fix — 5 of 9 non-Clean files needed nothing but annotations. Sig-only Bad files (high tbt/nac, zero block patterns) are reliably Path 0.
