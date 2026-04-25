@@ -107,6 +107,7 @@ describe('McpSessionManager', () => {
       expect(session?.initialized).toBe(false);
       manager.markInitialized(session!.id);
       const fetched = manager.getSession(session!.id);
+      // test-review:accept tobe_true — boolean state field `initialized`; verifying markInitialized() mutated session state
       expect(fetched?.initialized).toBe(true);
     });
 

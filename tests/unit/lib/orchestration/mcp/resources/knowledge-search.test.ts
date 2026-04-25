@@ -61,6 +61,7 @@ describe('handleKnowledgeSearch', () => {
     const body = JSON.parse(result.text);
     expect(body.results).toEqual([]);
     expect(body.message).toBe('No query provided');
+    // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies searchKnowledge skipped for empty/whitespace query
     expect(searchKnowledge).not.toHaveBeenCalled();
   });
 
@@ -69,6 +70,7 @@ describe('handleKnowledgeSearch', () => {
 
     const body = JSON.parse(result.text);
     expect(body.results).toEqual([]);
+    // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies searchKnowledge skipped for empty/whitespace query
     expect(searchKnowledge).not.toHaveBeenCalled();
   });
 
@@ -149,5 +151,16 @@ describe('handleKnowledgeSearch', () => {
     await expect(
       handleKnowledgeSearch('sunrise://knowledge/search?q=test', { maxResults: 5 })
     ).resolves.not.toThrow();
+  });
+
+  it('propagates searchKnowledge rejection', async () => {
+    // Arrange: searchKnowledge rejects — source has no try/catch so it propagates
+    const dbError = new Error('vector search failed');
+    vi.mocked(searchKnowledge).mockRejectedValue(dbError);
+
+    // Act + Assert: handleKnowledgeSearch rejects with the same error
+    await expect(
+      handleKnowledgeSearch('sunrise://knowledge/search?q=agents', null)
+    ).rejects.toThrow('vector search failed');
   });
 });

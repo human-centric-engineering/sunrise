@@ -171,6 +171,7 @@ describe('listMcpTools', () => {
     const result = await listMcpTools();
     expect(result).toHaveLength(0);
     // safeParse should never be called for inactive capabilities
+    // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies inactive capability skipped safeParse
     expect(capabilityFunctionDefinitionSchema.safeParse).not.toHaveBeenCalled();
   });
 
@@ -183,7 +184,10 @@ describe('listMcpTools', () => {
 
     const result = await listMcpTools();
     expect(result).toHaveLength(0);
-    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('malformed functionDefinition'),
+      expect.objectContaining({ capabilitySlug: 'search_knowledge' })
+    );
   });
 
   it('caches results on second call within TTL', async () => {
@@ -228,6 +232,16 @@ describe('listMcpTools', () => {
     expect(result).toHaveLength(2);
     expect(result.map((t) => t.slug)).toEqual(['tool_a', 'tool_c']);
   });
+
+  it('propagates DB errors when findMany rejects', async () => {
+    // Arrange: simulate a database failure
+    vi.mocked(prisma.mcpExposedTool.findMany).mockRejectedValue(
+      new Error('Connection terminated unexpectedly')
+    );
+
+    // Act + Assert: the source does not catch DB errors, so it propagates
+    await expect(listMcpTools()).rejects.toThrow('Connection terminated unexpectedly');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -245,6 +259,7 @@ describe('callMcpTool', () => {
 
     const result = await callMcpTool('nonexistent_tool', {}, 'user-1');
 
+    // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Unknown tool');
   });
@@ -260,9 +275,12 @@ describe('callMcpTool', () => {
 
     const result = await callMcpTool('search_knowledge', {}, 'user-1');
 
+    // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('MCP system agent');
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('mcp-system agent not found')
+    );
   });
 
   it('dispatches to capabilityDispatcher with correct context on success', async () => {
@@ -317,6 +335,7 @@ describe('callMcpTool', () => {
 
     const result = await callMcpTool('search_knowledge', {}, 'user-1');
 
+    // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Something broke');
   });
@@ -333,8 +352,26 @@ describe('callMcpTool', () => {
 
     const result = await callMcpTool('search_knowledge', {}, 'user-1');
 
+    // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Tool execution failed');
+  });
+
+  it('propagates dispatcher exceptions (throw, not { success: false })', async () => {
+    // Arrange: dispatcher throws instead of returning a failure result
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-1' } as never);
+    vi.mocked(capabilityDispatcher.dispatch).mockRejectedValue(
+      new Error('Dispatcher internal error')
+    );
+
+    // Act + Assert: the source does not catch dispatcher throws, so it propagates
+    await expect(callMcpTool('search_knowledge', {}, 'user-1')).rejects.toThrow(
+      'Dispatcher internal error'
+    );
   });
 
   it('passes empty object when args is undefined', async () => {

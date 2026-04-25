@@ -89,6 +89,7 @@ describe('getMcpServerConfig', () => {
 
     const result = await getMcpServerConfig();
 
+    // test-review:accept tobe_true — boolean schema field `isEnabled`; structural assertion on config row
     expect(result.isEnabled).toBe(true);
     expect(result.serverName).toBe('Custom MCP');
     expect(result.globalRateLimit).toBe(120);

@@ -27,12 +27,14 @@ describe('listMcpPrompts', () => {
   it('analyze-pattern has a required pattern_number argument', () => {
     const prompt = listMcpPrompts().find((p) => p.name === 'analyze-pattern');
     const arg = prompt?.arguments?.find((a) => a.name === 'pattern_number');
+    // test-review:accept tobe_true — boolean schema field `required`; structural assertion on MCP prompt argument definition
     expect(arg?.required).toBe(true);
   });
 
   it('search-knowledge has a required query argument', () => {
     const prompt = listMcpPrompts().find((p) => p.name === 'search-knowledge');
     const arg = prompt?.arguments?.find((a) => a.name === 'query');
+    // test-review:accept tobe_true — boolean schema field `required`; structural assertion on MCP prompt argument definition
     expect(arg?.required).toBe(true);
   });
 
