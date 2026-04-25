@@ -44,14 +44,14 @@ export function TestingTabs({
         >
           <p className="font-medium">Evaluations</p>
           <p>
-            Test a <em>single agent</em> against a set of prompts. You review and annotate each
+            Run a live chat session with a <em>single agent</em>. You review and annotate each
             response to measure quality and identify issues.
           </p>
           <ul className="mt-1 list-inside list-disc space-y-0.5">
             <li>Check an agent handles key scenarios correctly</li>
             <li>Catch regressions after changing instructions or capabilities</li>
             <li>Build an annotated dataset of good/bad responses</li>
-            <li>Generate improvement suggestions from annotations</li>
+            <li>Generate improvement suggestions from the conversation transcript</li>
           </ul>
 
           <p className="mt-3 font-medium">Experiments</p>

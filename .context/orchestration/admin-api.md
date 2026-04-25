@@ -1186,12 +1186,12 @@ Validated by `createEvaluationSchema`. The route checks the agent exists (any ad
 ```bash
 curl /api/v1/admin/orchestration/evaluations/<id>
 curl -X PATCH /api/v1/admin/orchestration/evaluations/<id> \
-  -d '{ "status": "in_progress", "description": "Expanded to 100 conversations" }'
+  -d '{ "status": "in_progress", "startedAt": "2026-04-25T10:00:00.000Z", "description": "Expanded to 100 conversations" }'
 ```
 
 Both methods run an ownership check via `findFirst({ where: { id, userId: session.user.id } })` and throw `NotFoundError` on miss. PATCH is rate-limited.
 
-**PATCH deliberately cannot set `status='completed'`.** `updateEvaluationSchema.status` is an enum excluding `'completed'` — Zod rejects the value at the boundary. Completion must go through `/complete` so the AI analysis and the status flip happen atomically. The schema also uses a `.refine()` to reject empty update bodies.
+**PATCH deliberately cannot set `status='completed'`.** `updateEvaluationSchema.status` is an enum excluding `'completed'` — Zod rejects the value at the boundary. Completion must go through `/complete` so the AI analysis and the status flip happen atomically. The schema also uses a `.refine()` to reject empty update bodies. PATCH also accepts an optional `startedAt` (ISO 8601 datetime) to record when the evaluation session began.
 
 ### Read evaluation logs
 
@@ -1210,7 +1210,7 @@ curl -X POST /api/v1/admin/orchestration/evaluations/<id>/complete
 **Synchronous POST**, not SSE. Runs in `completeEvaluationSession()` (`lib/orchestration/evaluations/complete-session.ts`):
 
 1. Load the session `{ id, userId }` (include `agent`, `logs`) — missing → `NotFoundError`.
-2. Reject if `status === 'completed'` → `ConflictError`.
+2. Reject if `status === 'completed'` or `status === 'archived'` → `ConflictError`.
 3. Reject if `logs.length === 0` → `ValidationError('evaluation_has_no_logs')`.
 4. Fetch up to **50** logs (`MAX_LOGS_IN_PROMPT`), ordered by `sequenceNumber` ascending. The cap bounds the analysis prompt; longer sessions are summarised from the first 50 events.
 5. Resolve the provider via `getProvider(session.agent.provider)`. If the agent has been deleted (`session.agentId === null`), fall back to `process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic'` with `EVALUATION_DEFAULT_MODEL ?? 'claude-sonnet-4-6'`.

@@ -66,8 +66,12 @@ export async function completeEvaluationSession(
     throw new NotFoundError('Evaluation session not found');
   }
 
-  if (session.status === 'completed') {
-    throw new ConflictError('Evaluation session is already completed');
+  if (session.status === 'completed' || session.status === 'archived') {
+    throw new ConflictError(
+      session.status === 'completed'
+        ? 'Evaluation session is already completed'
+        : 'Cannot complete an archived evaluation session'
+    );
   }
 
   const logs = await prisma.aiEvaluationLog.findMany({

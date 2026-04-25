@@ -74,6 +74,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.title !== undefined) data.title = body.title;
   if (body.description !== undefined) data.description = body.description;
   if (body.status !== undefined) data.status = body.status;
+  if (body.startedAt !== undefined) data.startedAt = new Date(body.startedAt);
   if (body.metadata !== undefined) {
     data.metadata = body.metadata as Prisma.InputJsonValue;
   }
