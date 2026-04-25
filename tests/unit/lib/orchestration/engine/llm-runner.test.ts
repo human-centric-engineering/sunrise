@@ -216,6 +216,7 @@ describe('runLlmCall', () => {
 
     // Allow the micro-task queue to flush so the .catch() handler runs
     await vi.waitFor(() => {
+      // test-review:accept no_arg_called — verifying fire-and-forget side-effect fired, not its payload shape
       expect(logCost).toHaveBeenCalled();
     });
   });

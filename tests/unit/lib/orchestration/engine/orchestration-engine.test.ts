@@ -143,8 +143,18 @@ describe('OrchestrationEngine', () => {
     expect(types.filter((t) => t === 'step_started')).toHaveLength(2);
     expect(types.filter((t) => t === 'step_completed')).toHaveLength(2);
 
-    // Checkpoint after each completed step + a final finalize.
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalled();
+    // Checkpoint after each completed step: verify the trace and cost totals
+    // are written on the step-checkpoint call (nac=1 / mp=1 fix).
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'exec_test' },
+        data: expect.objectContaining({
+          executionTrace: expect.any(Array),
+          totalTokensUsed: expect.any(Number),
+          totalCostUsd: expect.any(Number),
+        }),
+      })
+    );
   });
 
   it('accumulates tokens + cost on the terminal event', async () => {
@@ -561,6 +571,91 @@ describe('OrchestrationEngine', () => {
     const types = events.map((e) => e.type);
     // Engine should still complete despite checkpoint failures
     expect(types).toContain('workflow_completed');
+  });
+
+  // ─── BudgetExceeded catch branch in executeSingleStep ────────────
+  // NOTE (source finding): the `if (err instanceof BudgetExceeded)` branch
+  // in executeSingleStep (orchestration-engine.ts ~line 589) is unreachable
+  // when BudgetExceeded is thrown by an executor. runStepWithStrategy wraps
+  // all non-PausedForApproval errors (including BudgetExceeded) into
+  // ExecutorError with code 'executor_threw', so the BudgetExceeded instance
+  // never propagates out of runStepWithStrategy. An existing test
+  // ("BudgetExceeded thrown by executor is wrapped and sanitized…") already
+  // covers the observable behaviour. The todo below tracks the unreachable
+  // branch until the source is updated.
+  it.todo(
+    'BudgetExceeded thrown by executor reaches executeSingleStep BudgetExceeded branch (source fix needed — see source finding)'
+  );
+
+  // ─── finalize() DB failure ────────────────────────────────────────
+
+  it('finalize DB failure is logged but generator still completes cleanly', async () => {
+    // Arrange — all checkpoint updates succeed; only the final finalize update
+    // (which sets status + completedAt) throws. This exercises the catch/log
+    // path in finalize() (source line ~1138).
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
+
+    // The mock impl echoes data for checkpoint calls (those include
+    // executionTrace). When the finalize call arrives (data includes
+    // completedAt), we throw to simulate DB failure.
+    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
+      const { data } = args as { data: Record<string, unknown> };
+      if ('completedAt' in data) throw new Error('finalize DB down');
+      return {};
+    }) as never);
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    // Assert — workflow_completed is still yielded; finalize failure is non-fatal.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+  });
+
+  // ─── pauseForApproval() DB failure ────────────────────────────────
+
+  it('pauseForApproval DB failure is logged but approval_required is still emitted', async () => {
+    // Arrange — the human_approval step triggers PausedForApproval; the DB
+    // update inside pauseForApproval() throws. This exercises the catch/log
+    // path in pauseForApproval() (source line ~1112).
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A' },
+          nextSteps: [{ targetStepId: 'gate' }],
+        },
+        {
+          id: 'gate',
+          name: 'Approval',
+          type: 'human_approval',
+          config: { prompt: 'ok?' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+    registerStepType('llm_call', async () => ({ output: 'pre', tokensUsed: 0, costUsd: 0 }));
+    registerStepType('human_approval', async (step) => {
+      throw new PausedForApproval(step.id, { prompt: 'ok?' });
+    });
+
+    // Make all update calls fail so the pauseForApproval write (which sets
+    // status: 'paused_for_approval') also fails.
+    vi.mocked(prisma.aiWorkflowExecution.update).mockRejectedValue(
+      new Error('pauseForApproval DB down')
+    );
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const types = events.map((e) => e.type);
+
+    // Assert — approval_required is still emitted even though the DB write failed.
+    expect(types).toContain('approval_required');
+    expect(types).not.toContain('workflow_completed');
+    expect(types).not.toContain('workflow_failed');
   });
 
   // ─── MAX_STEPS guard ──────────────────────────────────────────────
