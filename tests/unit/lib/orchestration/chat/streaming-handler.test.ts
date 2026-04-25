@@ -123,6 +123,7 @@ const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard'
 const { scanOutput } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
+const { withAgentBudgetLock } = await import('@/lib/orchestration/llm/budget-mutex');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1605,6 +1606,42 @@ describe('mid-loop budget re-check', () => {
       code: 'budget_exceeded',
     });
     expect(budgetCallCount).toBe(2);
+  });
+
+  it('acquires budget lock for mid-loop re-check (not just initial check)', async () => {
+    // Arrange: budget OK on initial and mid-loop check; tool call triggers mid-loop path
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 5,
+      limit: 100,
+      remaining: 95,
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc1', name: 'search', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 100, outputTokens: 50 } },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 50, outputTokens: 20 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: 'result',
+    });
+
+    // Act
+    vi.mocked(withAgentBudgetLock).mockClear();
+    await collect(streamChat(baseRequest));
+
+    // Assert: lock acquired at least twice — once for initial check, once for mid-loop
+    expect(vi.mocked(withAgentBudgetLock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
 

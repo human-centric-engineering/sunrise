@@ -13,6 +13,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { formatUsd } from '@/lib/utils/format-currency';
 import type { BudgetAlert } from '@/lib/orchestration/llm/cost-reports';
 
 export interface BudgetAlertsBannerProps {
@@ -21,10 +22,6 @@ export interface BudgetAlertsBannerProps {
 
 function formatPercent(utilisation: number): string {
   return `${Math.round(utilisation * 100)}%`;
-}
-
-function formatUsd(value: number): string {
-  return `$${value.toFixed(2)}`;
 }
 
 export function BudgetAlertsBanner({ alerts }: BudgetAlertsBannerProps) {

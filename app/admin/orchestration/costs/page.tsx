@@ -6,7 +6,11 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
-import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import type {
+  BudgetAlert,
+  CostSummary,
+  GlobalCapStatus,
+} from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
 
@@ -46,12 +50,17 @@ async function getCostSummary(): Promise<CostSummary | null> {
   }
 }
 
-async function getBudgetAlerts(): Promise<BudgetAlert[] | null> {
+interface AlertsResponse {
+  alerts: BudgetAlert[];
+  globalCap: GlobalCapStatus;
+}
+
+async function getBudgetAlerts(): Promise<AlertsResponse | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
     if (!res.ok) return null;
-    const body = await parseApiResponse<{ alerts: BudgetAlert[] }>(res);
-    return body.success ? body.data.alerts : null;
+    const body = await parseApiResponse<AlertsResponse>(res);
+    return body.success ? body.data : null;
   } catch (err) {
     logger.error('costs page: failed to load budget alerts', err);
     return null;
@@ -118,7 +127,7 @@ export default async function CostsPage() {
   // is fresh (< 24h); only hits OpenRouter when stale or on cold start.
   await refreshFromOpenRouter();
 
-  const [summary, alerts, perModel, modelsResponse, settings] = await Promise.all([
+  const [summary, alertsResponse, perModel, modelsResponse, settings] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
     getPerModel30Day(),
@@ -160,7 +169,8 @@ export default async function CostsPage() {
 
       <CostsView
         summary={summary}
-        alerts={alerts}
+        alerts={alertsResponse?.alerts ?? null}
+        globalCap={alertsResponse?.globalCap ?? null}
         perModel={perModel}
         models={modelsResponse?.models ?? null}
         settings={settings}

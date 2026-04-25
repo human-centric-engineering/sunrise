@@ -98,9 +98,15 @@ export function hydrateSettings(row: {
     if (typeof val === 'string' && val.length > 0) merged[key] = val;
   }
 
-  const approvalAction = row.approvalDefaultAction as ApprovalDefaultAction | null;
-  const guardMode = row.inputGuardMode as InputGuardMode | null;
-  const outputMode = row.outputGuardMode as OutputGuardMode | null;
+  function isApprovalAction(v: string): v is ApprovalDefaultAction {
+    return VALID_APPROVAL_ACTIONS.has(v as ApprovalDefaultAction);
+  }
+  function isInputGuard(v: string): v is InputGuardMode {
+    return VALID_GUARD_MODES.has(v as InputGuardMode);
+  }
+  function isOutputGuard(v: string): v is OutputGuardMode {
+    return VALID_OUTPUT_GUARD_MODES.has(v as OutputGuardMode);
+  }
 
   return {
     id: row.id,
@@ -111,10 +117,13 @@ export function hydrateSettings(row: {
     lastSeededAt: row.lastSeededAt,
     defaultApprovalTimeoutMs: row.defaultApprovalTimeoutMs,
     approvalDefaultAction:
-      approvalAction && VALID_APPROVAL_ACTIONS.has(approvalAction) ? approvalAction : null,
-    inputGuardMode: guardMode && VALID_GUARD_MODES.has(guardMode) ? guardMode : 'log_only',
+      row.approvalDefaultAction && isApprovalAction(row.approvalDefaultAction)
+        ? row.approvalDefaultAction
+        : null,
+    inputGuardMode:
+      row.inputGuardMode && isInputGuard(row.inputGuardMode) ? row.inputGuardMode : 'log_only',
     outputGuardMode:
-      outputMode && VALID_OUTPUT_GUARD_MODES.has(outputMode) ? outputMode : 'log_only',
+      row.outputGuardMode && isOutputGuard(row.outputGuardMode) ? row.outputGuardMode : 'log_only',
     webhookRetentionDays: row.webhookRetentionDays,
     costLogRetentionDays: row.costLogRetentionDays,
     auditLogRetentionDays: row.auditLogRetentionDays,

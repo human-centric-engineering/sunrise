@@ -96,6 +96,15 @@ export interface BudgetAlert {
   severity: 'warning' | 'critical';
 }
 
+export interface GlobalCapStatus {
+  /** The configured global monthly budget in USD, or null if not set. */
+  cap: number | null;
+  /** Month-to-date spend across all agents. */
+  spent: number;
+  /** True when `spent >= cap`. */
+  exceeded: boolean;
+}
+
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
@@ -320,8 +329,19 @@ export async function getCostSummary(): Promise<CostSummary> {
     .map((g): CostSummaryAgentRow | null => {
       if (!g.agentId) return null;
       const agent = agentById.get(g.agentId);
-      if (!agent) return null;
       const monthSpend = g._sum.totalCostUsd ?? 0;
+      // Orphaned cost logs (agent deleted) still surface so
+      // sum(byAgent) matches totals.month and the admin isn't confused.
+      if (!agent) {
+        return {
+          agentId: g.agentId,
+          name: '(deleted)',
+          slug: '(deleted)',
+          monthSpend,
+          monthlyBudgetUsd: null,
+          utilisation: null,
+        };
+      }
       const budget = agent.monthlyBudgetUsd ?? null;
       return {
         agentId: agent.id,
@@ -428,4 +448,37 @@ export async function getBudgetAlerts(): Promise<BudgetAlert[]> {
   });
 
   return alerts;
+}
+
+// ----------------------------------------------------------------------------
+// getGlobalCapStatus
+// ----------------------------------------------------------------------------
+
+/**
+ * Check whether the global monthly budget cap (from `AiOrchestrationSettings`)
+ * has been exceeded. Returns null cap when no settings row or no cap configured.
+ */
+export async function getGlobalCapStatus(): Promise<GlobalCapStatus> {
+  try {
+    const settings = await prisma.aiOrchestrationSettings.findUnique({
+      where: { slug: 'global' },
+      select: { globalMonthlyBudgetUsd: true },
+    });
+    const cap = settings?.globalMonthlyBudgetUsd ?? null;
+    if (cap === null) return { cap: null, spent: 0, exceeded: false };
+
+    const now = new Date();
+    const monthStart = utcStartOfMonth(now);
+    const agg = await prisma.aiCostLog.aggregate({
+      where: { createdAt: { gte: monthStart } },
+      _sum: { totalCostUsd: true },
+    });
+    const spent = agg._sum.totalCostUsd ?? 0;
+    return { cap, spent, exceeded: spent >= cap };
+  } catch (err) {
+    logger.warn('getGlobalCapStatus: failed, returning safe default', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { cap: null, spent: 0, exceeded: false };
+  }
 }

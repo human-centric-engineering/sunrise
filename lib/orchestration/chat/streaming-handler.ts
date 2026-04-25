@@ -540,8 +540,9 @@ export class StreamingChatHandler {
           });
         }
 
-        // Re-check budget before the next tool-loop iteration
-        const midBudget = await checkBudget(agent.id);
+        // Re-check budget before the next tool-loop iteration (locked to
+        // prevent TOCTOU overruns when concurrent requests hit the same agent).
+        const midBudget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
         if (!midBudget.withinBudget) {
           const limitStr = midBudget.limit !== null ? `$${midBudget.limit.toFixed(2)}` : 'its';
           yield errorEvent(

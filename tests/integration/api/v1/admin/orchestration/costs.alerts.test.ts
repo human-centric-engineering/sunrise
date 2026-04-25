@@ -33,12 +33,13 @@ vi.mock('next/headers', () => ({
 
 vi.mock('@/lib/orchestration/llm/cost-reports', () => ({
   getBudgetAlerts: vi.fn(),
+  getGlobalCapStatus: vi.fn(),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
-import { getBudgetAlerts } from '@/lib/orchestration/llm/cost-reports';
+import { getBudgetAlerts, getGlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/costs/alerts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getGlobalCapStatus).mockResolvedValue({ cap: null, spent: 0, exceeded: false });
   });
 
   describe('Authentication & Authorization', () => {

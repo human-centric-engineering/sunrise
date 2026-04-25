@@ -12,7 +12,7 @@ Admin page at `/admin/orchestration/costs`. Surfaces every spend / budget signal
 ┌─────────────────────────────────────────────────────────────────┐
 │ Summary cards  ·  Today │ Week │ Month │ Projected              │
 ├─────────────────────────────────────────────────────────────────┤
-│ Budget alerts list  (agents ≥ 80% — Adjust / Pause)             │
+│ Budget alerts list  (global cap banner + agents ≥ 80%)           │
 ├─────────────────────────────────────────────────────────────────┤
 │ 30-day trend chart  (stacked Area by tier)                      │
 ├──────────────────────────────┬──────────────────────────────────┤
@@ -40,7 +40,7 @@ The server shell fires six parallel null-safe fetches via `serverFetch()`. Any u
 | Per-agent table        | `GET /costs/summary` (`byAgent[]`)                          | Joined with `monthlyBudgetUsd` server-side             |
 | Per-model table        | `GET /costs/summary` (`byModel[]`) + `GET /models`          | Joined to annotate provider / tier / local badge       |
 | Local vs cloud panel   | `GET /costs/summary.localSavings` + `byModel[]` + `/models` | `localSavings: null` → muted placeholder, never throws |
-| Budget alerts list     | `GET /costs/alerts`                                         | Already sorted by severity + utilisation               |
+| Budget alerts list     | `GET /costs/alerts`                                         | Returns `{ alerts, globalCap }` — sorted by severity   |
 | Configuration form     | `GET /settings` + `GET /models`                             | Singleton upsert-on-read                               |
 
 ## Trend chart — tier synthesis
@@ -73,7 +73,7 @@ The form edits a single `AiOrchestrationSettings` row (`slug: 'global'`, lazily 
 
 A select for each `TaskType`: `routing` / `chat` / `reasoning` / `embeddings`. Saved via `PATCH /settings { defaultModels }`. The route validates every id against the in-memory model registry (via `validateTaskDefaults()` in `model-registry.ts`) and returns a 400 if any id is unknown — admins can't smuggle a typo through.
 
-The values resolve at runtime via `getDefaultModelForTask(task)` in `lib/orchestration/llm/model-registry.ts`, which is called whenever the chat handler needs a model for a task that the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
+The values resolve at runtime via `getDefaultModelForTask(task)` in `lib/orchestration/llm/settings-resolver.ts`, which is called whenever the chat handler needs a model for a task that the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
 
 ### Global monthly budget cap (read-only reference)
 
@@ -93,6 +93,10 @@ Every non-trivial field is wrapped in `<FieldHelp>`. Reference copy (mirror the 
 - **Embeddings model** — "Used by the knowledge-base retrieval pipeline to embed both documents at ingest time and queries at search time. Changing this invalidates existing embeddings — re-index before you expect retrieval to work correctly."
 - **Global cap** — "When set, the streaming chat handler refuses any new turn whose cumulative month-to-date spend across all agents would meet or exceed this value."
 - **Projected month card** — "Extrapolates the current month-to-date spend to the end of the month using a simple per-day run rate."
+
+## Global cap exceeded banner
+
+When the platform-wide monthly budget cap is exceeded, `BudgetAlertsList` renders a prominent red banner at the top of the alerts section showing the current spend vs cap (e.g. "$542.00 of $500.00") with a link to `/admin/orchestration/settings`. This is driven by `globalCap: GlobalCapStatus` returned alongside per-agent alerts from `GET /costs/alerts`. The `GlobalCapStatus` shape is `{ cap: number | null, spent: number, exceeded: boolean }`, produced by `getGlobalCapStatus()` in `cost-reports.ts`.
 
 ## Pause-agent flow
 
@@ -125,30 +129,6 @@ Two `CostSummary`-like types exist, deliberately named differently:
 
 **Pricing source pipeline:** Static fallback map (compiled in) → OpenRouter `/api/v1/models` (24h cache, Zod-validated) → per-provider discovery (marks `available: true`). The cost tracker multiplies actual token counts by these rates.
 
-### Per-model price history chart
-
-Model rows in the pricing table that have historical data show a clock icon and are clickable. Clicking expands a step chart (`ModelPriceHistoryChart`) showing input and output token rates over time.
-
-**Data source:** `https://www.llm-prices.com/historical-v1.json` (Simon Willison's [llm-prices](https://github.com/simonw/llm-prices) project). Free, no auth, Cloudflare Pages hosted.
-
-**Fetcher:** `lib/orchestration/llm/pricing-history.ts`
-
-- 24h in-memory cache (matches OpenRouter cadence)
-- Deduplicates concurrent fetches via inflight promise
-- On failure (network error, timeout, non-200, malformed JSON): returns empty data, never throws
-- Server shell calls `getPricingHistory()` in parallel with other fetches
-- Data is serialised (Map → array) for server→client transfer
-
-**Chart features:**
-
-- Step line chart (input = blue, output = pink) — `type="stepAfter"`
-- Price change summary badges (e.g. "Input: -50%", "Output: -33%") in green/red
-- Date range and period count in footer
-- Attribution link to llm-prices.com
-- "No pricing history available" fallback for models not in the dataset
-
-**Coverage:** ~14 vendors (Anthropic, OpenAI, Google, DeepSeek, Mistral, xAI, etc.), 129 entries, data from early 2025 onwards.
-
 **OpenRouter refresh on page load:** The costs page calls `refreshFromOpenRouter()` before rendering, ensuring current-rate data is never more than 24h stale (no-op when cache is warm).
 
 ## Cost methodology panel
@@ -174,5 +154,5 @@ The badge format is `$low–$high/run` and includes a tooltip explaining the met
 - [`.context/admin/provider-form.md`](./provider-form.md) — where API keys live
 - [`.context/admin/workflow-builder.md`](./workflow-builder.md) — template banner, cost indicator
 - [`.context/orchestration/admin-api.md`](../orchestration/admin-api.md) — `/settings`, `/costs`, `/costs/summary`, `/costs/alerts`
-- [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md) — `getDefaultModelForTask` resolver
+- [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md) — `getDefaultModelForTask` in `settings-resolver.ts`
 - [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md) — consumer HTTP reference

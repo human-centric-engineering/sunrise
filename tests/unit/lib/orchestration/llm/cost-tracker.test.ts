@@ -413,6 +413,124 @@ describe('getMonthToDateGlobalSpend', () => {
   });
 });
 
+describe('logCost — optional field branches', () => {
+  it('includes conversationId when provided', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+      conversationId: 'conv-1',
+    });
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.conversationId).toBe('conv-1');
+  });
+
+  it('includes workflowExecutionId when provided', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'tool_call',
+      workflowExecutionId: 'wf-exec-1',
+    });
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.workflowExecutionId).toBe('wf-exec-1');
+  });
+
+  it('includes metadata when provided', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    const meta = { traceId: 'abc', retryCount: 2 };
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+      metadata: meta,
+    });
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.metadata).toEqual(meta);
+  });
+
+  it('respects explicit isLocal override (true for non-local model)', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+      isLocal: true,
+    });
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // test-review:accept tobe_true — structural assertion on isLocal override
+    expect(call.data.isLocal).toBe(true);
+  });
+
+  it('omits optional fields from data when not provided', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+    });
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('agentId');
+    expect(call.data).not.toHaveProperty('conversationId');
+    expect(call.data).not.toHaveProperty('workflowExecutionId');
+    expect(call.data).not.toHaveProperty('metadata');
+  });
+});
+
+describe('getAgentCosts — date range branches', () => {
+  it('passes from-only date range filter', async () => {
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const from = new Date('2026-04-01T00:00:00Z');
+
+    await getAgentCosts('agent-1', { from });
+
+    const call = (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.where.createdAt).toEqual({ gte: from });
+  });
+
+  it('passes to-only date range filter', async () => {
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const to = new Date('2026-04-30T00:00:00Z');
+
+    await getAgentCosts('agent-1', { to });
+
+    const call = (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.where.createdAt).toEqual({ lt: to });
+  });
+
+  it('passes both from and to date range filters', async () => {
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const from = new Date('2026-04-01T00:00:00Z');
+    const to = new Date('2026-04-30T00:00:00Z');
+
+    await getAgentCosts('agent-1', { from, to });
+
+    const call = (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.where.createdAt).toEqual({ gte: from, lt: to });
+  });
+
+  it('omits createdAt filter when no dateRange is provided', async () => {
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await getAgentCosts('agent-1');
+
+    const call = (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.where).toEqual({ agentId: 'agent-1' });
+  });
+});
+
 describe('calculateLocalSavings', () => {
   it('returns zero savings when no local rows exist in the window', async () => {
     // Arrange: DB returns empty list for local rows

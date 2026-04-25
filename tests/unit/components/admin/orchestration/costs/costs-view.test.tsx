@@ -179,7 +179,14 @@ describe('CostsView', () => {
   describe('null props (empty state)', () => {
     it('renders all six sub-sections without crashing when all props are null', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
 
       expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
@@ -193,7 +200,14 @@ describe('CostsView', () => {
 
     it('passes null summary to CostSummaryCards', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
       expect(screen.getByTestId('cost-summary-cards')).toHaveAttribute('data-has-summary', 'false');
     });
@@ -205,6 +219,7 @@ describe('CostsView', () => {
         <CostsView
           summary={MOCK_SUMMARY}
           alerts={[]}
+          globalCap={null}
           perModel={PER_MODEL}
           models={MOCK_MODELS}
           settings={MOCK_SETTINGS}
@@ -281,14 +296,28 @@ describe('CostsView', () => {
   describe('null summary.trend fallback', () => {
     it('passes null trend to CostTrendChart when summary is null', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
       expect(screen.getByTestId('cost-trend-chart')).toHaveAttribute('data-has-trend', 'false');
     });
 
     it('passes null byAgent to PerAgentCostTable when summary is null', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
       expect(screen.getByTestId('per-agent-cost-table')).toHaveAttribute('data-has-rows', 'false');
     });
@@ -297,14 +326,28 @@ describe('CostsView', () => {
   describe('pricing reference and methodology sections', () => {
     it('renders PricingReference component', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
       expect(screen.getByTestId('pricing-reference')).toBeInTheDocument();
     });
 
     it('renders CostMethodology component', () => {
       render(
-        <CostsView summary={null} alerts={null} perModel={null} models={null} settings={null} />
+        <CostsView
+          summary={null}
+          alerts={null}
+          globalCap={null}
+          perModel={null}
+          models={null}
+          settings={null}
+        />
       );
       expect(screen.getByTestId('cost-methodology')).toBeInTheDocument();
     });
@@ -314,6 +357,7 @@ describe('CostsView', () => {
         <CostsView
           summary={null}
           alerts={null}
+          globalCap={null}
           perModel={null}
           models={MOCK_MODELS}
           settings={null}

@@ -27,10 +27,11 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
 import { cn } from '@/lib/utils';
-import type { BudgetAlert } from '@/lib/orchestration/llm/cost-reports';
+import type { BudgetAlert, GlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
 
 export interface BudgetAlertsListProps {
   alerts: BudgetAlert[] | null;
+  globalCap?: GlobalCapStatus | null;
 }
 
 interface RowState {
@@ -39,10 +40,13 @@ interface RowState {
   error: string | null;
 }
 
-export function BudgetAlertsList({ alerts }: BudgetAlertsListProps) {
+export function BudgetAlertsList({ alerts, globalCap }: BudgetAlertsListProps) {
   const [state, setState] = React.useState<Record<string, RowState>>({});
 
-  if (!alerts || alerts.length === 0) {
+  const hasAgentAlerts = alerts && alerts.length > 0;
+  const hasGlobalCapAlert = globalCap?.exceeded === true;
+
+  if (!hasAgentAlerts && !hasGlobalCapAlert) {
     return (
       <Card data-testid="budget-alerts-list">
         <CardHeader>
@@ -58,10 +62,6 @@ export function BudgetAlertsList({ alerts }: BudgetAlertsListProps) {
   }
 
   const handlePause = async (agentId: string) => {
-    setState((prev) => ({
-      ...prev,
-      [agentId]: { pausing: true, paused: !!prev[agentId]?.paused, error: null },
-    }));
     // Optimistic: mark paused immediately.
     setState((prev) => ({
       ...prev,
@@ -86,6 +86,8 @@ export function BudgetAlertsList({ alerts }: BudgetAlertsListProps) {
     }
   };
 
+  const alertCount = (alerts?.length ?? 0) + (hasGlobalCapAlert ? 1 : 0);
+
   return (
     <Card data-testid="budget-alerts-list">
       <CardHeader>
@@ -94,12 +96,35 @@ export function BudgetAlertsList({ alerts }: BudgetAlertsListProps) {
             className="h-4 w-4 text-amber-600 dark:text-amber-400"
             aria-hidden="true"
           />
-          Budget alerts ({alerts.length})
+          Budget alerts ({alertCount})
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {hasGlobalCapAlert && globalCap && (
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm dark:border-red-800 dark:bg-red-950/30">
+            <AlertCircle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+            <div>
+              <p className="font-medium text-red-700 dark:text-red-300">
+                Global monthly budget exceeded
+              </p>
+              <p className="text-muted-foreground text-xs">
+                Combined spend of <Usd value={globalCap.spent} /> has reached the{' '}
+                <Usd value={globalCap.cap} /> global cap. All agent chat is blocked until the cap is
+                raised or the month resets.{' '}
+                <a href="/admin/orchestration/settings" className="text-primary underline">
+                  Adjust cap
+                </a>
+              </p>
+            </div>
+            <Badge variant="destructive" className="ml-auto shrink-0">
+              {globalCap.cap && globalCap.cap > 0
+                ? `${Math.round((globalCap.spent / globalCap.cap) * 100)}%`
+                : 'Exceeded'}
+            </Badge>
+          </div>
+        )}
         <ul className="divide-y text-sm">
-          {alerts.map((alert) => {
+          {(alerts ?? []).map((alert) => {
             const rowState = state[alert.agentId] ?? {
               pausing: false,
               paused: false,

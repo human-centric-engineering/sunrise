@@ -231,11 +231,23 @@ describe('OrchestrationSettingsForm', () => {
     });
   });
 
-  describe('null settings — renders empty form', () => {
+  describe('null settings — renders empty form with warning', () => {
     it('renders "No global cap set" when settings is null', () => {
       render(<OrchestrationSettingsForm settings={null} models={MOCK_MODELS} />);
 
       expect(screen.getByText(/no global cap set/i)).toBeInTheDocument();
+    });
+
+    it('shows amber warning banner when settings is null', () => {
+      render(<OrchestrationSettingsForm settings={null} models={MOCK_MODELS} />);
+
+      expect(screen.getByText(/settings could not be loaded/i)).toBeInTheDocument();
+    });
+
+    it('does not show warning banner when settings is provided', () => {
+      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+
+      expect(screen.queryByText(/settings could not be loaded/i)).not.toBeInTheDocument();
     });
   });
 });

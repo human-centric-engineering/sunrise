@@ -331,13 +331,14 @@ describe('getCostSummary', () => {
     expect(summary.byModel[0]).toMatchObject({ model: 'claude-sonnet-4-6', monthSpend: 0 });
   });
 
-  it('treats missing _sum.totalCostUsd as zero and excludes deleted agents', async () => {
+  it('treats missing _sum.totalCostUsd as zero and surfaces orphaned agents', async () => {
     mockedAggregate
       .mockResolvedValueOnce({ _sum: { totalCostUsd: null } })
       .mockResolvedValueOnce({ _sum: { totalCostUsd: null } })
       .mockResolvedValueOnce({ _sum: { totalCostUsd: null } });
 
-    // One row with a null agentId (shouldn't happen due to where clause but we defend).
+    // One row with a null agentId (shouldn't happen due to where clause but we defend),
+    // and one with an agent that no longer exists ('ghost').
     mockedGroupBy
       .mockResolvedValueOnce([
         { agentId: null, _sum: { totalCostUsd: 4 } },
@@ -346,13 +347,22 @@ describe('getCostSummary', () => {
       .mockResolvedValueOnce([]);
 
     mockedRaw.mockResolvedValueOnce([]);
-    // 'ghost' isn't in the agents lookup, so it drops out.
+    // 'ghost' isn't in the agents lookup — surfaces as (deleted).
     mockedAgentFind.mockResolvedValueOnce([]);
 
     const summary = await getCostSummary();
 
     expect(summary.totals).toEqual({ today: 0, week: 0, month: 0 });
-    expect(summary.byAgent).toEqual([]);
+    // Orphaned agent rows surface as (deleted) so sum(byAgent) matches totals.month
+    expect(summary.byAgent).toHaveLength(1);
+    expect(summary.byAgent[0]).toMatchObject({
+      agentId: 'ghost',
+      name: '(deleted)',
+      slug: '(deleted)',
+      monthSpend: 9,
+      monthlyBudgetUsd: null,
+      utilisation: null,
+    });
     expect(summary.byModel).toEqual([]);
     expect(summary.trend).toEqual([]);
   });

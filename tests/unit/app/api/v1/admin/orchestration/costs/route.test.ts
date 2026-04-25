@@ -1,9 +1,9 @@
 /**
- * Tests: Budget Alerts Route
+ * Tests: Cost Breakdown Route
  *
- * GET /api/v1/admin/orchestration/costs/alerts
+ * GET /api/v1/admin/orchestration/costs
  *
- * @see app/api/v1/admin/orchestration/costs/alerts/route.ts
+ * @see app/api/v1/admin/orchestration/costs/route.ts
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -44,52 +44,62 @@ vi.mock('@/lib/api/context', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/cost-reports', () => ({
-  getBudgetAlerts: vi.fn(),
-  getGlobalCapStatus: vi.fn(),
+  getCostBreakdown: vi.fn(),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { adminLimiter } from '@/lib/security/rate-limit';
-import { getBudgetAlerts, getGlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
+import { getCostBreakdown } from '@/lib/orchestration/llm/cost-reports';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { GET } from '@/app/api/v1/admin/orchestration/costs/alerts/route';
+import { GET } from '@/app/api/v1/admin/orchestration/costs/route';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeRequest(): NextRequest {
-  return new NextRequest('http://localhost:3000/api/v1/admin/orchestration/costs/alerts', {
-    method: 'GET',
-  });
+function makeRequest(params?: Record<string, string>): NextRequest {
+  const url = new URL('http://localhost:3000/api/v1/admin/orchestration/costs');
+  if (params) {
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  }
+  return new NextRequest(url, { method: 'GET' });
 }
+
+const validParams = {
+  dateFrom: '2026-04-01',
+  dateTo: '2026-04-25',
+  groupBy: 'day',
+};
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('GET /api/v1/admin/orchestration/costs/alerts', () => {
+describe('GET /api/v1/admin/orchestration/costs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
-    vi.mocked(getBudgetAlerts).mockResolvedValue([]);
-    vi.mocked(getGlobalCapStatus).mockResolvedValue({ cap: null, spent: 0, exceeded: false });
+    vi.mocked(getCostBreakdown).mockResolvedValue({
+      groupBy: 'day',
+      rows: [],
+      totals: { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 },
+    } as never);
   });
 
   // ── Auth ───────────────────────────────────────────────────────────────
 
   it('returns 401 for unauthenticated requests', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
-    const response = await GET(makeRequest());
+    const response = await GET(makeRequest(validParams));
     expect(response.status).toBe(401);
   });
 
   it('returns 403 for non-admin users', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
-    const response = await GET(makeRequest());
+    const response = await GET(makeRequest(validParams));
     expect(response.status).toBe(403);
   });
 
@@ -102,34 +112,41 @@ describe('GET /api/v1/admin/orchestration/costs/alerts', () => {
       remaining: 0,
       reset: Date.now() + 60_000,
     } as never);
-    const response = await GET(makeRequest());
+    const response = await GET(makeRequest(validParams));
     expect(response.status).toBe(429);
   });
 
   // ── Happy path ────────────────────────────────────────────────────────
 
-  it('returns alerts from getBudgetAlerts', async () => {
-    const mockAlerts = [
-      { agentId: 'a1', agentSlug: 'bot', utilisation: 0.85, severity: 'warning' },
-      { agentId: 'a2', agentSlug: 'bot2', utilisation: 1.1, severity: 'critical' },
-    ];
-    vi.mocked(getBudgetAlerts).mockResolvedValue(mockAlerts as never);
+  it('returns breakdown data for valid query params', async () => {
+    const mockBreakdown = {
+      groupBy: 'day',
+      rows: [{ date: '2026-04-01', totalCostUsd: 12.5 }],
+      totals: { totalCostUsd: 12.5, totalInputTokens: 1000, totalOutputTokens: 500 },
+    };
+    vi.mocked(getCostBreakdown).mockResolvedValue(mockBreakdown as never);
 
-    const response = await GET(makeRequest());
+    const response = await GET(makeRequest(validParams));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.data.alerts).toHaveLength(2);
+    expect(body.data.groupBy).toBe('day');
+    expect(body.data.rows).toHaveLength(1);
   });
 
-  it('returns empty alerts array when no agents are over budget', async () => {
-    vi.mocked(getBudgetAlerts).mockResolvedValue([]);
+  it('passes agentId filter to getCostBreakdown when provided', async () => {
+    await GET(makeRequest({ ...validParams, agentId: 'cmjbv4i3x00003wsloputgwul' }));
 
-    const response = await GET(makeRequest());
-    const body = await response.json();
+    expect(getCostBreakdown).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwul' })
+    );
+  });
 
-    expect(response.status).toBe(200);
-    expect(body.data.alerts).toEqual([]);
+  it('omits agentId from getCostBreakdown params when not provided', async () => {
+    await GET(makeRequest(validParams));
+
+    const call = vi.mocked(getCostBreakdown).mock.calls[0][0];
+    expect(call).not.toHaveProperty('agentId');
   });
 });
