@@ -29,6 +29,7 @@ function makeExecution(overrides: Partial<ExecutionListItem> = {}): ExecutionLis
     status: 'completed',
     totalTokensUsed: 1500,
     totalCostUsd: 0.0042,
+    startedAt: '2026-04-18T10:00:00Z',
     createdAt: '2026-04-18T10:00:00Z',
     completedAt: '2026-04-18T10:00:03Z',
     workflow: { id: 'wf-1', name: 'Test Workflow' },

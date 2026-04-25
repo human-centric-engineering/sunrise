@@ -21,7 +21,7 @@ interface ExecutionDetail {
   totalTokensUsed: number;
   totalCostUsd: number;
   budgetLimitUsd: number | null;
-  currentStep: number | null;
+  currentStep: string | null;
   inputData: unknown;
   outputData: unknown;
   errorMessage: string | null;

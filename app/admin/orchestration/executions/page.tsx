@@ -27,6 +27,7 @@ export interface ExecutionListItem {
   status: string;
   totalTokensUsed: number;
   totalCostUsd: number;
+  startedAt: string | null;
   createdAt: string;
   completedAt: string | null;
   workflow: { id: string; name: string };

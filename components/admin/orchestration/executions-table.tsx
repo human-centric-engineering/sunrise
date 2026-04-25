@@ -123,8 +123,11 @@ export function ExecutionsTable({
   );
 
   function formatDuration(start: string | null, end: string | null): string {
-    if (!start || !end) return '—';
-    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (!start) return '—';
+    const startMs = new Date(start).getTime();
+    const endMs = end ? new Date(end).getTime() : Date.now();
+    if (Number.isNaN(startMs)) return '—';
+    const ms = endMs - startMs;
     if (ms < 1000) return `${ms} ms`;
     return `${(ms / 1000).toFixed(1)}s`;
   }
@@ -240,7 +243,7 @@ export function ExecutionsTable({
                     ${ex.totalCostUsd.toFixed(4)}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {formatDuration(ex.createdAt, ex.completedAt)}
+                    {formatDuration(ex.startedAt, ex.completedAt)}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {formatDate(ex.createdAt)}

@@ -27,7 +27,7 @@ export interface ExecutionInfo {
   totalTokensUsed: number;
   totalCostUsd: number;
   budgetLimitUsd: number | null;
-  currentStep: number | null;
+  currentStep: string | null;
   inputData: unknown;
   outputData: unknown;
   errorMessage: string | null;
@@ -45,10 +45,11 @@ export interface ExecutionDetailViewProps {
 
 const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
   completed: 'default',
-  running: 'secondary',
+  running: 'default',
   pending: 'outline',
   failed: 'destructive',
   paused_for_approval: 'secondary',
+  cancelled: 'outline',
 };
 
 function formatStatus(status: string): string {
@@ -79,6 +80,7 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex w-full items-center gap-2 text-left"
+          aria-expanded={open}
         >
           {open ? (
             <ChevronDown className="text-muted-foreground h-4 w-4" />
