@@ -34,11 +34,13 @@ describe('orchestratorConfigSchema', () => {
       timeoutMs: 60000,
       budgetLimitUsd: 1.5,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts valid minimal config with defaults', () => {
     const result = orchestratorConfigSchema.safeParse(validConfig);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.selectionMode).toBe('auto');
@@ -156,6 +158,7 @@ describe('orchestratorConfigSchema', () => {
       ...validConfig,
       budgetLimitUsd: 0,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 });
@@ -170,6 +173,7 @@ describe('orchestratorPlannerResponseSchema', () => {
         { agentSlug: 'analyst', message: 'Analyze trends' },
       ],
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -179,6 +183,7 @@ describe('orchestratorPlannerResponseSchema', () => {
       finalAnswer: 'The answer is 42.',
       reasoning: 'I had enough data.',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 

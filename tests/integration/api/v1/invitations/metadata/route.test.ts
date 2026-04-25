@@ -143,6 +143,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<SuccessResponse>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'John Doe',
@@ -172,6 +173,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<SuccessResponse>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'Admin User',
@@ -453,6 +455,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       const data = await parseResponse<SuccessResponse>(response);
 
       // Should only return name and role
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'User with Extra Fields',
@@ -477,6 +480,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<SuccessResponse>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'User Plus',
@@ -501,6 +505,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<SuccessResponse>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(getInvitationMetadata).toHaveBeenCalledWith(email, token);
     });

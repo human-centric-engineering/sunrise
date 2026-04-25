@@ -59,6 +59,25 @@ Grades are deterministic given the signature/block counts — see rubric above.
 | tests/unit/lib/auth/client.test.ts                        | unit | Clean  | 0        | hpo=0,mp=0,me=0,tcm=0 | 26         | 6c5d7099686e5cb214d2d7fc59c8dea5a41df612 | 2026-04-18T21:37:20Z | All 3 `tobe_true` matches annotated with `// test-review:accept tobe_true — <rationale>` (isPending x2, emailVerified x1) — legitimate structural assertions on boolean fields. |
 | tests/unit/lib/auth/utils.test.ts                         | unit | Clean  | 0        | hpo=0,mp=0,me=0,tcm=0 | 36         | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T13:30:59Z | Minor→Clean via Path A: tightened no_arg_called (L318 logger.error → toHaveBeenCalledWith with message+error); fixed tcm (L514 test description now accurately describes swallow-then-throw mechanism); 2 tobe_true annotations added (hasRole, isAuthenticated — structural boolean return assertions). |
 
+## app/api/v1/users
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | ---------------------------------------- | -------------------- | ----- |
+| tests/unit/app/api/v1/users/me/avatar/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | Fixed: +1 rate-limit 429 test (me=0), 3 tobe_true annotated. Was Bad (sig=3, me=1). |
+| tests/unit/app/api/v1/users/[id]/route.delete.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | Fixed: removed mock-proving "meta field" test (mp=0), verified tcm "cleanup errors" matches source (tcm=0), 8 tobe_true + 3 no_arg_called annotated. Was Bad (sig=11, mp=1, tcm=1). |
+| tests/unit/app/api/v1/users/[id]/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 35 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | 17 tobe_true annotated. me=5 (DELETE handler) covered by sibling route.delete.test.ts — not a real gap, split-file FP. Was Bad (sig=17, me=5). |
+| tests/integration/api/v1/users/me/preferences.test.ts | integration | Clean | 0 | abm=0,scm=0,dsu=0,erm=0 | 15 | 1e6171a3d74d1b28f3a3da7e66f1c3aa6e8da9c4 | 2026-04-25T17:06:19Z | all sigs structural — annotation-fixable (tobe_true); Sonnet confirmed 0 real sigs, 0 block patterns. |
+| tests/integration/api/v1/users/route.test.ts | integration | Clean | 0 | abm=0,scm=0,dsu=0,erm=0 | 7 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | 1 tobe_true annotated. Was Minor (sig=1). |
+| tests/integration/api/v1/users/me.test.ts | integration | Clean | 0 | abm=0,scm=0,dsu=0,erm=0 | 27 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | Fixed: PATCH email test now verifies prisma.user.update args + updatedAt drift (dsu=0), 7 tobe_true annotated. Was Bad (sig=7, dsu=1). |
+| tests/integration/api/v1/users/[id]/route.test.ts | integration | Clean | 0 | abm=0,scm=0,dsu=0,erm=0 | 20 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | 4 tobe_true annotated. Was Minor (sig=4). |
+
+## app/api/v1/invitations
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | ---------------------------------------- | -------------------- | ----- |
+| tests/unit/app/api/v1/invitations/metadata/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 30 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | 2 tobe_true annotated. Was Minor (sig=2). |
+| tests/integration/api/v1/invitations/metadata/route.test.ts | integration | Clean | 0 | abm=0,scm=0,dsu=0,erm=0 | 17 | 6e4211e5ac9b7e2e44bfbf2ac75d5b682704b4ae | 2026-04-25T17:18:39Z | 5 tobe_true annotated, all structural. Was Bad (sig=5, block=0). |
+
 ## components/analytics
 
 | file                                                       | type | grade | sig_hits | block_patterns        | test_count | last_head                                | last_scanned         | notes                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -289,3 +308,21 @@ Grades are deterministic given the signature/block counts — see rubric above.
 | tests/unit/lib/orchestration/engine/outbound-rate-limiter.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3b155c35b30e7e3397e48dfec3679ccdc003b532 | 2026-04-25T09:52:00Z | Zero-hit file — no regex matches, skipped Sonnet. |
 | tests/unit/lib/orchestration/engine/step-registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 641759acc18e588e48a6b1429715adf9f1706637 | 2026-04-25T09:52:00Z | Zero-hit file — no regex matches, skipped Sonnet. |
 | tests/unit/lib/orchestration/engine/step-timeout.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 3 | 22e223a1c03c7ab965542a492c8b9d47f13a6ae2 | 2026-04-25T09:52:00Z | Zero-hit file — no regex matches, skipped Sonnet. Source: orchestration-engine.ts (split test). |
+
+## lib/validations
+
+Scanned 2026-04-25 on branch `triage/auth-api-routes` at HEAD `905cb1d`.
+
+All 9 files are pure Zod schema validation tests — no imperative code, mocks, side effects, or error handlers in the source. Sonnet block-tier pass skipped (block patterns impossible on declarative schema definitions). All tobe_true hits are structural (`safeParse().success` or boolean schema field defaults) — annotated via Path 0.
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/validations/auth.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 49 | 38da7858b443920f01cea3d28061e9a714cca98a | 2026-04-25T19:41:00Z | 19 tobe_true annotated (Path 0). Source: lib/validations/auth.ts. |
+| tests/unit/lib/validations/send-verification-email.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | 38da7858b443920f01cea3d28061e9a714cca98a | 2026-04-25T19:41:00Z | 11 tobe_true annotated (Path 0). Source: lib/validations/auth.ts (split file). |
+| tests/unit/lib/validations/common.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 101 | 5057595ab0f0a3baa018d85a2fbf7bf3c8bd38da | 2026-04-25T19:41:00Z | 42 tobe_true annotated (Path 0). Source: lib/validations/common.ts. |
+| tests/unit/lib/validations/admin.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 124 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T19:41:00Z | 53 tobe_true annotated (Path 0), incl. 1 `result.data.enabled` boolean field. Source: lib/validations/admin.ts. |
+| tests/unit/lib/validations/user.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 102 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T19:41:00Z | 55 tobe_true annotated (Path 0), incl. 4 boolean field defaults (productUpdates, securityAlerts). Source: lib/validations/user.ts. |
+| tests/unit/lib/validations/orchestration.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 222 | 737416b3a9d2dd05173e7214d93583070aa21d48 | 2026-04-25T19:41:00Z | 96 tobe_true annotated (Path 0), incl. 7 boolean field defaults (isActive, isTemplate, isEnabled). Source: lib/validations/orchestration.ts. |
+| tests/unit/lib/validations/orchestrator-config.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | 737416b3a9d2dd05173e7214d93583070aa21d48 | 2026-04-25T19:41:00Z | 5 tobe_true annotated (Path 0). Source: lib/validations/orchestration.ts (split file). |
+| tests/unit/lib/validations/storage.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 48 | 8e4455de841ec1cdecde94dd3445b315ac9c791f | 2026-04-25T19:41:00Z | 18 tobe_true annotated (Path 0). Source: lib/validations/storage.ts. |
+| tests/unit/lib/validations/mcp.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 113 | 4c44fee963c45ebf98150c7b1b08231071180f73 | 2026-04-25T19:41:00Z | 6 tobe_true annotated (Path 0), incl. 3 compound boolean fields (isEnabled, isActive). Source: lib/validations/mcp.ts. |

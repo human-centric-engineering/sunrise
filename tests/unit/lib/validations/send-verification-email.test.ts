@@ -21,6 +21,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'user@example.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -28,6 +29,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'user@mail.example.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -35,6 +37,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'user+tag@example.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -42,6 +45,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'user.name-test@example-domain.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -49,6 +53,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'user123@example456.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -58,6 +63,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'USER@EXAMPLE.COM',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.email).toBe('user@example.com');
@@ -68,6 +74,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'UsEr@ExAmPlE.CoM',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.email).toBe('user@example.com');
@@ -116,6 +123,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
         email: '  USER@EXAMPLE.COM  ',
       });
       // Transforms (trim, toLowerCase) are applied before validation
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.email).toBe('user@example.com');
@@ -188,6 +196,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
         extraField: 'should be removed',
         anotherField: 123,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toEqual({ email: 'user@example.com' });
@@ -202,6 +211,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
         email: 'user@example.com',
       };
       const result = sendVerificationEmailSchema.safeParse(input);
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         const email: string = result.data.email;
@@ -223,6 +233,7 @@ describe('lib/validations/auth - sendVerificationEmailSchema', () => {
       const result = sendVerificationEmailSchema.safeParse({
         email: 'valid@example.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 

@@ -266,6 +266,7 @@ describe('GET /api/v1/users/:id', () => {
           role: string;
         };
       }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(body.success).toBe(true);
       // Handler-derived fields — these come from the DB fixture, not the request, proving
       // the handler fetched the row and wrapped it, rather than echoing session data.
@@ -298,6 +299,7 @@ describe('GET /api/v1/users/:id', () => {
         success: boolean;
         data: Record<string, unknown>;
       }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(body.success).toBe(true);
       expect(body.data.id).toBe(TARGET_USER_ID);
       expect(body.data.email).toBe('target@example.com');
@@ -419,6 +421,7 @@ describe('PATCH /api/v1/users/:id', () => {
           success: boolean;
           data: { updatedAt: string; name: string };
         }>(response);
+        // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
         expect(body.success).toBe(true);
         // DB-state readback: updatedAt in the response comes from the update return value,
         // not from the request body — proving the handler actually persisted the change.
@@ -639,6 +642,7 @@ describe('DELETE /api/v1/users/:id', () => {
         success: boolean;
         data: { id: string; deleted: boolean };
       }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(body.success).toBe(true);
       expect(body.data).toEqual({ id: TARGET_USER_ID, deleted: true });
 

@@ -211,6 +211,7 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(userId);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -264,6 +265,7 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(targetUserId);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -353,11 +355,13 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert - Standard fields
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(userId);
       expect(data.data.name).toBe('John Doe');
       expect(data.data.email).toBe('john@example.com');
       expect(data.data.role).toBe('USER');
+      // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
       expect(data.data.emailVerified).toBe(true);
       expect(data.data.image).toBe('https://example.com/avatar.jpg');
 
@@ -403,6 +407,7 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -441,6 +446,7 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.timezone).toBe('UTC');
     });
@@ -476,6 +482,7 @@ describe('GET /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.timezone).toBe('Asia/Tokyo');
       expect(data.data.location).toBe('Tokyo, Japan');
@@ -606,6 +613,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(typeof data.data).toBe('object');
     });
@@ -882,6 +890,7 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('New Name');
       expect(data.data.id).toBe(targetUserId);
@@ -955,6 +964,7 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.role).toBe('ADMIN');
       expect(prisma.user.update).toHaveBeenCalledWith({
@@ -1015,7 +1025,9 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
       expect(data.data.emailVerified).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: targetUserId },
@@ -1078,6 +1090,7 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert — handler must return 200 envelope with emailVerified:false
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.emailVerified).toBe(false);
 
@@ -1145,9 +1158,11 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('New Name');
       expect(data.data.role).toBe('ADMIN');
+      // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
       expect(data.data.emailVerified).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: targetUserId },
@@ -1271,6 +1286,7 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert — 200: self-role-change guard did NOT fire; update proceeded
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledTimes(1);
     });
@@ -1316,6 +1332,7 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Assert — guard did NOT fire; update proceeded and returned 200
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
