@@ -133,6 +133,7 @@ describe('successResponse', () => {
       // Assert
       expect(stringJson.data).toBe('success');
       expect(numberJson.data).toBe(42);
+      // test-review:accept tobe_true — boolean payload value; asserting successResponse wraps the literal true data correctly
       expect(booleanJson.data).toBe(true);
     });
   });
@@ -950,6 +951,7 @@ describe('paginatedResponse', () => {
       const json = (await response.json()) as SuccessResponse;
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on API success envelope field
       expect(json.success).toBe(true);
       expect(json.data).toHaveLength(2);
       expect(json.meta!.totalPages).toBe(8);

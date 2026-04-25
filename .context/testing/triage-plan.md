@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a, 1b, 1c, 1d, 3a, 3b complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a, 3b complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -123,44 +123,60 @@
 ### Step 2a — `lib/api/` (10 test files)
 
 - **Triage:** `/test-triage scan lib/api`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - 10 files scanned: 4 hit, 6 zero-hit
+  - All 10 Clean. Hit files: responses (2 tbt annotated), parse-response (2 tbt annotated, tcm=1 known-bug doc), validation (1 tbt annotated FP), errors (nac=1+mp=1 marginal)
+  - No fixes needed — all findings sub-threshold
 
 ### Step 2b — `lib/errors/` (2 test files)
 
 - **Triage:** `/test-triage scan lib/errors`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - handler.test.ts: mp=1+tcm=1+ctn=1 all sub-threshold. messages.test.ts: zero-hit. Both Clean.
 
 ### Step 2c — `lib/logging/` (2 test files)
 
 - **Triage:** `/test-triage scan lib/logging`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - logger.test.ts: Was Bad (nac=7, hpo=3, mp=7, me=2). Path A: tightened 7 bare toHaveBeenCalled, +6 tests (pushToLogBuffer catch, non-Error types, stack truncation). Source finding: `if(error)` falsy guard. Now Clean (78 tests).
+  - context.test.ts: mp=2 marginal, nac=2 FP. Clean.
 
 ### Step 2d — `lib/db/` (1 test file)
 
 - **Triage:** `/test-triage scan lib/db`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - utils.test.ts: Was Bad (mp=2, tcm=1, ctn=1, tbt=2). Path A: sentinel tx forwarding, renamed "rollback"→"re-throw", toHaveBeenCalledTimes(0), 2 tbt annotated. Now Clean (23 tests).\*\*
 
 ### Step 2e — `lib/utils/` (6 test files)
 
 - **Triage:** `/test-triage scan lib/utils`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - invitation-token.test.ts: Was Bad (hpo=1, mp=1, me=2, tcm=1). Path A: +9 tests (invalid metadata path, getAllPendingInvitations full suite), tightened create args, 3 tbt annotated. tcm=1 was Sonnet misread (source does use 3 args). Now Clean (57 tests).
+  - timezones.test.ts: 1 tbt annotated (Array.some boolean). Clean.
+  - 4 zero-hit files: password-strength, initials, get-all-pending-invitations, format-currency. All Clean.
 
 ### Step 2f — `lib/hooks/` (4 test files)
 
 - **Triage:** `/test-triage scan lib/hooks`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - use-wizard.test.tsx: Was Bad (me=1, tbt=2). +1 test for totalSteps=0 clamp, 2 tbt annotated. Now Clean (7 tests).
+  - use-local-storage.test.tsx: ent=1 intentional, nac=2 FP. Clean.
+  - use-tracked-url-tabs.test.ts: mp=1+tcm=1+ctn=1 sub-threshold. Clean.
+  - use-url-tabs.test.ts: tcm=1+ctn=1 sub-threshold. Clean.
 
 ### Step 2g — `lib/constants/` + `lib/feature-flags/` (2 test files)
 
 - **Triage:** `/test-triage scan lib/constants` then `/test-triage scan lib/feature-flags`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - knowledge.test.ts: zero-hit. Clean.
+  - feature-flags/index.test.ts: tbt=1 FP, mp=1+me=1+ctn=1 sub-threshold. Clean.
 
 ---
 
@@ -434,13 +450,13 @@ Update this table after completing each step.
 | 1b   | lib/auth                         | 9     | 9C (was 1R, 2B, 2M, 4C)   | DONE (98.6%)  | DONE        |
 | 1c   | Auth API routes                  | 9     | 9C (was 4B, 3M, 2C)       | No            | DONE        |
 | 1d   | lib/validations                  | 9     | 9C (Path 0 only, 305 ann) | No            | DONE        |
-| 2a   | lib/api                          | 10    |                           | No            | NOT STARTED |
-| 2b   | lib/errors                       | 2     |                           | No            | NOT STARTED |
-| 2c   | lib/logging                      | 2     |                           | No            | NOT STARTED |
-| 2d   | lib/db                           | 1     |                           | No            | NOT STARTED |
-| 2e   | lib/utils                        | 6     |                           | No            | NOT STARTED |
-| 2f   | lib/hooks                        | 4     |                           | No            | NOT STARTED |
-| 2g   | lib/constants + feature-flags    | 2     |                           | No            | NOT STARTED |
+| 2a   | lib/api                          | 10    | 10C (4 annotated, 6 zero) | No            | DONE        |
+| 2b   | lib/errors                       | 2     | 2C (sub-threshold)        | No            | DONE        |
+| 2c   | lib/logging                      | 2     | 2C (was 1B, 1C)           | No            | DONE        |
+| 2d   | lib/db                           | 1     | 1C (was 1B)               | No            | DONE        |
+| 2e   | lib/utils                        | 6     | 6C (was 1B, 1M, 4C)       | No            | DONE        |
+| 2f   | lib/hooks                        | 4     | 4C (was 1B, 3C)           | No            | DONE        |
+| 2g   | lib/constants + feature-flags    | 2     | 2C (sub-threshold)        | No            | DONE        |
 | 3a   | orchestration/engine             | 25    | 25C (was 1R, 2M, 22C)     | YES (pending) | DONE        |
 | 3b   | orchestration/llm                | 20    | 20C (was 2R, 3B, 4M, 11C) | No            | DONE        |
 | 3c   | orchestration/mcp                | 13    |                           | No            | NOT STARTED |

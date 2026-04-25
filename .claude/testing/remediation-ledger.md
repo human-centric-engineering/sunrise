@@ -326,3 +326,67 @@ All 9 files are pure Zod schema validation tests — no imperative code, mocks, 
 | tests/unit/lib/validations/orchestrator-config.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | 737416b3a9d2dd05173e7214d93583070aa21d48 | 2026-04-25T19:41:00Z | 5 tobe_true annotated (Path 0). Source: lib/validations/orchestration.ts (split file). |
 | tests/unit/lib/validations/storage.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 48 | 8e4455de841ec1cdecde94dd3445b315ac9c791f | 2026-04-25T19:41:00Z | 18 tobe_true annotated (Path 0). Source: lib/validations/storage.ts. |
 | tests/unit/lib/validations/mcp.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 113 | 4c44fee963c45ebf98150c7b1b08231071180f73 | 2026-04-25T19:41:00Z | 6 tobe_true annotated (Path 0), incl. 3 compound boolean fields (isEnabled, isActive). Source: lib/validations/mcp.ts. |
+
+## lib/api
+
+Scanned 2026-04-25 on branch `triage/phase-2-core-infra` at HEAD `4ef4fd5`.
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/api/responses.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 59 | df15eac1bad7c53ea13737a4058ab17efc85a132 | 2026-04-25T21:00:00Z | 2 tobe_true annotated (Path 0). |
+| tests/unit/lib/api/validation.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 48 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | 1 tobe_true annotated (FP — boolean field `active`). |
+| tests/unit/lib/api/parse-response.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=1 | 39 | f0a9d3325c12c68471cf4d2925759f21c0cf5024 | 2026-04-25T21:00:00Z | 2 tobe_true annotated. Sonnet: tcm=1 "array error quirk" test documents known bug as passing — low risk. |
+| tests/unit/lib/api/errors.test.ts | unit | Clean | 0 | hpo=0,mp=1,me=0,tcm=0 | 71 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Sonnet: 1 nac (logger.error called check) + mp=1 (same test) — marginal, overall suite is thorough. |
+| tests/unit/lib/api/client.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 50 | 5057595ab0f0a3baa018d85a2fbf7bf3c8bd38da | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/api/server-fetch.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/api/sse.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 5c6b4690a15599f2e02f2be71d803954005dc078 | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/api/sse-parser.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | e5e9b531ed8567a44d5c770e4c7e6a870d82a1b6 | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/api/etag.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 01ecf97562556ae8504930930738f636b36c6c4b | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/api/endpoints.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 149 | 03c1a5e512a9cea6a601c20cd3d779119c1a13eb | 2026-04-25T21:00:00Z | Zero-hit file. |
+
+## lib/errors
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/errors/handler.test.ts | unit | Clean | 0 | hpo=0,mp=1,me=0,tcm=1 | 67 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Sonnet: mp=1 dedup test trivially true, tcm=1 errorType overwrite. ctn=1 in beforeEach. Low density — Clean. |
+| tests/unit/lib/errors/messages.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 84 | 590bfc7f78e58ab009b3f8f9aa42e5a9829477e7 | 2026-04-25T21:00:00Z | Zero-hit file. |
+
+## lib/logging
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/logging/context.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 36 | 9accdbfa653abe7ffcddc4722c17d3a921087152 | 2026-04-25T21:00:00Z | Sonnet: 2 nac FP (gate assertions before content checks), mp=2 marginal. Path 0 not needed (no tbt). |
+| tests/unit/lib/logging/logger.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 78 | 5057595ab0f0a3baa018d85a2fbf7bf3c8bd38da | 2026-04-25T21:00:00Z | Was Bad (nac=7, hpo=3, mp=7, me=2). Path A: tightened 7 bare toHaveBeenCalled to toHaveBeenCalledWith, +6 tests (pushToLogBuffer catch, non-Error types, stack truncation). Source finding: `if(error)` falsy guard swallows `false`/`0`. |
+
+## lib/db
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/db/utils.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Was Bad (mp=2, tcm=1, ctn=1, tbt=2). Path A: mp fixed with sentinel tx forwarding, tcm renamed "rollback"→"re-throw", ctn fixed with toHaveBeenCalledTimes(0), 2 tbt annotated. |
+
+## lib/utils
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/utils/invitation-token.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 57 | e5e7e48c492aa7ba290d5402f2aaf02da4fad63c | 2026-04-25T21:00:00Z | Was Bad (hpo=1, mp=1, me=2, tcm=1). Path A: +9 tests (invalid metadata, getAllPendingInvitations suite), tightened create arg assertion, tcm Sonnet misread (source uses 3 args — no change needed), 3 tbt annotated. |
+| tests/unit/lib/utils/timezones.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 66 | bb2888e4e266cb73afb8102b03a60e10d3fca534 | 2026-04-25T21:00:00Z | 1 tobe_true annotated (Array.some boolean result). |
+| tests/unit/lib/utils/password-strength.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 44 | df15eac1bad7c53ea13737a4058ab17efc85a132 | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/utils/initials.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 44 | 8e4455de841ec1cdecde94dd3445b315ac9c791f | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/utils/get-all-pending-invitations.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | e5e7e48c492aa7ba290d5402f2aaf02da4fad63c | 2026-04-25T21:00:00Z | Zero-hit file. Source: lib/utils/invitation-token.ts (split file). |
+| tests/unit/lib/utils/format-currency.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | d47f378eb16e60d96bad37d57f192854c46fa082 | 2026-04-25T21:00:00Z | Zero-hit file. |
+
+## lib/hooks
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/hooks/use-local-storage.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 55555df5aa5e738179e71328b62521296132063f | 2026-04-25T21:00:00Z | Sonnet: ent=1 intentional (swallow-error contract), nac=2 FP. All error paths exercised. |
+| tests/unit/lib/hooks/use-wizard.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 55555df5aa5e738179e71328b62521296132063f | 2026-04-25T21:00:00Z | Was Bad (me=1, tbt=2). +1 test for totalSteps=0 clamp path, 2 tbt annotated. |
+| tests/unit/lib/hooks/use-tracked-url-tabs.test.ts | unit | Clean | 0 | hpo=0,mp=1,me=0,tcm=1 | 24 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Sonnet: mp=1 previousTab ref test, tcm=1 isActive helper. ctn=1. Low density — Clean. |
+| tests/unit/lib/hooks/use-url-tabs.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=1 | 19 | bb2888e4e266cb73afb8102b03a60e10d3fca534 | 2026-04-25T21:00:00Z | Sonnet: tcm=1 minor framing issue. ctn=1. Low density — Clean. |
+
+## lib/constants + lib/feature-flags
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/constants/knowledge.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 12afced3bbaf6e365beb188bf49b0f0703642342 | 2026-04-25T21:00:00Z | Zero-hit file. |
+| tests/unit/lib/feature-flags/index.test.ts | unit | Clean | 0 | hpo=0,mp=1,me=1,tcm=0 | 27 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Sonnet: tbt=1 FP (function return value), mp=1 seedDefaultFlags skip test, me=1 no DB failure test. ctn=1. Low density — Clean. |

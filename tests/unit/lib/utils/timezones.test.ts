@@ -618,6 +618,7 @@ describe('integration tests', () => {
       // Validate it exists in grouped timezones
       const grouped = getTimezonesByRegion();
       const inRegion = grouped[timezone!.region].some((tz) => tz.value === userSelection);
+      // test-review:accept tobe_true — boolean result of Array.some(); asserting timezone exists in its grouped region
       expect(inRegion).toBe(true);
     });
 
