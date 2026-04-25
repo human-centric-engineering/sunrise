@@ -121,7 +121,7 @@ export function PerAgentCostTable({ rows }: PerAgentCostTableProps) {
                   </Tip>
                 </TableHead>
                 <TableHead>
-                  <Tip label="Percentage of monthly budget spent — green ≤ 50%, amber 50–80%, red > 80%">
+                  <Tip label="Percentage of monthly budget spent — green up to 50%, amber 51–80%, red above 80%">
                     <button
                       type="button"
                       className="font-medium hover:underline"
