@@ -45,13 +45,14 @@ vi.mock('@/lib/api/context', () => ({
 
 vi.mock('@/lib/orchestration/llm/cost-reports', () => ({
   getBudgetAlerts: vi.fn(),
+  getGlobalCapStatus: vi.fn(),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { adminLimiter } from '@/lib/security/rate-limit';
-import { getBudgetAlerts } from '@/lib/orchestration/llm/cost-reports';
+import { getBudgetAlerts, getGlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -75,6 +76,7 @@ describe('GET /api/v1/admin/orchestration/costs/alerts', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
     vi.mocked(getBudgetAlerts).mockResolvedValue([]);
+    vi.mocked(getGlobalCapStatus).mockResolvedValue({ cap: null, spent: 0, exceeded: false });
   });
 
   // ── Auth ───────────────────────────────────────────────────────────────
