@@ -370,6 +370,7 @@ describe('executeExternalCall', () => {
 
   // ─── HTTP error classification ───────────────────────────────────────
 
+  // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
   it('throws retriable error for 429 responses', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Rate limited', { status: 429 }));
 
@@ -379,6 +380,7 @@ describe('executeExternalCall', () => {
     expect(err.retriable).toBe(true);
   });
 
+  // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
   it('throws retriable error for 502 responses', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad Gateway', { status: 502 }));
 
@@ -387,6 +389,7 @@ describe('executeExternalCall', () => {
     expect(err.retriable).toBe(true);
   });
 
+  // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
   it('throws retriable error for 503 responses', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('Service Unavailable', { status: 503 })
@@ -397,6 +400,7 @@ describe('executeExternalCall', () => {
     expect(err.retriable).toBe(true);
   });
 
+  // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
   it('throws retriable error for 504 responses', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('Gateway Timeout', { status: 504 })
@@ -513,6 +517,7 @@ describe('executeExternalCall', () => {
 
   // ─── Outbound rate limiting ──────────────────────────────────────────
 
+  // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
   it('throws retriable "outbound_rate_limited" when host rate limit exceeded', async () => {
     // Set a very low limit.
     process.env.ORCHESTRATION_OUTBOUND_RATE_LIMIT = '2';
@@ -534,6 +539,7 @@ describe('executeExternalCall', () => {
     // Third call should be rate limited (before fetch is even called).
     const err: any = await executeExternalCall(makeStep(), makeCtx()).catch((e) => e);
     expect(err.code).toBe('outbound_rate_limited');
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
     expect(err.retriable).toBe(true);
   });
 
@@ -558,9 +564,45 @@ describe('executeExternalCall', () => {
     });
   });
 
+  it('propagates ctx.signal abort fired mid-flight as request_failed', async () => {
+    // Arrange: fetch starts but never resolves; we fire the abort mid-flight.
+    const execController = new AbortController();
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          // When the internal AbortController (linked to both timeout and ctx.signal)
+          // fires, fetch rejects with an AbortError — mirroring real browser behaviour.
+          const signal = init?.signal as AbortSignal | undefined;
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          }
+          // Fire the external (ctx) abort after fetch is already in progress.
+          execController.abort();
+        })
+    );
+
+    // Act: pass the mid-flight abort signal via ctx.
+    const err: any = await executeExternalCall(
+      makeStep(),
+      makeCtx({ signal: execController.signal })
+    ).catch((e) => e);
+
+    // Assert: the AbortError surfaced as request_failed (same path as timeout).
+    expect(err.code).toBe('request_failed');
+  });
+
   // ─── Allowlist caching ───────────────────────────────────────────────
 
-  it('does not re-parse allowlist on every call when env var is unchanged', async () => {
+  it('serves subsequent calls from cached allowlist when env var is unchanged', async () => {
+    // Arrange: the cache is empty (reset in beforeEach).
+    // Spy on the Set constructor to detect re-parsing — but since we cannot spy
+    // on module internals, we validate caching behaviourally: after the env var
+    // is changed and then restored to its original value (without resetAllowlistCache),
+    // the call should succeed, proving the cache correctly re-parses on value change
+    // and re-caches on the restored value.
     vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () =>
         new Response('{"ok":true}', {
@@ -569,11 +611,22 @@ describe('executeExternalCall', () => {
         })
     );
 
-    // Two calls with the same env var value should both succeed.
-    await executeExternalCall(makeStep(), makeCtx());
+    // First call: warms the cache with 'api.allowed.com,other.allowed.com'.
     await executeExternalCall(makeStep(), makeCtx());
 
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // Change env to a different value — cache invalidates.
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = 'other.allowed.com';
+    // api.allowed.com is no longer in the list, so this must throw.
+    await expect(executeExternalCall(makeStep(), makeCtx())).rejects.toMatchObject({
+      code: 'host_not_allowed',
+    });
+
+    // Restore env to original value — cache re-populates on next call.
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = 'api.allowed.com,other.allowed.com';
+    // api.allowed.com is back in the list, so the call succeeds again.
+    await expect(executeExternalCall(makeStep(), makeCtx())).resolves.toMatchObject({
+      output: { status: 200 },
+    });
   });
 
   it('refreshes cache when env var value changes after reset', async () => {

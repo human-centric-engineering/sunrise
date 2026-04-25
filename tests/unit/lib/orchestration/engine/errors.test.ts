@@ -50,6 +50,7 @@ describe('ExecutorError', () => {
 
   it('defaults retriable to true for backward compatibility', () => {
     const err = new ExecutorError('s1', 'llm_failed', 'LLM broke');
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
     expect(err.retriable).toBe(true);
   });
 
@@ -60,6 +61,7 @@ describe('ExecutorError', () => {
 
   it('accepts explicit retriable=true', () => {
     const err = new ExecutorError('s1', 'http_error_retriable', 'HTTP 503', undefined, true);
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
     expect(err.retriable).toBe(true);
   });
 });
