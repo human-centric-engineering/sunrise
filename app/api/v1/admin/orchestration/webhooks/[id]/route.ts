@@ -83,7 +83,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   logAdminAction({
     userId: session.user.id,
     action: 'webhook_subscription.update',
-    entityType: 'webhook',
+    entityType: 'webhook_subscription',
     entityId: parsed.data,
     entityName: webhook.url,
     changes: computeChanges(
@@ -122,7 +122,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   logAdminAction({
     userId: session.user.id,
     action: 'webhook_subscription.delete',
-    entityType: 'webhook',
+    entityType: 'webhook_subscription',
     entityId: parsed.data,
     entityName: existing.url,
     clientIp: getClientIP(request),

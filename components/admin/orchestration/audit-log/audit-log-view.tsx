@@ -49,14 +49,15 @@ const ENTITY_TYPES = [
   { value: 'experiment', label: 'Experiments' },
   { value: 'embed_token', label: 'Embed tokens' },
   { value: 'backup', label: 'Backups' },
-  { value: 'webhook', label: 'Webhooks' },
+  { value: 'webhook', label: 'Event hooks' },
+  { value: 'webhook_subscription', label: 'Webhook subscriptions' },
   { value: 'conversation', label: 'Conversations' },
 ];
 
 function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (action.endsWith('.create')) return 'default';
   if (action.endsWith('.update')) return 'secondary';
-  if (action.endsWith('.delete')) return 'destructive';
+  if (action.endsWith('.delete') || action.endsWith('_clear')) return 'destructive';
   return 'outline';
 }
 

@@ -396,7 +396,8 @@ describe('AuditLogView', () => {
     expect(screen.getByRole('option', { name: /^experiments$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^embed tokens$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^backups$/i })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /^webhooks$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^event hooks$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^webhook subscriptions$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^conversations$/i })).toBeInTheDocument();
   });
 

@@ -265,10 +265,9 @@ describe('McpAuditLog', () => {
   });
 
   describe('fetchEntries response shapes', () => {
-    it('handles flat array response from apiClient.get', async () => {
-      // Arrange: API returns a flat array (not enveloped)
-      const flatEntry = { ...ENTRY, id: 'flat-1' };
-      vi.mocked(apiClient.get).mockResolvedValue([flatEntry]);
+    it('shows error when apiClient.get returns an unexpected shape', async () => {
+      // Arrange: API returns a flat array instead of the expected { data, meta } envelope
+      vi.mocked(apiClient.get).mockResolvedValue([{ id: 'unexpected' }]);
 
       render(<McpAuditLog initialEntries={[]} initialMeta={null} />);
 
@@ -277,9 +276,9 @@ describe('McpAuditLog', () => {
         fireEvent.click(screen.getByText('Apply Filters'));
       });
 
-      // Assert: the flat-array branch executed — new entry is displayed
+      // Assert: Zod parse failure is caught and shown as an error
       await waitFor(() => {
-        expect(screen.getByText('tools/call')).toBeInTheDocument();
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
       });
     });
 

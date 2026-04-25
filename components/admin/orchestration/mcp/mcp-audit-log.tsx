@@ -109,19 +109,13 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
         if (f.dateTo) params.dateTo = f.dateTo;
 
         const raw = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_AUDIT, { params });
-        // The API wraps in { data, meta } — apiClient extracts the top-level data field
-        // which contains both data array and meta
-        if (Array.isArray(raw)) {
-          // Flat array response
-          setEntries(z.array(auditEntrySchema).parse(raw));
-          setMeta(null);
-        } else if (raw && typeof raw === 'object' && 'data' in raw) {
-          const envelope = z
-            .object({ data: z.array(auditEntrySchema), meta: auditMetaSchema })
-            .parse(raw);
-          setEntries(envelope.data);
-          setMeta(envelope.meta);
-        }
+        // apiClient extracts the top-level data field from { success, data, meta }
+        // leaving { data: AuditEntry[], meta: AuditMeta }
+        const envelope = z
+          .object({ data: z.array(auditEntrySchema), meta: auditMetaSchema })
+          .parse(raw);
+        setEntries(envelope.data);
+        setMeta(envelope.meta);
       } catch {
         setError('Failed to load audit entries.');
       } finally {
