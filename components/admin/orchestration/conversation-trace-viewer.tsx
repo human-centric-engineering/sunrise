@@ -22,13 +22,6 @@ import { messageMetadataSchema } from '@/lib/validations/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface ConversationDetail {
-  id: string;
-  title: string | null;
-  agent?: { id: string; name: string; slug: string } | null;
-  _count?: { messages: number };
-}
-
 interface MessageMetadata {
   tokenUsage?: { input?: number; output?: number };
   modelUsed?: string;
@@ -47,7 +40,6 @@ export interface ConversationMessage {
 }
 
 export interface ConversationTraceViewerProps {
-  conversation?: ConversationDetail;
   messages: ConversationMessage[];
 }
 

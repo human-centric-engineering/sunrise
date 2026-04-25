@@ -109,7 +109,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     FROM ai_message_embedding e
     JOIN ai_message m        ON m.id = e."messageId"
     JOIN ai_conversation c   ON c.id = m."conversationId"
-    JOIN ai_agent a          ON a.id = c."agentId"
+    LEFT JOIN ai_agent a     ON a.id = c."agentId"
     WHERE (e.embedding <=> $1::vector) < $2
       ${whereClause}
     ORDER BY (e.embedding <=> $1::vector) ASC
@@ -120,7 +120,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     Array<{
       conversationId: string;
       conversationTitle: string | null;
-      agentId: string;
+      agentId: string | null;
       userId: string;
       conversationIsActive: boolean;
       conversationCreatedAt: Date;
@@ -130,8 +130,8 @@ export const GET = withAdminAuth(async (request, _session) => {
       messageRole: string;
       messageContent: string;
       messageCreatedAt: Date;
-      agentName: string;
-      agentSlug: string;
+      agentName: string | null;
+      agentSlug: string | null;
       distance: number;
     }>
   >(sql, ...params);
@@ -151,9 +151,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       return true;
     })
     .map((r) => ({
+      id: r.conversationId,
       conversationId: r.conversationId,
       title: r.conversationTitle,
-      agent: { id: r.agentId, name: r.agentName, slug: r.agentSlug },
+      agent: r.agentId ? { id: r.agentId, name: r.agentName!, slug: r.agentSlug! } : null,
       agentId: r.agentId,
       userId: r.userId,
       isActive: r.conversationIsActive,

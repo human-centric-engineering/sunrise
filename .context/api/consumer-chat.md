@@ -147,18 +147,6 @@ Fetch messages for a conversation. Only returns safe fields: `id`, `role`, `cont
 
 ---
 
-## Agent Visibility Model
-
-The `AiAgent` model has a `visibility` field with three values:
-
-| Value         | Description                                  | Consumer access  |
-| ------------- | -------------------------------------------- | ---------------- |
-| `internal`    | Admin-only (default for all existing agents) | No               |
-| `public`      | Visible to all authenticated users           | Yes              |
-| `invite_only` | Accessible with a valid invite token         | Yes (with token) |
-
-Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
-
 ### GET `/chat/conversations/search`
 
 Search the authenticated user's conversations by message content.
@@ -171,7 +159,7 @@ Search the authenticated user's conversations by message content.
 | `page`  | number | 1       | Page number                         |
 | `limit` | number | 20      | Items per page                      |
 
-Searches `AiMessage.content` via case-insensitive `contains` for the user's conversations. Returns paginated conversations with agent info, same shape as `/chat/conversations`.
+Searches `AiMessage.content` via case-insensitive `contains` (lexical substring match) for the user's conversations. Returns paginated conversations with agent info, same shape as `/chat/conversations`. Unlike the admin search endpoint, this does not use pgvector semantic search.
 
 **Rate limiting:** `chatLimiter` (per IP).
 
@@ -209,6 +197,18 @@ Checks: agent exists and is `invite_only`, token exists, not revoked, not expire
 
 ---
 
+## Agent Visibility Model
+
+The `AiAgent` model has a `visibility` field with three values:
+
+| Value         | Description                                  | Consumer access  |
+| ------------- | -------------------------------------------- | ---------------- |
+| `internal`    | Admin-only (default for all existing agents) | No               |
+| `public`      | Visible to all authenticated users           | Yes              |
+| `invite_only` | Accessible with a valid invite token         | Yes (with token) |
+
+Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
+
 ## Validation Schemas
 
 All consumer schemas live in `lib/validations/orchestration.ts`:
@@ -220,10 +220,11 @@ All consumer schemas live in `lib/validations/orchestration.ts`:
 
 ## Rate Limiting
 
-| Limiter               | Scope       | Limit   | Used by                           |
-| --------------------- | ----------- | ------- | --------------------------------- |
-| `consumerChatLimiter` | Per user ID | 10/min  | `/chat/stream`                    |
-| `apiLimiter`          | Per IP      | 100/min | `/chat/stream`, DELETE operations |
+| Limiter               | Scope       | Limit   | Used by                                                           |
+| --------------------- | ----------- | ------- | ----------------------------------------------------------------- |
+| `consumerChatLimiter` | Per user ID | 10/min  | `/chat/stream`                                                    |
+| `apiLimiter`          | Per IP      | 100/min | `/chat/stream`, DELETE operations                                 |
+| `chatLimiter`         | Per IP      | —       | `/chat/conversations/search`, `/chat/agents/:slug/validate-token` |
 
 Defined in `lib/security/rate-limit.ts`. Consumer chat is deliberately stricter than admin chat (10 vs 20 msgs/min) to protect against cost abuse by end-users.
 
