@@ -45,7 +45,10 @@ function sanitizeChanges(
     if (SECRET_PATTERN.test(field)) {
       sanitized[field] = { from: '[REDACTED]', to: '[REDACTED]' };
     } else {
-      sanitized[field] = diff;
+      sanitized[field] = {
+        from: sanitizeMetadataValue(diff.from),
+        to: sanitizeMetadataValue(diff.to),
+      };
     }
   }
   return sanitized;

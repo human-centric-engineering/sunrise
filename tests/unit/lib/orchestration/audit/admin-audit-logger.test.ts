@@ -239,6 +239,54 @@ describe('logAdminAction', () => {
     expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
   });
 
+  it('redacts secret-named keys nested inside changes from/to values', async () => {
+    // Arrange — simulates a hook update where the `action` field contains
+    // headers with secret-named keys (e.g. X-Api-Key). The top-level field
+    // name `action` does NOT match SECRET_PATTERN, but the nested key should.
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+
+    logAdminAction({
+      userId: 'u-nested',
+      action: 'webhook.update',
+      entityType: 'webhook',
+      changes: {
+        action: {
+          from: {
+            type: 'webhook',
+            url: 'https://old.example.com',
+            headers: { 'X-Api-Key': 'old-secret' },
+          },
+          to: {
+            type: 'webhook',
+            url: 'https://new.example.com',
+            headers: { 'X-Api-Key': 'new-secret' },
+          },
+        },
+        name: { from: 'Old Hook', to: 'New Hook' },
+      },
+    });
+    await flushPromises();
+
+    const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
+    const storedChanges = call.data.changes as Record<string, { from: unknown; to: unknown }>;
+
+    // The nested X-Api-Key should be redacted in both from and to
+    expect(storedChanges.action).toEqual({
+      from: {
+        type: 'webhook',
+        url: 'https://old.example.com',
+        headers: { 'X-Api-Key': '[REDACTED]' },
+      },
+      to: {
+        type: 'webhook',
+        url: 'https://new.example.com',
+        headers: { 'X-Api-Key': '[REDACTED]' },
+      },
+    });
+    // Non-secret fields pass through unchanged
+    expect(storedChanges.name).toEqual({ from: 'Old Hook', to: 'New Hook' });
+  });
+
   it('stores null in the changes column when changes is null', async () => {
     // Arrange
     vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
