@@ -18,6 +18,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('@/lib/logging', () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 import {
   createAgentSchema,
   updateAgentSchema,
@@ -64,6 +69,7 @@ import {
   workflowDefinitionHistorySchema,
   workflowDefinitionRevertSchema,
   executionStatusSchema,
+  executionTraceSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1864,5 +1870,39 @@ describe('executionStatusSchema', () => {
     expect(executionStatusSchema.safeParse('unknown').success).toBe(false);
     expect(executionStatusSchema.safeParse('').success).toBe(false);
     expect(executionStatusSchema.safeParse(123).success).toBe(false);
+  });
+});
+
+describe('executionTraceSchema', () => {
+  it('parses valid trace entries', () => {
+    const trace = [
+      {
+        stepId: 'step-1',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: { text: 'hi' },
+        tokensUsed: 100,
+        costUsd: 0.01,
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:01Z',
+        durationMs: 1000,
+      },
+    ];
+    const result = executionTraceSchema.parse(trace);
+    expect(result).toHaveLength(1);
+    expect(result[0].stepId).toBe('step-1');
+  });
+
+  it('returns empty array and logs warning for malformed trace', async () => {
+    const { logger } = vi.mocked(await import('@/lib/logging'));
+    vi.clearAllMocks();
+
+    const result = executionTraceSchema.parse('not-an-array');
+    expect(result).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Malformed execution trace'),
+      expect.any(Object)
+    );
   });
 });

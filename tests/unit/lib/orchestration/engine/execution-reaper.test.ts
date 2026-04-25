@@ -24,7 +24,7 @@ describe('reapZombieExecutions', () => {
     vi.clearAllMocks();
   });
 
-  it('marks stale running executions as failed', async () => {
+  it('marks stale running executions as failed with errorMessage', async () => {
     (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({
       count: 3,
     });
@@ -41,6 +41,7 @@ describe('reapZombieExecutions', () => {
         data: expect.objectContaining({
           status: 'failed',
           completedAt: expect.any(Date),
+          errorMessage: expect.stringContaining('zombie threshold'),
         }),
       })
     );
