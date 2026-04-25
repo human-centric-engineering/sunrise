@@ -6,6 +6,7 @@
  *
  *   - `null` / non-finite        → `"—"`
  *   - `0`                        → `"$0.00"`
+ *   - `0 < |x| < 0.0001`        → 6 decimals (`$0.000042`)
  *   - `|x| < 1`                  → 4 decimals (`$0.0042`)
  *   - `|x| >= 1`                 → 2 decimals (`$12.34`)
  *   - `{ compact: true }`        → `$1.2k`, `$3.4M` for chart axes
@@ -37,6 +38,9 @@ export function formatUsd(
   if (value === 0) return '$0.00';
 
   const abs = Math.abs(value);
+  if (abs > 0 && abs < 0.0001) {
+    return formatFixed(value, 6);
+  }
   if (abs < 1) {
     return formatFixed(value, 4);
   }

@@ -217,6 +217,13 @@ export function OrchestrationSettingsForm({ settings, models }: OrchestrationSet
         </CardHeader>
 
         <CardContent className="space-y-6">
+          {!settings && (
+            <div className="flex items-center gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              Settings could not be loaded. The values below may not reflect the current
+              configuration. Try refreshing the page.
+            </div>
+          )}
           {error && (
             <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
               <AlertCircle className="h-4 w-4 shrink-0" />

@@ -16,7 +16,7 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
-import { getBudgetAlerts } from '@/lib/orchestration/llm/cost-reports';
+import { getBudgetAlerts, getGlobalCapStatus } from '@/lib/orchestration/llm/cost-reports';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 
@@ -26,10 +26,11 @@ export const GET = withAdminAuth(async (request) => {
   if (!rl.success) return createRateLimitResponse(rl);
 
   const log = await getRouteLogger(request);
-  const alerts = await getBudgetAlerts();
+  const [alerts, globalCap] = await Promise.all([getBudgetAlerts(), getGlobalCapStatus()]);
   log.info('Budget alerts fetched', {
     total: alerts.length,
     critical: alerts.filter((a) => a.severity === 'critical').length,
+    globalCapExceeded: globalCap.exceeded,
   });
-  return successResponse({ alerts });
+  return successResponse({ alerts, globalCap });
 });

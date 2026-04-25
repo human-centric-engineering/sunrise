@@ -27,7 +27,11 @@ import { OrchestrationSettingsForm } from '@/components/admin/orchestration/cost
 import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-agent-cost-table';
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
 import { PricingReference } from '@/components/admin/orchestration/costs/pricing-reference';
-import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import type {
+  BudgetAlert,
+  CostSummary,
+  GlobalCapStatus,
+} from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
 
@@ -39,6 +43,7 @@ interface PerModelDaily {
 export interface CostsViewProps {
   summary: CostSummary | null;
   alerts: BudgetAlert[] | null;
+  globalCap: GlobalCapStatus | null;
   perModel: PerModelDaily[] | null;
   models: ModelInfo[] | null;
   settings: OrchestrationSettings | null;
@@ -49,6 +54,7 @@ export interface CostsViewProps {
 export function CostsView({
   summary,
   alerts,
+  globalCap,
   perModel,
   models,
   settings,
@@ -58,7 +64,7 @@ export function CostsView({
     <div className="space-y-8">
       <CostSummaryCards summary={summary} />
 
-      <BudgetAlertsList alerts={alerts} />
+      <BudgetAlertsList alerts={alerts} globalCap={globalCap} />
 
       <CostTrendChart trend={summary?.trend ?? null} perModel={perModel} models={models} />
 
