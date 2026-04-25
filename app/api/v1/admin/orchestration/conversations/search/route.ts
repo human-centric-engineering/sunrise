@@ -27,6 +27,9 @@ const searchQuerySchema = z.object({
   q: z.string().min(1).max(500),
   agentId: z.string().optional(),
   userId: z.string().optional(),
+  isActive: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
+    .optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(10),
@@ -44,7 +47,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     });
   }
 
-  const { q, agentId, userId, dateFrom, dateTo, limit, threshold } = parsed.data;
+  const { q, agentId, userId, isActive, dateFrom, dateTo, limit, threshold } = parsed.data;
 
   // Embed the search query. If no provider is configured or the call
   // fails, signal `semanticAvailable: false` so the caller can fall back
@@ -56,6 +59,10 @@ export const GET = withAdminAuth(async (request, _session) => {
     log.warn('Conversation semantic search unavailable — embedding failed', {
       error: err instanceof Error ? err.message : String(err),
     });
+    return successResponse([], { total: 0, semanticAvailable: false });
+  }
+  if (!queryEmbedding.every((v) => Number.isFinite(v))) {
+    log.warn('Embedding returned non-finite values', { sample: queryEmbedding.slice(0, 5) });
     return successResponse([], { total: 0, semanticAvailable: false });
   }
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
@@ -73,6 +80,11 @@ export const GET = withAdminAuth(async (request, _session) => {
   if (userId) {
     conditions.push(`c."userId" = $${paramIdx}`);
     params.push(userId);
+    paramIdx++;
+  }
+  if (isActive !== undefined) {
+    conditions.push(`c."isActive" = $${paramIdx}`);
+    params.push(isActive);
     paramIdx++;
   }
   if (dateFrom) {
@@ -166,7 +178,7 @@ export const GET = withAdminAuth(async (request, _session) => {
         role: r.messageRole,
         content: r.messageContent.slice(0, 500),
         createdAt: r.messageCreatedAt,
-        similarity: 1 - Number(r.distance),
+        similarity: Math.max(0, 1 - Number(r.distance)),
       },
     }));
 

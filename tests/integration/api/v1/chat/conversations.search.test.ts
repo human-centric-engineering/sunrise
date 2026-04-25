@@ -28,7 +28,6 @@ vi.mock('next/headers', () => ({
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    aiMessage: { findMany: vi.fn() },
     aiConversation: { findMany: vi.fn(), count: vi.fn() },
   },
 }));
@@ -91,10 +90,6 @@ describe('GET /api/v1/chat/conversations/search', () => {
 
   it('returns matching conversations', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
-      { conversationId: 'conv-1' } as never,
-      { conversationId: 'conv-2' } as never,
-    ]);
     vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([
       {
         id: 'conv-1',
@@ -115,17 +110,20 @@ describe('GET /api/v1/chat/conversations/search', () => {
 
   it('scopes search to authenticated user only', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
 
     await GET(makeRequest({ q: 'test' }));
 
-    // Verify the message search filters by userId
-    expect(prisma.aiMessage.findMany).toHaveBeenCalledWith(
+    // Verify the conversation search filters by userId and message content
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          content: expect.objectContaining({ contains: 'test' }),
-          conversation: expect.objectContaining({
-            userId: 'cmjbv4i3x00003wsloputgwul',
+          userId: 'cmjbv4i3x00003wsloputgwul',
+          messages: expect.objectContaining({
+            some: expect.objectContaining({
+              content: expect.objectContaining({ contains: 'test' }),
+            }),
           }),
         }),
       })
@@ -134,7 +132,8 @@ describe('GET /api/v1/chat/conversations/search', () => {
 
   it('returns empty results when no matches', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
-    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
 
     const response = await GET(makeRequest({ q: 'nonexistent' }));
 

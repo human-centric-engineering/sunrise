@@ -130,12 +130,12 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 
 ### Export
 
-- Button: list toolbar. Forwards only `agentId`.
-- Endpoint supports `format=json|csv`, `agentId`, `userId`, `dateFrom`, `dateTo`. Defaults to `json`.
-- Hard cap: 500 conversations per export.
+- Button: list toolbar. Forwards all active filters (`agentId`, `isActive`, title/message search).
+- Endpoint supports `format=json|csv`, `agentId`, `isActive`, `q`, `messageSearch`, `tag`, `dateFrom`, `dateTo`. Defaults to `json`.
+- Hard cap: 500 conversations per export, 500 messages per conversation.
 - Rate limit: 1/min per admin IP via `adminLimiter` keyed on `export:<ip>`.
 - CSV columns: `conversation_id, conversation_title, agent_slug, user_id, message_role, message_content, created_at` (one row per message). `csvEscape` quotes values containing `, "` or newline.
-- JSON payload wraps data in `{ success: true, data: [...], meta: { total } }` and serves it as a file download via `Content-Disposition: attachment`.
+- JSON payload wraps data in `{ success: true, data: [...], meta: { total, totalMatching, capped } }` and serves it as a file download via `Content-Disposition: attachment`. `capped: true` indicates the 500-conversation cap was hit; `totalMatching` shows the untruncated count.
 
 ### Bulk clear (API only, no UI)
 
@@ -151,8 +151,9 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 ### Semantic search
 
 - `GET /conversations/search?q=…` embeds `q` via `embedText(q, 'query')`, runs cosine-distance search against `ai_message_embedding` (`<=>` with pgvector), and returns conversations grouped by best-matching message.
-- Params: `q` (1–500 chars, required), `agentId`, `userId`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
-- The list toolbar's "Search messages" checkbox calls this endpoint first. If the server signals `semanticAvailable: false` (no embedding provider configured), the table falls back to lexical `?messageSearch=` on the list endpoint.
+- Params: `q` (1–500 chars, required), `agentId`, `userId`, `isActive`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
+- The list toolbar's "Search messages" checkbox calls this endpoint first, forwarding `agentId` and `isActive` filters. If the server signals `semanticAvailable: false` (no embedding provider configured or embedding returned non-finite values), the table falls back to lexical `?messageSearch=` on the list endpoint.
+- Similarity scores in the response are clamped to `[0, 1]` (pgvector cosine distance can exceed 1 for dissimilar vectors).
 
 ## Data Sources
 

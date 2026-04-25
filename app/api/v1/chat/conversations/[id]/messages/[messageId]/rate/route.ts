@@ -42,11 +42,12 @@ export const POST = withAuth<Params>(async (request, session, { params }) => {
 
   const body = await validateRequestBody(request, rateMessageSchema);
 
-  // Verify the conversation belongs to this user
+  // Verify the conversation belongs to this user and the agent is publicly visible
   const conversation = await prisma.aiConversation.findFirst({
     where: {
       id: convId.data,
       userId: session.user.id,
+      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
     },
   });
   if (!conversation) throw new NotFoundError('Conversation not found');

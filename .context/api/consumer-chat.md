@@ -9,16 +9,17 @@ End-user-facing chat endpoints for interacting with publicly visible AI agents. 
 
 ## Quick reference
 
-| Endpoint                            | Method | Purpose                         |
-| ----------------------------------- | ------ | ------------------------------- |
-| `/chat/stream`                      | POST   | Streaming chat turn (SSE)       |
-| `/chat/agents`                      | GET    | List publicly available agents  |
-| `/chat/agents/:slug/validate-token` | POST   | Validate an invite token        |
-| `/chat/conversations`               | GET    | List user's own conversations   |
-| `/chat/conversations/search`        | GET    | Search conversations by content |
-| `/chat/conversations/:id`           | GET    | Single conversation detail      |
-| `/chat/conversations/:id`           | DELETE | Delete own conversation         |
-| `/chat/conversations/:id/messages`  | GET    | Messages for a conversation     |
+| Endpoint                                           | Method | Purpose                         |
+| -------------------------------------------------- | ------ | ------------------------------- |
+| `/chat/stream`                                     | POST   | Streaming chat turn (SSE)       |
+| `/chat/agents`                                     | GET    | List publicly available agents  |
+| `/chat/agents/:slug/validate-token`                | POST   | Validate an invite token        |
+| `/chat/conversations`                              | GET    | List user's own conversations   |
+| `/chat/conversations/search`                       | GET    | Search conversations by content |
+| `/chat/conversations/:id`                          | GET    | Single conversation detail      |
+| `/chat/conversations/:id`                          | DELETE | Delete own conversation         |
+| `/chat/conversations/:id/messages`                 | GET    | Messages for a conversation     |
+| `/chat/conversations/:id/messages/:messageId/rate` | POST   | Rate an assistant message       |
 
 ## Endpoints
 
@@ -144,6 +145,26 @@ Fetch messages for a conversation. Only returns safe fields: `id`, `role`, `cont
 ```
 
 **Key file:** `app/api/v1/chat/conversations/[id]/messages/route.ts`
+
+---
+
+### POST `/chat/conversations/:id/messages/:messageId/rate`
+
+Submit feedback on an assistant message (thumbs up/down). Only assistant messages in the user's own conversations with publicly visible agents can be rated.
+
+**Request body** (`rateMessageSchema`):
+
+```jsonc
+{
+  "rating": 1, // 1 = thumbs up, -1 = thumbs down
+}
+```
+
+**Response:** `{ "success": true, "data": { "message": { "id": "cuid", "rating": 1, "ratedAt": "..." } } }`
+
+Returns `404` if the conversation doesn't belong to the user, the agent is no longer public/active, or the message doesn't exist or isn't an assistant message. Rate limited via `apiLimiter`.
+
+**Key file:** `app/api/v1/chat/conversations/[id]/messages/[messageId]/rate/route.ts`
 
 ---
 

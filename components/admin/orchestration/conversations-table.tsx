@@ -111,6 +111,7 @@ export function ConversationsTable({
         if (msgSearch && searchValue) {
           const semanticParams = new URLSearchParams({ q: searchValue });
           if (agentValue && agentValue !== 'all') semanticParams.set('agentId', agentValue);
+          if (activeValue && activeValue !== 'all') semanticParams.set('isActive', activeValue);
 
           const semanticRes = await fetch(
             `${API.ADMIN.ORCHESTRATION.CONVERSATIONS_SEARCH}?${semanticParams.toString()}`,
