@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** Not started (Phase 1 ready to begin)
+**Status:** In progress (Step 1a complete, Step 3b next)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -58,8 +58,16 @@
 
 - **Triage:** `/test-triage scan lib/security`
 - **Ceiling pass:** YES — run `/test-coverage lib/security` after triage to find untested security code
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-24, PR #90)
 - **Notes:**
+  - Grade distribution: 1 Rotten, 3 Bad, 5 Clean → all 9 Clean after fixes
+  - Rotten: rate-limit.test.ts — async surface entirely untested, Date.now() token drift, off-by-one between sync/async semantics (intentional, documented)
+  - Bad: cors (mock-proving, missing !allowed path), proxy (12 weak negative assertions), rate-limit-stores (Redis error paths, LRU untested)
+  - Path 0 (annotations) effective for structural `toBe(true)` false positives — used on 4 files
+  - Path A (3 concurrent worktree agents) validated — ran smoothly on battery, cap subsequently bumped to 5
+  - Path B (rate-limit review+fix) caught async/sync off-by-one as source finding S1 — agent attempted fix, reverted when it broke semantics
+  - proxy.test.ts imports from `@/proxy` (root), not `lib/security/` — source path mapping friction
+  - Ceiling pass still pending — do after triage is further along
 
 ### Step 1b — `lib/auth/` (9 test files, 7 already in ledger)
 
@@ -381,7 +389,7 @@ Update this table after completing each step.
 
 | Step | Target                           | Files | Grade Distribution      | Ceiling Pass? | Status      |
 | ---- | -------------------------------- | ----- | ----------------------- | ------------- | ----------- |
-| 1a   | lib/security                     | 9     |                         | YES           | NOT STARTED |
+| 1a   | lib/security                     | 9     | 9C (was 1R, 3B, 5C)     | YES (pending) | DONE        |
 | 1b   | lib/auth                         | 9     | 2C, 1M, 2B (from prior) | YES           | PARTIAL     |
 | 1c   | Auth API routes                  | ~10   |                         | No            | NOT STARTED |
 | 1d   | lib/validations                  | 8     |                         | No            | NOT STARTED |
@@ -462,4 +470,7 @@ Record observations in the step-level Notes fields as they happen. At the end of
 
 Record anything useful discovered during the triage process that future sessions should know.
 
-- (Add entries here as phases complete)
+- **Step 1a (2026-04-24):** Path 0 (accept annotations) is the cheapest fix for structural `toBe(true)` hits — no test code changes needed. Use it first, then Path A/B for block patterns.
+- **Step 1a:** Source finding S1 (async/sync off-by-one) looked like a bug but was intentional. Agent reverted correctly after testing. Lesson: always check if `<=` vs `<` is compensating for increment-before vs increment-after semantics before "fixing" it.
+- **Step 1a:** proxy.test.ts imports from `@/proxy` (root-level file), not from `lib/security/`. The source path mapping in `/test-triage` assumes test path mirrors source path — this broke for proxy. Watch for similar mismatches in other areas.
+- **Step 1a:** Concurrency cap of 3 worktree agents was too conservative — no resource pressure on battery power. Bumped to 5 (PR #87). Monitor on next larger batch (Step 3b, 20 files).
