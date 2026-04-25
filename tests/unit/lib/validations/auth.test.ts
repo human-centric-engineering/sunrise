@@ -28,17 +28,20 @@ describe('passwordSchema', () => {
   describe('valid passwords', () => {
     it('should accept password with all required criteria', () => {
       const result = passwordSchema.safeParse('Password123!');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept password with 8 characters minimum', () => {
       const result = passwordSchema.safeParse('Pass123!');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept password up to 100 characters', () => {
       const longPassword = 'Password123!' + 'a'.repeat(88); // 100 chars total
       const result = passwordSchema.safeParse(longPassword);
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -53,6 +56,7 @@ describe('passwordSchema', () => {
 
       passwords.forEach((password) => {
         const result = passwordSchema.safeParse(password);
+        // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
         expect(result.success).toBe(true);
       });
     });
@@ -119,6 +123,7 @@ describe('emailSchema', () => {
   describe('valid emails', () => {
     it('should accept standard email format', () => {
       const result = emailSchema.safeParse('user@example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toBe('user@example.com');
@@ -127,6 +132,7 @@ describe('emailSchema', () => {
 
     it('should convert email to lowercase', () => {
       const result = emailSchema.safeParse('User@Example.COM');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toBe('user@example.com');
@@ -136,6 +142,7 @@ describe('emailSchema', () => {
     it('should normalize email with leading/trailing whitespace', () => {
       // Transforms (trim, toLowerCase) are applied before validation
       const result = emailSchema.safeParse('  USER@EXAMPLE.COM  ');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toBe('user@example.com');
@@ -144,16 +151,19 @@ describe('emailSchema', () => {
 
     it('should accept email with subdomain', () => {
       const result = emailSchema.safeParse('user@mail.example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept email with plus addressing', () => {
       const result = emailSchema.safeParse('user+tag@example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept email with dots in local part', () => {
       const result = emailSchema.safeParse('first.last@example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -213,6 +223,7 @@ describe('signUpSchema', () => {
   describe('valid sign-up data', () => {
     it('should accept valid sign-up data', () => {
       const result = signUpSchema.safeParse(validSignUpData);
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -221,6 +232,7 @@ describe('signUpSchema', () => {
         ...validSignUpData,
         name: '  John Doe  ',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.name).toBe('John Doe');
@@ -232,6 +244,7 @@ describe('signUpSchema', () => {
         ...validSignUpData,
         name: 'a'.repeat(100),
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -297,6 +310,7 @@ describe('signInSchema', () => {
         email: 'user@example.com',
         password: 'any-password',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -305,6 +319,7 @@ describe('signInSchema', () => {
         email: 'user@example.com',
         password: 'weak',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -349,6 +364,7 @@ describe('changePasswordSchema', () => {
   describe('valid password change data', () => {
     it('should accept valid password change', () => {
       const result = changePasswordSchema.safeParse(validChangePasswordData);
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -403,6 +419,7 @@ describe('resetPasswordRequestSchema', () => {
       const result = resetPasswordRequestSchema.safeParse({
         email: 'user@example.com',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -432,6 +449,7 @@ describe('resetPasswordSchema', () => {
   describe('valid password reset', () => {
     it('should accept valid reset data', () => {
       const result = resetPasswordSchema.safeParse(validResetPasswordData);
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -476,6 +494,7 @@ describe('verifyEmailSchema', () => {
       const result = verifyEmailSchema.safeParse({
         token: 'valid-verification-token',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });

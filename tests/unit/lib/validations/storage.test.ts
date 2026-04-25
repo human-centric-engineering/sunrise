@@ -119,6 +119,7 @@ describe('lib/validations/storage', () => {
       const result = fileMetadataSchema.safeParse(validFile);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toEqual(validFile);
@@ -236,6 +237,7 @@ describe('lib/validations/storage', () => {
       const result = imageFileSchema.safeParse(validImage);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -251,6 +253,7 @@ describe('lib/validations/storage', () => {
       const result = imageFileSchema.safeParse(validImage);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -266,6 +269,7 @@ describe('lib/validations/storage', () => {
       const result = imageFileSchema.safeParse(validImage);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -281,6 +285,7 @@ describe('lib/validations/storage', () => {
       const result = imageFileSchema.safeParse(validImage);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -368,6 +373,7 @@ describe('lib/validations/storage', () => {
       const result = avatarUploadSchema.safeParse(validAvatar);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -407,6 +413,8 @@ describe('lib/validations/storage', () => {
       const result = avatarUploadSchema.safeParse(avatar);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true); // Should pass with 10 MB limit
     });
 
@@ -444,6 +452,7 @@ describe('lib/validations/storage', () => {
       const result = avatarUploadSchema.safeParse(avatar);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -476,6 +485,7 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.provider).toBe('s3');
@@ -492,6 +502,7 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -505,6 +516,7 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -516,6 +528,8 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true); // All fields are optional
     });
 
@@ -542,6 +556,7 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.maxFileSizeMB).toBe(10);
@@ -558,6 +573,7 @@ describe('lib/validations/storage', () => {
       const result = storageConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.maxFileSizeMB).toBe(15);
@@ -607,6 +623,7 @@ describe('lib/validations/storage', () => {
       const result = s3ConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.bucket).toBe('my-bucket');
@@ -626,6 +643,7 @@ describe('lib/validations/storage', () => {
       const result = s3ConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.region).toBe('us-east-1'); // Default value
@@ -644,6 +662,7 @@ describe('lib/validations/storage', () => {
       const result = s3ConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -748,6 +767,7 @@ describe('lib/validations/storage', () => {
       const result = vercelBlobConfigSchema.safeParse(config);
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.token).toBe('vercel_blob_rw_ABC123XYZ789');

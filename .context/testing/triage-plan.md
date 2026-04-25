@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a, 1b, 1c, 3a, 3b complete)
+**Status:** In progress (Steps 1a, 1b, 1c, 1d, 3a, 3b complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -100,11 +100,18 @@
   - route.test.ts unit (Bad→Clean): 17 tbt annotated. me=5 (DELETE handler absent) is covered by sibling route.delete.test.ts — split-file false positive, noted in ledger
   - No ceiling pass needed — block findings were targeted and fixable
 
-### Step 1d — `lib/validations/` (8 test files)
+### Step 1d — `lib/validations/` (9 test files)
 
 - **Triage:** `/test-triage scan lib/validations`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - 9 files scanned: all pure Zod schema validation tests (auth, common, admin, user, orchestration, orchestrator-config, send-verification-email, storage, mcp)
+  - 806 tests total across 9 files — every one passes
+  - Sonnet block-tier pass skipped — Zod schema source files have no imperative code, mocks, side effects, or error handlers; block-tier findings impossible
+  - All tobe_true hits are structural: `safeParse().success` assertions and boolean schema field defaults (enabled, isActive, isTemplate, isEnabled, productUpdates, securityAlerts)
+  - 305 tobe_true annotations applied via Path 0 (annotation-only)
+  - Grade distribution: 9 Clean (all were Clean after annotations — no block findings possible)
+  - No ceiling pass needed — pure schema validation tests are self-contained
 
 ---
 
@@ -426,7 +433,7 @@ Update this table after completing each step.
 | 1a   | lib/security                     | 9     | 9C (was 1R, 3B, 5C)       | DONE (100%)   | DONE        |
 | 1b   | lib/auth                         | 9     | 9C (was 1R, 2B, 2M, 4C)   | DONE (98.6%)  | DONE        |
 | 1c   | Auth API routes                  | 9     | 9C (was 4B, 3M, 2C)       | No            | DONE        |
-| 1d   | lib/validations                  | 8     |                           | No            | NOT STARTED |
+| 1d   | lib/validations                  | 9     | 9C (Path 0 only, 305 ann) | No            | DONE        |
 | 2a   | lib/api                          | 10    |                           | No            | NOT STARTED |
 | 2b   | lib/errors                       | 2     |                           | No            | NOT STARTED |
 | 2c   | lib/logging                      | 2     |                           | No            | NOT STARTED |

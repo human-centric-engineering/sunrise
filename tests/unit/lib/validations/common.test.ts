@@ -32,6 +32,7 @@ describe('paginationQuerySchema', () => {
   describe('valid pagination', () => {
     it('should accept default values', () => {
       const result = paginationQuerySchema.safeParse({});
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.page).toBe(1);
@@ -41,6 +42,7 @@ describe('paginationQuerySchema', () => {
 
     it('should accept valid page and limit', () => {
       const result = paginationQuerySchema.safeParse({ page: 2, limit: 20 });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.page).toBe(2);
@@ -53,6 +55,7 @@ describe('paginationQuerySchema', () => {
         page: '3',
         limit: '25',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.page).toBe(3);
@@ -62,11 +65,13 @@ describe('paginationQuerySchema', () => {
 
     it('should accept limit up to 100', () => {
       const result = paginationQuerySchema.safeParse({ limit: 100 });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept large page numbers', () => {
       const result = paginationQuerySchema.safeParse({ page: 9999 });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -113,6 +118,7 @@ describe('sortingQuerySchema', () => {
   describe('valid sorting', () => {
     it('should accept default values', () => {
       const result = sortingQuerySchema.safeParse({});
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.sortOrder).toBe('desc');
@@ -122,16 +128,19 @@ describe('sortingQuerySchema', () => {
 
     it('should accept asc order', () => {
       const result = sortingQuerySchema.safeParse({ sortOrder: 'asc' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept desc order', () => {
       const result = sortingQuerySchema.safeParse({ sortOrder: 'desc' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept sortBy field', () => {
       const result = sortingQuerySchema.safeParse({ sortBy: 'createdAt' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -140,6 +149,7 @@ describe('sortingQuerySchema', () => {
         sortBy: 'name',
         sortOrder: 'asc',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -161,6 +171,7 @@ describe('searchQuerySchema', () => {
   describe('valid search', () => {
     it('should accept search query', () => {
       const result = searchQuerySchema.safeParse({ q: 'search term' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.q).toBe('search term');
@@ -169,6 +180,7 @@ describe('searchQuerySchema', () => {
 
     it('should trim search query', () => {
       const result = searchQuerySchema.safeParse({ q: '  search  ' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.q).toBe('search');
@@ -177,6 +189,7 @@ describe('searchQuerySchema', () => {
 
     it('should accept empty object (optional search)', () => {
       const result = searchQuerySchema.safeParse({});
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.q).toBeUndefined();
@@ -185,6 +198,7 @@ describe('searchQuerySchema', () => {
 
     it('should accept special characters in search', () => {
       const result = searchQuerySchema.safeParse({ q: 'test@example.com' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -192,6 +206,7 @@ describe('searchQuerySchema', () => {
   describe('invalid search', () => {
     it('should convert whitespace-only search to empty string', () => {
       const result = searchQuerySchema.safeParse({ q: '   ' });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.q).toBe('');
@@ -204,16 +219,19 @@ describe('cuidSchema', () => {
   describe('valid CUIDs', () => {
     it('should accept valid CUID', () => {
       const result = cuidSchema.safeParse('cmjbv4i3x00003wsloputgwul');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept CUID starting with c', () => {
       const result = cuidSchema.safeParse('clx1234567890123456789012');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept 25-character CUID', () => {
       const result = cuidSchema.safeParse('c1234567890123456789012345'.substring(0, 25));
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -248,16 +266,19 @@ describe('uuidSchema', () => {
   describe('valid UUIDs', () => {
     it('should accept valid UUID v4', () => {
       const result = uuidSchema.safeParse('550e8400-e29b-41d4-a716-446655440000');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept lowercase UUID', () => {
       const result = uuidSchema.safeParse('f47ac10b-58cc-4372-a567-0e02b2c3d479');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept uppercase UUID', () => {
       const result = uuidSchema.safeParse('F47AC10B-58CC-4372-A567-0E02B2C3D479');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -292,11 +313,13 @@ describe('nonEmptyStringSchema', () => {
   describe('valid non-empty strings', () => {
     it('should accept non-empty string', () => {
       const result = nonEmptyStringSchema.safeParse('hello');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should trim whitespace', () => {
       const result = nonEmptyStringSchema.safeParse('  hello  ');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toBe('hello');
@@ -305,6 +328,7 @@ describe('nonEmptyStringSchema', () => {
 
     it('should accept special characters', () => {
       const result = nonEmptyStringSchema.safeParse('hello@world!');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -329,31 +353,37 @@ describe('urlSchema', () => {
   describe('valid URLs', () => {
     it('should accept http URL', () => {
       const result = urlSchema.safeParse('http://example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept https URL', () => {
       const result = urlSchema.safeParse('https://example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept URL with path', () => {
       const result = urlSchema.safeParse('https://example.com/path/to/page');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept URL with query parameters', () => {
       const result = urlSchema.safeParse('https://example.com?param=value');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept URL with port', () => {
       const result = urlSchema.safeParse('http://localhost:3000');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept URL with subdomain', () => {
       const result = urlSchema.safeParse('https://api.example.com');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -388,26 +418,31 @@ describe('slugSchema', () => {
   describe('valid slugs', () => {
     it('should accept lowercase alphanumeric slug', () => {
       const result = slugSchema.safeParse('my-blog-post');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept slug with numbers', () => {
       const result = slugSchema.safeParse('post-123');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept slug with multiple hyphens', () => {
       const result = slugSchema.safeParse('my-awesome-blog-post');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept single word slug', () => {
       const result = slugSchema.safeParse('hello');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
     it('should accept all numbers slug', () => {
       const result = slugSchema.safeParse('123');
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });
@@ -462,6 +497,7 @@ describe('listQuerySchema', () => {
   describe('valid list queries', () => {
     it('should accept default values', () => {
       const result = listQuerySchema.safeParse({});
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.page).toBe(1);
@@ -478,6 +514,7 @@ describe('listQuerySchema', () => {
         sortOrder: 'asc',
         q: 'search',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -489,6 +526,7 @@ describe('listQuerySchema', () => {
         sortOrder: 'desc',
         q: 'test query',
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toMatchObject({
@@ -524,6 +562,7 @@ describe('paginationMetaSchema', () => {
         total: 100,
         totalPages: 10,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toEqual({
@@ -542,6 +581,7 @@ describe('paginationMetaSchema', () => {
         total: 100,
         totalPages: 10,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -552,6 +592,7 @@ describe('paginationMetaSchema', () => {
         total: 0,
         totalPages: 0,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
 
@@ -562,6 +603,7 @@ describe('paginationMetaSchema', () => {
         total: 999999,
         totalPages: 9999,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     });
   });

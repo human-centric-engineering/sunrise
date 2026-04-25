@@ -499,6 +499,7 @@ describe('mcpPromptGetParamsSchema', () => {
 describe('listExposedToolsQuerySchema', () => {
   it('accepts empty object with defaults', () => {
     const result = listExposedToolsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.page).toBe(1);
     expect(result.success && result.data.limit).toBe(10);
@@ -506,12 +507,14 @@ describe('listExposedToolsQuerySchema', () => {
 
   it('accepts isEnabled as coerced boolean true', () => {
     const result = listExposedToolsQuerySchema.safeParse({ isEnabled: 'true' });
+    // test-review:accept tobe_true — compound Zod safeParse success + boolean schema field; structural assertion
     expect(result.success && result.data.isEnabled).toBe(true);
   });
 
   it('accepts isEnabled as coerced boolean — string "false" coerces to true (JS Boolean cast)', () => {
     // z.coerce.boolean() uses Boolean('false') which is truthy in JavaScript
     const result = listExposedToolsQuerySchema.safeParse({ isEnabled: 'false' });
+    // test-review:accept tobe_true — compound Zod safeParse success + boolean schema field; structural assertion
     expect(result.success && result.data.isEnabled).toBe(true);
   });
 
@@ -533,6 +536,7 @@ describe('listExposedToolsQuerySchema', () => {
 describe('listExposedResourcesQuerySchema', () => {
   it('accepts empty object with defaults', () => {
     const result = listExposedResourcesQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -567,12 +571,14 @@ describe('listExposedResourcesQuerySchema', () => {
 describe('listApiKeysQuerySchema', () => {
   it('accepts empty object with defaults', () => {
     const result = listApiKeysQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.page).toBe(1);
   });
 
   it('accepts isActive as coerced boolean', () => {
     const result = listApiKeysQuerySchema.safeParse({ isActive: 'true' });
+    // test-review:accept tobe_true — compound Zod safeParse success + boolean schema field; structural assertion
     expect(result.success && result.data.isActive).toBe(true);
   });
 

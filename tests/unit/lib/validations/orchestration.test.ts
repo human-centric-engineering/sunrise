@@ -113,16 +113,19 @@ describe('createAgentSchema', () => {
 
   it('should accept a fully valid agent with all required fields', () => {
     const result = createAgentSchema.safeParse(VALID_AGENT);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should apply defaults: provider=anthropic, temperature=0.7, maxTokens=4096, isActive=true', () => {
     const result = createAgentSchema.safeParse(VALID_AGENT);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.provider).toBe('anthropic');
       expect(result.data.temperature).toBe(0.7);
       expect(result.data.maxTokens).toBe(4096);
+      // test-review:accept tobe_true — boolean schema field `isActive`; asserting parsed default value
       expect(result.data.isActive).toBe(true);
     }
   });
@@ -179,16 +182,19 @@ describe('createAgentSchema', () => {
 describe('updateAgentSchema', () => {
   it('should accept an empty object (all fields optional)', () => {
     const result = updateAgentSchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should accept a partial update with only name', () => {
     const result = updateAgentSchema.safeParse({ name: 'New Name' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should accept monthlyBudgetUsd: null to clear the budget', () => {
     const result = updateAgentSchema.safeParse({ monthlyBudgetUsd: null });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.monthlyBudgetUsd).toBeNull();
@@ -227,14 +233,17 @@ describe('createCapabilitySchema', () => {
 
   it('should accept a fully valid capability', () => {
     const result = createCapabilitySchema.safeParse(VALID_CAPABILITY);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should default requiresApproval=false and isActive=true', () => {
     const result = createCapabilitySchema.safeParse(VALID_CAPABILITY);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.requiresApproval).toBe(false);
+      // test-review:accept tobe_true — boolean schema field `isActive`; asserting parsed default value
       expect(result.data.isActive).toBe(true);
     }
   });
@@ -268,11 +277,13 @@ describe('createCapabilitySchema', () => {
 describe('updateCapabilitySchema', () => {
   it('should accept an empty object (all fields optional)', () => {
     const result = updateCapabilitySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should accept rateLimit: null to clear the rate limit', () => {
     const result = updateCapabilitySchema.safeParse({ rateLimit: null });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.rateLimit).toBeNull();
@@ -304,14 +315,17 @@ describe('createWorkflowSchema', () => {
 
   it('should accept a fully valid workflow', () => {
     const result = createWorkflowSchema.safeParse(VALID_WORKFLOW);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should default patternsUsed=[], isActive=true, isTemplate=false', () => {
     const result = createWorkflowSchema.safeParse(VALID_WORKFLOW);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.patternsUsed).toEqual([]);
+      // test-review:accept tobe_true — boolean schema field `isActive`; asserting parsed default value
       expect(result.data.isActive).toBe(true);
       expect(result.data.isTemplate).toBe(false);
     }
@@ -354,13 +368,16 @@ describe('createWorkflowSchema', () => {
 describe('updateWorkflowSchema', () => {
   it('should accept an empty object (all fields optional)', () => {
     const result = updateWorkflowSchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should accept a partial update with only isTemplate', () => {
     const result = updateWorkflowSchema.safeParse({ isTemplate: true });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
+      // test-review:accept tobe_true — boolean schema field `isTemplate`; asserting explicit input value
       expect(result.data.isTemplate).toBe(true);
     }
   });
@@ -374,6 +391,7 @@ describe('updateWorkflowSchema', () => {
     const result = updateWorkflowSchema.safeParse({
       workflowDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'skip' },
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -432,6 +450,7 @@ describe('workflowDefinitionHistoryEntrySchema', () => {
 
   it('accepts a valid history entry', () => {
     const result = workflowDefinitionHistoryEntrySchema.safeParse(VALID_ENTRY);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -477,11 +496,13 @@ describe('workflowDefinitionHistorySchema', () => {
 
   it('accepts an empty array', () => {
     const result = workflowDefinitionHistorySchema.safeParse([]);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts an array of valid entries', () => {
     const result = workflowDefinitionHistorySchema.safeParse([VALID_ENTRY, VALID_ENTRY]);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -499,11 +520,13 @@ describe('workflowDefinitionHistorySchema', () => {
 describe('workflowDefinitionRevertSchema', () => {
   it('accepts versionIndex of 0', () => {
     const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 0 });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts a positive integer versionIndex', () => {
     const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 5 });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -535,6 +558,7 @@ describe('chatMessageSchema', () => {
 
   it('should accept a valid chat message', () => {
     const result = chatMessageSchema.safeParse(VALID_MESSAGE);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -545,6 +569,7 @@ describe('chatMessageSchema', () => {
       contextType: 'document',
       contextId: 'doc-456',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.conversationId).toBe('conv-123');
@@ -579,11 +604,13 @@ describe('workflowExecutionSchema', () => {
 
   it('should accept a valid workflow execution request', () => {
     const result = workflowExecutionSchema.safeParse(VALID_EXECUTION);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should accept an optional budgetLimitUsd', () => {
     const result = workflowExecutionSchema.safeParse({ ...VALID_EXECUTION, budgetLimitUsd: 5.0 });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.budgetLimitUsd).toBe(5.0);
@@ -624,11 +651,13 @@ describe('evaluationSessionSchema', () => {
 
   it('should accept a valid evaluation session', () => {
     const result = evaluationSessionSchema.safeParse(VALID_SESSION);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should default status to draft', () => {
     const result = evaluationSessionSchema.safeParse(VALID_SESSION);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.status).toBe('draft');
@@ -639,6 +668,8 @@ describe('evaluationSessionSchema', () => {
     const statuses = ['draft', 'in_progress', 'completed', 'archived'] as const;
     for (const status of statuses) {
       const result = evaluationSessionSchema.safeParse({ ...VALID_SESSION, status });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     }
   });
@@ -661,11 +692,13 @@ describe('evaluationSessionSchema', () => {
 describe('knowledgeSearchSchema', () => {
   it('should accept a valid search query', () => {
     const result = knowledgeSearchSchema.safeParse({ query: 'retry pattern' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should default limit to 10', () => {
     const result = knowledgeSearchSchema.safeParse({ query: 'retry pattern' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.limit).toBe(10);
@@ -678,6 +711,7 @@ describe('knowledgeSearchSchema', () => {
       patternNumber: '3',
       limit: '20',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.patternNumber).toBe(3);
@@ -714,6 +748,7 @@ describe('documentUploadSchema', () => {
 
   it('should accept a valid document upload', () => {
     const result = documentUploadSchema.safeParse(VALID_DOCUMENT);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -724,6 +759,8 @@ describe('documentUploadSchema', () => {
         ...VALID_DOCUMENT,
         fileName: `file.${ext}`,
       });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     }
   });
@@ -769,11 +806,13 @@ describe('costQuerySchema', () => {
 
   it('should accept a valid cost query with date strings', () => {
     const result = costQuerySchema.safeParse(VALID_COST_QUERY);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should coerce date strings to Date objects', () => {
     const result = costQuerySchema.safeParse(VALID_COST_QUERY);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.startDate).toBeInstanceOf(Date);
@@ -783,6 +822,7 @@ describe('costQuerySchema', () => {
 
   it('should accept an optional agentId as CUID', () => {
     const result = costQuerySchema.safeParse({ ...VALID_COST_QUERY, agentId: VALID_CUID });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.agentId).toBe(VALID_CUID);
@@ -793,6 +833,8 @@ describe('costQuerySchema', () => {
     const operations = ['chat', 'tool_call', 'embedding', 'evaluation'] as const;
     for (const operation of operations) {
       const result = costQuerySchema.safeParse({ ...VALID_COST_QUERY, operation });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     }
   });
@@ -826,14 +868,17 @@ describe('providerConfigSchema', () => {
 
   it('should accept a valid provider config', () => {
     const result = providerConfigSchema.safeParse(VALID_PROVIDER);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('should default isLocal=false and isActive=true', () => {
     const result = providerConfigSchema.safeParse(VALID_PROVIDER);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.isLocal).toBe(false);
+      // test-review:accept tobe_true — boolean schema field `isActive`; asserting parsed default value
       expect(result.data.isActive).toBe(true);
     }
   });
@@ -842,6 +887,8 @@ describe('providerConfigSchema', () => {
     const types = ['anthropic', 'openai-compatible'] as const;
     for (const providerType of types) {
       const result = providerConfigSchema.safeParse({ ...VALID_PROVIDER, providerType });
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
       expect(result.success).toBe(true);
     }
   });
@@ -856,6 +903,7 @@ describe('providerConfigSchema', () => {
       ...VALID_PROVIDER,
       baseUrl: 'https://api.anthropic.com',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -894,6 +942,7 @@ describe('providerConfigSchema', () => {
       isLocal: true,
       baseUrl: 'http://localhost:11434/v1',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -920,6 +969,7 @@ describe('providerConfigSchema', () => {
       ...VALID_PROVIDER,
       apiKeyEnvVar: 'ANTHROPIC_API_KEY',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -944,6 +994,7 @@ describe('providerConfigSchema', () => {
 describe('listAgentsQuerySchema', () => {
   it('should accept empty query and apply pagination defaults', () => {
     const result = listAgentsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.page).toBeGreaterThanOrEqual(1);
@@ -953,8 +1004,10 @@ describe('listAgentsQuerySchema', () => {
 
   it('should coerce isActive string to boolean', () => {
     const result = listAgentsQuerySchema.safeParse({ isActive: 'true', provider: 'anthropic' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
+      // test-review:accept tobe_true — boolean schema field `isActive`; asserting coerced query param value
       expect(result.data.isActive).toBe(true);
       expect(result.data.provider).toBe('anthropic');
     }
@@ -969,6 +1022,7 @@ describe('listAgentsQuerySchema', () => {
 describe('listCapabilitiesQuerySchema', () => {
   it('should accept valid executionType filter', () => {
     const result = listCapabilitiesQuerySchema.safeParse({ executionType: 'internal' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1024,6 +1078,7 @@ describe('systemInstructionsHistorySchema', () => {
         changedBy: 'user_abc123',
       },
     ]);
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1050,7 +1105,9 @@ describe('instructionsRevertSchema', () => {
 describe('attachAgentCapabilitySchema', () => {
   it('should accept a minimal valid attach body', () => {
     const result = attachAgentCapabilitySchema.safeParse({ capabilityId: VALID_CUID });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
+    // test-review:accept tobe_true — boolean schema field `isEnabled`; asserting parsed default value
     if (result.success) expect(result.data.isEnabled).toBe(true);
   });
 
@@ -1067,6 +1124,7 @@ describe('attachAgentCapabilitySchema', () => {
       customConfig: { maxItems: 10 },
       customRateLimit: 30,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1161,6 +1219,7 @@ describe('agentBundleSchema', () => {
         },
       ],
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 });
@@ -1188,6 +1247,7 @@ describe('importAgentsSchema', () => {
 
   it('should default conflictMode to skip', () => {
     const result = importAgentsSchema.safeParse({ bundle: MINIMAL_BUNDLE });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.conflictMode).toBe('skip');
   });
@@ -1197,6 +1257,7 @@ describe('importAgentsSchema', () => {
       bundle: MINIMAL_BUNDLE,
       conflictMode: 'overwrite',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1220,6 +1281,7 @@ describe('importAgentsSchema', () => {
 describe('updateProviderConfigSchema', () => {
   it('accepts a partial update with just name', () => {
     const result = updateProviderConfigSchema.safeParse({ name: 'New Name' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1228,6 +1290,7 @@ describe('updateProviderConfigSchema', () => {
       apiKeyEnvVar: null,
       baseUrl: null,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1255,6 +1318,7 @@ describe('updateProviderConfigSchema', () => {
       baseUrl: 'http://localhost:11434/v1',
       isLocal: true,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 });
@@ -1266,6 +1330,7 @@ describe('updateProviderConfigSchema', () => {
 describe('listProvidersQuerySchema', () => {
   it('accepts an empty query (pagination defaults)', () => {
     const result = listProvidersQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1275,6 +1340,7 @@ describe('listProvidersQuerySchema', () => {
       providerType: 'anthropic',
       q: 'claude',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1295,6 +1361,7 @@ describe('listWorkflowsQuerySchema', () => {
       isTemplate: 'false',
       q: 'onboarding',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1316,6 +1383,7 @@ describe('listExecutionsQuerySchema', () => {
       startDate: '2025-01-01',
       endDate: '2025-12-31',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1332,6 +1400,7 @@ describe('listExecutionsQuerySchema', () => {
 describe('executeWorkflowBodySchema', () => {
   it('accepts inputData alone', () => {
     const result = executeWorkflowBodySchema.safeParse({ inputData: { topic: 'test' } });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1340,6 +1409,7 @@ describe('executeWorkflowBodySchema', () => {
       inputData: {},
       budgetLimitUsd: 5.5,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1364,6 +1434,7 @@ describe('executeWorkflowBodySchema', () => {
 describe('approveExecutionBodySchema', () => {
   it('accepts an empty body', () => {
     const result = approveExecutionBodySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1372,6 +1443,7 @@ describe('approveExecutionBodySchema', () => {
       approvalPayload: { decision: 'approved' },
       notes: 'Looks good',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1391,6 +1463,7 @@ describe('chatStreamRequestSchema', () => {
       message: 'hello',
       agentSlug: 'default-agent',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1403,6 +1476,7 @@ describe('chatStreamRequestSchema', () => {
       contextId: 'pattern-1',
       entityContext: { foo: 'bar' },
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1428,17 +1502,20 @@ describe('chatStreamRequestSchema', () => {
 describe('listConversationsQuerySchema', () => {
   it('accepts pagination defaults and no filters', () => {
     const result = listConversationsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('coerces string "true" / "false" into boolean for isActive', () => {
     const result = listConversationsQuerySchema.safeParse({ isActive: 'true' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.isActive).toBe(true);
   });
 
   it('accepts q substring filter', () => {
     const result = listConversationsQuerySchema.safeParse({ q: 'test search' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1458,6 +1535,7 @@ describe('clearConversationsBodySchema', () => {
     const result = clearConversationsBodySchema.safeParse({
       olderThan: '2025-01-01T00:00:00Z',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1465,6 +1543,7 @@ describe('clearConversationsBodySchema', () => {
     const result = clearConversationsBodySchema.safeParse({
       agentId: 'clh1234567890abcdefghijkl',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1478,6 +1557,7 @@ describe('clearConversationsBodySchema', () => {
       agentId: 'clh1234567890abcdefghijkl',
       userId: 'clh9876543210abcdefghijkl',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1486,6 +1566,7 @@ describe('clearConversationsBodySchema', () => {
       olderThan: '2025-01-01T00:00:00Z',
       allUsers: true,
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1507,11 +1588,13 @@ describe('clearConversationsBodySchema', () => {
 describe('listDocumentsQuerySchema', () => {
   it('accepts the default pagination with no filters', () => {
     const result = listDocumentsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts a valid status enum value', () => {
     const result = listDocumentsQuerySchema.safeParse({ status: 'ready' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1524,6 +1607,7 @@ describe('listDocumentsQuerySchema', () => {
 describe('getPatternParamSchema', () => {
   it('coerces a numeric string into a positive integer', () => {
     const result = getPatternParamSchema.safeParse({ number: '12' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.number).toBe(12);
   });
@@ -1550,6 +1634,7 @@ describe('costBreakdownQuerySchema', () => {
       dateTo: '2026-02-01',
       groupBy: 'day',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1560,6 +1645,7 @@ describe('costBreakdownQuerySchema', () => {
       dateTo: '2026-01-02',
       groupBy: 'model',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1612,6 +1698,7 @@ describe('costBreakdownQuerySchema', () => {
 describe('listEvaluationsQuerySchema', () => {
   it('accepts pagination defaults with no filters', () => {
     const result = listEvaluationsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1621,6 +1708,7 @@ describe('listEvaluationsQuerySchema', () => {
       status: 'in_progress',
       q: 'retention',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1641,6 +1729,7 @@ describe('createEvaluationSchema', () => {
       agentId: VALID_CUID,
       title: 'Retention probe',
     });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1670,6 +1759,7 @@ describe('createEvaluationSchema', () => {
       status: 'completed',
     });
     // status is stripped (ignored) because schema is not .strict()
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && 'status' in result.data).toBe(false);
   });
@@ -1683,11 +1773,13 @@ describe('updateEvaluationSchema', () => {
 
   it('accepts a single title change', () => {
     const result = updateEvaluationSchema.safeParse({ title: 'New title' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts a status transition to in_progress', () => {
     const result = updateEvaluationSchema.safeParse({ status: 'in_progress' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
@@ -1700,12 +1792,14 @@ describe('updateEvaluationSchema', () => {
 describe('evaluationLogsQuerySchema', () => {
   it('applies default limit of 100 when omitted', () => {
     const result = evaluationLogsQuerySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.limit).toBe(100);
   });
 
   it('coerces a numeric string limit', () => {
     const result = evaluationLogsQuerySchema.safeParse({ limit: '25' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.limit).toBe(25);
   });
@@ -1717,12 +1811,14 @@ describe('evaluationLogsQuerySchema', () => {
 
   it('accepts an optional before cursor (positive integer sequenceNumber)', () => {
     const result = evaluationLogsQuerySchema.safeParse({ before: 42 });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.before).toBe(42);
   });
 
   it('coerces a numeric-string before cursor', () => {
     const result = evaluationLogsQuerySchema.safeParse({ before: '7' });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     expect(result.success && result.data.before).toBe(7);
   });
@@ -1741,11 +1837,13 @@ describe('evaluationLogsQuerySchema', () => {
 describe('completeEvaluationBodySchema', () => {
   it('accepts an empty body', () => {
     const result = completeEvaluationBodySchema.safeParse({});
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
   it('accepts unknown extra fields (passthrough for forward compat)', () => {
     const result = completeEvaluationBodySchema.safeParse({ futureOption: true });
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 });
