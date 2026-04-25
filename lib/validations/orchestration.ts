@@ -1554,6 +1554,7 @@ export const updateEvaluationSchema = z
       .trim()
       .optional(),
     status: z.enum(['draft', 'in_progress', 'archived']).optional(),
+    startedAt: z.string().datetime().optional(),
     metadata: metadataSchema,
   })
   .refine(
@@ -1561,6 +1562,7 @@ export const updateEvaluationSchema = z
       v.title !== undefined ||
       v.description !== undefined ||
       v.status !== undefined ||
+      v.startedAt !== undefined ||
       v.metadata !== undefined,
     { message: 'At least one field must be provided' }
   );

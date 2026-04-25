@@ -14,11 +14,12 @@
  * - Complete button is disabled when no messages
  * - Confirmation dialog shown before completing
  * - Archive button with confirmation dialog
- * - Renders annotation category buttons when a message entry is expanded
+ * - Renders all four annotation category buttons when a message entry is expanded
  * - Manual save button persists annotations
  * - Annotation limit warning shown when approaching limit
  * - Loads existing logs on mount for in-progress evaluations
  * - Auto-save uses ref (not stale closure)
+ * - Includes startedAt in draft→in_progress PATCH
  *
  * @see components/admin/orchestration/evaluation-runner.tsx
  */
@@ -269,6 +270,32 @@ describe('EvaluationRunner', () => {
           }
         });
         expect(patchCalls.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('includes startedAt in the draft→in_progress PATCH', async () => {
+      render(<EvaluationRunner evaluation={DRAFT_EVAL} />);
+
+      await waitFor(() => {
+        const patchCalls = mockFetch.mock.calls.filter((call) => {
+          const opts = call[1];
+          if (opts?.method !== 'PATCH') return false;
+          try {
+            const body = JSON.parse(opts.body as string) as { status?: string };
+            return body.status === 'in_progress';
+          } catch {
+            return false;
+          }
+        });
+        expect(patchCalls.length).toBeGreaterThan(0);
+
+        const body = JSON.parse((patchCalls[0][1] as RequestInit).body as string) as {
+          status: string;
+          startedAt?: string;
+        };
+        expect(body.startedAt).toBeDefined();
+        // Must be a valid ISO datetime
+        expect(new Date(body.startedAt!).toISOString()).toBe(body.startedAt);
       });
     });
 
@@ -867,7 +894,7 @@ describe('EvaluationRunner', () => {
       });
     }
 
-    it('expanding annotation entry shows category buttons', async () => {
+    it('expanding annotation entry shows all four category buttons', async () => {
       const user = userEvent.setup();
       await setupWithOneMessage(user);
 
@@ -877,7 +904,9 @@ describe('EvaluationRunner', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: 'Expected' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Unexpected' })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Issue' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Observation' })).toBeInTheDocument();
       });
     });
 

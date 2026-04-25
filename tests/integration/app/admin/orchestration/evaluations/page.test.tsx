@@ -148,6 +148,22 @@ describe('EvaluationsListPage (server component)', () => {
     expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
   });
 
+  it('falls back to empty state when API returns success: false', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: false, error: { code: 'ERR', message: 'fail' } })
+      .mockResolvedValueOnce({ success: false, error: { code: 'ERR', message: 'fail' } });
+
+    const { default: EvaluationsListPage } =
+      await import('@/app/admin/orchestration/evaluations/page');
+
+    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
+    expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
+  });
+
   it('does not throw when serverFetch rejects', async () => {
     // Arrange
     const { serverFetch } = await import('@/lib/api/server-fetch');

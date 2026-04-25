@@ -188,7 +188,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'in_progress' }),
+      body: JSON.stringify({ status: 'in_progress', startedAt: new Date().toISOString() }),
     }).then((res) => {
       if (res.ok) setCurrentStatus('in_progress');
     });
@@ -755,6 +755,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                               variant={ann?.category === cat.value ? 'default' : 'outline'}
                               size="sm"
                               className="h-7 text-xs"
+                              aria-pressed={ann?.category === cat.value}
                               onClick={() =>
                                 updateAnnotation(i, {
                                   category: ann?.category === cat.value ? null : cat.value,

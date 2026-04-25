@@ -99,6 +99,8 @@ The metadata format supports a maximum of **24 non-default annotations** (4 keys
 
 ### Annotation persistence
 
+> **Important:** Annotations are persisted to session metadata for record-keeping, but are **not** fed to the AI analysis. The `/complete` endpoint analyses the conversation logs (transcript) only. Annotations serve as the evaluator's own notes.
+
 Annotations are persisted to the session's `metadata` field via PATCH as flat keys:
 
 ```
@@ -117,11 +119,13 @@ The `metadataSchema` only allows `Record<string, string|number|boolean|null>` wi
 
 ### Status transitions
 
-| From        | To          | Trigger                                                              |
-| ----------- | ----------- | -------------------------------------------------------------------- |
-| draft       | in_progress | Auto-PATCH on runner mount (useEffect with ref guard)                |
-| in_progress | completed   | User clicks "Complete Evaluation" → confirms dialog → POST /complete |
-| any         | archived    | Archive button (with confirmation) or manual PATCH via API           |
+| From                   | To          | Trigger                                                              |
+| ---------------------- | ----------- | -------------------------------------------------------------------- |
+| draft                  | in_progress | Auto-PATCH on runner mount (useEffect with ref guard)                |
+| in_progress            | completed   | User clicks "Complete Evaluation" → confirms dialog → POST /complete |
+| any (except completed) | archived    | Archive button (with confirmation) or manual PATCH via API           |
+
+> **Note:** Archived sessions cannot be completed. The `/complete` endpoint returns `409 Conflict` for both `completed` and `archived` sessions.
 
 ### Completion flow
 

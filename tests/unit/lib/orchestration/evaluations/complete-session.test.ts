@@ -4,7 +4,7 @@
  * Prisma, provider-manager, and cost-tracker are fully mocked. Tests cover:
  *  - happy path (valid JSON, session update, cost logged, result shape)
  *  - NotFoundError on missing or cross-user session
- *  - ConflictError when session already completed
+ *  - ConflictError when session already completed or archived
  *  - ValidationError when logs are empty
  *  - malformed JSON → retry → second failure throws a sanitized error
  *  - logs cap at MAX_LOGS_IN_PROMPT (50)
@@ -195,6 +195,14 @@ describe('completeEvaluationSession', () => {
 
   it('throws ConflictError when the session is already completed', async () => {
     findFirst.mockResolvedValueOnce(makeSession({ status: 'completed' }));
+    await expect(
+      completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(mockedGetProvider).not.toHaveBeenCalled();
+  });
+
+  it('throws ConflictError when the session is archived', async () => {
+    findFirst.mockResolvedValueOnce(makeSession({ status: 'archived' }));
     await expect(
       completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
     ).rejects.toBeInstanceOf(ConflictError);

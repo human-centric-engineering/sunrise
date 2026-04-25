@@ -96,8 +96,8 @@ export default async function TestingPage({
           <FieldHelp title="Agent testing" contentClassName="w-96">
             <p>This page has two tools for measuring and improving your agents:</p>
             <p className="mt-2">
-              <strong>Evaluations</strong> test a single agent against a set of prompts. You review
-              and annotate responses to measure quality and generate improvement suggestions.
+              <strong>Evaluations</strong> let you run a live chat session with a single agent. You
+              review and annotate responses to measure quality and generate improvement suggestions.
             </p>
             <p className="mt-2">
               <strong>Experiments</strong> compare 2&ndash;5 variants of the same agent side by side
