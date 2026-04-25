@@ -220,6 +220,21 @@ After every step the engine checks `ctx.totalCostUsd > budgetLimitUsd` and emits
 
 If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
 
+## Execution statuses
+
+| Status                | Meaning                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| `pending`             | Row created, engine not yet started (rare — transitions quickly) |
+| `running`             | Engine is actively processing steps                              |
+| `paused_for_approval` | Waiting for a human to approve a `human_approval` step           |
+| `completed`           | All steps finished successfully                                  |
+| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped)     |
+| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`              |
+
+## Zombie reaper
+
+If the process dies mid-execution, the row stays in `running` indefinitely. The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for rows stuck in `running` beyond a 30-minute threshold and marks them `failed` with an explanatory `errorMessage`. It is called by the unified maintenance tick endpoint.
+
 ## Adding a new step type
 
 1. Add the literal to `KNOWN_STEP_TYPES` / `WorkflowStepType` in `types/orchestration.ts`.
