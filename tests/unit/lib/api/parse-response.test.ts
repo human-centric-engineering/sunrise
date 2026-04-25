@@ -164,6 +164,7 @@ describe('parseApiResponse', () => {
       };
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on parsed API response success field
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toEqual({ id: '123' });
@@ -619,6 +620,7 @@ describe('parseApiResponse', () => {
       };
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on parsed API response success field
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toEqual({ id: '123' });

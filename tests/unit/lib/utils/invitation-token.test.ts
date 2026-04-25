@@ -21,6 +21,7 @@ import {
   getValidInvitation,
   updateInvitationToken,
   getInvitationMetadata,
+  getAllPendingInvitations,
 } from '@/lib/utils/invitation-token';
 
 /**
@@ -33,7 +34,12 @@ vi.mock('@/lib/db/client', () => ({
     verification: {
       create: vi.fn(),
       findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
       deleteMany: vi.fn(),
+    },
+    user: {
+      findUnique: vi.fn(),
     },
   },
 }));
@@ -310,7 +316,7 @@ describe('validateInvitationToken()', () => {
       const result = await validateInvitationToken(email, token);
 
       // Assert
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — boolean return type; false is the failure case tested separately
     });
 
     it('should query database with correct identifier, expiration filter, and ordering', async () => {
@@ -348,7 +354,7 @@ describe('validateInvitationToken()', () => {
       const invalidResult = await validateInvitationToken(email, wrongToken);
 
       // Assert
-      expect(validResult).toBe(true);
+      expect(validResult).toBe(true); // test-review:accept tobe_true — discriminates between correct/wrong token in the same test
       expect(invalidResult).toBe(false);
     });
 
@@ -730,6 +736,27 @@ describe('getValidInvitation()', () => {
       // Assert
       expect(result).toBeNull();
     });
+
+    it('should return null and log warning when record has invalid metadata', async () => {
+      // Arrange: parseInvitationMetadata returns null for corrupt/missing metadata fields
+      const email = 'user@example.com';
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
+        id: 'verification-123',
+        identifier: `invitation:${email}`,
+        value: 'hashed-token',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: { corrupt: true }, // Does not conform to InvitationMetadata schema
+      });
+
+      // Act
+      const result = await getValidInvitation(email);
+
+      // Assert: Invalid metadata should produce null result and a warning log
+      expect(result).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith('Invalid invitation metadata', { email });
+    });
   });
 
   describe('error handling', () => {
@@ -794,8 +821,19 @@ describe('updateInvitationToken()', () => {
         where: { identifier: `invitation:${email}` },
       });
 
-      // Assert: New token created
-      expect(prisma.verification.create).toHaveBeenCalled();
+      // Assert: New token created with correct identifier and metadata
+      expect(prisma.verification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            identifier: `invitation:${email}`,
+            metadata: expect.objectContaining({
+              name: metadata.name,
+              role: metadata.role,
+              invitedBy: metadata.invitedBy,
+            }),
+          }),
+        })
+      );
     });
 
     it('should log token regeneration', async () => {
@@ -1112,6 +1150,196 @@ describe('getInvitationMetadata()', () => {
 });
 
 /**
+ * Test Suite: getAllPendingInvitations()
+ */
+describe('getAllPendingInvitations()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const makeVerification = (email: string, metadata: object) => ({
+    id: `verification-${email}`,
+    identifier: `invitation:${email}`,
+    value: 'hashed-token',
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+    updatedAt: new Date('2024-01-01T00:00:00Z'),
+    metadata,
+  });
+
+  describe('happy path', () => {
+    it('should return invitations and total when records exist', async () => {
+      // Arrange
+      const invitedAt = new Date('2024-01-01T00:00:00Z').toISOString();
+      const verification = makeVerification('alice@example.com', {
+        name: 'Alice',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedAt,
+      });
+
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([verification]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(1);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ name: 'Admin User' } as any);
+
+      // Act
+      const result = await getAllPendingInvitations();
+
+      // Assert
+      expect(result.total).toBe(1);
+      expect(result.invitations).toHaveLength(1);
+      expect(result.invitations[0]).toMatchObject({
+        email: 'alice@example.com',
+        name: 'Alice',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedByName: 'Admin User',
+      });
+    });
+
+    it('should return empty list when no pending invitations exist', async () => {
+      // Arrange
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(0);
+
+      // Act
+      const result = await getAllPendingInvitations();
+
+      // Assert
+      expect(result.total).toBe(0);
+      expect(result.invitations).toHaveLength(0);
+    });
+
+    it('should skip records with invalid metadata', async () => {
+      // Arrange: One valid, one corrupt
+      const invitedAt = new Date().toISOString();
+      const valid = makeVerification('alice@example.com', {
+        name: 'Alice',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedAt,
+      });
+      const corrupt = makeVerification('broken@example.com', { corrupt: true });
+
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([valid, corrupt]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(2);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Act
+      const result = await getAllPendingInvitations();
+
+      // Assert: corrupt record is silently skipped; total reflects DB count (unfiltered)
+      expect(result.invitations).toHaveLength(1);
+      expect(result.invitations[0].email).toBe('alice@example.com');
+    });
+
+    it('should apply search filter across email and name', async () => {
+      // Arrange
+      const invitedAt = new Date().toISOString();
+      const alice = makeVerification('alice@example.com', {
+        name: 'Alice Smith',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedAt,
+      });
+      const bob = makeVerification('bob@example.com', {
+        name: 'Bob Jones',
+        role: 'USER',
+        invitedBy: 'admin-123',
+        invitedAt,
+      });
+
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([alice, bob]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(2);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Act
+      const result = await getAllPendingInvitations({ search: 'alice' });
+
+      // Assert: Only alice matches the search
+      expect(result.invitations).toHaveLength(1);
+      expect(result.invitations[0].email).toBe('alice@example.com');
+      expect(result.total).toBe(1); // filtered total
+    });
+
+    it('should paginate results', async () => {
+      // Arrange: 3 invitations, page 2 of limit 2 should return only the 3rd
+      const invitedAt = new Date().toISOString();
+      const verifications = ['a@example.com', 'b@example.com', 'c@example.com'].map((email) =>
+        makeVerification(email, { name: email, role: 'USER', invitedBy: 'admin-123', invitedAt })
+      );
+
+      vi.mocked(prisma.verification.findMany).mockResolvedValue(verifications);
+      vi.mocked(prisma.verification.count).mockResolvedValue(3);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+      // Act
+      const result = await getAllPendingInvitations({ page: 2, limit: 2 });
+
+      // Assert
+      expect(result.invitations).toHaveLength(1);
+      expect(result.total).toBe(3);
+    });
+
+    it('should query only non-expired invitations with the correct identifier prefix', async () => {
+      // Arrange
+      vi.mocked(prisma.verification.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.verification.count).mockResolvedValue(0);
+
+      // Act
+      await getAllPendingInvitations();
+
+      // Assert: Both queries use the same base where clause
+      const expectedWhere = expect.objectContaining({
+        identifier: { startsWith: 'invitation:' },
+        expiresAt: { gt: expect.any(Date) },
+      });
+      expect(prisma.verification.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere })
+      );
+      expect(prisma.verification.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere })
+      );
+    });
+  });
+
+  describe('error handling', () => {
+    it('should throw when the database query fails', async () => {
+      // Arrange
+      const dbError = new Error('Connection refused');
+      vi.mocked(prisma.verification.findMany).mockRejectedValue(dbError);
+      vi.mocked(prisma.verification.count).mockResolvedValue(0);
+
+      // Act & Assert
+      await expect(getAllPendingInvitations()).rejects.toThrow(
+        'Failed to fetch pending invitations'
+      );
+    });
+
+    it('should log error when database query fails', async () => {
+      // Arrange
+      const dbError = new Error('Connection refused');
+      vi.mocked(prisma.verification.findMany).mockRejectedValue(dbError);
+      vi.mocked(prisma.verification.count).mockResolvedValue(0);
+
+      // Act
+      try {
+        await getAllPendingInvitations();
+      } catch {
+        // Expected to throw
+      }
+
+      // Assert
+      expect(logger.error).toHaveBeenCalledWith('Failed to fetch pending invitations', dbError);
+    });
+  });
+});
+
+/**
  * Integration Test: Full workflow
  */
 describe('Full invitation workflow', () => {
@@ -1168,7 +1396,7 @@ describe('Full invitation workflow', () => {
 
     // Assert
     expect(token).toMatch(/^[a-f0-9]{64}$/);
-    expect(isValid).toBe(true);
+    expect(isValid).toBe(true); // test-review:accept tobe_true — end-to-end workflow; generate→validate→delete asserts the full flow succeeds
     expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
       where: {
         identifier: `invitation:${email}`,

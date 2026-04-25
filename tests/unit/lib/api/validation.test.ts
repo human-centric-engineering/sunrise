@@ -59,6 +59,7 @@ describe('validateRequestBody()', () => {
 
       // Assert: Type-safe access to properties
       expect(result.count).toBe(42);
+      // test-review:accept tobe_true — boolean field on validated result; asserting type-safe access to parsed data
       expect(result.active).toBe(true);
       expect(typeof result.count).toBe('number');
       expect(typeof result.active).toBe('boolean');
