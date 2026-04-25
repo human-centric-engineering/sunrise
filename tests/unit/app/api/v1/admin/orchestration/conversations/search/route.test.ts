@@ -142,7 +142,6 @@ describe('GET /conversations/search', () => {
       makeRequest({
         q: 'test',
         agentId: 'agent-42',
-        userId: 'user-99',
         dateFrom: '2025-01-01',
         dateTo: '2025-06-30',
       })
@@ -151,14 +150,14 @@ describe('GET /conversations/search', () => {
     expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
     const [sql, ...params] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0];
 
-    // SQL should contain filter conditions
+    // SQL should contain filter conditions — userId is always present (session scoping)
     expect(sql).toContain('"agentId"');
     expect(sql).toContain('"userId"');
     expect(sql).toContain('timestamptz');
 
-    // Params should include the filter values (after embedding, threshold, limit)
+    // Params should include session userId (mandatory) and filter values
+    expect(params).toContain('cmjbv4i3x00003wsloputgwul'); // session.user.id
     expect(params).toContain('agent-42');
-    expect(params).toContain('user-99');
     expect(params).toContain('2025-01-01');
     expect(params).toContain('2025-06-30');
   });
@@ -227,6 +226,64 @@ describe('GET /conversations/search', () => {
     expect(body.meta.total).toBe(0);
     expect(body.meta.semanticAvailable).toBe(false);
     expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('signals semanticAvailable:false when embedding contains NaN or Infinity', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Simulate a broken embedding provider that returns garbage values
+    vi.mocked(embedText).mockResolvedValue([0.1, NaN, 0.3, Infinity, 0.5]);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    expect(response.status).toBe(200);
+
+    const body = await parseJson<{
+      data: unknown[];
+      meta: { semanticAvailable: boolean };
+    }>(response);
+
+    expect(body.meta.semanticAvailable).toBe(false);
+    // Must not attempt a pgvector query with non-finite values
+    expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('passes isActive filter to the SQL query', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([]);
+
+    await GET(makeRequest({ q: 'test', isActive: 'false' }));
+
+    const [sql, ...params] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0];
+    expect(sql).toContain('"isActive"');
+    expect(params).toContain(false);
+  });
+
+  it('returns null agent for orphaned conversations (agent deleted)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+      makeSearchResult({ agentId: null, agentName: null, agentSlug: null }),
+    ]);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    const body = await parseJson<{
+      data: Array<{ agent: unknown; agentId: string | null }>;
+    }>(response);
+
+    expect(body.data[0].agent).toBeNull();
+    expect(body.data[0].agentId).toBeNull();
+  });
+
+  it('clamps similarity to 0 when pgvector distance exceeds 1', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Cosine distance > 1 happens with dissimilar vectors in pgvector
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([makeSearchResult({ distance: 1.5 })]);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    const body = await parseJson<{
+      data: Array<{ bestMatch: { similarity: number } }>;
+    }>(response);
+
+    // 1 - 1.5 = -0.5, but should be clamped to 0
+    expect(body.data[0].bestMatch.similarity).toBe(0);
   });
 
   it('includes list-shape fields (isActive, updatedAt, _count) for the UI', async () => {

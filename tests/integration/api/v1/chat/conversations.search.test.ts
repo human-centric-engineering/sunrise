@@ -60,6 +60,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { chatLimiter } from '@/lib/security/rate-limit';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/chat/conversations/search', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Restore default: rate limiting passes (individual tests override when testing 429)
+    vi.mocked(chatLimiter.check).mockReturnValue({ success: true } as never);
   });
 
   it('returns 401 unauthenticated', async () => {
@@ -140,5 +143,49 @@ describe('GET /api/v1/chat/conversations/search', () => {
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: unknown[] }>(response);
     expect(body.data).toHaveLength(0);
+  });
+
+  it('returns 429 when rate limited', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    vi.mocked(chatLimiter.check).mockReturnValue({ success: false } as never);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+
+    expect(response.status).toBe(429);
+    // Should not hit the database at all
+    expect(prisma.aiConversation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('only returns conversations with publicly visible active agents', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+
+    const response = await GET(makeRequest({ q: 'test' }));
+    expect(response.status).toBe(200);
+
+    // The where clause must enforce agent visibility — this is the security boundary
+    // preventing consumers from searching conversations with internal agents.
+    const findManyCall = vi.mocked(prisma.aiConversation.findMany).mock.calls[0]?.[0];
+    const where = findManyCall?.where as Record<string, unknown>;
+    expect(where.isActive).toBe(true);
+    expect(where.agent).toEqual({ visibility: { in: ['public', 'invite_only'] }, isActive: true });
+    expect(where.messages).toEqual({
+      some: { content: { contains: 'test', mode: 'insensitive' } },
+    });
+  });
+
+  it('paginates results correctly', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(50);
+
+    const response = await GET(makeRequest({ q: 'test', page: '3', limit: '10' }));
+    expect(response.status).toBe(200);
+
+    // Page 3 with limit 10 should skip 20 rows
+    const findManyCall = vi.mocked(prisma.aiConversation.findMany).mock.calls[0]?.[0];
+    expect(findManyCall?.skip).toBe(20);
+    expect(findManyCall?.take).toBe(10);
   });
 });
