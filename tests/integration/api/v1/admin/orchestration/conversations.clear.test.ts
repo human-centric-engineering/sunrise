@@ -298,14 +298,20 @@ describe('POST /api/v1/admin/orchestration/conversations/clear', () => {
     });
   });
 
-  describe('Self-scoped clear does NOT emit audit log', () => {
-    it('omits logAdminAction when no cross-user target is supplied', async () => {
+  describe('Self-scoped clear emits audit log', () => {
+    it('calls logAdminAction with scope "self" for self-scoped clear', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiConversation.deleteMany).mockResolvedValue({ count: 1 });
 
       await POST(makePostRequest({ agentId: AGENT_ID }));
 
-      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'conversation.bulk_clear',
+          entityType: 'conversation',
+          metadata: expect.objectContaining({ scope: 'self' }),
+        })
+      );
     });
   });
 });

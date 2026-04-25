@@ -20,6 +20,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 
 const SAFE_SELECT = {
   id: true,
@@ -79,6 +80,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     adminId: session.user.id,
   });
 
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook_subscription.update',
+    entityType: 'webhook_subscription',
+    entityId: parsed.data,
+    entityName: webhook.url,
+    changes: computeChanges(
+      existing as unknown as Record<string, unknown>,
+      webhook as unknown as Record<string, unknown>
+    ),
+    clientIp: getClientIP(request),
+  });
+
   return successResponse(webhook);
 });
 
@@ -103,6 +117,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   log.info('Webhook deleted', {
     webhookId: parsed.data,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook_subscription.delete',
+    entityType: 'webhook_subscription',
+    entityId: parsed.data,
+    entityName: existing.url,
+    clientIp: getClientIP(request),
   });
 
   return successResponse({ deleted: true });

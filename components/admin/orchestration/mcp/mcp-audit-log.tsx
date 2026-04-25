@@ -29,6 +29,17 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import {
@@ -69,6 +80,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
   const [loading, setLoading] = useState(false);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [method, setMethod] = useState('');
@@ -87,6 +99,7 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
       }
     ) => {
       setLoading(true);
+      setError(null);
       try {
         const params: Record<string, string | number> = { page, limit: 50 };
         const f = filters ?? { method, responseCode, dateFrom, dateTo };
@@ -96,21 +109,15 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
         if (f.dateTo) params.dateTo = f.dateTo;
 
         const raw = await apiClient.get<unknown>(API.ADMIN.ORCHESTRATION.MCP_AUDIT, { params });
-        // The API wraps in { data, meta } — apiClient extracts the top-level data field
-        // which contains both data array and meta
-        if (Array.isArray(raw)) {
-          // Flat array response
-          setEntries(z.array(auditEntrySchema).parse(raw));
-          setMeta(null);
-        } else if (raw && typeof raw === 'object' && 'data' in raw) {
-          const envelope = z
-            .object({ data: z.array(auditEntrySchema), meta: auditMetaSchema })
-            .parse(raw);
-          setEntries(envelope.data);
-          setMeta(envelope.meta);
-        }
+        // apiClient extracts the top-level data field from { success, data, meta }
+        // leaving { data: AuditEntry[], meta: AuditMeta }
+        const envelope = z
+          .object({ data: z.array(auditEntrySchema), meta: auditMetaSchema })
+          .parse(raw);
+        setEntries(envelope.data);
+        setMeta(envelope.meta);
       } catch {
-        // silent
+        setError('Failed to load audit entries.');
       } finally {
         setLoading(false);
       }
@@ -143,8 +150,8 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
           ? `Purged ${String(deleted)} log entries`
           : (data.message ?? 'No old entries to purge')
       );
-      // Refresh current page
-      void fetchEntries(meta?.page ?? 1);
+      // Reset to page 1 — purge may have removed enough rows to make the current page empty
+      void fetchEntries(1);
     } catch {
       setPurgeResult('Purge failed');
     } finally {
@@ -235,11 +242,35 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
         </CardContent>
       </Card>
 
+      {error && <p className="text-destructive text-sm">{error}</p>}
+
       {/* Purge + info */}
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => void handlePurge()} disabled={purging}>
-          {purging ? 'Purging...' : 'Purge Old Logs'}
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" disabled={purging}>
+              {purging ? 'Purging...' : 'Purge Old Logs'}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Purge old audit logs?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete audit log entries older than the configured retention
+                period. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => void handlePurge()}
+              >
+                Purge
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <FieldHelp title="Purge Old Logs">
           Deletes audit log entries older than the retention period configured in Settings. This
           action is irreversible.

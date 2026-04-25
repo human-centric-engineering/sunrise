@@ -171,6 +171,32 @@ describe('logMcpAudit', () => {
     expect(stored.safe).toBe('data');
   });
 
+  it('does not redact fields where key/token are prefixes of longer words', async () => {
+    vi.mocked(prisma.mcpAuditLog.create).mockResolvedValue({} as never);
+
+    logMcpAudit({
+      apiKeyId: 'key-1',
+      method: 'tools/call',
+      requestParams: {
+        apiKeyCount: 5,
+        tokenizeInput: true,
+        encryptionKeyRotation: 'daily',
+        query: 'hello',
+      },
+      responseCode: 'success',
+      durationMs: 5,
+    });
+
+    await flushPromises();
+
+    const call = vi.mocked(prisma.mcpAuditLog.create).mock.calls[0][0];
+    const stored = call.data.requestParams as Record<string, unknown>;
+    expect(stored.apiKeyCount).toBe(5);
+    expect(stored.tokenizeInput).toBe(true);
+    expect(stored.encryptionKeyRotation).toBe('daily');
+    expect(stored.query).toBe('hello');
+  });
+
   it('does not throw when prisma.mcpAuditLog.create rejects', async () => {
     vi.mocked(prisma.mcpAuditLog.create).mockRejectedValue(new Error('DB error'));
 

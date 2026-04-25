@@ -171,6 +171,28 @@ describe('handleMcpRequest', () => {
       expect(result?.error).toBeDefined();
       expect(result?.error?.message).toBe('Rate limit exceeded');
     });
+
+    it('includes toolSlug in rate-limited audit entry for tools/call', async () => {
+      const blockedLimiter = makeRateLimiter(false);
+      const req = makeRequest({
+        method: 'tools/call',
+        params: { name: 'search_kb', arguments: {} },
+      });
+      await handleMcpRequest(req, {
+        auth,
+        session,
+        serverState,
+        rateLimiter: blockedLimiter,
+      });
+
+      const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
+      expect(logMcpAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          responseCode: 'rate_limited',
+          toolSlug: 'search_kb',
+        })
+      );
+    });
   });
 
   describe('ping', () => {

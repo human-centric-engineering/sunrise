@@ -290,14 +290,73 @@ describe('AuditLogView', () => {
     expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
   });
 
-  it('non-ok fetch response does not crash the component', async () => {
+  it('shows error message when fetch returns non-ok response', async () => {
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() => Promise.resolve(new Response(null, { status: 500 })));
     render(<AuditLogView />);
-    // Should not throw — component stays in loading state or shows empty
     await waitFor(() => {
-      expect(screen.queryByText(/error/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/failed to load audit log/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when API returns success: false', async () => {
+    const body = JSON.stringify({ success: false, error: { code: 'INTERNAL', message: 'oops' } });
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+        )
+      );
+    render(<AuditLogView />);
+    await waitFor(() => {
+      expect(screen.getByText(/server returned an error/i)).toBeInTheDocument();
+    });
+  });
+
+  it('collapses expanded row when data is re-fetched', async () => {
+    const user = userEvent.setup();
+    const changes = { name: { from: 'Old', to: 'New' } };
+    mockFetchSuccess([makeEntry({ changes })]);
+
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    // Expand the row
+    await user.click(screen.getByText('Support Bot'));
+    await waitFor(() => {
+      expect(screen.getByText(/"from": "Old"/)).toBeInTheDocument();
+    });
+
+    // Trigger a re-fetch via Refresh
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+
+    // Expanded content should disappear
+    await waitFor(() => {
+      expect(screen.queryByText(/"from": "Old"/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('clears stale error when a new fetch begins', async () => {
+    const user = userEvent.setup();
+
+    // First fetch fails → error visible
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 500 })));
+    render(<AuditLogView />);
+    await waitFor(() => {
+      expect(screen.getByText(/failed to load audit log/i)).toBeInTheDocument();
+    });
+
+    // Next fetch succeeds — swap mock and trigger via Refresh
+    mockFetchSuccess([makeEntry()]);
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+
+    // Error should disappear once the new fetch starts (before response arrives)
+    await waitFor(() => {
+      expect(screen.queryByText(/failed to load audit log/i)).not.toBeInTheDocument();
     });
   });
 
@@ -318,7 +377,7 @@ describe('AuditLogView', () => {
 
   // ── Entity type dropdown filter ────────────────────────────────────────────
 
-  it('exposes all expected entity-type options (no dead webhook entry)', async () => {
+  it('exposes all expected entity-type options', async () => {
     const user = userEvent.setup();
     mockFetchSuccess([makeEntry()]);
     render(<AuditLogView />);
@@ -330,12 +389,16 @@ describe('AuditLogView', () => {
     expect(screen.getByRole('option', { name: /^agents$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^workflows$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^capabilities$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^providers$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^MCP API keys$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^knowledge$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^settings$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^experiments$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^embed tokens$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^backups$/i })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /^webhooks$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^event hooks$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^webhook subscriptions$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^conversations$/i })).toBeInTheDocument();
   });
 
   it('calls fetch with entityType param when entity type is changed', async () => {
@@ -400,6 +463,72 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => {
       expect(screen.getByText('agent-fallback-id')).toBeInTheDocument();
+    });
+  });
+
+  // ── Date range filters ─────────────────────────────────────────────────────
+
+  it('sends dateFrom and dateTo query params when date inputs are set', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    const fromInput = screen.getByLabelText(/from/i);
+    const toInput = screen.getByLabelText(/to/i);
+
+    await user.clear(fromInput);
+    await user.type(fromInput, '2026-01-01');
+    await user.clear(toInput);
+    await user.type(toInput, '2026-01-31');
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const lastUrl = calls[calls.length - 1][0] as string;
+      expect(lastUrl).toContain('dateFrom=2026-01-01');
+      expect(lastUrl).toContain('dateTo=2026-01-31');
+    });
+  });
+
+  // ── Metadata rendering ───────────────────────────────────────────────────
+
+  it('shows metadata alongside changes in expanded row', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([
+      makeEntry({
+        changes: { name: { from: 'A', to: 'B' } },
+        metadata: { eventType: 'conversation.message' },
+      }),
+    ]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    await user.click(screen.getByText('Support Bot'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes')).toBeInTheDocument();
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+      expect(screen.getByText(/eventType/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows metadata even when changes is null', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([
+      makeEntry({
+        changes: null,
+        metadata: { reason: 'scheduled' },
+      }),
+    ]);
+    render(<AuditLogView />);
+    await waitFor(() => screen.getByText('Support Bot'));
+
+    await user.click(screen.getByText('Support Bot'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+      expect(screen.getByText(/scheduled/)).toBeInTheDocument();
+      expect(screen.queryByText('Changes')).not.toBeInTheDocument();
     });
   });
 

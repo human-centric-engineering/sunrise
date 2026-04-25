@@ -133,7 +133,34 @@ describe('McpAuditLog', () => {
   });
 
   describe('Purge', () => {
-    it('calls apiClient.delete when Purge is clicked', async () => {
+    /** Click the Purge trigger and confirm in the AlertDialog */
+    async function confirmPurge() {
+      await act(async () => {
+        fireEvent.click(screen.getByText('Purge Old Logs'));
+      });
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Purge old audit logs?')).toBeInTheDocument();
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^purge$/i }));
+      });
+    }
+
+    it('shows confirmation dialog before purging', async () => {
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Purge Old Logs'));
+      });
+
+      expect(screen.getByText('Purge old audit logs?')).toBeInTheDocument();
+      expect(screen.getByText(/permanently delete/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^purge$/i })).toBeInTheDocument();
+    });
+
+    it('calls apiClient.delete when Purge is confirmed', async () => {
       vi.mocked(apiClient.delete).mockResolvedValue({ deleted: 5 });
       vi.mocked(apiClient.get).mockResolvedValue({
         data: [],
@@ -142,9 +169,7 @@ describe('McpAuditLog', () => {
 
       render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
 
-      await act(async () => {
-        fireEvent.click(screen.getByText('Purge Old Logs'));
-      });
+      await confirmPurge();
 
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/mcp/audit'));
@@ -156,7 +181,6 @@ describe('McpAuditLog', () => {
     });
 
     it('shows "No old entries to purge" when deleted count is 0 and no message field', async () => {
-      // Arrange: purge returns 0 deleted, no message field → falls back to default string
       vi.mocked(apiClient.delete).mockResolvedValue({ deleted: 0 });
       vi.mocked(apiClient.get).mockResolvedValue({
         data: [],
@@ -165,19 +189,14 @@ describe('McpAuditLog', () => {
 
       render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
 
-      // Act
-      await act(async () => {
-        fireEvent.click(screen.getByText('Purge Old Logs'));
-      });
+      await confirmPurge();
 
-      // Assert: the default fallback message is shown
       await waitFor(() => {
         expect(screen.getByText('No old entries to purge')).toBeInTheDocument();
       });
     });
 
     it('shows custom message when purge returns deleted=0 with a message field', async () => {
-      // Arrange: server returns custom message field
       vi.mocked(apiClient.delete).mockResolvedValue({
         deleted: 0,
         message: 'Nothing to purge yet',
@@ -189,29 +208,20 @@ describe('McpAuditLog', () => {
 
       render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
 
-      // Act
-      await act(async () => {
-        fireEvent.click(screen.getByText('Purge Old Logs'));
-      });
+      await confirmPurge();
 
-      // Assert: the server-provided message is displayed
       await waitFor(() => {
         expect(screen.getByText('Nothing to purge yet')).toBeInTheDocument();
       });
     });
 
     it('shows "Purge failed" when purge throws', async () => {
-      // Arrange: apiClient.delete rejects
       vi.mocked(apiClient.delete).mockRejectedValue(new Error('Network error'));
 
       render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
 
-      // Act
-      await act(async () => {
-        fireEvent.click(screen.getByText('Purge Old Logs'));
-      });
+      await confirmPurge();
 
-      // Assert: error message shown
       await waitFor(() => {
         expect(screen.getByText('Purge failed')).toBeInTheDocument();
       });
@@ -255,10 +265,9 @@ describe('McpAuditLog', () => {
   });
 
   describe('fetchEntries response shapes', () => {
-    it('handles flat array response from apiClient.get', async () => {
-      // Arrange: API returns a flat array (not enveloped)
-      const flatEntry = { ...ENTRY, id: 'flat-1' };
-      vi.mocked(apiClient.get).mockResolvedValue([flatEntry]);
+    it('shows error when apiClient.get returns an unexpected shape', async () => {
+      // Arrange: API returns a flat array instead of the expected { data, meta } envelope
+      vi.mocked(apiClient.get).mockResolvedValue([{ id: 'unexpected' }]);
 
       render(<McpAuditLog initialEntries={[]} initialMeta={null} />);
 
@@ -267,9 +276,9 @@ describe('McpAuditLog', () => {
         fireEvent.click(screen.getByText('Apply Filters'));
       });
 
-      // Assert: the flat-array branch executed — new entry is displayed
+      // Assert: Zod parse failure is caught and shown as an error
       await waitFor(() => {
-        expect(screen.getByText('tools/call')).toBeInTheDocument();
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
       });
     });
 
@@ -409,6 +418,52 @@ describe('McpAuditLog', () => {
           expect.stringContaining('/mcp/audit'),
           expect.objectContaining({ params: expect.objectContaining({ page: 1 }) })
         );
+      });
+    });
+  });
+
+  describe('Error handling', () => {
+    it('shows error message when fetchEntries fails', async () => {
+      vi.mocked(apiClient.get).mockRejectedValue(new Error('Network error'));
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      // Trigger a fetch
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
+      });
+    });
+
+    it('clears error on next successful fetch', async () => {
+      // First fetch fails
+      vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('Network error'));
+
+      render(<McpAuditLog initialEntries={[ENTRY]} initialMeta={META} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load audit entries.')).toBeInTheDocument();
+      });
+
+      // Second fetch succeeds
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [ENTRY],
+        meta: META,
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Apply Filters'));
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Failed to load audit entries.')).not.toBeInTheDocument();
       });
     });
   });

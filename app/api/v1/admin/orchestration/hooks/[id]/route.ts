@@ -23,6 +23,7 @@ import {
   hasReservedHookHeader,
 } from '@/lib/orchestration/hooks/types';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
 
@@ -69,7 +70,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   return successResponse(toSafeHook(hook));
 });
 
-export const PATCH = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -100,10 +101,24 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, _session, { p
 
   invalidateHookCache();
   log.info('Event hook updated', { hookId: id });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook.update',
+    entityType: 'webhook',
+    entityId: id,
+    entityName: updated.name,
+    changes: computeChanges(
+      existing as unknown as Record<string, unknown>,
+      updated as unknown as Record<string, unknown>
+    ),
+    clientIp: getClientIP(request),
+  });
+
   return successResponse(toSafeHook(updated));
 });
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -119,5 +134,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, _session, { 
 
   invalidateHookCache();
   log.info('Event hook deleted', { hookId: id });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook.delete',
+    entityType: 'webhook',
+    entityId: id,
+    entityName: existing.name,
+    clientIp: getClientIP(request),
+  });
+
   return successResponse({ deleted: true });
 });

@@ -23,6 +23,7 @@ import {
   hasReservedHookHeader,
 } from '@/lib/orchestration/hooks/types';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { z } from 'zod';
 
 const createHookSchema = z.object({
@@ -96,6 +97,16 @@ export const POST = withAdminAuth(async (request, session) => {
 
   invalidateHookCache();
   log.info('Event hook created', { hookId: hook.id, eventType });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'webhook.create',
+    entityType: 'webhook',
+    entityId: hook.id,
+    entityName: name,
+    metadata: { eventType },
+    clientIp: clientIP,
+  });
 
   return successResponse(toSafeHook(hook), undefined, { status: 201 });
 });

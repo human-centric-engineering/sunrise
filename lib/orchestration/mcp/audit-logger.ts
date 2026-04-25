@@ -8,8 +8,13 @@
  */
 
 import { Prisma } from '@prisma/client';
+import type { McpAuditLog, McpApiKey } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+
+export type McpAuditLogWithKey = McpAuditLog & {
+  apiKey: Pick<McpApiKey, 'name' | 'keyPrefix'> | null;
+};
 
 const MAX_PARAMS_BYTES = 10_000; // 10KB
 
@@ -30,17 +35,18 @@ interface AuditEntry {
  * Truncate and sanitize request params for audit storage.
  * Strips any keys that look like secrets and caps total size.
  */
+/**
+ * Matches field names that are likely secrets. For common words (`key`,
+ * `token`) requires them to END the field name to avoid over-redacting
+ * fields like `apiKeyCount` or `tokenizeInput`.
+ */
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s?$)/i;
+
 function sanitizeParams(params: unknown): unknown {
   if (params === undefined || params === null) return null;
 
   const json = JSON.stringify(params, (key, value) => {
-    const lower = key.toLowerCase();
-    if (
-      lower.includes('password') ||
-      lower.includes('secret') ||
-      lower.includes('token') ||
-      lower.includes('key')
-    ) {
+    if (key && SECRET_PATTERN.test(key)) {
       return '[REDACTED]';
     }
     return value as unknown;
@@ -95,7 +101,7 @@ export async function queryMcpAuditLogs(filters: {
   responseCode?: string;
   dateFrom?: Date;
   dateTo?: Date;
-}): Promise<{ items: unknown[]; total: number }> {
+}): Promise<{ items: McpAuditLogWithKey[]; total: number }> {
   const where: Record<string, unknown> = {};
 
   if (filters.method) where.method = filters.method;

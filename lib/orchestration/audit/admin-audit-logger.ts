@@ -8,6 +8,7 @@
  * Follows the same pattern as `lib/orchestration/mcp/audit-logger.ts`.
  */
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
@@ -26,7 +27,13 @@ export interface AdminAuditEntry {
 
 // ─── Secret sanitisation ────────────────────────────────────────────────────
 
-const SECRET_PATTERN = /password|secret|token|key|credential/i;
+/**
+ * Matches field names that are likely secrets. For common words (`key`,
+ * `token`) requires them to END the field name (or the whole name) to
+ * avoid over-redacting fields like `apiKeyCount` or `tokenizeInput`.
+ * Longer words (`password`, `secret`, `credential`) are matched anywhere.
+ */
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s?$)/i;
 
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined
@@ -38,7 +45,10 @@ function sanitizeChanges(
     if (SECRET_PATTERN.test(field)) {
       sanitized[field] = { from: '[REDACTED]', to: '[REDACTED]' };
     } else {
-      sanitized[field] = diff;
+      sanitized[field] = {
+        from: sanitizeMetadataValue(diff.from),
+        to: sanitizeMetadataValue(diff.to),
+      };
     }
   }
   return sanitized;
@@ -79,10 +89,15 @@ export function computeChanges(
 
   const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const key of allKeys) {
-    const a = JSON.stringify(before[key]);
-    const b = JSON.stringify(after[key]);
-    if (a !== b) {
-      changes[key] = { from: before[key], to: after[key] };
+    try {
+      const a = JSON.stringify(before[key]);
+      const b = JSON.stringify(after[key]);
+      if (a !== b) {
+        changes[key] = { from: before[key], to: after[key] };
+      }
+    } catch {
+      // Non-serializable value (circular ref, BigInt, etc.) — record as changed
+      changes[key] = { from: '[unserializable]', to: '[unserializable]' };
     }
   }
 
@@ -103,8 +118,14 @@ export function logAdminAction(entry: AdminAuditEntry): void {
         entityType: entry.entityType,
         entityId: entry.entityId ?? null,
         entityName: entry.entityName ?? null,
-        changes: sanitizeChanges(entry.changes) as never,
-        metadata: sanitizeMetadata(entry.metadata) as never,
+        changes: (() => {
+          const s = sanitizeChanges(entry.changes);
+          return s === null ? Prisma.JsonNull : (s as Prisma.InputJsonValue);
+        })(),
+        metadata: (() => {
+          const s = sanitizeMetadata(entry.metadata);
+          return s === null ? Prisma.JsonNull : (s as Prisma.InputJsonValue);
+        })(),
         clientIp: entry.clientIp ?? null,
       },
     })

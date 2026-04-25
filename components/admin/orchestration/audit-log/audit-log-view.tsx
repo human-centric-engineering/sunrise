@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -48,12 +49,15 @@ const ENTITY_TYPES = [
   { value: 'experiment', label: 'Experiments' },
   { value: 'embed_token', label: 'Embed tokens' },
   { value: 'backup', label: 'Backups' },
+  { value: 'webhook', label: 'Event hooks' },
+  { value: 'webhook_subscription', label: 'Webhook subscriptions' },
+  { value: 'conversation', label: 'Conversations' },
 ];
 
 function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (action.endsWith('.create')) return 'default';
   if (action.endsWith('.update')) return 'secondary';
-  if (action.endsWith('.delete')) return 'destructive';
+  if (action.endsWith('.delete') || action.endsWith('_clear')) return 'destructive';
   return 'outline';
 }
 
@@ -76,6 +80,9 @@ export function AuditLogView() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const limit = 25;
 
@@ -89,12 +96,19 @@ export function AuditLogView() {
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    setExpandedId(null);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (entityType !== 'all') params.set('entityType', entityType);
       if (debouncedSearch) params.set('q', debouncedSearch);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError('Failed to load audit log. Please try again.');
+        return;
+      }
       const json = (await res.json()) as {
         success: boolean;
         data: AuditEntry[];
@@ -103,11 +117,13 @@ export function AuditLogView() {
       if (json.success) {
         setEntries(json.data);
         setTotal(json.meta.total);
+      } else {
+        setError('Server returned an error. Please try again.');
       }
     } finally {
       setLoading(false);
     }
-  }, [page, entityType, debouncedSearch]);
+  }, [page, entityType, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => {
     void fetchEntries();
@@ -130,7 +146,7 @@ export function AuditLogView() {
         </Button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-end gap-3">
         <Input
           placeholder="Filter by action, name, or user..."
           value={search}
@@ -155,7 +171,41 @@ export function AuditLogView() {
             ))}
           </SelectContent>
         </Select>
+        <div className="flex items-end gap-2">
+          <div>
+            <Label htmlFor="audit-date-from" className="text-muted-foreground text-xs">
+              From
+            </Label>
+            <Input
+              id="audit-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setPage(1);
+              }}
+              className="w-[140px]"
+            />
+          </div>
+          <div>
+            <Label htmlFor="audit-date-to" className="text-muted-foreground text-xs">
+              To
+            </Label>
+            <Input
+              id="audit-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setPage(1);
+              }}
+              className="w-[140px]"
+            />
+          </div>
+        </div>
       </div>
+
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <div className="rounded-md border">
         <Table>
@@ -191,11 +241,24 @@ export function AuditLogView() {
                   <TableCell>
                     <span className="font-medium">{entry.entityName ?? entry.entityId ?? '—'}</span>
                     <span className="text-muted-foreground ml-2 text-xs">{entry.entityType}</span>
-                    {expandedId === entry.id && entry.changes && (
-                      <div className="bg-muted mt-2 rounded p-2 text-xs">
-                        <pre className="overflow-x-auto whitespace-pre-wrap">
-                          {JSON.stringify(entry.changes, null, 2)}
-                        </pre>
+                    {expandedId === entry.id && (entry.changes || entry.metadata) && (
+                      <div className="bg-muted mt-2 space-y-2 rounded p-2 text-xs">
+                        {entry.changes && (
+                          <div>
+                            <span className="text-muted-foreground font-medium">Changes</span>
+                            <pre className="overflow-x-auto whitespace-pre-wrap">
+                              {JSON.stringify(entry.changes, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                        {entry.metadata && (
+                          <div>
+                            <span className="text-muted-foreground font-medium">Metadata</span>
+                            <pre className="overflow-x-auto whitespace-pre-wrap">
+                              {JSON.stringify(entry.metadata, null, 2)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     )}
                   </TableCell>

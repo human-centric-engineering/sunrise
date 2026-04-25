@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -87,6 +88,33 @@ describe('computeChanges', () => {
     // Assert
     expect(result).toBeNull();
   });
+
+  it('handles non-serializable values (BigInt) without throwing', () => {
+    // Arrange — BigInt throws on JSON.stringify
+    const before = { count: BigInt(1) } as unknown as Record<string, unknown>;
+    const after = { count: BigInt(2) } as unknown as Record<string, unknown>;
+
+    // Act — must not throw
+    const result = computeChanges(before, after);
+
+    // Assert — captured as [unserializable]
+    expect(result).toEqual({ count: { from: '[unserializable]', to: '[unserializable]' } });
+  });
+
+  it('handles circular references without throwing', () => {
+    // Arrange — circular ref throws on JSON.stringify
+    const circular: Record<string, unknown> = { name: 'test' };
+    circular.self = circular;
+
+    const before = { config: circular };
+    const after = { config: { name: 'updated' } };
+
+    // Act — must not throw
+    const result = computeChanges(before, after);
+
+    // Assert — captured as [unserializable]
+    expect(result).toEqual({ config: { from: '[unserializable]', to: '[unserializable]' } });
+  });
 });
 
 // ─── logAdminAction ───────────────────────────────────────────────────────────
@@ -138,7 +166,7 @@ describe('logAdminAction', () => {
     logAdminAction({ userId: 'u2', action: 'settings.update', entityType: 'settings' });
     await flushPromises();
 
-    // Assert — each optional field coerced to null at the DB boundary
+    // Assert — each optional field coerced to null/JsonNull at the DB boundary
     expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -147,8 +175,8 @@ describe('logAdminAction', () => {
           entityType: 'settings',
           entityId: null,
           entityName: null,
-          changes: null,
-          metadata: null,
+          changes: Prisma.JsonNull,
+          metadata: Prisma.JsonNull,
           clientIp: null,
         }),
       })
@@ -185,6 +213,80 @@ describe('logAdminAction', () => {
     expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
   });
 
+  it('does not redact fields where key/token are prefixes of longer words', async () => {
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+
+    logAdminAction({
+      userId: 'u-noredact',
+      action: 'agent.update',
+      entityType: 'agent',
+      changes: {
+        apiKeyCount: { from: 3, to: 5 },
+        tokenizeInput: { from: false, to: true },
+        encryptionKeyRotation: { from: 'weekly', to: 'daily' },
+        displayName: { from: 'Alice', to: 'Bob' },
+      },
+    });
+    await flushPromises();
+
+    const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
+    const storedChanges = call.data.changes as Record<string, { from: unknown; to: unknown }>;
+
+    // 'key' and 'token' as prefixes of longer words should NOT be redacted
+    expect(storedChanges.apiKeyCount).toEqual({ from: 3, to: 5 });
+    expect(storedChanges.tokenizeInput).toEqual({ from: false, to: true });
+    expect(storedChanges.encryptionKeyRotation).toEqual({ from: 'weekly', to: 'daily' });
+    expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
+  });
+
+  it('redacts secret-named keys nested inside changes from/to values', async () => {
+    // Arrange — simulates a hook update where the `action` field contains
+    // headers with secret-named keys (e.g. X-Api-Key). The top-level field
+    // name `action` does NOT match SECRET_PATTERN, but the nested key should.
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+
+    logAdminAction({
+      userId: 'u-nested',
+      action: 'webhook.update',
+      entityType: 'webhook',
+      changes: {
+        action: {
+          from: {
+            type: 'webhook',
+            url: 'https://old.example.com',
+            headers: { 'X-Api-Key': 'old-secret' },
+          },
+          to: {
+            type: 'webhook',
+            url: 'https://new.example.com',
+            headers: { 'X-Api-Key': 'new-secret' },
+          },
+        },
+        name: { from: 'Old Hook', to: 'New Hook' },
+      },
+    });
+    await flushPromises();
+
+    const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
+    const storedChanges = call.data.changes as Record<string, { from: unknown; to: unknown }>;
+
+    // The nested X-Api-Key should be redacted in both from and to
+    expect(storedChanges.action).toEqual({
+      from: {
+        type: 'webhook',
+        url: 'https://old.example.com',
+        headers: { 'X-Api-Key': '[REDACTED]' },
+      },
+      to: {
+        type: 'webhook',
+        url: 'https://new.example.com',
+        headers: { 'X-Api-Key': '[REDACTED]' },
+      },
+    });
+    // Non-secret fields pass through unchanged
+    expect(storedChanges.name).toEqual({ from: 'Old Hook', to: 'New Hook' });
+  });
+
   it('stores null in the changes column when changes is null', async () => {
     // Arrange
     vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
@@ -198,10 +300,10 @@ describe('logAdminAction', () => {
     });
     await flushPromises();
 
-    // Assert
+    // Assert — null changes stored as Prisma.JsonNull
     expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ changes: null }),
+        data: expect.objectContaining({ changes: Prisma.JsonNull }),
       })
     );
   });

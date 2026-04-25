@@ -78,12 +78,14 @@ function makeAuditLog(overrides: Record<string, unknown> = {}) {
     method: 'tools/call',
     toolSlug: 'search_knowledge',
     resourceUri: null,
+    requestParams: null,
     responseCode: 'success',
     errorMessage: null,
     durationMs: 120,
     clientIp: '127.0.0.1',
     userAgent: 'MCP-Client/1.0',
     createdAt: new Date('2025-01-01'),
+    apiKey: { name: 'Test Key', keyPrefix: 'smcp_test' },
     ...overrides,
   };
 }
