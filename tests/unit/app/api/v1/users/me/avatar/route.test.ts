@@ -148,6 +148,39 @@ describe('app/api/v1/users/me/avatar/route', () => {
       expect(data.success).toBe(false);
     });
 
+    it('should return 429 when upload rate limit is exceeded', async () => {
+      // Arrange
+      const { auth } = await import('@/lib/auth/config');
+      const { isStorageEnabled, uploadAvatar } = await import('@/lib/storage/upload');
+      const { prisma } = await import('@/lib/db/client');
+      const { uploadLimiter } = await import('@/lib/security/rate-limit');
+
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as never);
+      vi.mocked(isStorageEnabled).mockReturnValue(true);
+      vi.mocked(uploadLimiter.check).mockReturnValueOnce({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Math.ceil((Date.now() + 900000) / 1000),
+      });
+
+      const { POST } = await import('@/app/api/v1/users/me/avatar/route');
+      const request = createUploadRequest(createMockFile());
+
+      // Act
+      const response = await POST(request);
+      const data = await response.json();
+
+      // Assert
+      expect(response.status).toBe(429);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('RATE_LIMIT_EXCEEDED');
+
+      // No DB or storage operations should have occurred
+      expect(uploadAvatar).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
     it('should return 400 when no file provided', async () => {
       const { isStorageEnabled } = await import('@/lib/storage/upload');
       const { auth } = await import('@/lib/auth/config');
@@ -244,6 +277,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
       const data = await response.json();
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.url).toContain('?v=');
       expect(data.data.width).toBe(500);
@@ -506,6 +540,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
       const data = await response.json();
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.message).toBe('Avatar removed');
 
@@ -532,6 +567,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
       const data = await response.json();
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(deleteByPrefix).not.toHaveBeenCalled();
       expect(prisma.user.update).toHaveBeenCalledWith({

@@ -183,6 +183,7 @@ describe('GET /api/v1/users', () => {
         meta: { page: number; limit: number; total: number; totalPages: number };
       }>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(2);
       expect(data.data[0]).toMatchObject({

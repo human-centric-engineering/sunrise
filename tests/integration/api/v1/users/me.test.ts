@@ -164,6 +164,7 @@ describe('GET /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject({
         id: mockUserData.id,
@@ -195,6 +196,7 @@ describe('GET /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
 
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -251,6 +253,7 @@ describe('PATCH /api/v1/users/me', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('Updated Name');
     });
@@ -279,6 +282,7 @@ describe('PATCH /api/v1/users/me', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof updatedData }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.bio).toBe('Updated bio');
       expect(data.data.phone).toBe('+1 (555) 999-8888');
@@ -307,6 +311,7 @@ describe('PATCH /api/v1/users/me', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -319,9 +324,13 @@ describe('PATCH /api/v1/users/me', () => {
       // Arrange
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null); // No existing user with this email
+      // updatedAt differs from mockUserData.updatedAt to prove the response comes from the DB,
+      // not from echoing the request body
+      const dbUpdatedAt = new Date('2025-06-01T12:00:00.000Z');
       vi.mocked(prisma.user.update).mockResolvedValue({
         ...mockUserData,
         email: 'newemail@example.com',
+        updatedAt: dbUpdatedAt,
       });
       const request = createMockRequest({ email: 'newemail@example.com' });
 
@@ -330,8 +339,22 @@ describe('PATCH /api/v1/users/me', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
+      const data = await parseResponse<{
+        success: boolean;
+        data: typeof mockUserData & { updatedAt: string };
+      }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      expect(data.success).toBe(true);
       expect(data.data.email).toBe('newemail@example.com');
+      // Verify the handler-derived updatedAt comes from the DB return, not the request body
+      expect(new Date(data.data.updatedAt).toISOString()).toBe(dbUpdatedAt.toISOString());
+      // Verify prisma.user.update was called with the correct arguments (dsu fix)
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cmjbv4i3x00003wsloputgwul' },
+          data: expect.objectContaining({ email: 'newemail@example.com' }),
+        })
+      );
     });
 
     it('should return 400 when email is already taken', async () => {
@@ -444,7 +467,9 @@ describe('DELETE /api/v1/users/me', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: { deleted: boolean } }>(response);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural assertion on the deleted boolean field in the API response, paired with status 200 and id check
       expect(data.data.deleted).toBe(true);
 
       // Verify user was deleted

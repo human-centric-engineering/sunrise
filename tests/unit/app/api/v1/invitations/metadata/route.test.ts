@@ -144,6 +144,7 @@ describe('GET /api/v1/invitations/metadata', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'John Doe',
@@ -628,6 +629,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       // Assert
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
       expect(data.success).toBe(true);
       expect(typeof data.data).toBe('object');
     });
