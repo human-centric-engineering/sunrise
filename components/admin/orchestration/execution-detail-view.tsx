@@ -120,8 +120,9 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
                 <strong>Pending</strong> — queued, not yet started. <strong>Running</strong> —
                 engine is processing steps. <strong>Completed</strong> — all steps finished
                 successfully. <strong>Failed</strong> — a step threw an error.{' '}
-                <strong>Paused for approval</strong> — waiting for a human to approve a capability
-                call.
+                <strong>Paused for approval</strong> — waiting for a human to review and approve
+                before the workflow continues. <strong>Cancelled</strong> — stopped by a user before
+                completion.
               </FieldHelp>
             </CardTitle>
           </CardHeader>

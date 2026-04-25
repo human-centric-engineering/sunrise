@@ -82,7 +82,7 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
             <p className="text-foreground mt-2 font-medium">This page</p>
             <p>
               Inspect the step-by-step trace, see total cost and token usage, and diagnose where a
-              workflow succeeded or failed.
+              workflow succeeded, failed, or was cancelled.
             </p>
           </FieldHelp>
         </h1>
