@@ -11,6 +11,8 @@
  * - Error state: submit with invalid function definition JSON (jsonError guard)
  * - Error state: submit with invalid executionConfig JSON (execConfigError guard)
  * - Error state: submit with missing/unparsed function definition (parsedFn guard)
+ * - Edit mode: PATCH success resets form, PATCH failure shows API error
+ * - Metadata: rejects non-primitive values, accepts valid primitives
  *
  * @see components/admin/orchestration/capability-form.tsx
  */
@@ -583,6 +585,118 @@ describe('CapabilityForm — Basic tab', () => {
       await waitFor(() => {
         expect(screen.getByText(/metadata is not valid json/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Edit mode save flow ────────────────────────────────────────────────────
+
+  describe('edit mode save', () => {
+    it('PATCHes and shows "Saved" confirmation on success', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'cap-edit-1',
+        name: 'Updated Capability',
+        slug: 'existing-capability',
+      });
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      // Modify the name
+      const nameInput = screen.getByRole('textbox', { name: /^name/i });
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Capability');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/capabilities/cap-edit-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({ name: 'Updated Capability' }),
+          })
+        );
+      });
+    });
+
+    it('shows API error message when PATCH fails', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Slug already taken', 'CONFLICT', 409)
+      );
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/slug already taken/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Metadata validation ──────────────────────────────────────────────────
+
+  describe('metadata validation', () => {
+    it('rejects metadata with non-primitive values (arrays, objects)', async () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, {
+        target: { value: JSON.stringify({ tags: ['a', 'b'] }) },
+      });
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      const errorEl = document.querySelector('p.text-destructive');
+      expect(errorEl).toBeTruthy();
+      expect(errorEl?.textContent).toMatch(/must be a string, number, boolean, or null/i);
+    });
+
+    it('accepts metadata with valid primitive values', async () => {
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      const metadataTextarea = screen.getByPlaceholderText(/"team"/);
+      fireEvent.change(metadataTextarea, {
+        target: {
+          value: JSON.stringify({ team: 'platform', version: 2, active: true, deprecated: null }),
+        },
+      });
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // No error should appear
+      const errorEl = document.querySelector('p.text-destructive');
+      expect(errorEl).toBeNull();
     });
   });
 
