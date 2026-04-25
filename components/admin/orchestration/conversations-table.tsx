@@ -120,10 +120,11 @@ export function ConversationsTable({
 
           if (semanticRes.ok) {
             const semanticBody = await parseApiResponse<ConversationListItem[]>(semanticRes);
-            const semanticMeta = semanticBody.success
-              ? (semanticBody.meta as { semanticAvailable?: boolean } | undefined)
-              : undefined;
-            if (semanticBody.success && semanticMeta?.semanticAvailable !== false) {
+            const semanticAvailable =
+              semanticBody.success && semanticBody.meta && 'semanticAvailable' in semanticBody.meta
+                ? semanticBody.meta.semanticAvailable
+                : undefined;
+            if (semanticBody.success && semanticAvailable !== false) {
               setConversations(semanticBody.data);
               // Semantic results come back un-paginated; pin meta to a
               // single page so the pager doesn't render.
