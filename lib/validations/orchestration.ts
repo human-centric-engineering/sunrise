@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema, slugSchema } from '@/lib/validations/common';
+import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
@@ -1748,7 +1749,12 @@ export const executionTraceEntrySchema = z.object({
   durationMs: z.number(),
 });
 
-export const executionTraceSchema = z.array(executionTraceEntrySchema).catch([]);
+export const executionTraceSchema = z.array(executionTraceEntrySchema).catch((ctx) => {
+  logger.warn('Malformed execution trace — returning empty array', {
+    issues: ctx.error?.issues?.length ?? 0,
+  });
+  return [];
+});
 
 // ============================================================================
 // Executor Config Schemas — step.config validation

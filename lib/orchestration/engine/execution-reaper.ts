@@ -36,6 +36,7 @@ export async function reapZombieExecutions(
     data: {
       status: WorkflowStatus.FAILED,
       completedAt: new Date(),
+      errorMessage: 'Execution reaped: exceeded zombie threshold without completing',
     },
   });
 
