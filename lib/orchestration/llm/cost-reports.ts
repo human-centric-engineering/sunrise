@@ -320,8 +320,19 @@ export async function getCostSummary(): Promise<CostSummary> {
     .map((g): CostSummaryAgentRow | null => {
       if (!g.agentId) return null;
       const agent = agentById.get(g.agentId);
-      if (!agent) return null;
       const monthSpend = g._sum.totalCostUsd ?? 0;
+      // Orphaned cost logs (agent deleted) still surface so
+      // sum(byAgent) matches totals.month and the admin isn't confused.
+      if (!agent) {
+        return {
+          agentId: g.agentId,
+          name: '(deleted)',
+          slug: '(deleted)',
+          monthSpend,
+          monthlyBudgetUsd: null,
+          utilisation: null,
+        };
+      }
       const budget = agent.monthlyBudgetUsd ?? null;
       return {
         agentId: agent.id,

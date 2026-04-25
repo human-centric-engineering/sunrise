@@ -58,10 +58,6 @@ export function BudgetAlertsList({ alerts }: BudgetAlertsListProps) {
   }
 
   const handlePause = async (agentId: string) => {
-    setState((prev) => ({
-      ...prev,
-      [agentId]: { pausing: true, paused: !!prev[agentId]?.paused, error: null },
-    }));
     // Optimistic: mark paused immediately.
     setState((prev) => ({
       ...prev,
