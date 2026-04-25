@@ -390,3 +390,21 @@ Scanned 2026-04-25 on branch `triage/phase-2-core-infra` at HEAD `4ef4fd5`.
 | ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
 | tests/unit/lib/constants/knowledge.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 12afced3bbaf6e365beb188bf49b0f0703642342 | 2026-04-25T21:00:00Z | Zero-hit file. |
 | tests/unit/lib/feature-flags/index.test.ts | unit | Clean | 0 | hpo=0,mp=1,me=1,tcm=0 | 27 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-25T21:00:00Z | Sonnet: tbt=1 FP (function return value), mp=1 seedDefaultFlags skip test, me=1 no DB failure test. ctn=1. Low density — Clean. |
+
+## lib/orchestration/mcp
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/orchestration/mcp/auth.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Zero-hit file. |
+| tests/unit/lib/orchestration/mcp/resources/agent-list.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Zero-hit file. |
+| tests/unit/lib/orchestration/mcp/audit-logger.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 4206d846e4c801c318a8e9883573a2ce8f8e4cbe | 2026-04-25T21:33:00Z | tbt=1 annotated (tokenizeInput boolean field). |
+| tests/unit/lib/orchestration/mcp/config.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=1 annotated (isEnabled boolean field). |
+| tests/unit/lib/orchestration/mcp/prompt-registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=2 annotated (required boolean field). |
+| tests/unit/lib/orchestration/mcp/protocol-handler.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 45 | fd6c2517858f9e38c2ceceac1518fe63842a1b23 | 2026-04-25T21:33:00Z | tbt=1 annotated (instanceof Error check). |
+| tests/unit/lib/orchestration/mcp/rate-limiter.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=3 annotated (result.success boolean field). |
+| tests/unit/lib/orchestration/mcp/resource-registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Zero-hit file. |
+| tests/unit/lib/orchestration/mcp/session-manager.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 34 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=1 annotated (initialized boolean field). |
+| tests/unit/lib/orchestration/mcp/resources/pattern-detail.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Zero-hit file. |
+| tests/unit/lib/orchestration/mcp/resources/workflow-list.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=1 annotated (isTemplate boolean field). |
+| tests/unit/lib/orchestration/mcp/tool-registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Was Bad (mp=1, me=1). Tightened 2 bare toHaveBeenCalled to toHaveBeenCalledWith, +2 error propagation tests, 4 tbt + 1 ctn annotated. |
+| tests/unit/lib/orchestration/mcp/resources/knowledge-search.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Was Bad (me=1). +1 rejection propagation test, 2 ctn annotated. |

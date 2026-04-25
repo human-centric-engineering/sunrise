@@ -192,6 +192,7 @@ describe('logMcpAudit', () => {
     const call = vi.mocked(prisma.mcpAuditLog.create).mock.calls[0][0];
     const stored = call.data.requestParams as Record<string, unknown>;
     expect(stored.apiKeyCount).toBe(5);
+    // test-review:accept tobe_true — boolean field `tokenizeInput` from requestParams; verifying audit log stores original param values
     expect(stored.tokenizeInput).toBe(true);
     expect(stored.encryptionKeyRotation).toBe('daily');
     expect(stored.query).toBe('hello');

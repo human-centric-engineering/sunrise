@@ -15,6 +15,7 @@ describe('McpRateLimiter', () => {
   describe('check', () => {
     it('returns a RateLimitResult with success=true on first call', () => {
       const result = limiter.check('key-1', 10);
+      // test-review:accept tobe_true — structural assertion on RateLimitResult.success boolean field
       expect(result.success).toBe(true);
     });
 
@@ -46,6 +47,7 @@ describe('McpRateLimiter', () => {
 
       // key-B should still succeed
       const result = limiter.check('key-B', maxRequests);
+      // test-review:accept tobe_true — structural assertion on RateLimitResult.success boolean field
       expect(result.success).toBe(true);
     });
 
@@ -56,6 +58,7 @@ describe('McpRateLimiter', () => {
 
       // Now call with a higher maxRequests — should create a fresh limiter
       const result = limiter.check('key-change', 10);
+      // test-review:accept tobe_true — structural assertion on RateLimitResult.success boolean field
       expect(result.success).toBe(true);
     });
 

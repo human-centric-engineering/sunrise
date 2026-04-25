@@ -120,6 +120,7 @@ describe('McpProtocolError', () => {
 
   it('is an instance of Error', () => {
     const err = new McpProtocolError(JsonRpcErrorCode.INTERNAL_ERROR, 'oops');
+    // test-review:accept tobe_true — boolean instanceof check; verifying McpProtocolError extends Error
     expect(err instanceof Error).toBe(true);
   });
 });

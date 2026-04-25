@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a–1d, 2a–2g, 3a, 3b complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3c complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -221,8 +221,13 @@
 
 - **Path:** `tests/unit/lib/orchestration/mcp/`
 - **Triage:** `/test-triage scan lib/orchestration/mcp`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - Grade distribution: 4 Clean (auth, agent-list, resource-registry, pattern-detail), 7 Minor (session-manager, rate-limiter, protocol-handler, config, prompt-registry, audit-logger, workflow-list), 2 Bad (tool-registry, knowledge-search) → all 13 Clean after fixes
+  - Minor files: all tobe_true hits were boolean field assertions (initialized, success, instanceof, isEnabled, required, tokenizeInput, isTemplate) — annotated via Path 0
+  - Bad: tool-registry (mp=1 bare logger assertions, me=1 no DB/dispatcher error tests) — tightened 2 `toHaveBeenCalled()` to `toHaveBeenCalledWith(...)`, +2 error propagation tests, 4 tbt + 1 ctn annotated
+  - Bad: knowledge-search (me=1 searchKnowledge rejection untested) — +1 rejection propagation test, 2 ctn annotated
+  - 254 total tests across 13 files, all passing
 
 ### Step 3d — `knowledge/` (12 test files)
 
@@ -459,7 +464,7 @@ Update this table after completing each step.
 | 2g   | lib/constants + feature-flags    | 2     | 2C (sub-threshold)        | No            | DONE        |
 | 3a   | orchestration/engine             | 25    | 25C (was 1R, 2M, 22C)     | YES (pending) | DONE        |
 | 3b   | orchestration/llm                | 20    | 20C (was 2R, 3B, 4M, 11C) | No            | DONE        |
-| 3c   | orchestration/mcp                | 13    |                           | No            | NOT STARTED |
+| 3c   | orchestration/mcp                | 13    | 4C+7M+2B → 13C            | No            | DONE        |
 | 3d   | orchestration/knowledge          | 12    |                           | No            | NOT STARTED |
 | 3e   | orchestration/chat               | 10    |                           | YES           | NOT STARTED |
 | 3f   | orchestration/capabilities       | 9     |                           | No            | NOT STARTED |

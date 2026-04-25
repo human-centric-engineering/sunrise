@@ -148,6 +148,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null);
 
     const body = JSON.parse(result.text);
+    // test-review:accept tobe_true — boolean schema field `isTemplate`; structural assertion on workflow data shape
     expect(body.workflows[0].isTemplate).toBe(true);
   });
 
