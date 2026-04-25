@@ -57,6 +57,7 @@ describe('calculateCost', () => {
   it('returns $0 for local-tier models', () => {
     const cost = calculateCost('local:generic', 10_000, 10_000);
     expect(cost.totalCostUsd).toBe(0);
+    // test-review:accept tobe_true — structural assertion on isLocal boolean field of CostResult
     expect(cost.isLocal).toBe(true);
   });
 
@@ -64,7 +65,9 @@ describe('calculateCost', () => {
     const { logger } = await import('@/lib/logging');
     const cost = calculateCost('model-that-does-not-exist', 1_000, 1_000);
     expect(cost.totalCostUsd).toBe(0);
+    // test-review:accept tobe_true — structural assertion on isLocal boolean field of CostResult
     expect(cost.isLocal).toBe(true);
+    // test-review:accept no_arg_called — presence check; stricter toHaveBeenCalledWith assertion exists at line 259
     expect(logger.warn).toHaveBeenCalled();
   });
 });
@@ -117,6 +120,7 @@ describe('logCost', () => {
       operation: 'chat',
     });
     const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // test-review:accept tobe_true — structural assertion on isLocal boolean field persisted to DB
     expect(call.data.isLocal).toBe(true);
     expect(call.data.totalCostUsd).toBe(0);
   });
@@ -147,6 +151,7 @@ describe('checkBudget', () => {
       _sum: { totalCostUsd: 42 },
     });
     const status = await checkBudget('agent-1');
+    // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
     expect(status.withinBudget).toBe(true);
     expect(status.spent).toBe(42);
     expect(status.limit).toBe(100);
@@ -254,6 +259,7 @@ describe('calculateCost — unknown model ID', () => {
     expect(cost.inputCostUsd).toBe(0);
     expect(cost.outputCostUsd).toBe(0);
     expect(cost.totalCostUsd).toBe(0);
+    // test-review:accept tobe_true — structural assertion on isLocal boolean field of CostResult
     expect(cost.isLocal).toBe(true);
     // Assert: the source logs a warning so operators can add the model
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
@@ -282,6 +288,7 @@ describe('checkBudget — global budget cap', () => {
 
     // Assert: global cap reached → withinBudget=false, flag set
     expect(status.withinBudget).toBe(false);
+    // test-review:accept tobe_true — structural assertion on globalCapExceeded boolean flag of BudgetStatus
     expect(status.globalCapExceeded).toBe(true);
     expect(status.limit).toBeNull();
     expect(status.remaining).toBeNull();
@@ -303,6 +310,7 @@ describe('checkBudget — global budget cap', () => {
     const status = await checkBudget('agent-1');
 
     // Assert: under cap → withinBudget=true, no globalCapExceeded flag
+    // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
     expect(status.withinBudget).toBe(true);
     expect(status.globalCapExceeded).toBeUndefined();
   });
@@ -323,6 +331,7 @@ describe('checkBudget — global budget cap', () => {
     const status = await checkBudget('agent-1');
 
     // Assert: no cap configured → always within budget (for the global dimension)
+    // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
     expect(status.withinBudget).toBe(true);
     expect(status.globalCapExceeded).toBeUndefined();
   });
@@ -344,6 +353,7 @@ describe('checkBudget — global budget cap', () => {
     const status = await checkBudget('agent-1');
 
     // Assert: per-agent budget evaluated normally; global cap treated as unchecked
+    // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
     expect(status.withinBudget).toBe(true);
     expect(status.spent).toBe(20);
     expect(status.limit).toBe(100);
@@ -372,6 +382,7 @@ describe('checkBudget — global budget cap', () => {
 
     // Assert: withinBudget=false because global cap exceeded, even though per-agent is fine
     expect(status.withinBudget).toBe(false);
+    // test-review:accept tobe_true — structural assertion on globalCapExceeded boolean flag of BudgetStatus
     expect(status.globalCapExceeded).toBe(true);
     expect(status.limit).toBe(50);
     expect(status.remaining).toBe(40); // 50 - 10

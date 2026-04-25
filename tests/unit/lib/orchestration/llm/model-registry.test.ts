@@ -83,6 +83,7 @@ describe('refreshFromOpenRouter', () => {
     expect(gpt?.outputCostPerMillion).toBeCloseTo(10);
     expect(gpt?.provider).toBe('openai');
     expect(gpt?.tier).toBe('mid'); // 2.5 <= 5
+    // test-review:accept tobe_true — structural assertion on supportsTools boolean field of ModelEntry
     expect(gpt?.supportsTools).toBe(true);
 
     // Full prefixed id should also resolve to the same entry.
@@ -120,12 +121,14 @@ describe('accessors', () => {
   it('filters by tier', () => {
     const frontier = registry.getModelsByTier('frontier');
     expect(frontier.some((m) => m.id === 'claude-opus-4-6')).toBe(true);
+    // test-review:accept tobe_true — structural assertion on tier field filter contract: every entry in getModelsByTier('frontier') must carry tier === 'frontier'
     expect(frontier.every((m) => m.tier === 'frontier')).toBe(true);
   });
 
   it('filters by provider', () => {
     const anthropic = registry.getModelsByProvider('anthropic');
     expect(anthropic.length).toBeGreaterThanOrEqual(3);
+    // test-review:accept tobe_true — structural assertion on provider field filter contract: every entry in getModelsByProvider('anthropic') must carry provider === 'anthropic'
     expect(anthropic.every((m) => m.provider === 'anthropic')).toBe(true);
   });
 
@@ -300,6 +303,18 @@ describe('validateTaskDefaults', () => {
     const errors = registry.validateTaskDefaults(defaults);
     // Assert: no errors; undefined tasks are not validated
     expect(errors).toHaveLength(0);
+  });
+
+  it('returns an error when the model id value is a non-string type (number)', () => {
+    // Arrange: cast a number as string to simulate a runtime type violation
+    // (e.g. JSON.parse returning a number where a string is expected)
+    const defaults = { chat: 42 as unknown as string };
+    // Act
+    const errors = registry.validateTaskDefaults(defaults);
+    // Assert: non-string value triggers the "non-empty string" guard
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('chat');
+    expect(errors[0].message).toMatch(/non-empty/);
   });
 });
 

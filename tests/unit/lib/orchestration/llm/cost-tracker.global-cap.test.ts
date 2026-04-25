@@ -59,6 +59,7 @@ describe('checkBudget — global cap', () => {
       const status = await checkBudget('agent-1');
 
       // Assert: withinBudget true (no per-agent budget), no globalCapExceeded flag
+      // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
       expect(status.withinBudget).toBe(true);
       expect(status.globalCapExceeded).toBeUndefined();
     });
@@ -79,6 +80,7 @@ describe('checkBudget — global cap', () => {
       const status = await checkBudget('agent-1');
 
       // Assert
+      // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
       expect(status.withinBudget).toBe(true);
       expect(status.globalCapExceeded).toBeUndefined();
       expect(status.spent).toBe(200);
@@ -101,6 +103,7 @@ describe('checkBudget — global cap', () => {
 
       // Assert: global cap exceeded
       expect(status.withinBudget).toBe(false);
+      // test-review:accept tobe_true — structural assertion on globalCapExceeded boolean field of BudgetStatus
       expect(status.globalCapExceeded).toBe(true);
     });
 
@@ -116,6 +119,7 @@ describe('checkBudget — global cap', () => {
 
       // Assert
       expect(status.withinBudget).toBe(false);
+      // test-review:accept tobe_true — structural assertion on globalCapExceeded boolean field of BudgetStatus
       expect(status.globalCapExceeded).toBe(true);
     });
   });
@@ -134,6 +138,7 @@ describe('checkBudget — global cap', () => {
 
       // Assert: withinBudget false because global cap exceeded, even though per-agent is ok
       expect(status.withinBudget).toBe(false);
+      // test-review:accept tobe_true — structural assertion on globalCapExceeded boolean field of BudgetStatus
       expect(status.globalCapExceeded).toBe(true);
       expect(status.limit).toBe(500);
       expect(status.remaining).toBe(400);
@@ -159,8 +164,49 @@ describe('checkBudget — global cap', () => {
 
       // Assert: never throws, per-agent budget logic still works
       expect(thrown).toBe(false);
+      // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
       expect(status?.withinBudget).toBe(true);
       expect(status?.spent).toBe(30);
+    });
+  });
+
+  describe('when agent is not found in the database', () => {
+    it('throws an error identifying the missing agent', async () => {
+      // Arrange: findUnique returns null — agent does not exist
+      mockedAgentFindUnique.mockResolvedValueOnce(null);
+
+      // Act & Assert: checkBudget must throw for an unknown agent
+      await expect(checkBudget('nonexistent-agent')).rejects.toThrow('nonexistent-agent');
+    });
+  });
+
+  describe('when global spend aggregate fails after settings lookup succeeds', () => {
+    it('falls back to per-agent logic only (does not throw)', async () => {
+      // Arrange: settings lookup returns a global cap, but the subsequent
+      // getMonthToDateGlobalSpend aggregate call rejects.
+      mockedAgentFindUnique.mockResolvedValueOnce({ monthlyBudgetUsd: 200 });
+      // Per-agent aggregate
+      mockedAggregate.mockResolvedValueOnce({ _sum: { totalCostUsd: 50 } });
+      // Settings lookup succeeds with a global cap set
+      mockedSettingsFindUnique.mockResolvedValueOnce({ globalMonthlyBudgetUsd: 1000 });
+      // Global spend aggregate (second aggregate call) rejects
+      mockedAggregate.mockRejectedValueOnce(new Error('aggregate DB error'));
+
+      // Act
+      let thrown = false;
+      let status;
+      try {
+        status = await checkBudget('agent-1');
+      } catch {
+        thrown = true;
+      }
+
+      // Assert: global cap failure is swallowed; per-agent budget still evaluated
+      expect(thrown).toBe(false);
+      // test-review:accept tobe_true — structural assertion on withinBudget boolean field of BudgetStatus
+      expect(status?.withinBudget).toBe(true); // agent spent 50 of 200 — within budget
+      expect(status?.spent).toBe(50);
+      expect(status?.globalCapExceeded).toBeUndefined();
     });
   });
 });

@@ -111,6 +111,7 @@ describe('EMBEDDING_MODELS', () => {
     const model = EMBEDDING_MODELS.find((m) => m.id === 'ollama/nomic-embed-text');
     expect(model).toBeDefined();
     expect(model?.provider).toBe('Ollama');
+    // test-review:accept tobe_true — structural assertion on local boolean field of EmbeddingModel
     expect(model?.local).toBe(true);
   });
 
@@ -118,6 +119,7 @@ describe('EMBEDDING_MODELS', () => {
     const model = EMBEDDING_MODELS.find((m) => m.id === 'ollama/mxbai-embed-large');
     expect(model).toBeDefined();
     expect(model?.provider).toBe('Ollama');
+    // test-review:accept tobe_true — structural assertion on local boolean field of EmbeddingModel
     expect(model?.local).toBe(true);
   });
 
@@ -185,16 +187,19 @@ describe('EMBEDDING_MODELS', () => {
   });
 
   describe('schema-compatible models', () => {
+    // test-review:accept tobe_true — structural assertion on schemaCompatible boolean field of EmbeddingModel
     it('voyage-3 is marked schemaCompatible (output_dimension: 1536 supported)', () => {
       const model = EMBEDDING_MODELS.find((m) => m.id === 'voyage/voyage-3');
       expect(model?.schemaCompatible).toBe(true);
     });
 
+    // test-review:accept tobe_true — structural assertion on schemaCompatible boolean field of EmbeddingModel
     it('text-embedding-3-small is marked schemaCompatible (native 1536-dim)', () => {
       const model = EMBEDDING_MODELS.find((m) => m.id === 'openai/text-embedding-3-small');
       expect(model?.schemaCompatible).toBe(true);
     });
 
+    // test-review:accept tobe_true — structural assertion on schemaCompatible boolean field of EmbeddingModel
     it('text-embedding-3-large is marked schemaCompatible (dimensions param supported)', () => {
       const model = EMBEDDING_MODELS.find((m) => m.id === 'openai/text-embedding-3-large');
       expect(model?.schemaCompatible).toBe(true);
@@ -226,6 +231,7 @@ describe('EMBEDDING_MODELS', () => {
       }
     });
 
+    // test-review:accept tobe_true — structural assertion on hasFreeTier boolean field of EmbeddingModel
     it('local models have hasFreeTier: true', () => {
       const localModels = EMBEDDING_MODELS.filter((m) => m.local);
       for (const model of localModels) {
@@ -273,6 +279,7 @@ describe('filterEmbeddingModels', () => {
 
       // Assert
       expect(result.length).toBeGreaterThan(0);
+      // test-review:accept tobe_true — structural assertion on schemaCompatible filter invariant
       for (const model of result) {
         expect(model.schemaCompatible).toBe(true);
       }
@@ -315,6 +322,7 @@ describe('filterEmbeddingModels', () => {
 
       // Assert
       expect(result.length).toBeGreaterThan(0);
+      // test-review:accept tobe_true — structural assertion on hasFreeTier filter invariant
       for (const model of result) {
         expect(model.hasFreeTier).toBe(true);
       }
@@ -355,6 +363,7 @@ describe('filterEmbeddingModels', () => {
 
       // Assert
       expect(result.length).toBeGreaterThan(0);
+      // test-review:accept tobe_true — structural assertion on local filter invariant
       for (const model of result) {
         expect(model.local).toBe(true);
       }
@@ -418,6 +427,7 @@ describe('filterEmbeddingModels', () => {
 
       // Assert: every result must satisfy both constraints
       expect(result.length).toBeGreaterThan(0);
+      // test-review:accept tobe_true — structural assertion on combined filter invariant (schemaCompatible + hasFreeTier)
       for (const model of result) {
         expect(model.schemaCompatible).toBe(true);
         expect(model.hasFreeTier).toBe(true);
@@ -445,6 +455,7 @@ describe('filterEmbeddingModels', () => {
       });
 
       // Assert: every result must satisfy all three constraints
+      // test-review:accept tobe_true — structural assertion on triple filter invariant (schemaCompatible + hasFreeTier + cloud)
       for (const model of result) {
         expect(model.schemaCompatible).toBe(true);
         expect(model.hasFreeTier).toBe(true);
@@ -700,6 +711,7 @@ describe('getEmbeddingModels', () => {
 
       // Assert: compatible appears first despite being second in DB output
       expect(result[0].id).toContain('compat');
+      // test-review:accept tobe_true — structural assertion on schemaCompatible sort order invariant
       expect(result[0].schemaCompatible).toBe(true);
       expect(result[1].schemaCompatible).toBe(false);
     });

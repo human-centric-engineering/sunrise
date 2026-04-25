@@ -105,6 +105,23 @@ describe('withRetry', () => {
     });
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it('wraps a non-ProviderError thrown by fn into a ProviderError via toProviderError', async () => {
+    // Arrange: function that throws a plain Error (not a ProviderError)
+    const cause = new Error('unexpected failure');
+    const fn = vi.fn().mockRejectedValue(cause);
+
+    // Act: withRetry should catch the plain Error, wrap it, and throw a ProviderError
+    const thrown = await withRetry(fn, { maxRetries: 0 }).catch((e: unknown) => e);
+
+    // Assert: the caught error is a ProviderError wrapping the original cause
+    expect(thrown).toBeInstanceOf(ProviderError);
+    const providerErr = thrown as InstanceType<typeof ProviderError>;
+    expect(providerErr.cause).toBe(cause);
+    // Plain Error with no status → provider_error code, non-retriable
+    expect(providerErr.code).toBe('provider_error');
+    expect(providerErr.retriable).toBe(false);
+  });
 });
 
 describe('ProviderError', () => {
@@ -118,6 +135,7 @@ describe('ProviderError', () => {
     });
     expect(err.code).toBe('x');
     expect(err.status).toBe(418);
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ProviderError
     expect(err.retriable).toBe(true);
     expect(err.cause).toBe(cause);
     expect(err.name).toBe('ProviderError');
@@ -239,6 +257,7 @@ describe('toProviderError', () => {
     expect(result.code).toBe('http_502');
     expect(result.status).toBe(502);
     // 502 is a 5xx → retriable
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ProviderError (5xx status maps to retriable=true)
     expect(result.retriable).toBe(true);
     expect(result.cause).toBe(sdkError);
     expect(result.message).toBe('Bad Gateway');
@@ -296,6 +315,7 @@ describe('toProviderError', () => {
     const result = toProviderError(sdkError, 'fallback');
 
     // Assert
+    // test-review:accept tobe_true — structural assertion on retriable boolean field of ProviderError (429 status maps to retriable=true)
     expect(result.retriable).toBe(true);
     expect(result.status).toBe(429);
   });
