@@ -45,7 +45,7 @@ import type { PaginationMeta } from '@/types/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface ConversationListItem {
+export interface ConversationListItem {
   id: string;
   title: string | null;
   isActive: boolean;
@@ -56,7 +56,7 @@ interface ConversationListItem {
   updatedAt: string;
 }
 
-interface AgentOption {
+export interface AgentOption {
   id: string;
   name: string;
 }
@@ -111,6 +111,7 @@ export function ConversationsTable({
         if (msgSearch && searchValue) {
           const semanticParams = new URLSearchParams({ q: searchValue });
           if (agentValue && agentValue !== 'all') semanticParams.set('agentId', agentValue);
+          if (activeValue && activeValue !== 'all') semanticParams.set('isActive', activeValue);
 
           const semanticRes = await fetch(
             `${API.ADMIN.ORCHESTRATION.CONVERSATIONS_SEARCH}?${semanticParams.toString()}`,
@@ -278,6 +279,14 @@ export function ConversationsTable({
             onClick={() => {
               const params = new URLSearchParams({ format: 'json' });
               if (agentFilter && agentFilter !== 'all') params.set('agentId', agentFilter);
+              if (activeFilter && activeFilter !== 'all') params.set('isActive', activeFilter);
+              if (search) {
+                if (searchMessages) {
+                  params.set('messageSearch', search);
+                } else {
+                  params.set('q', search);
+                }
+              }
               window.location.href = `${API.ADMIN.ORCHESTRATION.CONVERSATIONS_EXPORT}?${params}`;
             }}
             title="Export conversations as JSON"

@@ -9,16 +9,17 @@ End-user-facing chat endpoints for interacting with publicly visible AI agents. 
 
 ## Quick reference
 
-| Endpoint                            | Method | Purpose                         |
-| ----------------------------------- | ------ | ------------------------------- |
-| `/chat/stream`                      | POST   | Streaming chat turn (SSE)       |
-| `/chat/agents`                      | GET    | List publicly available agents  |
-| `/chat/agents/:slug/validate-token` | POST   | Validate an invite token        |
-| `/chat/conversations`               | GET    | List user's own conversations   |
-| `/chat/conversations/search`        | GET    | Search conversations by content |
-| `/chat/conversations/:id`           | GET    | Single conversation detail      |
-| `/chat/conversations/:id`           | DELETE | Delete own conversation         |
-| `/chat/conversations/:id/messages`  | GET    | Messages for a conversation     |
+| Endpoint                                           | Method | Purpose                         |
+| -------------------------------------------------- | ------ | ------------------------------- |
+| `/chat/stream`                                     | POST   | Streaming chat turn (SSE)       |
+| `/chat/agents`                                     | GET    | List publicly available agents  |
+| `/chat/agents/:slug/validate-token`                | POST   | Validate an invite token        |
+| `/chat/conversations`                              | GET    | List user's own conversations   |
+| `/chat/conversations/search`                       | GET    | Search conversations by content |
+| `/chat/conversations/:id`                          | GET    | Single conversation detail      |
+| `/chat/conversations/:id`                          | DELETE | Delete own conversation         |
+| `/chat/conversations/:id/messages`                 | GET    | Messages for a conversation     |
+| `/chat/conversations/:id/messages/:messageId/rate` | POST   | Rate an assistant message       |
 
 ## Endpoints
 
@@ -147,17 +148,25 @@ Fetch messages for a conversation. Only returns safe fields: `id`, `role`, `cont
 
 ---
 
-## Agent Visibility Model
+### POST `/chat/conversations/:id/messages/:messageId/rate`
 
-The `AiAgent` model has a `visibility` field with three values:
+Submit feedback on an assistant message (thumbs up/down). Only assistant messages in the user's own conversations with publicly visible agents can be rated.
 
-| Value         | Description                                  | Consumer access  |
-| ------------- | -------------------------------------------- | ---------------- |
-| `internal`    | Admin-only (default for all existing agents) | No               |
-| `public`      | Visible to all authenticated users           | Yes              |
-| `invite_only` | Accessible with a valid invite token         | Yes (with token) |
+**Request body** (`rateMessageSchema`):
 
-Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
+```jsonc
+{
+  "rating": 1, // 1 = thumbs up, -1 = thumbs down
+}
+```
+
+**Response:** `{ "success": true, "data": { "message": { "id": "cuid", "rating": 1, "ratedAt": "..." } } }`
+
+Returns `404` if the conversation doesn't belong to the user, the agent is no longer public/active, or the message doesn't exist or isn't an assistant message. Rate limited via `apiLimiter`.
+
+**Key file:** `app/api/v1/chat/conversations/[id]/messages/[messageId]/rate/route.ts`
+
+---
 
 ### GET `/chat/conversations/search`
 
@@ -171,7 +180,7 @@ Search the authenticated user's conversations by message content.
 | `page`  | number | 1       | Page number                         |
 | `limit` | number | 20      | Items per page                      |
 
-Searches `AiMessage.content` via case-insensitive `contains` for the user's conversations. Returns paginated conversations with agent info, same shape as `/chat/conversations`.
+Searches `AiMessage.content` via case-insensitive `contains` (lexical substring match) for the user's conversations. Returns paginated conversations with agent info, same shape as `/chat/conversations`. Unlike the admin search endpoint, this does not use pgvector semantic search.
 
 **Rate limiting:** `chatLimiter` (per IP).
 
@@ -209,6 +218,18 @@ Checks: agent exists and is `invite_only`, token exists, not revoked, not expire
 
 ---
 
+## Agent Visibility Model
+
+The `AiAgent` model has a `visibility` field with three values:
+
+| Value         | Description                                  | Consumer access  |
+| ------------- | -------------------------------------------- | ---------------- |
+| `internal`    | Admin-only (default for all existing agents) | No               |
+| `public`      | Visible to all authenticated users           | Yes              |
+| `invite_only` | Accessible with a valid invite token         | Yes (with token) |
+
+Admins set visibility when creating or updating agents via the admin API. The consumer endpoints filter on `visibility IN ('public', 'invite_only')`. For `invite_only` agents, the chat stream validates the invite token (not revoked, not expired, within `maxUses`).
+
 ## Validation Schemas
 
 All consumer schemas live in `lib/validations/orchestration.ts`:
@@ -220,10 +241,11 @@ All consumer schemas live in `lib/validations/orchestration.ts`:
 
 ## Rate Limiting
 
-| Limiter               | Scope       | Limit   | Used by                           |
-| --------------------- | ----------- | ------- | --------------------------------- |
-| `consumerChatLimiter` | Per user ID | 10/min  | `/chat/stream`                    |
-| `apiLimiter`          | Per IP      | 100/min | `/chat/stream`, DELETE operations |
+| Limiter               | Scope       | Limit   | Used by                                                           |
+| --------------------- | ----------- | ------- | ----------------------------------------------------------------- |
+| `consumerChatLimiter` | Per user ID | 10/min  | `/chat/stream`                                                    |
+| `apiLimiter`          | Per IP      | 100/min | `/chat/stream`, DELETE operations                                 |
+| `chatLimiter`         | Per IP      | —       | `/chat/conversations/search`, `/chat/agents/:slug/validate-token` |
 
 Defined in `lib/security/rate-limit.ts`. Consumer chat is deliberately stricter than admin chat (10 vs 20 msgs/min) to protect against cost abuse by end-users.
 

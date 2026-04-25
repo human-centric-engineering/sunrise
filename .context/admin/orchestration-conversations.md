@@ -123,19 +123,19 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 - Displays each tag as a `secondary` badge with an `X` remove button.
 - **Add tag** button opens an inline `Input` + `Plus` submit. Empty tags and duplicates (`tags.includes(tag)`) are silently ignored.
 - Updates are **optimistic** — local state changes immediately, then `PATCH /conversations/:id` fires with the new array.
-- On PATCH failure the UI reverts to `initialTags` (the value supplied at first render), **not** the previous local state — so consecutive edits before a failure can roll back multiple steps. Errors are swallowed (no toast, no logging).
+- On PATCH failure the UI reverts to `committedTags` (the last server-confirmed state), not `initialTags`. Each successful save updates `committedTags`, so a failure only rolls back the failing change, not prior successful edits. An inline error message is displayed.
 - `updateConversationSchema` caps tags at 20 entries, 1–100 chars each, trimmed. Over-limit submissions fail silently from the UI's perspective.
 
 ## Operations
 
 ### Export
 
-- Button: list toolbar. Forwards only `agentId`.
-- Endpoint supports `format=json|csv`, `agentId`, `userId`, `dateFrom`, `dateTo`. Defaults to `json`.
-- Hard cap: 500 conversations per export.
+- Button: list toolbar. Forwards all active filters (`agentId`, `isActive`, title/message search).
+- Endpoint supports `format=json|csv`, `agentId`, `isActive`, `q`, `messageSearch`, `tag`, `dateFrom`, `dateTo`. Defaults to `json`.
+- Hard cap: 500 conversations per export, 500 messages per conversation.
 - Rate limit: 1/min per admin IP via `adminLimiter` keyed on `export:<ip>`.
 - CSV columns: `conversation_id, conversation_title, agent_slug, user_id, message_role, message_content, created_at` (one row per message). `csvEscape` quotes values containing `, "` or newline.
-- JSON payload wraps data in `{ success: true, data: [...], meta: { total } }` and serves it as a file download via `Content-Disposition: attachment`.
+- JSON payload wraps data in `{ success: true, data: [...], meta: { total, totalMatching, capped } }` and serves it as a file download via `Content-Disposition: attachment`. `capped: true` indicates the 500-conversation cap was hit; `totalMatching` shows the untruncated count.
 
 ### Bulk clear (API only, no UI)
 
@@ -145,35 +145,36 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
   - default → caller's own conversations (`session.user.id`).
   - `userId: '<cuid>'` → that specific user's conversations.
   - `allUsers: true` → across all users (still narrowed by `olderThan` / `agentId`). Mutually exclusive with `userId`.
-- Cross-user deletions (`userId` or `allUsers`) emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`) with scope, target, filters, and `deletedCount`. Self-scoped clears don't.
+- All bulk clear operations (including self-scoped) emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`) with scope, target, filters, and `deletedCount`.
 - Rate limit: `adminLimiter` per client IP.
 
-### Semantic search (API only, no UI)
+### Semantic search
 
-- `GET /conversations/search?q=…` embeds `q` via `embedText(q, 'query')`, runs cosine-distance search against `ai_message_embedding` (`<=>` with pgvector), and returns conversations grouped by best-matching message.
-- Params: `q` (1–500 chars, required), `agentId`, `userId`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
-- The list toolbar's "Search messages" checkbox does **not** call this — it calls the plain `?messageSearch=` lexical filter on the list endpoint.
+- `GET /conversations/search?q=…` embeds `q` via `embedText(q, 'query')`, runs cosine-distance search against `ai_message_embedding` (`<=>` with pgvector), and returns conversations grouped by best-matching message. Scoped to `session.user.id` — admins only search their own conversations.
+- Params: `q` (1–500 chars, required), `agentId`, `isActive`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
+- The list toolbar's "Search messages" checkbox calls this endpoint first, forwarding `agentId` and `isActive` filters. If the server signals `semanticAvailable: false` (no embedding provider configured or embedding returned non-finite values), the table falls back to lexical `?messageSearch=` on the list endpoint.
+- Similarity scores in the response are clamped to `[0, 1]` (pgvector cosine distance can exceed 1 for dissimilar vectors).
 
 ## Data Sources
 
 One row per admin endpoint backing this UI.
 
-| Path                                                     | Method | Purpose                                                                                                                  |
-| -------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `/api/v1/admin/orchestration/conversations`              | GET    | Paginated list with filters (`agentId`, `userId`, `isActive`, `q`, `messageSearch`, `tag`, `dateFrom`, `dateTo`).        |
-| `/api/v1/admin/orchestration/conversations/:id`          | GET    | Single conversation + agent + `_count.messages`. Scoped to `session.user.id` — other users return 404.                   |
-| `/api/v1/admin/orchestration/conversations/:id`          | PATCH  | Update `title`, `tags`, `isActive`. Rate-limited (`adminLimiter`). Used by `ConversationTags`.                           |
-| `/api/v1/admin/orchestration/conversations/:id`          | DELETE | Hard delete; messages cascade via FK. 404 for cross-user. No UI caller.                                                  |
-| `/api/v1/admin/orchestration/conversations/:id/messages` | GET    | Full messages with **admin-visible metadata** (tokens, cost, latency) — consumer route strips these. Cross-user allowed. |
-| `/api/v1/admin/orchestration/conversations/export`       | GET    | JSON / CSV export, capped at 500, 1/min per admin IP.                                                                    |
-| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected.  |
-| `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings. Not wired into the UI.                                               |
+| Path                                                     | Method | Purpose                                                                                                                        |
+| -------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `/api/v1/admin/orchestration/conversations`              | GET    | Paginated list scoped to `session.user.id`. Filters: `agentId`, `isActive`, `q`, `messageSearch`, `tag`, `dateFrom`, `dateTo`. |
+| `/api/v1/admin/orchestration/conversations/:id`          | GET    | Single conversation + agent + `_count.messages`. Scoped to `session.user.id` — other users return 404.                         |
+| `/api/v1/admin/orchestration/conversations/:id`          | PATCH  | Update `title`, `tags`, `isActive`. Rate-limited (`adminLimiter`). Used by `ConversationTags`.                                 |
+| `/api/v1/admin/orchestration/conversations/:id`          | DELETE | Hard delete; messages cascade via FK. 404 for cross-user. No UI caller.                                                        |
+| `/api/v1/admin/orchestration/conversations/:id/messages` | GET    | Full messages with **admin-visible metadata** (tokens, cost, latency) — consumer route strips these. Cross-user allowed.       |
+| `/api/v1/admin/orchestration/conversations/export`       | GET    | JSON / CSV export, capped at 500, 1/min per admin IP.                                                                          |
+| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected.        |
+| `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings, scoped to `session.user.id`. Wired into the UI via "Search messages".      |
 
-Ownership / scope quirks worth noting:
+Ownership / scope notes:
 
-- List (`GET /conversations`) is **not** userId-scoped by default — it returns rows for every user unless `?userId=` is passed. Useful for admin audit.
-- Detail (`GET /conversations/:id`), PATCH, and DELETE **are** scoped to `session.user.id` and return 404 (never 403) for another user's conversation. The detail page therefore fails with `notFound()` when an admin opens a link to someone else's conversation.
-- Messages (`GET /conversations/:id/messages`) is **not** userId-scoped — cross-user messages are visible, which is what makes the detail page work for admin audit of other users' conversations is **not** possible today (the parent detail fetch 404s first). Keep this asymmetry in mind when changing either route.
+- List (`GET /conversations`), detail, PATCH, DELETE, and export are all scoped to `session.user.id`. Admins only see their own conversations. Any `userId` query parameter is silently ignored.
+- Detail (`GET /conversations/:id`), PATCH, and DELETE return 404 (never 403) for another user's conversation.
+- Messages (`GET /conversations/:id/messages`) is **not** userId-scoped — any admin can fetch any conversation's messages via direct API call. This is intentional for admin audit use cases (e.g. scripts, dashboards). The detail page blocks cross-user viewing at the page level (the parent conversation fetch 404s first, calling `notFound()` before messages render). Keep this asymmetry in mind when changing either route.
 
 ## Related Docs
 

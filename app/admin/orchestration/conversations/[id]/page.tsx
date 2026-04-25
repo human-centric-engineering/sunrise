@@ -3,7 +3,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { ConversationTags } from '@/components/admin/orchestration/conversation-tags';
-import { ConversationTraceViewer } from '@/components/admin/orchestration/conversation-trace-viewer';
+import {
+  ConversationTraceViewer,
+  type ConversationMessage,
+} from '@/components/admin/orchestration/conversation-trace-viewer';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -24,16 +27,6 @@ interface ConversationDetail {
   updatedAt: string;
   agent?: { id: string; name: string; slug: string } | null;
   _count?: { messages: number };
-}
-
-interface ConversationMessage {
-  id: string;
-  role: string;
-  content: string;
-  capabilitySlug: string | null;
-  toolCallId: string | null;
-  metadata: Record<string, unknown> | null;
-  createdAt: string;
 }
 
 async function getConversation(id: string): Promise<ConversationDetail | null> {
@@ -117,7 +110,7 @@ export default async function ConversationDetailPage({
         <ConversationTags conversationId={conversation.id} initialTags={conversation.tags ?? []} />
       </div>
 
-      <ConversationTraceViewer conversation={conversation} messages={messages} />
+      <ConversationTraceViewer messages={messages} />
     </div>
   );
 }

@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { ConversationsTable } from '@/components/admin/orchestration/conversations-table';
+import {
+  ConversationsTable,
+  type ConversationListItem,
+  type AgentOption,
+} from '@/components/admin/orchestration/conversations-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -20,22 +24,6 @@ const EMPTY_META: PaginationMeta = {
   total: 0,
   totalPages: 1,
 };
-
-interface ConversationListItem {
-  id: string;
-  title: string | null;
-  isActive: boolean;
-  agentId: string | null;
-  agent?: { id: string; name: string; slug: string } | null;
-  _count?: { messages: number };
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface AgentOption {
-  id: string;
-  name: string;
-}
 
 async function getConversations(): Promise<{
   conversations: ConversationListItem[];

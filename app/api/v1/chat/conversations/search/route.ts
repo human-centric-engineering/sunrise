@@ -29,32 +29,13 @@ export const GET = withAuth(async (request, session) => {
   const { q, page, limit } = validateQueryParams(searchParams, consumerConversationSearchSchema);
   const skip = (page - 1) * limit;
 
-  // Find conversations where any message matches the search term
-  const messageWhere: Prisma.AiMessageWhereInput = {
-    content: { contains: q, mode: 'insensitive' },
-    conversation: {
-      userId: session.user.id,
-      isActive: true,
-      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
-    },
-  };
-
-  // Get distinct conversation IDs matching the search
-  const matchingMessages = await prisma.aiMessage.findMany({
-    where: messageWhere,
-    select: { conversationId: true },
-    distinct: ['conversationId'],
-    take: 200,
-  });
-
-  const conversationIds = matchingMessages.map((m) => m.conversationId);
-
-  if (conversationIds.length === 0) {
-    return paginatedResponse([], { page, limit, total: 0 });
-  }
-
+  // Find conversations where any message matches the search term.
+  // Query at the conversation level so Prisma handles skip/take correctly.
   const where: Prisma.AiConversationWhereInput = {
-    id: { in: conversationIds },
+    userId: session.user.id,
+    isActive: true,
+    agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+    messages: { some: { content: { contains: q, mode: 'insensitive' } } },
   };
 
   const [conversations, total] = await Promise.all([

@@ -21,6 +21,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiConversation: {
       findMany: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
     },
   },
 }));

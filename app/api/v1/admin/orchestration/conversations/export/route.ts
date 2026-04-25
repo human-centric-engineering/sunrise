@@ -24,6 +24,9 @@ import { conversationExportQuerySchema } from '@/lib/validations/orchestration';
 /** Maximum conversations per export to prevent memory issues. */
 const MAX_EXPORT_CONVERSATIONS = 500;
 
+/** Maximum messages per conversation in exports to bound memory usage. */
+const MAX_MESSAGES_PER_CONVERSATION = 500;
+
 export const GET = withAdminAuth(async (request, session) => {
   // Extra rate limit for exports — 1/min per admin IP
   const ip = getClientIP(request);
@@ -62,17 +65,21 @@ export const GET = withAdminAuth(async (request, session) => {
     };
   }
 
-  const conversations = await prisma.aiConversation.findMany({
-    where,
-    orderBy: { updatedAt: 'desc' },
-    take: MAX_EXPORT_CONVERSATIONS,
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      messages: {
-        orderBy: { createdAt: 'asc' },
+  const [conversations, totalConversations] = await Promise.all([
+    prisma.aiConversation.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: MAX_EXPORT_CONVERSATIONS,
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          take: MAX_MESSAGES_PER_CONVERSATION,
+        },
       },
-    },
-  });
+    }),
+    prisma.aiConversation.count({ where }),
+  ]);
 
   log.info('Conversation export', {
     format: query.format,
@@ -128,7 +135,9 @@ export const GET = withAdminAuth(async (request, session) => {
     })),
   }));
 
-  return new Response(JSON.stringify({ success: true, data, meta: { total: data.length } }), {
+  const capped = totalConversations > MAX_EXPORT_CONVERSATIONS;
+  const meta = { total: data.length, totalMatching: totalConversations, capped };
+  return new Response(JSON.stringify({ success: true, data, meta }), {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': `attachment; filename="conversations-export-${new Date().toISOString().slice(0, 10)}.json"`,

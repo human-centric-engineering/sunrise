@@ -13,8 +13,11 @@ import { Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+
+const MAX_TAGS = 20;
 
 export interface ConversationTagsProps {
   conversationId: string;
@@ -112,6 +115,12 @@ export function ConversationTags({ conversationId, initialTags }: ConversationTa
               <X className="h-3 w-3" />
             </Button>
           </form>
+        ) : tags.length >= MAX_TAGS ? (
+          <Tip label={`Maximum of ${MAX_TAGS} tags reached`}>
+            <Button variant="outline" size="sm" className="h-6 text-xs" disabled>
+              <Plus className="mr-1 h-3 w-3" /> Add tag
+            </Button>
+          </Tip>
         ) : (
           <Button
             variant="outline"
