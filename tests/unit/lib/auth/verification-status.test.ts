@@ -97,9 +97,10 @@ describe('lib/auth/verification-status', () => {
         });
 
         // Act
-        await getVerificationStatus('test@example.com', false);
+        const status = await getVerificationStatus('test@example.com', false);
 
-        // Assert
+        // Assert: returned status reflects token found, and correct identifier was queried
+        expect(status).toBe('pending');
         expect(prisma.verification.findFirst).toHaveBeenCalledWith({
           where: {
             identifier: 'test@example.com',
@@ -122,9 +123,10 @@ describe('lib/auth/verification-status', () => {
         });
 
         // Act
-        await getVerificationStatus(testEmail, false);
+        const status = await getVerificationStatus(testEmail, false);
 
-        // Assert: Only id is selected
+        // Assert: returned status is pending (token exists) and only id was selected
+        expect(status).toBe('pending');
         expect(prisma.verification.findFirst).toHaveBeenCalledWith(
           expect.objectContaining({
             select: { id: true },
@@ -159,15 +161,17 @@ describe('lib/auth/verification-status', () => {
 
     describe('expired tokens', () => {
       it('should return "not_sent" when token exists but is expired', async () => {
-        // Arrange: Token expired in the past
-        // The query filters expired tokens with expiresAt > now, so findFirst returns null
+        // Arrange: The source filters expired tokens via expiresAt > now in the query itself,
+        // so an expired token is excluded by the DB — findFirst returns null.
+        // The key distinction from "emailVerified=true": the DB IS queried (no early return).
         vi.mocked(prisma.verification.findFirst).mockResolvedValue(null);
 
         // Act
         const status = await getVerificationStatus(testEmail, false);
 
-        // Assert
+        // Assert: expired token → not_sent, AND the DB was queried (proves no early return)
         expect(status).toBe('not_sent');
+        expect(prisma.verification.findFirst).toHaveBeenCalledTimes(1);
       });
 
       it('should filter expired tokens using gt (greater than) filter', async () => {
@@ -176,8 +180,11 @@ describe('lib/auth/verification-status', () => {
         const beforeCall = Date.now();
 
         // Act
-        await getVerificationStatus(testEmail, false);
+        const status = await getVerificationStatus(testEmail, false);
         const afterCall = Date.now();
+
+        // Assert: status reflects no valid token found
+        expect(status).toBe('not_sent');
 
         // Assert: Query should use gt filter with current time
         expect(prisma.verification.findFirst).toHaveBeenCalledWith(

@@ -384,12 +384,12 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mocks.getValidInvitation).not.toHaveBeenCalled();
     });
 
-    it("should throw APIError when invitationEmail is present but user's OAuth email does not match", async () => {
-      // Arrange: OAuth state has invitationEmail but no invitationToken.
-      // The email matches so we reach the token branch — but since there is no token,
-      // validateInvitationToken is never called and user is returned unmodified.
-      // However if the emails differ, the hook throws immediately before the token check.
-      // This test covers the email-mismatch path where invitationToken is absent.
+    it('should throw APIError when invitationEmail is present but no token and OAuth email does not match', async () => {
+      // Arrange: OAuth state has invitationEmail but NO invitationToken.
+      // The email mismatch is detected first (before the token branch is reached),
+      // so the hook throws immediately regardless of whether a token is present.
+      // This is a distinct scenario from L363 (which has a token) because the
+      // email-mismatch guard runs before the token branch.
       const mockUser = makeUserCreateData({
         id: 'oauth-before-no-token',
         email: 'other@example.com',
@@ -515,6 +515,89 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
     });
 
+    it('should return unmodified user when getValidInvitation returns null with a valid token', async () => {
+      // Arrange: token is valid but getValidInvitation returns null (e.g. invitation already consumed
+      // or cleaned up). The hook should fall through and return the user unchanged — no role applied.
+      const mockUser = makeUserCreateData({
+        id: 'oauth-before-inv-null',
+        email: 'norecord@example.com',
+      });
+
+      mocks.getOAuthState.mockResolvedValue({
+        invitationEmail: 'norecord@example.com',
+        invitationToken: 'valid-token-but-no-record',
+      });
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      // getValidInvitation returns null — invitation record not found
+      mocks.getValidInvitation.mockResolvedValue(null);
+      mocks.deleteInvitationToken.mockResolvedValue(undefined);
+
+      const ctx: DatabaseHookContext = { path: '/callback/google' };
+
+      // Act
+      const result = await userCreateBeforeHook(mockUser, ctx);
+
+      // Assert: user returned unchanged — no role override when invitation is null
+      expect(result).toEqual({ data: mockUser });
+      expect(result.data.role).toBe(mockUser.role);
+
+      // Token is still consumed (deleteInvitationToken called before the null check)
+      expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('norecord@example.com');
+
+      // Role-apply log should NOT have been called
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        'Applying invitation role to OAuth user before creation',
+        expect.any(Object)
+      );
+    });
+
+    it('should not block signup when deleteInvitationToken throws inside the valid-invitation branch', async () => {
+      // Arrange: token is valid and invitation record exists, but deleteInvitationToken throws.
+      // The outer catch should swallow the error and return the user unchanged.
+      const mockUser = makeUserCreateData({
+        id: 'oauth-before-delete-throws',
+        email: 'deletethrows@example.com',
+      });
+
+      const mockInvitation = {
+        email: 'deletethrows@example.com',
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+        metadata: {
+          name: 'Test User',
+          role: 'ADMIN',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+        },
+      };
+
+      mocks.getOAuthState.mockResolvedValue({
+        invitationEmail: 'deletethrows@example.com',
+        invitationToken: 'valid-token-delete-fails',
+      });
+      mocks.validateInvitationToken.mockResolvedValue(true);
+      mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+      const deleteError = new Error('Token store unavailable');
+      mocks.deleteInvitationToken.mockRejectedValue(deleteError);
+
+      const ctx: DatabaseHookContext = { path: '/callback/google' };
+
+      // Act
+      const result = await userCreateBeforeHook(mockUser, ctx);
+
+      // Assert: hook returns user unchanged — the error was caught, not re-thrown
+      expect(result).toEqual({ data: mockUser });
+
+      // Assert: error logged
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'Error checking OAuth invitation in before hook',
+        deleteError
+      );
+
+      // Assert: role was NOT applied (we never returned from inside the if block)
+      expect(result.data.role).toBe(mockUser.role);
+    });
+
     it('should return unmodified user for non-OAuth paths (email/password signup)', async () => {
       // Arrange
       const mockUser = makeUserCreateData({
@@ -531,6 +614,22 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(result.data).toEqual(expect.objectContaining(mockUser));
       expect(mocks.getOAuthState).not.toHaveBeenCalled();
       expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
+    });
+
+    it('should return unmodified user when ctx is null (nullish coalescing ?? false arm)', async () => {
+      // Arrange: ctx is null — the ?? false arm fires so isOAuthSignup = false
+      const mockUser = makeUserCreateData({
+        id: 'null-ctx-before-user',
+        email: 'nullctx@example.com',
+      });
+
+      // Act
+      const result = await userCreateBeforeHook(mockUser, null);
+
+      // Assert: treated as non-OAuth path, user returned unchanged
+      expect(result.data).toEqual(expect.objectContaining(mockUser));
+      // getOAuthState must not be called because the OAuth branch was not entered
+      expect(mocks.getOAuthState).not.toHaveBeenCalled();
     });
   });
 
@@ -617,106 +716,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           })
         );
 
-        // Assert: No invitation processing in after hook
-        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
-      });
-
-      it('should complete OAuth signup without invitation processing in after hook', async () => {
-        // Token validation and deletion now happen in the before hook.
-        // The after hook does not inspect OAuth invitation state at all.
-        const mockUser = makeUserCreateData({
-          id: 'oauth-user-789',
-          email: 'invalid@example.com',
-        });
-
-        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
-
-        // Act
-        await userCreateAfterHook(mockUser, ctx);
-
-        // Assert: No invitation processing in after hook
-        expect(mocks.getOAuthState).not.toHaveBeenCalled();
-        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
-
-        // Assert: Only preferences update
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
-        expect(updateCalls.length).toBe(1);
-
-        // Assert: User creation continued (welcome email sent — OAuth path)
+        // Assert: Welcome email sent (OAuth path always sends immediately)
         expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
             to: mockUser.email,
             subject: 'Welcome to Sunrise',
-          })
-        );
-      });
-
-      it('should gracefully handle OAuth signup — after hook does not process invitation state', async () => {
-        // After hook no longer reads OAuth state at all; before hook handles all invitation logic
-        const mockUser = makeUserCreateData({
-          id: 'oauth-user-999',
-          email: 'actual@example.com',
-        });
-
-        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
-
-        // Act: after hook does not touch invitation state
-        await userCreateAfterHook(mockUser, ctx);
-
-        // Assert: No invitation processing
-        expect(mocks.getOAuthState).not.toHaveBeenCalled();
-        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
-
-        // Assert: Preferences were still set
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
-        expect(updateCalls.length).toBe(1);
-        expect(updateCalls[0]?.[0]).toEqual(
-          expect.objectContaining({
-            where: { id: mockUser.id },
-            data: expect.objectContaining({
-              preferences: expect.objectContaining({
-                email: expect.objectContaining({
-                  marketing: false,
-                  productUpdates: true,
-                  securityAlerts: true,
-                }),
-              }),
-            }),
-          })
-        );
-
-        // Assert: Welcome email still sent (OAuth path is always immediate)
-        expect(mocks.sendEmail).toHaveBeenCalledWith(
-          expect.objectContaining({
-            to: mockUser.email,
-          })
-        );
-      });
-
-      it('should set preferences and send welcome email for OAuth signup without invitation', async () => {
-        // After hook no longer reads OAuth state — it skips all invitation processing for OAuth
-        const mockUser = makeUserCreateData({
-          id: 'oauth-user-000',
-          email: 'nostate@example.com',
-        });
-
-        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
-
-        // Act
-        await userCreateAfterHook(mockUser, ctx);
-
-        // Assert: No invitation processing at all
-        expect(mocks.getOAuthState).not.toHaveBeenCalled();
-        expect(mocks.validateInvitationToken).not.toHaveBeenCalled();
-        expect(mocks.deleteInvitationToken).not.toHaveBeenCalled();
-
-        // Assert: User creation succeeded (welcome email sent)
-        expect(mocks.sendEmail).toHaveBeenCalledWith(
-          expect.objectContaining({
-            to: mockUser.email,
           })
         );
       });
@@ -839,6 +843,24 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         );
       });
 
+      it('should use "User" as fallback userName when user.name is an empty string', async () => {
+        // Arrange: user.name is '' — the || 'User' falsy arm fires (Gap B20[1])
+        const mockUser = makeUserCreateData({
+          id: 'empty-name-user',
+          email: 'emptyname@example.com',
+          name: '',
+        });
+
+        const WelcomeEmail = (await import('@/emails/welcome')).default;
+        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
+
+        // Act
+        await userCreateAfterHook(mockUser, ctx);
+
+        // Assert: WelcomeEmail called with userName: 'User' not ''
+        expect(WelcomeEmail).toHaveBeenCalledWith(expect.objectContaining({ userName: 'User' }));
+      });
+
       it('should not block user creation if welcome email fails', async () => {
         // Arrange
         mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
@@ -868,6 +890,32 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           userEmail: mockUser.email,
           signupMethod: 'email/password',
           error: 'SMTP server unavailable',
+        });
+      });
+
+      it('should log String(error) when sendEmail catch receives a non-Error value', async () => {
+        // Arrange: sendEmail rejects with a plain string, not an Error instance.
+        // The catch branch uses String(error) for the error field (Gap B21[1]).
+        mockEnv.REQUIRE_EMAIL_VERIFICATION = false;
+
+        const mockUser = makeUserCreateData({
+          id: 'string-reject-user',
+          email: 'stringreject@example.com',
+        });
+
+        mocks.sendEmail.mockRejectedValue('network timeout');
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act: should not throw
+        await userCreateAfterHook(mockUser, ctx);
+
+        // Assert: logger.warn called with the stringified error
+        expect(mocks.logger.warn).toHaveBeenCalledWith('Failed to send welcome email', {
+          userId: mockUser.id,
+          userEmail: mockUser.email,
+          signupMethod: 'email/password',
+          error: 'network timeout',
         });
       });
 
@@ -1131,6 +1179,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         ];
 
         for (const path of oauthPaths) {
+          // test-review:accept clear_then_notcalled — mid-loop mock reset for iteration isolation; clearAllMocks is followed only by positive toHaveBeenCalledWith assertions, not notCalled
           vi.clearAllMocks();
           mocks.sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
           mocks.prisma.user.update.mockResolvedValue(createMockUser());
@@ -1156,6 +1205,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         const emailPaths = ['/api/auth/signup', '/auth/register', undefined];
 
         for (const path of emailPaths) {
+          // test-review:accept clear_then_notcalled — mid-loop mock reset for iteration isolation; clearAllMocks is followed only by positive toHaveBeenCalledWith assertions, not notCalled
           vi.clearAllMocks();
           // Re-set env after clearAllMocks (clearAllMocks doesn't reset mockEnv)
           mockEnv.REQUIRE_EMAIL_VERIFICATION = false;

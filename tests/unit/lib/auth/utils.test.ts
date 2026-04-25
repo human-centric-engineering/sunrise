@@ -315,7 +315,10 @@ describe('getServerUser()', () => {
 
       // Assert: Verify null returned due to error
       expect(result).toBeNull();
-      expect(vi.mocked(logger.error)).toHaveBeenCalled();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to get server session',
+        expect.any(Error)
+      );
     });
   });
 });
@@ -347,6 +350,7 @@ describe('hasRole()', () => {
       const result = await hasRole('ADMIN');
 
       // Assert: Verify true returned
+      // test-review:accept tobe_true — boolean return is the full contract of hasRole(); asserting the specific value is the structural test
       expect(result).toBe(true);
     });
 
@@ -503,14 +507,15 @@ describe('requireAuth()', () => {
       await expect(requireAuth()).rejects.toThrow('Authentication required');
     });
 
-    it('should throw error when session retrieval fails', async () => {
+    it('should throw "Authentication required" when session retrieval fails', async () => {
       // Arrange: Mock error in getSession
       const mockHeaders = createMockHeaders();
 
       vi.mocked(headers).mockResolvedValue(mockHeaders);
       vi.mocked(auth.api.getSession).mockRejectedValue(new Error('Auth error'));
 
-      // Act & Assert: Verify error propagated as "Authentication required"
+      // Act & Assert: getServerSession swallows the error and returns null;
+      // requireAuth then throws a new "Authentication required" error based on the null return.
       await expect(requireAuth()).rejects.toThrow('Authentication required');
     });
   });
@@ -654,6 +659,7 @@ describe('isAuthenticated()', () => {
       const result = isAuthenticated(session);
 
       // Assert: Verify true returned
+      // test-review:accept tobe_true — isAuthenticated is a boolean type guard; asserting the specific value is the structural test
       expect(result).toBe(true);
     });
 

@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a, 3a, 3b complete)
+**Status:** In progress (Steps 1a, 1b, 3a, 3b complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -74,8 +74,16 @@
 - **Triage:** `/test-triage scan lib/auth` (will skip already-graded files at same HEAD)
 - **Ceiling pass:** YES — `/test-coverage lib/auth` after triage
 - **Fix remaining:** `guards.test.ts` (Bad), `verification-status.test.ts` (Bad), `utils.test.ts` (Minor) still open from prior runs
-- **Status:** PARTIAL — 7/9 graded, 2 Bad + 1 Minor still need fixes
+- **Status:** DONE (2026-04-25)
 - **Notes:**
+  - Rescan found: config-database-hook worsened Minor→Rotten (deeper Sonnet analysis exposed mp=4 vacuous OAuth tests, me=2 untested error paths); guards improved Bad→Minor (prior mp/tcm fixed by source changes)
+  - 2 new files scanned: api-keys (Clean), config-sendVerificationEmail (Clean)
+  - All 9 files now Clean after fixes:
+    - config-database-hook (Rotten→Clean): removed 3 vacuous mock-proving tests, added 2 error path tests (getValidInvitation null, deleteInvitationToken throw), fixed overlapping test title
+    - verification-status (Bad→Clean): 3 tests now assert return values, expired-token test distinguished from not-sent
+    - guards (Minor→Clean): Path 0 — 2 tobe_true annotations on data.success envelope assertions
+    - utils (Minor→Clean): tightened logger.error to toHaveBeenCalledWith, fixed test description for swallow-then-throw mechanism, 2 tobe_true annotations
+  - Ceiling pass: config.ts 98.5% lines, 98.6% branches (was 94.44%), 87.5% functions. Remaining gaps: generateId config callback (not testable) and static env boolean. All 5 hook functions at 100%. +3 ceiling tests in config-database-hook.
 
 ### Step 1c — Auth-related API routes (~10 test files)
 
@@ -407,7 +415,7 @@ Update this table after completing each step.
 | Step | Target                           | Files | Grade Distribution        | Ceiling Pass? | Status      |
 | ---- | -------------------------------- | ----- | ------------------------- | ------------- | ----------- |
 | 1a   | lib/security                     | 9     | 9C (was 1R, 3B, 5C)       | DONE (100%)   | DONE        |
-| 1b   | lib/auth                         | 9     | 2C, 1M, 2B (from prior)   | YES           | PARTIAL     |
+| 1b   | lib/auth                         | 9     | 9C (was 1R, 2B, 2M, 4C)   | DONE (98.6%)  | DONE        |
 | 1c   | Auth API routes                  | ~10   |                           | No            | NOT STARTED |
 | 1d   | lib/validations                  | 8     |                           | No            | NOT STARTED |
 | 2a   | lib/api                          | 10    |                           | No            | NOT STARTED |
