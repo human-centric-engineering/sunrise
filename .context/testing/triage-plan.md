@@ -57,8 +57,8 @@
 ### Step 1a — `lib/security/` (9 test files)
 
 - **Triage:** `/test-triage scan lib/security`
-- **Ceiling pass:** YES — run `/test-coverage lib/security` after triage to find untested security code
-- **Status:** DONE (2026-04-24, PR #90)
+- **Ceiling pass:** DONE (2026-04-25, triage/lib-security-ceiling branch)
+- **Status:** DONE (2026-04-24 triage PR #90, 2026-04-25 ceiling pass)
 - **Notes:**
   - Grade distribution: 1 Rotten, 3 Bad, 5 Clean → all 9 Clean after fixes
   - Rotten: rate-limit.test.ts — async surface entirely untested, Date.now() token drift, off-by-one between sync/async semantics (intentional, documented)
@@ -67,7 +67,7 @@
   - Path A (3 concurrent worktree agents) validated — ran smoothly on battery, cap subsequently bumped to 5
   - Path B (rate-limit review+fix) caught async/sync off-by-one as source finding S1 — agent attempted fix, reverted when it broke semantics
   - proxy.test.ts imports from `@/proxy` (root), not `lib/security/` — source path mapping friction
-  - Ceiling pass still pending — do after triage is further along
+  - Ceiling pass: all 12 source files at 100% lines/branches/functions. Gaps were cors (80%→100% branches), memory store (87.5%→100%), redis store (87.5%→100%). No untested files found.
 
 ### Step 1b — `lib/auth/` (9 test files, 7 already in ledger)
 
