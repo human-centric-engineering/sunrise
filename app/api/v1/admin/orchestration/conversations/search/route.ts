@@ -5,7 +5,8 @@
  *
  * Embeds the query and performs cosine similarity search against
  * AiMessageEmbedding vectors. Returns conversations ranked by
- * best-matching message, with optional filters for agent, user,
+ * best-matching message, scoped to the calling admin's own
+ * conversations. Supports optional filters for agent, status,
  * and date range.
  *
  * When no embedding provider is configured (or embedding fails), returns
@@ -26,7 +27,6 @@ import { z } from 'zod';
 const searchQuerySchema = z.object({
   q: z.string().min(1).max(500),
   agentId: z.string().optional(),
-  userId: z.string().optional(),
   isActive: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
     .optional(),
@@ -36,7 +36,7 @@ const searchQuerySchema = z.object({
   threshold: z.coerce.number().min(0).max(1).default(0.8),
 });
 
-export const GET = withAdminAuth(async (request, _session) => {
+export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
 
@@ -47,7 +47,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     });
   }
 
-  const { q, agentId, userId, isActive, dateFrom, dateTo, limit, threshold } = parsed.data;
+  const { q, agentId, isActive, dateFrom, dateTo, limit, threshold } = parsed.data;
 
   // Embed the search query. If no provider is configured or the call
   // fails, signal `semanticAvailable: false` so the caller can fall back
@@ -67,19 +67,14 @@ export const GET = withAdminAuth(async (request, _session) => {
   }
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
-  // Build dynamic WHERE conditions
-  const conditions: string[] = [];
-  const params: unknown[] = [embeddingStr, threshold, limit];
-  let paramIdx = 4;
+  // Build dynamic WHERE conditions — always scope to the calling admin
+  const conditions: string[] = [`c."userId" = $4`];
+  const params: unknown[] = [embeddingStr, threshold, limit, session.user.id];
+  let paramIdx = 5;
 
   if (agentId) {
     conditions.push(`c."agentId" = $${paramIdx}`);
     params.push(agentId);
-    paramIdx++;
-  }
-  if (userId) {
-    conditions.push(`c."userId" = $${paramIdx}`);
-    params.push(userId);
     paramIdx++;
   }
   if (isActive !== undefined) {

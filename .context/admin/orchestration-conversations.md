@@ -150,8 +150,8 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 
 ### Semantic search
 
-- `GET /conversations/search?q=…` embeds `q` via `embedText(q, 'query')`, runs cosine-distance search against `ai_message_embedding` (`<=>` with pgvector), and returns conversations grouped by best-matching message.
-- Params: `q` (1–500 chars, required), `agentId`, `userId`, `isActive`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
+- `GET /conversations/search?q=…` embeds `q` via `embedText(q, 'query')`, runs cosine-distance search against `ai_message_embedding` (`<=>` with pgvector), and returns conversations grouped by best-matching message. Scoped to `session.user.id` — admins only search their own conversations.
+- Params: `q` (1–500 chars, required), `agentId`, `isActive`, `dateFrom`, `dateTo`, `limit` (1–50, default 10), `threshold` (0–1, default 0.8 — results with distance `< threshold`).
 - The list toolbar's "Search messages" checkbox calls this endpoint first, forwarding `agentId` and `isActive` filters. If the server signals `semanticAvailable: false` (no embedding provider configured or embedding returned non-finite values), the table falls back to lexical `?messageSearch=` on the list endpoint.
 - Similarity scores in the response are clamped to `[0, 1]` (pgvector cosine distance can exceed 1 for dissimilar vectors).
 
@@ -168,7 +168,7 @@ One row per admin endpoint backing this UI.
 | `/api/v1/admin/orchestration/conversations/:id/messages` | GET    | Full messages with **admin-visible metadata** (tokens, cost, latency) — consumer route strips these. Cross-user allowed.       |
 | `/api/v1/admin/orchestration/conversations/export`       | GET    | JSON / CSV export, capped at 500, 1/min per admin IP.                                                                          |
 | `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected.        |
-| `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings. Wired into the UI via the "Search messages" checkbox.                      |
+| `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings, scoped to `session.user.id`. Wired into the UI via "Search messages".      |
 
 Ownership / scope notes:
 
