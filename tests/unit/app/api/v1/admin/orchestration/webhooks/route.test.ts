@@ -55,6 +55,11 @@ vi.mock('@/lib/security/safe-url', () => ({
   isSafeProviderUrl: vi.fn((url: string) => !url.includes('internal')),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { GET, POST } from '@/app/api/v1/admin/orchestration/webhooks/route';
