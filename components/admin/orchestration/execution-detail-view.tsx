@@ -8,12 +8,24 @@
  * existing `ExecutionTraceEntryRow` for each trace entry.
  */
 
-import { useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  RotateCcw,
+  StopCircle,
+  ThumbsUp,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
@@ -104,14 +116,144 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
 // ─── Main component ─────────────────────────────────────────────────────────
 
 export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewProps) {
+  const router = useRouter();
   const duration = formatDuration(execution.startedAt, execution.completedAt);
   const budgetUsed =
     execution.budgetLimitUsd && execution.budgetLimitUsd > 0
       ? (execution.totalCostUsd / execution.budgetLimitUsd) * 100
       : null;
 
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionResult, setActionResult] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const handleCancel = useCallback(async () => {
+    setActionLoading(true);
+    setActionResult(null);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.executionCancel(execution.id));
+      setActionResult({ type: 'success', message: 'Execution cancelled.' });
+      router.refresh();
+    } catch (err) {
+      setActionResult({
+        type: 'error',
+        message: err instanceof APIClientError ? err.message : 'Cancel failed',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  }, [execution.id, router]);
+
+  const handleApprove = useCallback(async () => {
+    setActionLoading(true);
+    setActionResult(null);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(execution.id), {
+        body: { approvalPayload: { approved: true } },
+      });
+      setActionResult({
+        type: 'success',
+        message: 'Approved — execution resumed. Return to workflows to monitor progress.',
+      });
+      router.refresh();
+    } catch (err) {
+      setActionResult({
+        type: 'error',
+        message: err instanceof APIClientError ? err.message : 'Approval failed',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  }, [execution.id, router]);
+
+  const handleRetryStep = useCallback(
+    async (stepId: string) => {
+      setActionLoading(true);
+      setActionResult(null);
+      try {
+        await apiClient.post(API.ADMIN.ORCHESTRATION.executionRetryStep(execution.id), {
+          body: { stepId },
+        });
+        setActionResult({
+          type: 'success',
+          message: 'Execution reset for retry. Return to workflows to re-run.',
+        });
+        router.refresh();
+      } catch (err) {
+        setActionResult({
+          type: 'error',
+          message: err instanceof APIClientError ? err.message : 'Retry failed',
+        });
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [execution.id, router]
+  );
+
+  const canCancel = execution.status === 'running' || execution.status === 'paused_for_approval';
+  const canApprove = execution.status === 'paused_for_approval';
+  const canRetry = execution.status === 'failed';
+  const failedStepId = canRetry ? trace.find((e) => e.status === 'failed')?.stepId : undefined;
+
   return (
     <div className="space-y-6">
+      {/* Action result banner */}
+      {actionResult && (
+        <div
+          role="alert"
+          className={cn(
+            'flex items-center gap-2 rounded-md border px-4 py-3 text-sm',
+            actionResult.type === 'success'
+              ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950/40 dark:text-green-200'
+              : 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200'
+          )}
+        >
+          {actionResult.type === 'success' ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 shrink-0" />
+          )}
+          {actionResult.message}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {(canCancel || canApprove || (canRetry && failedStepId)) && (
+        <div className="flex flex-wrap gap-2">
+          {canApprove && (
+            <Button size="sm" onClick={() => void handleApprove()} disabled={actionLoading}>
+              <ThumbsUp className="mr-2 h-4 w-4" />
+              Approve &amp; Continue
+            </Button>
+          )}
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleCancel()}
+              disabled={actionLoading}
+            >
+              <StopCircle className="mr-2 h-4 w-4" />
+              Cancel Execution
+            </Button>
+          )}
+          {canRetry && failedStepId && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleRetryStep(failedStepId)}
+              disabled={actionLoading}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Retry Failed Step
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Summary section */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
