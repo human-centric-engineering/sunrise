@@ -98,6 +98,28 @@ describe('MemoryRateLimitStore', () => {
     expect(entry.resetAt).toBeGreaterThanOrEqual(before + 60_000);
   });
 
+  it('peek returns null when all cached timestamps have expired outside the window', async () => {
+    // Arrange: use fake timers to control Date.now()
+    vi.useFakeTimers();
+    const windowMs = 1_000; // 1-second window
+
+    const timedStore = new MemoryRateLimitStore();
+
+    // Increment at t=0 so the cache holds a timestamp inside the window
+    await timedStore.increment('expiry-key', windowMs);
+
+    // Advance time past the window so the stored timestamp is now stale
+    vi.advanceTimersByTime(windowMs + 100);
+
+    // Act: peek — the LRU cache still holds the key but all timestamps fall outside the window
+    const result = await timedStore.peek('expiry-key', windowMs);
+
+    // Assert: the branch at L46 (requests.length === 0 after filtering) returns null
+    expect(result).toBeNull();
+
+    vi.useRealTimers();
+  });
+
   it('evicts the oldest key when maxKeys is exceeded (LRU)', async () => {
     // Arrange: store with capacity of exactly 2 keys
     const lruStore = new MemoryRateLimitStore(2);
@@ -534,5 +556,32 @@ describe('RedisRateLimitStore', () => {
 
     // Act + Assert: peek should propagate the Redis error to the caller
     await expect(store.peek('any-key', 60_000)).rejects.toThrow('NOSCRIPT');
+  });
+
+  it('wraps a non-Error thrown value in a new Error during init failure (L90 ternary false-arm)', async () => {
+    // Arrange: make the constructor throw a plain string (not an Error instance) to exercise
+    // the `err instanceof Error ? err : new Error(String(err))` false-arm in redis.ts init()
+    ioredisState.constructorShouldThrow = true;
+    ioredisState.constructorThrowValue = 'connection string is invalid';
+    const { logger } = await import('@/lib/logging');
+    vi.clearAllMocks();
+
+    // Act: build store — init() catches the thrown string
+    const store = new RedisRateLimitStore('redis://broken:6379');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Assert: store is not ready
+    await expect(store.increment('any-key', 60_000)).rejects.toThrow(
+      'Redis rate limit store is not connected'
+    );
+
+    // Assert: logger.error was called with the wrapped Error (not the raw string)
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to initialize Redis rate limit store — falling back will not work',
+      expect.any(Error)
+    );
+
+    // Clean up
+    ioredisState.constructorThrowValue = undefined;
   });
 });

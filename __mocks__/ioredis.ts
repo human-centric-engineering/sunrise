@@ -18,6 +18,12 @@ export interface IoredisState {
   onHandlers: Record<string, (err: Error) => void>;
   /** When true, the Redis constructor throws instead of returning a client. */
   constructorShouldThrow: boolean;
+  /**
+   * When set, the Redis constructor throws this value (can be non-Error to
+   * exercise the `err instanceof Error ? err : new Error(String(err))` branch).
+   * Takes precedence over the default `new Error(...)` when constructorShouldThrow is true.
+   */
+  constructorThrowValue?: unknown;
   /** When set, the next eval() call rejects with this error instead of resolving. */
   evalShouldReject: Error | null;
 }
@@ -26,6 +32,7 @@ export const ioredisState: IoredisState = {
   evalResults: [],
   onHandlers: {},
   constructorShouldThrow: false,
+  constructorThrowValue: undefined,
   evalShouldReject: null,
 };
 
@@ -49,7 +56,11 @@ const mockClient = {
 // When a constructor function returns an object, `new` returns that object.
 function Redis(this: unknown, url: string, _options?: unknown): typeof mockClient {
   if (ioredisState.constructorShouldThrow) {
-    throw new Error(`ioredis constructor failed for ${url}`);
+    // Use constructorThrowValue if set; otherwise fall back to a standard Error
+    // so that tests can throw non-Error values (strings, plain objects) to exercise
+    // the `err instanceof Error ? err : new Error(String(err))` branch in redis.ts.
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    throw ioredisState.constructorThrowValue ?? new Error(`ioredis constructor failed for ${url}`);
   }
   return mockClient;
 }
