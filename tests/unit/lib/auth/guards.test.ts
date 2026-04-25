@@ -167,6 +167,7 @@ describe('withAuth', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data.userId checks
       expect(data.success).toBe(true);
       expect(data.data.userId).toBe(mockSession.user.id);
 
@@ -562,6 +563,7 @@ describe('withAdminAuth', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data.userId checks
       expect(data.success).toBe(true);
       expect(data.data.userId).toBe(mockSession.user.id);
 
