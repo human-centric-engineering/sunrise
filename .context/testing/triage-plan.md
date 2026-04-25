@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Step 1a + 3b complete)
+**Status:** In progress (Steps 1a, 3a, 3b complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -149,9 +149,15 @@
 
 - **Path:** `tests/unit/lib/orchestration/engine/`
 - **Triage:** `/test-triage scan lib/orchestration/engine`
-- **Ceiling pass:** YES — critical runtime path
-- **Status:** NOT STARTED
+- **Ceiling pass:** YES — critical runtime path (still pending)
+- **Status:** DONE (2026-04-25, triage/orchestration-engine branch)
 - **Notes:**
+  - Plan estimated 10 files but found 25 (executors/ subdirectory adds 13, plus 2 split/cross-module tests)
+  - Grade distribution: 1 Rotten, 0 Bad, 2 Minor, 22 Clean → all 25 Clean after fixes
+  - Rotten: orchestrator-workflow.test.ts (block_sum=13) — cross-module test against workflows/validator.ts. 0 of 11 error codes tested. Rewritten from 4→16 tests. Used Path A despite Rotten grade because NOTES were very specific.
+  - Minor: external-call (mp=1 caching, me=1 mid-flight abort), orchestration-engine (mp=1 checkpoint, me=3 BudgetExceeded/finalize/pauseForApproval failures)
+  - Source finding: BudgetExceeded catch branch in orchestration-engine.ts executeSingleStep may be dead code — executor throws get wrapped to ExecutorError by runStepWithStrategy before reaching it. Parked as it.todo.
+  - 2 FP annotations added on already-Clean files (errors.test.ts tbt=2, llm-runner.test.ts nac=1) to prevent future rescan re-flagging
 
 ### Step 3b — `llm/` (20 test files)
 
@@ -411,7 +417,7 @@ Update this table after completing each step.
 | 2e   | lib/utils                        | 6     |                           | No            | NOT STARTED |
 | 2f   | lib/hooks                        | 4     |                           | No            | NOT STARTED |
 | 2g   | lib/constants + feature-flags    | 2     |                           | No            | NOT STARTED |
-| 3a   | orchestration/engine             | 23    |                           | YES           | NOT STARTED |
+| 3a   | orchestration/engine             | 25    | 25C (was 1R, 2M, 22C)     | YES (pending) | DONE        |
 | 3b   | orchestration/llm                | 20    | 20C (was 2R, 3B, 4M, 11C) | No            | DONE        |
 | 3c   | orchestration/mcp                | 13    |                           | No            | NOT STARTED |
 | 3d   | orchestration/knowledge          | 12    |                           | No            | NOT STARTED |
@@ -489,3 +495,7 @@ Record anything useful discovered during the triage process that future sessions
 - **Step 3b:** Agents that write new tests with `toBe(true)` structural assertions don't always add accept annotations for their own assertions. Post-fix annotation pass needed — caught 5 un-annotated hits.
 - **Step 3b:** 4 concurrent worktree agents caused noticeable laptop slowdown. Cap reduced back to 3 — Sonnet scan agents (lightweight) stay at 5.
 - **Step 3b:** Path 0 (annotation-only) continues to be the cheapest fix — 5 of 9 non-Clean files needed nothing but annotations. Sig-only Bad files (high tbt/nac, zero block patterns) are reliably Path 0.
+- **Step 3a (2026-04-25):** Plan estimated 23 files but found 25 — `executors/` subdirectory was uncounted. Always glob recursively to get the real count.
+- **Step 3a:** Path A works even for Rotten files when the Sonnet NOTES are specific and actionable (orchestrator-workflow had block_sum=13 but all findings were clear). Path B is only needed when NOTES are vague or structural.
+- **Step 3a:** Sonnet correctly identified a dead code branch (BudgetExceeded catch in executeSingleStep) — the agent parked it as `it.todo` per protocol. This is the source-finding workflow working as designed.
+- **Step 3a:** Adding FP annotations to already-Clean files (errors.test.ts, llm-runner.test.ts) prevents future rescans from re-flagging. Worth doing during the fix pass even though the files are already Clean.
