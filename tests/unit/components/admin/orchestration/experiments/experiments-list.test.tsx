@@ -63,8 +63,8 @@ function makeExperiment(overrides: Record<string, unknown> = {}) {
     agentId: AGENT.id,
     agent: AGENT,
     variants: [
-      { id: 'v1', label: 'Variant A', score: null },
-      { id: 'v2', label: 'Variant B', score: null },
+      { id: 'v1', label: 'Variant A', score: null, evaluationSession: null },
+      { id: 'v2', label: 'Variant B', score: null, evaluationSession: null },
     ],
     creator: { id: 'user-1', name: 'Admin' },
     createdAt: '2025-01-15T00:00:00.000Z',
@@ -175,8 +175,8 @@ describe('ExperimentsList', () => {
         makeExperiment({
           status: 'completed',
           variants: [
-            { id: 'v1', label: 'Variant A', score: 0.85 },
-            { id: 'v2', label: 'Variant B', score: 0.72 },
+            { id: 'v1', label: 'Variant A', score: 0.85, evaluationSession: null },
+            { id: 'v2', label: 'Variant B', score: 0.72, evaluationSession: null },
           ],
         }),
       ]);
@@ -194,8 +194,8 @@ describe('ExperimentsList', () => {
         makeExperiment({
           status: 'completed',
           variants: [
-            { id: 'v1', label: 'Variant A', score: null },
-            { id: 'v2', label: 'Variant B', score: null },
+            { id: 'v1', label: 'Variant A', score: null, evaluationSession: null },
+            { id: 'v2', label: 'Variant B', score: null, evaluationSession: null },
           ],
         }),
       ]);
@@ -205,6 +205,35 @@ describe('ExperimentsList', () => {
       await waitFor(() => {
         const naLabels = screen.getAllByText('N/A');
         expect(naLabels.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it('shows evaluation session status for running experiments', async () => {
+      mockGet.mockResolvedValue([
+        makeExperiment({
+          status: 'running',
+          variants: [
+            {
+              id: 'v1',
+              label: 'Variant A',
+              score: null,
+              evaluationSession: { id: 'sess-1', status: 'in_progress', completedAt: null },
+            },
+            {
+              id: 'v2',
+              label: 'Variant B',
+              score: null,
+              evaluationSession: { id: 'sess-2', status: 'completed', completedAt: '2025-01-16' },
+            },
+          ],
+        }),
+      ]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('in_progress')).toBeInTheDocument();
+        expect(screen.getByText('completed')).toBeInTheDocument();
       });
     });
 

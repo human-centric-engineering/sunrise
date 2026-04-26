@@ -46,10 +46,17 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+interface EvalSession {
+  id: string;
+  status: string;
+  completedAt: string | null;
+}
+
 interface Variant {
   id: string;
   label: string;
   score: number | null;
+  evaluationSession: EvalSession | null;
 }
 
 interface Experiment {
@@ -463,6 +470,24 @@ export function ExperimentsList(): React.ReactElement {
                     <div className="font-medium">{exp.name}</div>
                     {exp.description && (
                       <p className="text-muted-foreground mt-0.5 text-xs">{exp.description}</p>
+                    )}
+                    {exp.status === 'running' && (
+                      <div className="mt-1 flex gap-3">
+                        {exp.variants.map((v) => (
+                          <span key={v.id} className="text-xs">
+                            <span className="font-medium">{v.label}:</span>{' '}
+                            <span
+                              className={
+                                v.evaluationSession?.status === 'completed'
+                                  ? 'text-green-600'
+                                  : 'text-muted-foreground'
+                              }
+                            >
+                              {v.evaluationSession?.status ?? 'pending'}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
                     )}
                     {exp.status === 'completed' && (
                       <div className="mt-1 flex gap-3">

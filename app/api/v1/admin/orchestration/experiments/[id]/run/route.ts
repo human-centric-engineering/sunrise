@@ -3,8 +3,10 @@
  *
  * POST /api/v1/admin/orchestration/experiments/:id/run
  *
- * Transitions a draft experiment to "running". Validates that the
- * experiment is in draft status and has at least 2 variants.
+ * Transitions a draft experiment to "running" and creates one evaluation
+ * session per variant, linking each via evaluationSessionId. The admin
+ * then chats with each variant's session and completes them. When all
+ * sessions reach "completed", the experiment can be marked complete.
  *
  * Authentication: Admin role required.
  */
@@ -42,14 +44,38 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
     throw new ValidationError('Experiment needs at least 2 variants to run');
   }
 
-  const updated = await prisma.aiExperiment.update({
-    where: { id },
-    data: { status: 'running' },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
-      creator: { select: { id: true, name: true } },
-    },
+  const now = new Date();
+
+  // Create evaluation sessions and link them to variants in a single transaction
+  const updated = await prisma.$transaction(async (tx) => {
+    // Create one evaluation session per variant
+    for (const variant of experiment.variants) {
+      const evalSession = await tx.aiEvaluationSession.create({
+        data: {
+          userId: session.user.id,
+          agentId: experiment.agentId,
+          title: `${experiment.name} — ${variant.label}`,
+          status: 'in_progress',
+          startedAt: now,
+        },
+      });
+
+      await tx.aiExperimentVariant.update({
+        where: { id: variant.id },
+        data: { evaluationSessionId: evalSession.id },
+      });
+    }
+
+    // Transition experiment to running
+    return tx.aiExperiment.update({
+      where: { id },
+      data: { status: 'running' },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: { include: { evaluationSession: true } },
+        creator: { select: { id: true, name: true } },
+      },
+    });
   });
 
   logAdminAction({

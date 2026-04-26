@@ -599,9 +599,10 @@ model AiEvaluationSession {
   updatedAt              DateTime  @updatedAt
 
   // Relations
-  user  User              @relation("AiEvaluationSessionUser", fields: [userId], references: [id])
-  agent AiAgent?          @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  logs  AiEvaluationLog[]
+  user               User                  @relation("AiEvaluationSessionUser", fields: [userId], references: [id])
+  agent              AiAgent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  logs               AiEvaluationLog[]
+  experimentVariants AiExperimentVariant[]
 
   @@index([userId])
   @@index([agentId])
@@ -889,13 +890,15 @@ model AiExperimentVariant {
   id                  String  @id @default(cuid())
   experimentId        String
   agentVersionId      String? // references AiAgentVersion.id (null if using live agent)
-  evaluationSessionId String? // filled after experiment run
+  evaluationSessionId String? // filled when experiment is run
   label               String  // e.g. "Control", "Variant A"
   score               Float?  // aggregated evaluation score after run
 
-  experiment AiExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  experiment        AiExperiment        @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  evaluationSession AiEvaluationSession? @relation(fields: [evaluationSessionId], references: [id], onDelete: SetNull)
 
   @@index([experimentId])
+  @@index([evaluationSessionId])
   @@map("ai_experiment_variant")
 }
 

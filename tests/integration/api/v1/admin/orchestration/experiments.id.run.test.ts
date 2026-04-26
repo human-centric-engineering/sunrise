@@ -25,14 +25,29 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiExperiment: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
+const mockEvalSessionCreate = vi.fn();
+const mockVariantUpdate = vi.fn();
+
+vi.mock('@/lib/db/client', () => {
+  const experimentFindUnique = vi.fn();
+  const experimentUpdate = vi.fn();
+
+  const txProxy = {
+    aiEvaluationSession: { create: (...args: unknown[]) => mockEvalSessionCreate(...args) },
+    aiExperimentVariant: { update: (...args: unknown[]) => mockVariantUpdate(...args) },
+    aiExperiment: { update: (...args: unknown[]) => experimentUpdate(...args) },
+  };
+
+  return {
+    prisma: {
+      aiExperiment: {
+        findUnique: experimentFindUnique,
+        update: experimentUpdate,
+      },
+      $transaction: vi.fn((cb: (tx: typeof txProxy) => Promise<unknown>) => cb(txProxy)),
     },
-  },
-}));
+  };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
@@ -122,6 +137,8 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
     vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
       makeExperimentWithAgent({ status: 'running' }) as never
     );
+    mockEvalSessionCreate.mockResolvedValue({ id: 'eval-session-1' });
+    mockVariantUpdate.mockResolvedValue({});
   });
 
   describe('Authentication & Authorization', () => {
@@ -234,6 +251,45 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
           userId: ADMIN_ID,
           action: 'experiment.run',
           entityType: 'experiment',
+        })
+      );
+    });
+
+    it('creates one evaluation session per variant', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest(), makeContext());
+
+      expect(mockEvalSessionCreate).toHaveBeenCalledTimes(2);
+      expect(mockEvalSessionCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            agentId: 'agent-1',
+            title: 'Test Experiment — Control',
+            status: 'in_progress',
+          }),
+        })
+      );
+      expect(mockEvalSessionCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            title: 'Test Experiment — Variant A',
+          }),
+        })
+      );
+    });
+
+    it('links evaluation sessions to variants via evaluationSessionId', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      mockEvalSessionCreate.mockResolvedValue({ id: 'eval-session-123' });
+
+      await POST(makePostRequest(), makeContext());
+
+      expect(mockVariantUpdate).toHaveBeenCalledTimes(2);
+      expect(mockVariantUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'v1' },
+          data: { evaluationSessionId: 'eval-session-123' },
         })
       );
     });

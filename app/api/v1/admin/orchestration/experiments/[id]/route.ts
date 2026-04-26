@@ -45,7 +45,11 @@ export const GET = withAdminAuth<Params>(async (request, _session, { params }) =
     where: { id },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
+      variants: {
+        include: {
+          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+        },
+      },
       creator: { select: { id: true, name: true } },
     },
   });
@@ -83,7 +87,11 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
     },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
+      variants: {
+        include: {
+          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+        },
+      },
       creator: { select: { id: true, name: true } },
     },
   });

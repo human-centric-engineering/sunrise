@@ -106,8 +106,14 @@ Validation:
   - status must be "draft"       → 400 "Experiment is already {status}"
   - variants.length >= 2         → 400 "Experiment needs at least 2 variants to run"
 
-Effect: sets status → "running"
-Response 200: { success: true, data: Experiment }
+Effect:
+  1. Creates one AiEvaluationSession per variant (status: "in_progress",
+     title: "{experiment name} — {variant label}", linked to experiment's agent)
+  2. Links each session to its variant via evaluationSessionId
+  3. Sets experiment status → "running"
+  All writes happen in a single Prisma transaction.
+
+Response 200: { success: true, data: Experiment (with variants including evaluationSession) }
 Audit: experiment.run
 ```
 
@@ -133,10 +139,27 @@ interface ExperimentVariant {
   experimentId: string;
   label: string; // e.g. "Control", "Treatment A"
   agentVersionId?: string | null; // pin to a snapshot; null = current live config
-  evaluationSessionId?: string | null; // filled when experiment runs
-  score?: number | null; // filled in after evaluation
+  evaluationSessionId?: string | null; // set when experiment runs via POST /run
+  score?: number | null; // filled in after evaluation session completes
+  evaluationSession?: {
+    // included in API responses
+    id: string;
+    status: string; // "draft" | "in_progress" | "completed" | "archived"
+    completedAt: string | null;
+  } | null;
 }
 ```
+
+## Evaluation session integration
+
+When an experiment is run (`POST /run`), one `AiEvaluationSession` is created per variant
+and linked via `evaluationSessionId`. The admin then navigates to each evaluation session
+(under Evaluations) to chat with the agent and complete the session. The experiment list
+shows each variant's session status (in_progress / completed) inline.
+
+`AiExperimentVariant.evaluationSessionId` has a Prisma `@relation` to `AiEvaluationSession`
+with `onDelete: SetNull` — if a session is deleted, the variant retains its data but the
+link becomes null.
 
 ## Admin UI
 
