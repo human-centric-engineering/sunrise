@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { FileText } from 'lucide-react';
+import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
 import {
@@ -12,6 +13,27 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { API } from '@/lib/api/endpoints';
+
+const chunksResponseSchema = z.object({
+  success: z.boolean(),
+  data: z
+    .object({
+      chunks: z.array(
+        z.object({
+          id: z.string(),
+          content: z.string(),
+          chunkType: z.string(),
+          patternNumber: z.number().nullable(),
+          patternName: z.string().nullable(),
+          section: z.string().nullable(),
+          category: z.string().nullable(),
+          keywords: z.string().nullable(),
+          estimatedTokens: z.number(),
+        })
+      ),
+    })
+    .optional(),
+});
 
 interface ChunkData {
   id: string;
@@ -52,7 +74,7 @@ export function DocumentChunksModal({
       if (!res.ok) {
         throw new Error(`Failed to load chunks (${res.status})`);
       }
-      const body = (await res.json()) as { data?: { chunks: ChunkData[] } };
+      const body = chunksResponseSchema.parse(await res.json());
       setChunks(body.data?.chunks ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load chunks');

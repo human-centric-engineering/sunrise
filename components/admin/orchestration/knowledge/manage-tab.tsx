@@ -201,6 +201,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
+  const [rechunkError, setRechunkError] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
   const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
@@ -297,9 +298,21 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const handleRechunk = useCallback(
     async (docId: string) => {
       setRechunkingId(docId);
+      setRechunkError(null);
       try {
-        await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRechunk(docId), { method: 'POST' });
+        const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRechunk(docId), {
+          method: 'POST',
+        });
+        if (!res.ok) {
+          const body: unknown = await res.json().catch(() => null);
+          const parsed = body as { error?: { message?: string } } | null;
+          const msg = parsed?.error?.message ?? `Rechunk failed (${res.status})`;
+          setRechunkError(msg);
+          return;
+        }
         onRefresh();
+      } catch {
+        setRechunkError('Network error — could not reach the server.');
       } finally {
         setRechunkingId(null);
       }
@@ -615,166 +628,169 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium">
-                    <Tip label="The document name — click to view details">
-                      <span>Name</span>
-                    </Tip>
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium">
-                    <Tip label="Document category for filtering and agent scoping">
-                      <span>Category</span>
-                    </Tip>
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium">
-                    <Tip label="Processing status — pending, processing, ready, or failed">
-                      <span>Status</span>
-                    </Tip>
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    <Tip label="Number of text chunks this document was split into for vector search">
-                      <span>Chunks</span>
-                    </Tip>
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium">
-                    <Tip label="When this document was uploaded">
-                      <span>Uploaded</span>
-                    </Tip>
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {documents.map((doc) => {
-                  const style = STATUS_STYLES[doc.status] ?? STATUS_STYLES.pending;
-                  const isSeeded = doc.fileName === 'agentic-design-patterns.md';
-                  return (
-                    <tr key={doc.id}>
-                      <td className="px-4 py-2 font-medium">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setViewChunksId(doc.id);
-                            setViewChunksName(doc.name);
-                          }}
-                          className="text-primary text-left hover:underline"
-                          title="View chunks"
-                        >
-                          {doc.name}
-                        </button>
-                      </td>
-                      <td className="px-4 py-2">
-                        {doc.category ? (
-                          <Badge variant="secondary" className="text-xs">
-                            {doc.category}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2">
-                        <Badge variant={style.variant}>{style.label}</Badge>
-                      </td>
-                      <td className="px-4 py-2 text-right">{doc.chunkCount}</td>
-                      <td className="text-muted-foreground px-4 py-2 text-xs">
-                        {new Date(doc.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <span className="inline-flex items-center gap-1">
-                          {isSeeded ? (
-                            <>
-                              <Badge variant="outline" className="text-xs">
-                                Pre-chunked
-                              </Badge>
-                              <FieldHelp
-                                title="Pre-chunked"
-                                ariaLabel="Why can't this be rechunked?"
-                              >
-                                <p>
-                                  This document was loaded from the built-in Agentic Design Patterns
-                                  data, which ships pre-chunked with optimised section boundaries.
-                                  Rechunking would use the generic chunker and produce lower-quality
-                                  splits.
-                                </p>
-                                <p className="mt-2">
-                                  To refresh this data, use the{' '}
-                                  <strong>Load Agentic Design Patterns</strong> button above (it
-                                  will skip if already loaded).
-                                </p>
-                              </FieldHelp>
-                            </>
+          <>
+            {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium">
+                      <Tip label="The document name — click to view details">
+                        <span>Name</span>
+                      </Tip>
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium">
+                      <Tip label="Document category for filtering and agent scoping">
+                        <span>Category</span>
+                      </Tip>
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium">
+                      <Tip label="Processing status — pending, processing, ready, or failed">
+                        <span>Status</span>
+                      </Tip>
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      <Tip label="Number of text chunks this document was split into for vector search">
+                        <span>Chunks</span>
+                      </Tip>
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium">
+                      <Tip label="When this document was uploaded">
+                        <span>Uploaded</span>
+                      </Tip>
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {documents.map((doc) => {
+                    const style = STATUS_STYLES[doc.status] ?? STATUS_STYLES.pending;
+                    const isSeeded = doc.fileName === 'agentic-design-patterns.md';
+                    return (
+                      <tr key={doc.id}>
+                        <td className="px-4 py-2 font-medium">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setViewChunksId(doc.id);
+                              setViewChunksName(doc.name);
+                            }}
+                            className="text-primary text-left hover:underline"
+                            title="View chunks"
+                          >
+                            {doc.name}
+                          </button>
+                        </td>
+                        <td className="px-4 py-2">
+                          {doc.category ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {doc.category}
+                            </Badge>
                           ) : (
-                            <>
-                              {doc.status === 'pending_review' ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setViewChunksId(doc.id);
-                                    setViewChunksName(doc.name);
-                                  }}
-                                >
-                                  <Eye className="mr-1 h-3 w-3" />
-                                  Review
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={rechunkingId === doc.id}
-                                  onClick={() => void handleRechunk(doc.id)}
-                                >
-                                  <RefreshCw
-                                    className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
-                                  />
-                                  Rechunk
-                                </Button>
-                              )}
-                              {deleteConfirmId === doc.id ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <span className="text-destructive text-xs">
-                                    Delete? Chunks &amp; embeddings will also be removed.
-                                  </span>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    disabled={deletingId === doc.id}
-                                    onClick={() => void handleDelete(doc.id)}
-                                  >
-                                    {deletingId === doc.id ? 'Deleting...' : 'Yes'}
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setDeleteConfirmId(null)}
-                                  >
-                                    No
-                                  </Button>
-                                </span>
-                              ) : (
-                                <Tip label="Permanently delete this document, all its chunks, and their embeddings">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setDeleteConfirmId(doc.id)}
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </Tip>
-                              )}
-                            </>
+                            <span className="text-muted-foreground text-xs">—</span>
                           )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="px-4 py-2">
+                          <Badge variant={style.variant}>{style.label}</Badge>
+                        </td>
+                        <td className="px-4 py-2 text-right">{doc.chunkCount}</td>
+                        <td className="text-muted-foreground px-4 py-2 text-xs">
+                          {new Date(doc.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <span className="inline-flex items-center gap-1">
+                            {isSeeded ? (
+                              <>
+                                <Badge variant="outline" className="text-xs">
+                                  Pre-chunked
+                                </Badge>
+                                <FieldHelp
+                                  title="Pre-chunked"
+                                  ariaLabel="Why can't this be rechunked?"
+                                >
+                                  <p>
+                                    This document was loaded from the built-in Agentic Design
+                                    Patterns data, which ships pre-chunked with optimised section
+                                    boundaries. Rechunking would use the generic chunker and produce
+                                    lower-quality splits.
+                                  </p>
+                                  <p className="mt-2">
+                                    To refresh this data, use the{' '}
+                                    <strong>Load Agentic Design Patterns</strong> button above (it
+                                    will skip if already loaded).
+                                  </p>
+                                </FieldHelp>
+                              </>
+                            ) : (
+                              <>
+                                {doc.status === 'pending_review' ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      setViewChunksId(doc.id);
+                                      setViewChunksName(doc.name);
+                                    }}
+                                  >
+                                    <Eye className="mr-1 h-3 w-3" />
+                                    Review
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={rechunkingId === doc.id}
+                                    onClick={() => void handleRechunk(doc.id)}
+                                  >
+                                    <RefreshCw
+                                      className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
+                                    />
+                                    Rechunk
+                                  </Button>
+                                )}
+                                {deleteConfirmId === doc.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="text-destructive text-xs">
+                                      Delete? Chunks &amp; embeddings will also be removed.
+                                    </span>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      disabled={deletingId === doc.id}
+                                      onClick={() => void handleDelete(doc.id)}
+                                    >
+                                      {deletingId === doc.id ? 'Deleting...' : 'Yes'}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setDeleteConfirmId(null)}
+                                    >
+                                      No
+                                    </Button>
+                                  </span>
+                                ) : (
+                                  <Tip label="Permanently delete this document, all its chunks, and their embeddings">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setDeleteConfirmId(doc.id)}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </Tip>
+                                )}
+                              </>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

@@ -50,7 +50,7 @@ describe('DocumentChunksModal', () => {
     vi.clearAllMocks();
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ data: { chunks: mockChunks } }),
+      json: () => Promise.resolve({ success: true, data: { chunks: mockChunks } }),
     });
   });
 
@@ -175,7 +175,7 @@ describe('DocumentChunksModal', () => {
   it('shows empty state when document has no chunks', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ data: { chunks: [] } }),
+      json: () => Promise.resolve({ success: true, data: { chunks: [] } }),
     });
 
     render(
