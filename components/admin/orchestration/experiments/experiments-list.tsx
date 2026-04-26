@@ -8,9 +8,19 @@
  */
 
 import * as React from 'react';
-import { Loader2, Play, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle, Loader2, Play, Plus, Trash2, X } from 'lucide-react';
 import { Tip } from '@/components/ui/tooltip';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,10 +46,17 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+interface EvalSession {
+  id: string;
+  status: string;
+  completedAt: string | null;
+}
+
 interface Variant {
   id: string;
   label: string;
   score: number | null;
+  evaluationSession: EvalSession | null;
 }
 
 interface Experiment {
@@ -81,6 +98,7 @@ function CreateExperimentForm({
 }): React.ReactElement {
   const [agents, setAgents] = React.useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = React.useState(true);
+  const [agentFetchError, setAgentFetchError] = React.useState(false);
   const [name, setName] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [agentId, setAgentId] = React.useState('');
@@ -95,6 +113,7 @@ function CreateExperimentForm({
         setAgents(data);
       } catch {
         setAgents([]);
+        setAgentFetchError(true);
       } finally {
         setLoadingAgents(false);
       }
@@ -202,6 +221,8 @@ function CreateExperimentForm({
             </Label>
             {loadingAgents ? (
               <p className="text-muted-foreground text-xs">Loading agents...</p>
+            ) : agentFetchError ? (
+              <p className="text-xs text-red-600">Failed to load agents. Please try again.</p>
             ) : agents.length === 0 ? (
               <p className="text-xs text-amber-600">
                 No agents found. Create an agent first under Build &rarr; Agents.
@@ -295,42 +316,72 @@ function CreateExperimentForm({
 
 // ─── Main List ──────────────────────────────────────────────────────────────
 
+type StatusFilter = 'all' | 'draft' | 'running' | 'completed';
+
 export function ExperimentsList(): React.ReactElement {
   const [experiments, setExperiments] = React.useState<Experiment[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>('all');
+  const [runningId, setRunningId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [completingId, setCompletingId] = React.useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<Experiment | null>(null);
 
   const fetchExperiments = React.useCallback(async () => {
     try {
-      const data = await apiClient.get<Experiment[]>(ENDPOINT);
+      const params = statusFilter !== 'all' ? { status: statusFilter } : undefined;
+      const data = await apiClient.get<Experiment[]>(ENDPOINT, { params });
       setExperiments(data);
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to load experiments');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [statusFilter]);
 
   React.useEffect(() => {
     void fetchExperiments();
   }, [fetchExperiments]);
 
   async function handleRun(id: string): Promise<void> {
+    setError(null);
+    setRunningId(id);
     try {
       await apiClient.post(`${ENDPOINT}/${id}/run`);
       await fetchExperiments();
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to start experiment');
+    } finally {
+      setRunningId(null);
+    }
+  }
+
+  async function handleComplete(id: string): Promise<void> {
+    setError(null);
+    setCompletingId(id);
+    try {
+      await apiClient.patch(`${ENDPOINT}/${id}`, { body: { status: 'completed' } });
+      await fetchExperiments();
+    } catch (err) {
+      setError(err instanceof APIClientError ? err.message : 'Failed to complete experiment');
+    } finally {
+      setCompletingId(null);
     }
   }
 
   async function handleDelete(id: string): Promise<void> {
+    setError(null);
+    setDeletingId(id);
     try {
       await apiClient.delete(`${ENDPOINT}/${id}`);
       setExperiments((prev) => prev.filter((e) => e.id !== id));
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to delete experiment');
+    } finally {
+      setDeletingId(null);
+      setDeleteTarget(null);
     }
   }
 
@@ -347,7 +398,11 @@ export function ExperimentsList(): React.ReactElement {
         <CreateExperimentForm
           onCreated={() => {
             setShowCreate(false);
-            void fetchExperiments();
+            if (statusFilter !== 'all') {
+              setStatusFilter('all');
+            } else {
+              void fetchExperiments();
+            }
           }}
           onCancel={() => setShowCreate(false)}
         />
@@ -357,6 +412,20 @@ export function ExperimentsList(): React.ReactElement {
           New Experiment
         </Button>
       )}
+
+      {/* Status filter */}
+      <div className="flex gap-1" role="group" aria-label="Filter by status">
+        {(['all', 'draft', 'running', 'completed'] as const).map((status) => (
+          <Button
+            key={status}
+            variant={statusFilter === status ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setStatusFilter(status)}
+          >
+            {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
+          </Button>
+        ))}
+      </div>
 
       {/* Experiment table */}
       <div className="rounded-md border">
@@ -395,7 +464,11 @@ export function ExperimentsList(): React.ReactElement {
             {experiments.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
-                  {loading ? 'Loading\u2026' : 'No experiments found.'}
+                  {loading
+                    ? 'Loading\u2026'
+                    : statusFilter !== 'all'
+                      ? `No ${statusFilter} experiments found.`
+                      : 'No experiments found.'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -405,6 +478,24 @@ export function ExperimentsList(): React.ReactElement {
                     <div className="font-medium">{exp.name}</div>
                     {exp.description && (
                       <p className="text-muted-foreground mt-0.5 text-xs">{exp.description}</p>
+                    )}
+                    {exp.status === 'running' && (
+                      <div className="mt-1 flex gap-3">
+                        {exp.variants.map((v) => (
+                          <span key={v.id} className="text-xs">
+                            <span className="font-medium">{v.label}:</span>{' '}
+                            <span
+                              className={
+                                v.evaluationSession?.status === 'completed'
+                                  ? 'text-green-600'
+                                  : 'text-muted-foreground'
+                              }
+                            >
+                              {v.evaluationSession?.status ?? 'pending'}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
                     )}
                     {exp.status === 'completed' && (
                       <div className="mt-1 flex gap-3">
@@ -428,14 +519,50 @@ export function ExperimentsList(): React.ReactElement {
                   <TableCell>
                     <div className="flex items-center gap-1">
                       {exp.status === 'draft' && (
-                        <Button variant="outline" size="sm" onClick={() => void handleRun(exp.id)}>
-                          <Play className="mr-1 h-3 w-3" />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={runningId === exp.id}
+                          onClick={() => void handleRun(exp.id)}
+                        >
+                          {runningId === exp.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Play className="mr-1 h-3 w-3" />
+                          )}
                           Run
                         </Button>
                       )}
-                      <Button variant="ghost" size="sm" onClick={() => void handleDelete(exp.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                      </Button>
+                      {exp.status === 'running' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={completingId === exp.id}
+                          onClick={() => void handleComplete(exp.id)}
+                        >
+                          {completingId === exp.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <CheckCircle className="mr-1 h-3 w-3" />
+                          )}
+                          Complete
+                        </Button>
+                      )}
+                      {exp.status !== 'running' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Delete experiment"
+                          disabled={deletingId === exp.id}
+                          onClick={() => setDeleteTarget(exp)}
+                        >
+                          {deletingId === exp.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -444,6 +571,29 @@ export function ExperimentsList(): React.ReactElement {
           </TableBody>
         </Table>
       </div>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete experiment</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? This will
+              permanently remove the experiment and all its variants.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && void handleDelete(deleteTarget.id)}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={!!deletingId}
+            >
+              {deletingId ? 'Deleting\u2026' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

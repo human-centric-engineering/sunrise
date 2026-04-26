@@ -61,7 +61,11 @@ export const GET = withAdminAuth(async (request) => {
       take: limit,
       include: {
         agent: { select: { id: true, name: true, slug: true } },
-        variants: true,
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
+        },
         creator: { select: { id: true, name: true } },
       },
     }),
@@ -95,7 +99,11 @@ export const POST = withAdminAuth(async (request, session) => {
     },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
+      variants: {
+        include: {
+          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+        },
+      },
       creator: { select: { id: true, name: true } },
     },
   });

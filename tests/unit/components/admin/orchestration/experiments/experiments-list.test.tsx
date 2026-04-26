@@ -28,12 +28,14 @@ import { ExperimentsList } from '@/components/admin/orchestration/experiments/ex
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
+    patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
   APIClientError: class APIClientError extends Error {
@@ -61,8 +63,8 @@ function makeExperiment(overrides: Record<string, unknown> = {}) {
     agentId: AGENT.id,
     agent: AGENT,
     variants: [
-      { id: 'v1', label: 'Variant A', score: null },
-      { id: 'v2', label: 'Variant B', score: null },
+      { id: 'v1', label: 'Variant A', score: null, evaluationSession: null },
+      { id: 'v2', label: 'Variant B', score: null, evaluationSession: null },
     ],
     creator: { id: 'user-1', name: 'Admin' },
     createdAt: '2025-01-15T00:00:00.000Z',
@@ -173,8 +175,8 @@ describe('ExperimentsList', () => {
         makeExperiment({
           status: 'completed',
           variants: [
-            { id: 'v1', label: 'Variant A', score: 0.85 },
-            { id: 'v2', label: 'Variant B', score: 0.72 },
+            { id: 'v1', label: 'Variant A', score: 0.85, evaluationSession: null },
+            { id: 'v2', label: 'Variant B', score: 0.72, evaluationSession: null },
           ],
         }),
       ]);
@@ -192,8 +194,8 @@ describe('ExperimentsList', () => {
         makeExperiment({
           status: 'completed',
           variants: [
-            { id: 'v1', label: 'Variant A', score: null },
-            { id: 'v2', label: 'Variant B', score: null },
+            { id: 'v1', label: 'Variant A', score: null, evaluationSession: null },
+            { id: 'v2', label: 'Variant B', score: null, evaluationSession: null },
           ],
         }),
       ]);
@@ -203,6 +205,35 @@ describe('ExperimentsList', () => {
       await waitFor(() => {
         const naLabels = screen.getAllByText('N/A');
         expect(naLabels.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it('shows evaluation session status for running experiments', async () => {
+      mockGet.mockResolvedValue([
+        makeExperiment({
+          status: 'running',
+          variants: [
+            {
+              id: 'v1',
+              label: 'Variant A',
+              score: null,
+              evaluationSession: { id: 'sess-1', status: 'in_progress', completedAt: null },
+            },
+            {
+              id: 'v2',
+              label: 'Variant B',
+              score: null,
+              evaluationSession: { id: 'sess-2', status: 'completed', completedAt: '2025-01-16' },
+            },
+          ],
+        }),
+      ]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('in_progress')).toBeInTheDocument();
+        expect(screen.getByText('completed')).toBeInTheDocument();
       });
     });
 
@@ -224,7 +255,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /run/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^run$/i })).toBeInTheDocument();
       });
     });
 
@@ -234,7 +265,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /run/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^run$/i })).not.toBeInTheDocument();
       });
     });
 
@@ -244,7 +275,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /run/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^run$/i })).not.toBeInTheDocument();
       });
     });
   });
@@ -258,8 +289,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(mockPost).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments/exp-1/run');
@@ -275,8 +306,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed to start experiment')).toBeInTheDocument();
@@ -291,8 +322,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Experiment already running')).toBeInTheDocument();
@@ -300,8 +331,64 @@ describe('ExperimentsList', () => {
     });
   });
 
+  describe('Complete action', () => {
+    it('shows "Complete" button for running experiment', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^complete$/i })).toBeInTheDocument();
+      });
+    });
+
+    it('does not show "Complete" button for draft experiment', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'draft' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.queryByRole('button', { name: /^complete$/i })).not.toBeInTheDocument();
+    });
+
+    it('calls apiClient.patch with status completed and refetches', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+      mockPatch.mockResolvedValue(undefined);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: /^complete$/i }));
+      await user.click(screen.getByRole('button', { name: /^complete$/i }));
+
+      await waitFor(() => {
+        expect(mockPatch).toHaveBeenCalledWith(
+          '/api/v1/admin/orchestration/experiments/exp-1',
+          expect.objectContaining({ body: { status: 'completed' } })
+        );
+      });
+      // fetchExperiments called twice: initial mount + after complete
+      expect(mockGet).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows error message when complete fails', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+      mockPatch.mockRejectedValue(new Error('Complete failed'));
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: /^complete$/i }));
+      await user.click(screen.getByRole('button', { name: /^complete$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to complete experiment')).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('Delete action', () => {
-    it('calls apiClient.delete and removes experiment from table', async () => {
+    it('opens confirmation dialog, then calls apiClient.delete on confirm', async () => {
       const user = userEvent.setup();
       mockGet.mockResolvedValue([makeExperiment()]);
       mockDelete.mockResolvedValue(undefined);
@@ -310,17 +397,16 @@ describe('ExperimentsList', () => {
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
 
-      // Delete button is the one with Trash2 icon — no accessible name text, find by role
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      expect(deleteButton).toBeDefined();
-      await user.click(deleteButton!);
+      // Click the delete button (now has aria-label)
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();
+      });
+
+      // Confirm the delete
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(mockDelete).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments/exp-1');
@@ -331,6 +417,26 @@ describe('ExperimentsList', () => {
       });
     });
 
+    it('does not delete when confirmation is cancelled', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment()]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();
+      });
+
+      // Cancel the delete
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      expect(mockDelete).not.toHaveBeenCalled();
+      expect(screen.getByText('Formal vs Casual')).toBeInTheDocument();
+    });
+
     it('shows error message when delete fails with generic error', async () => {
       const user = userEvent.setup();
       mockGet.mockResolvedValue([makeExperiment()]);
@@ -339,16 +445,9 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
-
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      await user.click(deleteButton!);
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+      await waitFor(() => screen.getByText(/are you sure/i));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed to delete experiment')).toBeInTheDocument();
@@ -364,19 +463,116 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
-
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      await user.click(deleteButton!);
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+      await waitFor(() => screen.getByText(/are you sure/i));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Forbidden')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Delete button visibility', () => {
+    it('hides delete button for running experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.queryByRole('button', { name: /delete experiment/i })).not.toBeInTheDocument();
+    });
+
+    it('shows delete button for draft experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'draft' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.getByRole('button', { name: /delete experiment/i })).toBeInTheDocument();
+    });
+
+    it('shows delete button for completed experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'completed' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.getByRole('button', { name: /delete experiment/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Filter reset on create', () => {
+    it('resets filter to "all" after creating an experiment when filter is active', async () => {
+      const user = userEvent.setup();
+      // Use a dynamic mock: experiments endpoint returns [], agents endpoint returns agents
+      mockGet.mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/agents')) {
+          return Promise.resolve([{ id: 'agent-1', name: 'Support Bot', slug: 'support-bot' }]);
+        }
+        return Promise.resolve([]);
+      });
+      mockPost.mockResolvedValue(undefined);
+
+      render(<ExperimentsList />);
+
+      // Set filter to "Running"
+      await waitFor(() => screen.getByRole('button', { name: 'Running' }));
+      await user.click(screen.getByRole('button', { name: 'Running' }));
+
+      // Open create form
+      await waitFor(() => screen.getByRole('button', { name: /new experiment/i }));
+      await user.click(screen.getByRole('button', { name: /new experiment/i }));
+
+      // Fill name and select agent
+      await waitFor(() => screen.getByText('Support Bot'));
+      await user.type(screen.getByPlaceholderText(/e\.g\. Formal vs casual tone/i), 'New Exp');
+      const selectTrigger = screen.getByRole('combobox');
+      await user.click(selectTrigger);
+      const agentOption = await screen.findByRole('option', { name: 'Support Bot' });
+      await user.click(agentOption);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /create experiment/i })).not.toBeDisabled()
+      );
+
+      // Reset mock call count to track the refetch after create
+      mockGet.mockClear();
+      mockGet.mockResolvedValue([]);
+
+      await user.click(screen.getByRole('button', { name: /create experiment/i }));
+
+      // After create, filter resets to "all" → fetches without status param
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: undefined,
+        });
+      });
+    });
+  });
+
+  describe('Filter-aware empty state', () => {
+    it('shows filter-specific message when a status filter is active', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Draft' }));
+      await user.click(screen.getByRole('button', { name: 'Draft' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('No draft experiments found.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic message when "All" filter is active', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No experiments found.')).toBeInTheDocument();
       });
     });
   });
@@ -415,7 +611,7 @@ describe('ExperimentsList', () => {
       });
     });
 
-    it('shows "No agents found" when agents fetch throws (catch path)', async () => {
+    it('shows "Failed to load agents" when agents fetch throws (catch path)', async () => {
       const user = userEvent.setup();
       mockGet
         .mockResolvedValueOnce([]) // experiments
@@ -427,7 +623,7 @@ describe('ExperimentsList', () => {
       await user.click(screen.getByRole('button', { name: /new experiment/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/no agents found/i)).toBeInTheDocument();
+        expect(screen.getByText(/failed to load agents/i)).toBeInTheDocument();
       });
     });
 
@@ -740,6 +936,72 @@ describe('ExperimentsList', () => {
       await user.click(screen.getByRole('button', { name: /cancel/i }));
 
       expect(screen.queryByRole('button', { name: /create experiment/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Status filter', () => {
+    it('renders filter buttons for all statuses', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Draft' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Completed' })).toBeInTheDocument();
+      });
+    });
+
+    it('fetches without status param when "All" is selected (default)', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: undefined,
+        });
+      });
+    });
+
+    it('fetches with status param when a filter is selected', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Draft' }));
+      await user.click(screen.getByRole('button', { name: 'Draft' }));
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: { status: 'draft' },
+        });
+      });
+    });
+
+    it('re-fetches when filter changes', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Running' }));
+      await user.click(screen.getByRole('button', { name: 'Running' }));
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: { status: 'running' },
+        });
+      });
+
+      await user.click(screen.getByRole('button', { name: 'All' }));
+
+      await waitFor(() => {
+        // Called at least 3 times: initial, Running, All
+        expect(mockGet.mock.calls.length).toBeGreaterThanOrEqual(3);
+      });
     });
   });
 });

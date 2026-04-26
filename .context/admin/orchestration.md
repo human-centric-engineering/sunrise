@@ -113,22 +113,23 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 
 65 route files under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
 
-| Area          | Endpoints | Purpose                                                                               |
-| ------------- | --------- | ------------------------------------------------------------------------------------- |
-| Agents        | 13 routes | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
-| Capabilities  | 5 routes  | CRUD, agents-using count, execution stats                                             |
-| Providers     | 7 routes  | CRUD, test connection, test model, health, models                                     |
-| Workflows     | 8 routes  | CRUD, validate, dry-run, execute, definition history/revert                           |
-| Executions    | 5 routes  | List, read, approve, cancel, retry-step                                               |
-| Chat          | 1 route   | Streaming chat turn (SSE)                                                             |
-| Knowledge     | 10 routes | Documents, search, seed, embed, graph, retry, patterns                                |
-| Conversations | 4 routes  | List, read, delete, bulk clear                                                        |
-| Costs         | 3 routes  | Breakdown, summary, alerts                                                            |
-| Settings      | 1 route   | Global orchestration settings                                                         |
-| Webhooks      | 2 routes  | CRUD for webhook subscriptions                                                        |
-| Evaluations   | 4 routes  | CRUD, logs, AI completion                                                             |
-| Observability | 1 route   | Dashboard stats                                                                       |
-| Quiz          | 1 route   | Quiz scores                                                                           |
+| Area          | Endpoints           | Purpose                                                                               |
+| ------------- | ------------------- | ------------------------------------------------------------------------------------- |
+| Agents        | 13 routes           | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
+| Capabilities  | 5 routes            | CRUD, agents-using count, execution stats                                             |
+| Providers     | 7 routes            | CRUD, test connection, test model, health, models                                     |
+| Workflows     | 8 routes            | CRUD, validate, dry-run, execute, definition history/revert                           |
+| Executions    | 5 routes            | List, read, approve, cancel, retry-step                                               |
+| Chat          | 1 route             | Streaming chat turn (SSE)                                                             |
+| Knowledge     | 10 routes           | Documents, search, seed, embed, graph, retry, patterns                                |
+| Conversations | 4 routes            | List, read, delete, bulk clear                                                        |
+| Costs         | 3 routes            | Breakdown, summary, alerts                                                            |
+| Settings      | 1 route             | Global orchestration settings                                                         |
+| Webhooks      | 2 routes            | CRUD for webhook subscriptions                                                        |
+| Evaluations   | 4 routes            | CRUD, logs, AI completion                                                             |
+| Experiments   | 3 files, 6 handlers | A/B testing — list, create, get, update, delete, run                                  |
+| Observability | 1 route             | Dashboard stats                                                                       |
+| Quiz          | 1 route             | Quiz scores                                                                           |
 
 Full reference: [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md)
 

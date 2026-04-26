@@ -3,12 +3,10 @@
  *
  * POST /api/v1/admin/orchestration/experiments/:id/run
  *
- * Starts an experiment run: transitions status to "running",
- * creates evaluation sessions per variant using the agent version
- * snapshots, and returns the experiment with updated status.
- *
- * Currently sets status to running — full eval session integration
- * is a future enhancement that ties into the evaluation runner.
+ * Transitions a draft experiment to "running" and creates one evaluation
+ * session per variant, linking each via evaluationSessionId. The admin
+ * then chats with each variant's session and completes them. When all
+ * sessions reach "completed", the experiment can be marked complete.
  *
  * Authentication: Admin role required.
  */
@@ -32,28 +30,63 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
   const { id } = await params;
   const log = await getRouteLogger(request);
 
-  const experiment = await prisma.aiExperiment.findUnique({
+  // Quick 404 check before opening a transaction
+  const exists = await prisma.aiExperiment.findUnique({
     where: { id },
-    include: { variants: true },
+    select: { id: true },
   });
-  if (!experiment) throw new NotFoundError('Experiment not found');
+  if (!exists) throw new NotFoundError('Experiment not found');
 
-  if (experiment.status !== 'draft') {
-    throw new ValidationError(`Experiment is already ${experiment.status}`);
-  }
+  const now = new Date();
 
-  if (experiment.variants.length < 2) {
-    throw new ValidationError('Experiment needs at least 2 variants to run');
-  }
+  // All reads and writes inside the transaction to prevent TOCTOU races
+  const updated = await prisma.$transaction(async (tx) => {
+    const experiment = await tx.aiExperiment.findUnique({
+      where: { id },
+      include: { variants: true },
+    });
+    if (!experiment) throw new NotFoundError('Experiment not found');
 
-  const updated = await prisma.aiExperiment.update({
-    where: { id },
-    data: { status: 'running' },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
-      creator: { select: { id: true, name: true } },
-    },
+    if (experiment.status !== 'draft') {
+      throw new ValidationError(`Experiment is already ${experiment.status}`);
+    }
+
+    if (experiment.variants.length < 2) {
+      throw new ValidationError('Experiment needs at least 2 variants to run');
+    }
+
+    // Create one evaluation session per variant
+    for (const variant of experiment.variants) {
+      const evalSession = await tx.aiEvaluationSession.create({
+        data: {
+          userId: session.user.id,
+          agentId: experiment.agentId,
+          title: `${experiment.name} — ${variant.label}`,
+          status: 'in_progress',
+          startedAt: now,
+        },
+      });
+
+      await tx.aiExperimentVariant.update({
+        where: { id: variant.id },
+        data: { evaluationSessionId: evalSession.id },
+      });
+    }
+
+    // Transition experiment to running
+    return tx.aiExperiment.update({
+      where: { id },
+      data: { status: 'running' },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
+        },
+        creator: { select: { id: true, name: true } },
+      },
+    });
   });
 
   logAdminAction({
@@ -61,14 +94,14 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
     action: 'experiment.run',
     entityType: 'experiment',
     entityId: id,
-    entityName: experiment.name,
-    metadata: { variantCount: experiment.variants.length },
+    entityName: updated.name,
+    metadata: { variantCount: updated.variants.length },
     clientIp: clientIP,
   });
 
   log.info('Experiment run started', {
     experimentId: id,
-    variantCount: experiment.variants.length,
+    variantCount: updated.variants.length,
   });
 
   return successResponse(updated);

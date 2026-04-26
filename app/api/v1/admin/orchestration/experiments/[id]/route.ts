@@ -16,10 +16,16 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string };
+
+const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+  draft: ['completed'],
+  running: ['completed'],
+  completed: [],
+};
 
 const updateSchema = z
   .object({
@@ -39,7 +45,11 @@ export const GET = withAdminAuth<Params>(async (request, _session, { params }) =
     where: { id },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
+      variants: {
+        include: {
+          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+        },
+      },
       creator: { select: { id: true, name: true } },
     },
   });
@@ -61,6 +71,13 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
   const existing = await prisma.aiExperiment.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('Experiment not found');
 
+  if (body.status !== undefined) {
+    const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
+    if (!allowed.includes(body.status)) {
+      throw new ValidationError(`Cannot transition from '${existing.status}' to '${body.status}'`);
+    }
+  }
+
   const experiment = await prisma.aiExperiment.update({
     where: { id },
     data: {
@@ -70,7 +87,11 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
     },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
-      variants: true,
+      variants: {
+        include: {
+          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+        },
+      },
       creator: { select: { id: true, name: true } },
     },
   });
@@ -99,6 +120,10 @@ export const DELETE = withAdminAuth<Params>(async (request, session, { params })
 
   const existing = await prisma.aiExperiment.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('Experiment not found');
+
+  if (existing.status === 'running') {
+    throw new ValidationError('Cannot delete a running experiment — stop it first');
+  }
 
   await prisma.aiExperiment.delete({ where: { id } });
 

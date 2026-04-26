@@ -23,6 +23,7 @@ Prisma model: `AiExperiment` with `AiExperimentVariant[]`.
 ```
 GET /api/v1/admin/orchestration/experiments
 Authorization: Admin
+Rate limit: adminLimiter
 Query:
   page        integer (default 1)
   limit       integer (default 20)
@@ -65,14 +66,35 @@ Response 200: { success: true, data: Experiment }
 
 ```
 PATCH /api/v1/admin/orchestration/experiments/:id
-Body: { name?, description? }   — at least one field required
+Authorization: Admin
+Rate limit: adminLimiter
+
+Body: { name?, description?, status? }   — at least one field required
+
+Status transitions are validated:
+  draft    → completed   (cancel without running)
+  running  → completed   (stop)
+  completed → (none — terminal state)
+
+Note: Running state is only reachable via `POST /run`, which creates
+evaluation sessions. PATCH cannot transition to "running".
+
+Invalid transitions return 400 VALIDATION_ERROR.
+
 Response 200: { success: true, data: Experiment }
+Audit: experiment.update
 ```
 
 ### Delete experiment
 
 ```
 DELETE /api/v1/admin/orchestration/experiments/:id
+Authorization: Admin
+Rate limit: adminLimiter
+
+Validation:
+  - status must not be "running" → 400 "Cannot delete a running experiment — stop it first"
+
 Response 200: { success: true, data: { deleted: true } }
 Audit: experiment.delete
 ```
@@ -88,8 +110,14 @@ Validation:
   - status must be "draft"       → 400 "Experiment is already {status}"
   - variants.length >= 2         → 400 "Experiment needs at least 2 variants to run"
 
-Effect: sets status → "running"
-Response 200: { success: true, data: Experiment }
+Effect:
+  1. Creates one AiEvaluationSession per variant (status: "in_progress",
+     title: "{experiment name} — {variant label}", linked to experiment's agent)
+  2. Links each session to its variant via evaluationSessionId
+  3. Sets experiment status → "running"
+  All writes happen in a single Prisma transaction.
+
+Response 200: { success: true, data: Experiment (with variants including evaluationSession) }
 Audit: experiment.run
 ```
 
@@ -97,12 +125,15 @@ Audit: experiment.run
 
 ```
 draft → running → completed
-         ↑
-    POST /run
+  │        ↑          (terminal)
+  │   POST /run
+  └──────────────► completed   (skip running via PATCH)
 ```
 
-- Only `draft` experiments can be run.
-- Transitioning to `completed` is manual (PATCH) — no automated stop today.
+- Only `draft` experiments can be run via `POST /run`.
+- `running → completed` via PATCH or the UI "Complete" button.
+- `draft → completed` via PATCH (cancel without running).
+- `completed` is terminal — no transitions out.
 
 ## Variant shape
 
@@ -112,10 +143,27 @@ interface ExperimentVariant {
   experimentId: string;
   label: string; // e.g. "Control", "Treatment A"
   agentVersionId?: string | null; // pin to a snapshot; null = current live config
-  score?: number | null; // filled in after evaluation
-  createdAt: Date;
+  evaluationSessionId?: string | null; // set when experiment runs via POST /run
+  score?: number | null; // filled in after evaluation session completes
+  evaluationSession?: {
+    // included in API responses
+    id: string;
+    status: string; // "draft" | "in_progress" | "completed" | "archived"
+    completedAt: string | null;
+  } | null;
 }
 ```
+
+## Evaluation session integration
+
+When an experiment is run (`POST /run`), one `AiEvaluationSession` is created per variant
+and linked via `evaluationSessionId`. The admin then navigates to each evaluation session
+(under Evaluations) to chat with the agent and complete the session. The experiment list
+shows each variant's session status (in_progress / completed) inline.
+
+`AiExperimentVariant.evaluationSessionId` has a Prisma `@relation` to `AiEvaluationSession`
+with `onDelete: SetNull` — if a session is deleted, the variant retains its data but the
+link becomes null.
 
 ## Admin UI
 
@@ -131,7 +179,9 @@ The `defaultTab` is read from the `tab` query param — `experiments` opens the 
 
 ### `ExperimentsList` (`components/admin/orchestration/experiments/experiments-list.tsx`)
 
-Client-only island. Mounts with a `GET /experiments` fetch, stores the rows in local state, and mutates via `apiClient.post`/`delete` then re-fetches.
+Client-only island. Mounts with a `GET /experiments` fetch, stores the rows in local state, and mutates via `apiClient.post`/`patch`/`delete` then re-fetches.
+
+**Status filter:** A button group above the table filters experiments by status (All, Draft, Running, Completed). Defaults to "All". Selecting a filter passes `?status=` to the API and re-fetches.
 
 **List row:** name + optional description, agent name, status badge (`draft` / `running` / `completed`), variant count, created date, actions.
 
@@ -139,12 +189,13 @@ Completed experiments inline each variant's score under the name cell (`Variant 
 
 **Per-row actions:**
 
-| Action | Visibility                 | Call                                                |
-| ------ | -------------------------- | --------------------------------------------------- |
-| Run    | Only for `status: 'draft'` | `POST /experiments/:id/run` → refetch list          |
-| Delete | Always                     | `DELETE /experiments/:id` → optimistic local remove |
+| Action   | Visibility                   | Call                                                                      |
+| -------- | ---------------------------- | ------------------------------------------------------------------------- |
+| Run      | Only for `status: 'draft'`   | `POST /experiments/:id/run` → refetch list                                |
+| Complete | Only for `status: 'running'` | `PATCH /experiments/:id` with `{ status: 'completed' }` → refetch list    |
+| Delete   | Draft and completed only     | `DELETE /experiments/:id` → confirmation dialog → optimistic local remove |
 
-No stop button. Status transitions to `completed` happen through a `PATCH` — not wired to the list today.
+All action buttons show a loading spinner and disable during the request to prevent double-clicks.
 
 **Create form (`CreateExperimentForm`):** collapsed into a "New Experiment" button until clicked, then expands to an inline Card.
 
@@ -168,5 +219,7 @@ Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md conte
 | Rate limited                    | 429  | `RATE_LIMIT_EXCEEDED` |
 | Experiment not found            | 404  | `NOT_FOUND`           |
 | Already running/completed       | 400  | `VALIDATION_ERROR`    |
+| Invalid status transition       | 400  | `VALIDATION_ERROR`    |
+| Delete while running            | 400  | `VALIDATION_ERROR`    |
 | < 2 variants on run             | 400  | `VALIDATION_ERROR`    |
 | Too few/many variants on create | 400  | `VALIDATION_ERROR`    |
