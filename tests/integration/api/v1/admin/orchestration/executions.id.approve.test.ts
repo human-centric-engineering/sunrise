@@ -171,7 +171,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(response.status).toBe(400);
   });
 
-  it('transitions the row to RUNNING and returns resumeStepId on happy path', async () => {
+  it('transitions the row to PENDING and returns resumeStepId on happy path', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
 
@@ -192,7 +192,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     const updateArg = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as unknown as {
       data: { status: string; executionTrace: Array<{ stepId: string; status: string }> };
     };
-    expect(updateArg.data.status).toBe('running');
+    expect(updateArg.data.status).toBe('pending');
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
   });
 
@@ -203,5 +203,49 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
       makeParams(EXECUTION_ID)
     );
     expect(response.status).toBe(400);
+  });
+
+  it('succeeds even when trace has no awaiting_approval entry (awaitingIdx === -1)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Execution is paused_for_approval but the trace entries are all 'completed' —
+    // this can happen if the trace was manually edited or a bug in checkpoint.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        executionTrace: [
+          {
+            stepId: 'approval-step',
+            stepType: 'human_approval',
+            label: 'Review',
+            status: 'completed', // not 'awaiting_approval'
+            output: null,
+            tokensUsed: 0,
+            costUsd: 0,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:00Z',
+            durationMs: 0,
+          },
+        ],
+      }) as never
+    );
+
+    const response = await POST(
+      makePostRequest({ approvalPayload: { approved: true } }),
+      makeParams(EXECUTION_ID)
+    );
+
+    expect(response.status).toBe(200);
+    const data = await parseJson<{
+      success: boolean;
+      data: { success: boolean; resumeStepId: string };
+    }>(response);
+    expect(data.success).toBe(true);
+
+    // The trace should be passed through unchanged (no mutation since awaitingIdx === -1)
+    const updateArg = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as unknown as {
+      data: { status: string; executionTrace: Array<{ status: string }> };
+    };
+    expect(updateArg.data.status).toBe('pending');
+    // The single trace entry should still be 'completed' — untouched
+    expect(updateArg.data.executionTrace[0].status).toBe('completed');
   });
 });

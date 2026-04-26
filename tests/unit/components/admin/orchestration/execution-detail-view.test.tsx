@@ -4,7 +4,7 @@
  * @see components/admin/orchestration/execution-detail-view.tsx
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -13,6 +13,17 @@ import {
   type ExecutionInfo,
 } from '@/components/admin/orchestration/execution-detail-view';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
+
+// ─── Mocks ───────────────────────────────────────────────────────────────────
+
+const mockRefresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh }) }));
+
+const mockPost = vi.fn().mockResolvedValue({ success: true });
+vi.mock('@/lib/api/client', () => ({
+  apiClient: { post: (...args: unknown[]) => mockPost(...args) },
+  APIClientError: class extends Error {},
+}));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +64,10 @@ const TRACE_ENTRY: ExecutionTraceEntry = {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ExecutionDetailView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe('Status badge', () => {
     it('renders the status badge with formatted text', () => {
       render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
@@ -208,6 +223,289 @@ describe('ExecutionDetailView', () => {
       render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
 
       expect(screen.getByRole('heading', { name: /step timeline/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Status badge — cancelled', () => {
+    it('renders cancelled status with explicit badge variant', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'cancelled' })} trace={[]} />);
+
+      expect(screen.getByText('Cancelled')).toBeInTheDocument();
+    });
+
+    it('renders running status badge', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.getByText('Running')).toBeInTheDocument();
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('collapsible JSON card button has aria-expanded', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ inputData: { prompt: 'hello' } })}
+          trace={[]}
+        />
+      );
+
+      const button = screen.getByRole('button', { name: /input data/i });
+      expect(button).toHaveAttribute('aria-expanded', 'false');
+
+      await user.click(button);
+      expect(button).toHaveAttribute('aria-expanded', 'true');
+    });
+  });
+
+  describe('Action buttons', () => {
+    it('shows Cancel button when execution is running', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /cancel execution/i })).toBeInTheDocument();
+    });
+
+    it('shows Approve button when execution is paused_for_approval', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /cancel execution/i })).toBeInTheDocument();
+    });
+
+    it('shows Retry button when execution is failed with a failed trace entry', () => {
+      const failedTrace: ExecutionTraceEntry = {
+        ...TRACE_ENTRY,
+        status: 'failed',
+        error: 'LLM timeout',
+      };
+
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'failed',
+            errorMessage: 'LLM timeout',
+          })}
+          trace={[failedTrace]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /retry failed step/i })).toBeInTheDocument();
+    });
+
+    it('does not show action buttons for completed executions', () => {
+      render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
+
+      expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    });
+
+    it('Cancel button calls the cancel endpoint', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /cancel execution/i }));
+
+      expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('/cancel'));
+    });
+
+    it('Cancel success shows success banner and refreshes', async () => {
+      mockPost.mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /cancel execution/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Execution cancelled.');
+      expect(mockRefresh).toHaveBeenCalled();
+    });
+
+    it('Cancel error shows error banner with API error message', async () => {
+      const { APIClientError } = await import('@/lib/api/client');
+      mockPost.mockRejectedValueOnce(new APIClientError('Execution already completed'));
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /cancel execution/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Execution already completed');
+    });
+
+    it('Cancel error shows generic message for non-API errors', async () => {
+      mockPost.mockRejectedValueOnce(new Error('Network failure'));
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /cancel execution/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Cancel failed');
+    });
+
+    it('Approve button calls the approve endpoint and shows success banner', async () => {
+      mockPost.mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /approve/i }));
+
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.stringContaining('/approve'),
+        expect.objectContaining({
+          body: { approvalPayload: { approved: true } },
+        })
+      );
+      expect(await screen.findByRole('alert')).toHaveTextContent(/approved/i);
+      expect(mockRefresh).toHaveBeenCalled();
+    });
+
+    it('Approve error shows error banner', async () => {
+      const { APIClientError } = await import('@/lib/api/client');
+      mockPost.mockRejectedValueOnce(new APIClientError('Not in approval state'));
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /approve/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Not in approval state');
+    });
+
+    it('Retry button calls the retry-step endpoint with the failed step ID', async () => {
+      mockPost.mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
+      const failedTrace: ExecutionTraceEntry = {
+        ...TRACE_ENTRY,
+        stepId: 'step-fail-1',
+        status: 'failed',
+        error: 'LLM timeout',
+      };
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'failed', errorMessage: 'LLM timeout' })}
+          trace={[failedTrace]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /retry failed step/i }));
+
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.stringContaining('/retry-step'),
+        expect.objectContaining({
+          body: { stepId: 'step-fail-1' },
+        })
+      );
+      // Two alerts: the error banner (errorMessage) + the action success banner
+      const alerts = await screen.findAllByRole('alert');
+      expect(alerts.some((el) => el.textContent?.includes('retry'))).toBe(true);
+      expect(mockRefresh).toHaveBeenCalled();
+    });
+
+    it('Retry error shows error banner', async () => {
+      mockPost.mockRejectedValueOnce(new Error('Server error'));
+      const user = userEvent.setup();
+      const failedTrace: ExecutionTraceEntry = {
+        ...TRACE_ENTRY,
+        stepId: 'step-fail-1',
+        status: 'failed',
+        error: 'LLM timeout',
+      };
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'failed', errorMessage: 'LLM timeout' })}
+          trace={[failedTrace]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /retry failed step/i }));
+
+      // Two alerts: the error banner (errorMessage) + the action error banner
+      const alerts = await screen.findAllByRole('alert');
+      expect(alerts.some((el) => el.textContent?.includes('Retry failed'))).toBe(true);
+    });
+
+    it('buttons are disabled while an action is in progress', async () => {
+      // Make post hang until we resolve it
+      let resolvePost!: (v: unknown) => void;
+      mockPost.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePost = resolve;
+          })
+      );
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      // Click approve — should disable all action buttons
+      await user.click(screen.getByRole('button', { name: /approve/i }));
+
+      const approveBtn = screen.getByRole('button', { name: /approve/i });
+      const cancelBtn = screen.getByRole('button', { name: /cancel execution/i });
+      expect(approveBtn).toBeDisabled();
+      expect(cancelBtn).toBeDisabled();
+
+      // Resolve the pending request
+      resolvePost({ success: true });
+    });
+
+    it('does not show Retry button for failed execution with no failed trace entry', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'failed', errorMessage: 'Unknown' })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+
+      // All trace entries are 'completed', so no failedStepId → no retry button
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     });
   });
 });

@@ -1085,7 +1085,7 @@ export class OrchestrationEngine {
         },
       });
     } catch (err) {
-      ctx.logger.warn('Checkpoint failed', {
+      ctx.logger.error('Checkpoint failed — in-memory trace may diverge from DB', {
         executionId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -1136,7 +1136,10 @@ export class OrchestrationEngine {
         },
       });
     } catch (err) {
-      ctx.logger.error('finalize: DB update failed', err, { executionId });
+      ctx.logger.error('finalize: DB update failed — execution row is stale', err, {
+        executionId,
+      });
+      throw err;
     }
   }
 }

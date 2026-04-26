@@ -80,6 +80,7 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
     completedAt: null,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    workflow: { id: WORKFLOW_ID, name: 'Test Workflow' },
     ...overrides,
   };
 }
@@ -147,7 +148,13 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     const data = await parseJson<{
       success: boolean;
       data: {
-        execution: { id: string; status: string; totalTokensUsed: number; currentStep: string };
+        execution: {
+          id: string;
+          status: string;
+          totalTokensUsed: number;
+          currentStep: string;
+          workflow: { id: string; name: string };
+        };
         trace: Array<{ stepId: string; status: string }>;
       };
     }>(response);
@@ -156,6 +163,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.execution.id).toBe(EXECUTION_ID);
     expect(data.data.execution.currentStep).toBe('step2');
     expect(data.data.execution.totalTokensUsed).toBe(10);
+    expect(data.data.execution.workflow.name).toBe('Test Workflow');
     expect(data.data.trace).toHaveLength(1);
     expect(data.data.trace[0].stepId).toBe('step1');
   });

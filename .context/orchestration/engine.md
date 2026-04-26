@@ -220,6 +220,29 @@ After every step the engine checks `ctx.totalCostUsd > budgetLimitUsd` and emits
 
 If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
 
+## Execution statuses
+
+| Status                | Meaning                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------- |
+| `pending`             | Ready to run but no engine attached — set by approve/retry before the client reconnects |
+| `running`             | Engine is actively processing steps                                                     |
+| `paused_for_approval` | Waiting for a human to approve a `human_approval` step                                  |
+| `completed`           | All steps finished successfully                                                         |
+| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped, or abandoned approval)     |
+| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`                                     |
+
+The `pending` → `running` transition happens inside `initRun()` when the engine picks up a resume. This gap prevents the zombie reaper from sweeping rows before the client reconnects.
+
+## Zombie reaper
+
+The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
+
+- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect).
+- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry).
+- **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
+
+Called by the unified maintenance tick endpoint.
+
 ## Adding a new step type
 
 1. Add the literal to `KNOWN_STEP_TYPES` / `WorkflowStepType` in `types/orchestration.ts`.

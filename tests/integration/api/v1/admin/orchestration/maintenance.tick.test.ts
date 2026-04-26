@@ -124,7 +124,11 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     });
     vi.mocked(processPendingRetries).mockResolvedValue(3);
     vi.mocked(processPendingHookRetries).mockResolvedValue(2);
-    vi.mocked(reapZombieExecutions).mockResolvedValue({ reaped: 1 });
+    vi.mocked(reapZombieExecutions).mockResolvedValue({
+      reaped: 1,
+      stalePending: 0,
+      abandonedApprovals: 0,
+    });
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 5, failed: 0 });
     vi.mocked(enforceRetentionPolicies).mockResolvedValue({
       deleted: 10,
@@ -168,7 +172,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
     expect(body.data.webhookRetries).toBe(3);
     expect(body.data.hookRetries).toBe(2);
-    expect(body.data.zombieReaper).toEqual({ reaped: 1 });
+    expect(body.data.zombieReaper).toEqual({ reaped: 1, stalePending: 0, abandonedApprovals: 0 });
     expect(body.data.embeddingBackfill).toEqual({ processed: 5, failed: 0 });
     expect(body.data.retention).toEqual({
       deleted: 10,
@@ -196,7 +200,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     });
     // Other functions should succeed
     expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
-    expect(body.data.zombieReaper).toEqual({ reaped: 1 });
+    expect(body.data.zombieReaper).toEqual({ reaped: 1, stalePending: 0, abandonedApprovals: 0 });
   });
 
   it('returns skipped when tick is already running', async () => {

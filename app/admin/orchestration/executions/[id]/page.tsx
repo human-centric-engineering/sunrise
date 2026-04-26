@@ -21,13 +21,14 @@ interface ExecutionDetail {
   totalTokensUsed: number;
   totalCostUsd: number;
   budgetLimitUsd: number | null;
-  currentStep: number | null;
+  currentStep: string | null;
   inputData: unknown;
   outputData: unknown;
   errorMessage: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  workflow: { id: string; name: string };
 }
 
 interface ExecutionResponse {
@@ -61,7 +62,9 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
             AI Orchestration
           </Link>
           {' / '}
-          <span>Executions</span>
+          <Link href="/admin/orchestration/executions" className="hover:underline">
+            Executions
+          </Link>
           {' / '}
           <span className="text-foreground">{id.slice(0, 8)}…</span>
         </nav>
@@ -82,10 +85,19 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
             <p className="text-foreground mt-2 font-medium">This page</p>
             <p>
               Inspect the step-by-step trace, see total cost and token usage, and diagnose where a
-              workflow succeeded or failed.
+              workflow succeeded, failed, or was cancelled.
             </p>
           </FieldHelp>
         </h1>
+        <p className="text-muted-foreground text-sm">
+          Workflow:{' '}
+          <Link
+            href={`/admin/orchestration/workflows/${data.execution.workflowId}`}
+            className="hover:underline"
+          >
+            {data.execution.workflow.name}
+          </Link>
+        </p>
       </header>
 
       <ExecutionDetailView execution={data.execution} trace={data.trace} />

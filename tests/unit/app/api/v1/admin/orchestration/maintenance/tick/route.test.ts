@@ -102,7 +102,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 const DEFAULT_SCHEDULE_RESULT = { triggered: 2, skipped: 0 };
 const DEFAULT_RETRY_RESULT = 3;
 const DEFAULT_HOOK_RETRY_RESULT = 2;
-const DEFAULT_REAPER_RESULT = { reaped: 1 };
+const DEFAULT_REAPER_RESULT = { reaped: 1, stalePending: 0, abandonedApprovals: 0 };
 const DEFAULT_EMBEDDER_RESULT = { backfilled: 5, failed: 0 };
 const DEFAULT_RETENTION_RESULT = {
   deleted: 10,

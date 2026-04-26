@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event';
 import { ExecutionsTable } from '@/components/admin/orchestration/executions-table';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
 import type { PaginationMeta } from '@/types/api';
-import type { ExecutionListItem } from '@/app/admin/orchestration/executions/page';
+import type { ExecutionListItem } from '@/types/orchestration';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ function makeExecution(overrides: Partial<ExecutionListItem> = {}): ExecutionLis
     status: 'completed',
     totalTokensUsed: 1500,
     totalCostUsd: 0.0042,
+    startedAt: '2026-04-18T10:00:00Z',
     createdAt: '2026-04-18T10:00:00Z',
     completedAt: '2026-04-18T10:00:03Z',
     workflow: { id: 'wf-1', name: 'Test Workflow' },
@@ -199,6 +200,34 @@ describe('ExecutionsTable', () => {
         const lastUrl = typeof lastArg === 'string' ? lastArg : '';
         expect(lastUrl).toContain('page=2');
       });
+    });
+  });
+
+  describe('duration', () => {
+    it('computes duration from startedAt, not createdAt', () => {
+      const exec = makeExecution({
+        startedAt: '2026-04-18T10:00:05Z',
+        createdAt: '2026-04-18T10:00:00Z',
+        completedAt: '2026-04-18T10:00:08Z',
+      });
+      render(<ExecutionsTable initialExecutions={[exec]} initialMeta={MOCK_META} />);
+
+      // 3s (from startedAt to completedAt), not 8s (from createdAt)
+      expect(screen.getByText('3.0s')).toBeInTheDocument();
+    });
+
+    it('shows elapsed time for running executions (startedAt set, completedAt null)', () => {
+      const exec = makeExecution({
+        status: 'running',
+        startedAt: new Date(Date.now() - 5000).toISOString(),
+        completedAt: null,
+      });
+      render(<ExecutionsTable initialExecutions={[exec]} initialMeta={MOCK_META} />);
+
+      // Should show a duration like "5.0s" (not "—")
+      const cells = screen.getAllByRole('cell');
+      const durationCell = cells.find((cell) => /\d+\.\d+s|\d+ ms/.test(cell.textContent ?? ''));
+      expect(durationCell).toBeTruthy();
     });
   });
 });

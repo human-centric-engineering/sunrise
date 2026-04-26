@@ -34,12 +34,14 @@ import {
 import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { formatDuration } from '@/lib/utils/format-duration';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
-import type { ExecutionListItem } from '@/app/admin/orchestration/executions/page';
+import type { ExecutionListItem } from '@/types/orchestration';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
+  { value: 'pending', label: 'Pending' },
   { value: 'running', label: 'Running' },
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
@@ -121,13 +123,6 @@ export function ExecutionsTable({
     },
     [fetchExecutions]
   );
-
-  function formatDuration(start: string | null, end: string | null): string {
-    if (!start || !end) return '—';
-    const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 1000) return `${ms} ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
-  }
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {
@@ -240,7 +235,7 @@ export function ExecutionsTable({
                     ${ex.totalCostUsd.toFixed(4)}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {formatDuration(ex.createdAt, ex.completedAt)}
+                    {formatDuration(ex.startedAt, ex.completedAt)}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {formatDate(ex.createdAt)}
