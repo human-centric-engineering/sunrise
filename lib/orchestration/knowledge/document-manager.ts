@@ -9,6 +9,7 @@
 import { createHash } from 'crypto';
 import { extname } from 'path';
 import { prisma } from '@/lib/db/client';
+import { executeTransaction } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
 import {
   chunkMarkdownDocument,
@@ -20,12 +21,19 @@ import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
+/** Transaction client type used by insertChunks */
+type TxClient = Parameters<Parameters<typeof executeTransaction>[0]>[0];
+
 /**
  * Insert chunks with embeddings into the database using raw SQL for pgvector.
  * Extracted from the three callers (upload, confirm, rechunk) that all had
  * identical 15-parameter INSERT statements.
+ *
+ * Accepts a transaction client so all inserts are atomic — if any chunk
+ * fails, the entire batch is rolled back (no partial chunk data).
  */
 async function insertChunks(
+  tx: TxClient,
   documentId: string,
   chunks: Chunk[],
   embeddings: number[][],
@@ -35,7 +43,7 @@ async function insertChunks(
     const chunk = chunks[i];
     const embeddingStr = `[${embeddings[i].join(',')}]`;
 
-    await prisma.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content, embedding,
         "chunkType", "patternNumber", "patternName", category,
@@ -130,7 +138,7 @@ export async function uploadDocument(
 
   try {
     // Chunk the document
-    const chunks = chunkMarkdownDocument(content, name);
+    const chunks = chunkMarkdownDocument(content, name, document.id);
 
     // If a document-level category was set, apply it to chunks that have none
     if (resolvedCategory) {
@@ -149,15 +157,17 @@ export async function uploadDocument(
       return document;
     }
 
-    // Generate embeddings and store chunks
+    // Generate embeddings (external API call — kept outside transaction)
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-    await insertChunks(document.id, chunks, embeddings, provenance);
 
-    // Update document status
-    const updated = await prisma.aiKnowledgeDocument.update({
-      where: { id: document.id },
-      data: { status: 'ready', chunkCount: chunks.length },
+    // Insert chunks + update status atomically
+    const updated = await executeTransaction(async (tx) => {
+      await insertChunks(tx, document.id, chunks, embeddings, provenance);
+      return await tx.aiKnowledgeDocument.update({
+        where: { id: document.id },
+        data: { status: 'ready', chunkCount: chunks.length },
+      });
     });
 
     logger.info('Document uploaded successfully', {
@@ -350,7 +360,7 @@ export async function confirmPreview(
   });
 
   try {
-    const chunks = chunkMarkdownDocument(content, document.name);
+    const chunks = chunkMarkdownDocument(content, document.name, documentId);
 
     if (category) {
       for (const chunk of chunks) {
@@ -369,15 +379,17 @@ export async function confirmPreview(
 
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-    await insertChunks(documentId, chunks, embeddings, provenance);
 
-    const updated = await prisma.aiKnowledgeDocument.update({
-      where: { id: documentId },
-      data: {
-        status: 'ready',
-        chunkCount: chunks.length,
-        metadata: { format: extname(document.fileName).toLowerCase() },
-      },
+    const updated = await executeTransaction(async (tx) => {
+      await insertChunks(tx, documentId, chunks, embeddings, provenance);
+      return await tx.aiKnowledgeDocument.update({
+        where: { id: documentId },
+        data: {
+          status: 'ready',
+          chunkCount: chunks.length,
+          metadata: { format: extname(document.fileName).toLowerCase() },
+        },
+      });
     });
 
     logger.info('Document preview confirmed and processed', {
@@ -450,14 +462,9 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     data: { status: 'processing' },
   });
 
-  // Delete old chunks
-  await prisma.aiKnowledgeChunk.deleteMany({
-    where: { documentId },
-  });
-
   try {
     // Re-chunk
-    const chunks = chunkMarkdownDocument(content, document.name);
+    const chunks = chunkMarkdownDocument(content, document.name, documentId);
 
     if (chunks.length === 0) {
       return await prisma.aiKnowledgeDocument.update({
@@ -466,14 +473,18 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
       });
     }
 
-    // Re-embed and store new chunks
+    // Re-embed (external API call — kept outside transaction)
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-    await insertChunks(documentId, chunks, embeddings, provenance);
 
-    const updated = await prisma.aiKnowledgeDocument.update({
-      where: { id: documentId },
-      data: { status: 'ready', chunkCount: chunks.length },
+    // Delete old chunks + insert new ones atomically
+    const updated = await executeTransaction(async (tx) => {
+      await tx.aiKnowledgeChunk.deleteMany({ where: { documentId } });
+      await insertChunks(tx, documentId, chunks, embeddings, provenance);
+      return await tx.aiKnowledgeDocument.update({
+        where: { id: documentId },
+        data: { status: 'ready', chunkCount: chunks.length },
+      });
     });
 
     logger.info('Document re-chunked successfully', {

@@ -321,10 +321,16 @@ function chunkGenericSection(
  *
  * @param content - Raw markdown content
  * @param documentName - Name of the document (used for chunk IDs)
+ * @param documentId - Unique document ID (first 8 chars used in chunk keys to prevent collisions)
  * @returns Array of structured chunks ready for embedding
  */
-export function chunkMarkdownDocument(content: string, documentName: string): Chunk[] {
-  const documentSlug = slugify(documentName);
+export function chunkMarkdownDocument(
+  content: string,
+  documentName: string,
+  documentId?: string
+): Chunk[] {
+  const idPrefix = documentId ? documentId.slice(0, 8) : '';
+  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
   const cleaned = stripMermaidBlocks(content);
   const globalMetadata = parseMetadataComments(cleaned);
 
