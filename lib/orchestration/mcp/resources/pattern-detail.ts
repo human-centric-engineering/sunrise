@@ -17,7 +17,7 @@ export async function handlePatternDetail(
   const match = uri.match(/patterns\/(\d+)/);
   const patternNumber = match ? parseInt(match[1], 10) : null;
 
-  if (patternNumber === null || isNaN(patternNumber)) {
+  if (patternNumber === null || !Number.isSafeInteger(patternNumber) || patternNumber < 1) {
     return {
       uri,
       mimeType: 'application/json',
