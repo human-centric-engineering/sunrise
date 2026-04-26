@@ -27,6 +27,7 @@ describe('scanOutput', () => {
       'pricing strategy',
     ]);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.topicMatches).toContain('competitor');
     expect(result.topicMatches).not.toContain('pricing strategy');
@@ -37,6 +38,7 @@ describe('scanOutput', () => {
       'internal roadmap',
     ]);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.topicMatches).toContain('internal roadmap');
   });
@@ -47,6 +49,7 @@ describe('scanOutput', () => {
       ['competitor', 'internal roadmap', 'salary']
     );
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.topicMatches).toHaveLength(2);
     expect(result.topicMatches).toContain('competitor');
@@ -63,6 +66,7 @@ describe('scanOutput', () => {
   it('detects PII email pattern', () => {
     const result = scanOutput('Contact us at john@example.com for more info.', []);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.builtInMatches).toContain('pii_email');
   });
@@ -70,6 +74,7 @@ describe('scanOutput', () => {
   it('detects PII phone number pattern', () => {
     const result = scanOutput('Call us at (555) 123-4567 for support.', []);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.builtInMatches).toContain('pii_phone');
   });
@@ -77,6 +82,7 @@ describe('scanOutput', () => {
   it('detects PII SSN pattern', () => {
     const result = scanOutput('Your SSN is 123-45-6789.', []);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.builtInMatches).toContain('pii_ssn');
   });
@@ -84,6 +90,7 @@ describe('scanOutput', () => {
   it('detects PII credit card pattern', () => {
     const result = scanOutput('Your card number is 4111 1111 1111 1111.', []);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.builtInMatches).toContain('pii_credit_card');
   });
@@ -93,6 +100,7 @@ describe('scanOutput', () => {
       'competitor',
     ]);
 
+    // test-review:accept tobe_true — boolean field `flagged` on OutputScanResult; structural assertion on scan outcome
     expect(result.flagged).toBe(true);
     expect(result.topicMatches).toContain('competitor');
     expect(result.builtInMatches).toContain('pii_email');

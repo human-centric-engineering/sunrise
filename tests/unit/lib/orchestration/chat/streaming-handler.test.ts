@@ -959,7 +959,7 @@ describe('StreamingChatHandler', () => {
 
     await collect(streamChat(baseRequest));
 
-    expect(mockRecordSuccess).toHaveBeenCalled();
+    expect(mockRecordSuccess).toHaveBeenCalledTimes(1);
   });
 
   // 22 — Input guard is called with user message -----------------------------------
@@ -1330,6 +1330,7 @@ describe('StreamingChatHandler', () => {
       }>;
     };
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(capResults.results[0].result.success).toBe(true);
     expect(capResults.results[1].result.success).toBe(false);
     expect(capResults.results[1].result.error?.code).toBe('execution_error');
@@ -1461,9 +1462,9 @@ describe('StreamingChatHandler', () => {
       await collect(streamChat(baseRequest));
 
       // Circuit breaker should have recorded failure for the failing provider
-      expect(mockBreaker.recordFailure).toHaveBeenCalled();
-      // And success for the recovered stream
-      expect(mockBreaker.recordSuccess).toHaveBeenCalled();
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+      // And success exactly once for the recovered stream
+      expect(mockBreaker.recordSuccess).toHaveBeenCalledTimes(1);
     });
 
     it('does not retry on AbortError — rethrows immediately', async () => {
@@ -1862,8 +1863,8 @@ describe('input guard mode dispatch', () => {
     // Assert: stream completed with a done event — processing continued past warning
     expect(events[events.length - 1]).toMatchObject({ type: 'done' });
 
-    // Assert: provider WAS invoked — message was not blocked
-    expect(provider.chatStream).toHaveBeenCalled();
+    // Assert: provider WAS invoked exactly once — message was not blocked
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1986,5 +1987,102 @@ describe('rolling conversation summarization', () => {
         'summary' in ((c[0] as Record<string, unknown>).data as object)
     );
     expect(summaryUpdateCall).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crash-path error-marker persistence
+// ---------------------------------------------------------------------------
+
+describe('crash-path error-marker persistence', () => {
+  it('persists an error-marker assistant message with metadata.error=true when handler crashes', async () => {
+    // Arrange: provider throws so the outer catch fires; a conversationId is set
+    // because prisma.aiConversation.create resolves (default beforeEach mock).
+    const provider = {
+      name: 'mock',
+      isLocal: false,
+      chat: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+      chatStream: vi.fn(() => {
+        throw new Error('Unexpected provider crash');
+      }),
+    };
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    await collect(streamChat(baseRequest));
+
+    // Assert: persistMessage delegates to prisma.aiMessage.create; look for
+    // the error-marker row — role=assistant with metadata.error === true.
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const errorMarker = createCalls.find(
+      (c: unknown[]) =>
+        (c[0] as { data: Record<string, unknown> }).data.role === 'assistant' &&
+        typeof (c[0] as { data: Record<string, unknown> }).data.metadata === 'object' &&
+        ((c[0] as { data: Record<string, unknown> }).data.metadata as Record<string, unknown>)
+          .error === true
+    );
+
+    expect(errorMarker).toBeDefined();
+    expect((errorMarker![0] as { data: Record<string, unknown> }).data).toMatchObject({
+      role: 'assistant',
+      content: '[An error occurred and the response could not be completed.]',
+      metadata: {
+        error: true,
+        errorCode: 'internal_error',
+      },
+    });
+  });
+
+  it('logs logger.warn and does not re-throw when persistMessage itself throws during crash handler', async () => {
+    // Arrange: provider throws first (triggering the catch block), then
+    // prisma.aiMessage.create throws on the error-marker write.
+    let createCallCount = 0;
+    const createImpl = async ({ data }: { data: Record<string, unknown> }) => {
+      createCallCount++;
+      // The first create is the user message (persisted before the LLM call).
+      // Subsequent create calls are the error-marker write — throw on those.
+      if (createCallCount > 1) {
+        throw new Error('DB write failed');
+      }
+      return makeMessage({ ...data, id: `m_${createCallCount}` });
+    };
+    (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      createImpl
+    );
+
+    const provider = {
+      name: 'mock',
+      isLocal: false,
+      chat: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+      chatStream: vi.fn(() => {
+        throw new Error('Provider exploded');
+      }),
+    };
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act: collect must resolve without throwing — the nested catch absorbs the error.
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: stream still yields a terminal error event to the consumer.
+    expect(events[events.length - 1]).toMatchObject({ type: 'error', code: 'internal_error' });
+
+    // Assert: logger.warn was called with the "Failed to persist error-marker" message.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Failed to persist error-marker assistant message',
+      expect.objectContaining({ conversationId: 'conv-1' })
+    );
   });
 });
