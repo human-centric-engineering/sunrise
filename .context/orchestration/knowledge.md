@@ -10,9 +10,10 @@ Document ingestion, chunking, embeddings, and vector search for the agent knowle
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                          |
 | `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                         |
-| `seeder.ts`           | `seedFromChunksJson`                                                                                                                                    | Idempotent seeder for the "Agentic Design Patterns" doc                                           |
+| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                       |
 | `chunker.ts`          | `chunkMarkdownDocument`, `parseMetadataComments`                                                                                                        | Markdown → chunks with type classification; metadata comment parser                               |
-| `embedder.ts`         | `embedBatch`                                                                                                                                            | Generates embeddings for chunks                                                                   |
+| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                               | Generates embeddings for text and chunk batches                                                   |
+| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                  |
 | `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md)) |
 
 ## Quick Start
@@ -26,7 +27,7 @@ import {
   listMetaTags,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge/search';
-import { seedFromChunksJson } from '@/lib/orchestration/knowledge/seeder';
+import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 
 // Upload text content (admin flow — content is a string)
 const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
@@ -57,7 +58,7 @@ const results = await searchKnowledge(
 const pattern = await getPatternDetail(3);
 
 // Seed (idempotent — see below)
-await seedFromChunksJson('prisma/seeds/data/chunks/chunks.json');
+await seedChunks('prisma/seeds/data/chunks/chunks.json');
 ```
 
 ## Document Lifecycle
@@ -167,7 +168,7 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 ## Seeder
 
-`seedFromChunksJson(chunksJsonPath)` loads a pre-built chunks file and upserts a single canonical document — the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on.
+`seedChunks(chunksJsonPath)` loads a pre-built chunks file and upserts a single canonical document — the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on.
 
 **The seeder is idempotent.** Safe to call on every deploy: if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Don't wrap calls in existence checks — that's the seeder's job.
 

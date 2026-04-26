@@ -889,7 +889,7 @@ Prefer this over `EventSource` — `EventSource` doesn't support POST bodies, cu
 
 ## Knowledge Base
 
-Six routes wrapping `documentManager`, `searchKnowledge`, `getPatternDetail`, and `seedFromChunksJson`. See [`knowledge.md`](./knowledge.md) for the underlying library API and document lifecycle.
+Six routes wrapping `documentManager`, `searchKnowledge`, `getPatternDetail`, and `seedChunks`. See [`knowledge.md`](./knowledge.md) for the underlying library API and document lifecycle.
 
 ### Search
 
@@ -962,7 +962,7 @@ Empty body. Re-runs the chunker + embedder on an existing document — use it af
 curl -X POST /api/v1/admin/orchestration/knowledge/seed
 ```
 
-Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedFromChunksJson`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
+Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedChunks`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
 
 ## Conversations
 
