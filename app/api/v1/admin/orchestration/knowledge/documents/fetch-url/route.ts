@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -46,15 +46,10 @@ export const POST = withAdminAuth(async (request, session) => {
     fetched.fileName.endsWith('.txt');
 
   if (requiresPreview(fetched.fileName)) {
-    // PDFs need preview flow — return a helpful error
-    // (The admin should use the regular upload with preview for PDFs from URL in the future)
-    // For now, process them through the buffer pipeline which will throw
-    document = await uploadDocumentFromBuffer(
-      fetched.content,
-      fetched.fileName,
-      session.user.id,
-      body.category,
-      body.url
+    const ext = fetched.fileName.split('.').pop()?.toUpperCase() ?? 'This file';
+    return errorResponse(
+      `${ext} files require the preview step. Download the file and upload it via the document upload form.`,
+      { code: 'PREVIEW_REQUIRED', status: 422 }
     );
   } else if (isText) {
     const content = fetched.content.toString('utf-8');

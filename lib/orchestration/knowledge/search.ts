@@ -230,7 +230,10 @@ export async function searchKnowledge(
     };
     return {
       chunk,
-      similarity: (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost),
+      similarity: Math.min(
+        1,
+        (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost)
+      ),
       documentName: row.documentName,
     };
   });

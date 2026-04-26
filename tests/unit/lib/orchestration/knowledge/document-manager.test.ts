@@ -268,7 +268,7 @@ describe('uploadDocument', () => {
 
     expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith({
       where: { id: 'doc-123' },
-      data: { status: 'ready', chunkCount: 2 },
+      data: { status: 'ready', chunkCount: 2, metadata: { rawContent: '# Doc' } },
     });
   });
 

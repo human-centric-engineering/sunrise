@@ -166,7 +166,7 @@ export async function uploadDocument(
       await insertChunks(tx, document.id, chunks, embeddings, provenance);
       return await tx.aiKnowledgeDocument.update({
         where: { id: document.id },
-        data: { status: 'ready', chunkCount: chunks.length },
+        data: { status: 'ready', chunkCount: chunks.length, metadata: { rawContent: content } },
       });
     });
 
@@ -387,7 +387,7 @@ export async function confirmPreview(
         data: {
           status: 'ready',
           chunkCount: chunks.length,
-          metadata: { format: extname(document.fileName).toLowerCase() },
+          metadata: { format: extname(document.fileName).toLowerCase(), rawContent: content },
         },
       });
     });
@@ -453,8 +453,12 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     return rest;
   }
 
-  // Reconstruct content from existing chunks
-  const content = document.chunks.map((c) => c.content).join('\n\n---\n\n');
+  // Prefer stored original content; fall back to lossy chunk reconstruction
+  const meta = document.metadata as Record<string, unknown> | null;
+  const content =
+    typeof meta?.rawContent === 'string' && meta.rawContent.trim()
+      ? meta.rawContent
+      : document.chunks.map((c) => c.content).join('\n\n---\n\n');
 
   // Set status to processing
   await prisma.aiKnowledgeDocument.update({
