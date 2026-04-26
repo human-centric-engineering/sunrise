@@ -226,7 +226,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /run/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^run$/i })).toBeInTheDocument();
       });
     });
 
@@ -236,7 +236,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /run/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^run$/i })).not.toBeInTheDocument();
       });
     });
 
@@ -246,7 +246,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /run/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^run$/i })).not.toBeInTheDocument();
       });
     });
   });
@@ -260,8 +260,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(mockPost).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments/exp-1/run');
@@ -277,8 +277,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed to start experiment')).toBeInTheDocument();
@@ -293,8 +293,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /run/i }));
-      await user.click(screen.getByRole('button', { name: /run/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^run$/i }));
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Experiment already running')).toBeInTheDocument();
@@ -309,7 +309,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /complete/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^complete$/i })).toBeInTheDocument();
       });
     });
 
@@ -319,7 +319,7 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
-      expect(screen.queryByRole('button', { name: /complete/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^complete$/i })).not.toBeInTheDocument();
     });
 
     it('calls apiClient.patch with status completed and refetches', async () => {
@@ -329,8 +329,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /complete/i }));
-      await user.click(screen.getByRole('button', { name: /complete/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^complete$/i }));
+      await user.click(screen.getByRole('button', { name: /^complete$/i }));
 
       await waitFor(() => {
         expect(mockPatch).toHaveBeenCalledWith(
@@ -349,8 +349,8 @@ describe('ExperimentsList', () => {
 
       render(<ExperimentsList />);
 
-      await waitFor(() => screen.getByRole('button', { name: /complete/i }));
-      await user.click(screen.getByRole('button', { name: /complete/i }));
+      await waitFor(() => screen.getByRole('button', { name: /^complete$/i }));
+      await user.click(screen.getByRole('button', { name: /^complete$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed to complete experiment')).toBeInTheDocument();
@@ -803,6 +803,72 @@ describe('ExperimentsList', () => {
       await user.click(screen.getByRole('button', { name: /cancel/i }));
 
       expect(screen.queryByRole('button', { name: /create experiment/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Status filter', () => {
+    it('renders filter buttons for all statuses', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Draft' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Completed' })).toBeInTheDocument();
+      });
+    });
+
+    it('fetches without status param when "All" is selected (default)', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: undefined,
+        });
+      });
+    });
+
+    it('fetches with status param when a filter is selected', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Draft' }));
+      await user.click(screen.getByRole('button', { name: 'Draft' }));
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: { status: 'draft' },
+        });
+      });
+    });
+
+    it('re-fetches when filter changes', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Running' }));
+      await user.click(screen.getByRole('button', { name: 'Running' }));
+
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: { status: 'running' },
+        });
+      });
+
+      await user.click(screen.getByRole('button', { name: 'All' }));
+
+      await waitFor(() => {
+        // Called at least 3 times: initial, Running, All
+        expect(mockGet.mock.calls.length).toBeGreaterThanOrEqual(3);
+      });
     });
   });
 });

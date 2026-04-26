@@ -309,11 +309,14 @@ function CreateExperimentForm({
 
 // ─── Main List ──────────────────────────────────────────────────────────────
 
+type StatusFilter = 'all' | 'draft' | 'running' | 'completed';
+
 export function ExperimentsList(): React.ReactElement {
   const [experiments, setExperiments] = React.useState<Experiment[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>('all');
   const [runningId, setRunningId] = React.useState<string | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [completingId, setCompletingId] = React.useState<string | null>(null);
@@ -321,14 +324,15 @@ export function ExperimentsList(): React.ReactElement {
 
   const fetchExperiments = React.useCallback(async () => {
     try {
-      const data = await apiClient.get<Experiment[]>(ENDPOINT);
+      const params = statusFilter !== 'all' ? { status: statusFilter } : undefined;
+      const data = await apiClient.get<Experiment[]>(ENDPOINT, { params });
       setExperiments(data);
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to load experiments');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [statusFilter]);
 
   React.useEffect(() => {
     void fetchExperiments();
@@ -397,6 +401,20 @@ export function ExperimentsList(): React.ReactElement {
           New Experiment
         </Button>
       )}
+
+      {/* Status filter */}
+      <div className="flex gap-1" role="group" aria-label="Filter by status">
+        {(['all', 'draft', 'running', 'completed'] as const).map((status) => (
+          <Button
+            key={status}
+            variant={statusFilter === status ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setStatusFilter(status)}
+          >
+            {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
+          </Button>
+        ))}
+      </div>
 
       {/* Experiment table */}
       <div className="rounded-md border">

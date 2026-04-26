@@ -152,7 +152,9 @@ The `defaultTab` is read from the `tab` query param — `experiments` opens the 
 
 ### `ExperimentsList` (`components/admin/orchestration/experiments/experiments-list.tsx`)
 
-Client-only island. Mounts with a `GET /experiments` fetch, stores the rows in local state, and mutates via `apiClient.post`/`delete` then re-fetches.
+Client-only island. Mounts with a `GET /experiments` fetch, stores the rows in local state, and mutates via `apiClient.post`/`patch`/`delete` then re-fetches.
+
+**Status filter:** A button group above the table filters experiments by status (All, Draft, Running, Completed). Defaults to "All". Selecting a filter passes `?status=` to the API and re-fetches.
 
 **List row:** name + optional description, agent name, status badge (`draft` / `running` / `completed`), variant count, created date, actions.
 
