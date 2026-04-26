@@ -146,12 +146,19 @@ describe('McpToolsList', () => {
   });
 
   describe('Remove', () => {
-    it('calls apiClient.delete when Remove is clicked', async () => {
+    it('calls apiClient.delete when Remove is confirmed via dialog', async () => {
       vi.mocked(apiClient.delete).mockResolvedValue(undefined);
       render(<McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY]} />);
 
+      // Click the Remove trigger to open confirmation dialog
       await act(async () => {
         fireEvent.click(screen.getByText('Remove'));
+      });
+
+      // Click the confirmation button inside the AlertDialog
+      const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
       });
 
       await waitFor(() => {

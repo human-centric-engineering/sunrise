@@ -635,7 +635,7 @@ describe('toggle handler', () => {
 // ---------------------------------------------------------------------------
 
 describe('remove handler', () => {
-  it('clicking Remove sends DELETE to mcpResourceById(id)', async () => {
+  it('clicking Remove and confirming sends DELETE to mcpResourceById(id)', async () => {
     // Arrange
     const user = userEvent.setup();
     const resource = makeResource({ id: 'r-1', name: 'Knowledge Search' });
@@ -645,8 +645,10 @@ describe('remove handler', () => {
     } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
-    // Act
+    // Act — open confirmation dialog then confirm
     await user.click(screen.getByRole('button', { name: /Remove/i }));
+    const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+    await user.click(confirmButton);
 
     // Assert
     expect(mockFetch).toHaveBeenCalledWith(
@@ -666,8 +668,10 @@ describe('remove handler', () => {
     } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
-    // Act
+    // Act — open confirmation dialog then confirm
     await user.click(screen.getByRole('button', { name: /Remove/i }));
+    const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+    await user.click(confirmButton);
 
     // Assert — after removal table is gone and the unique name is no longer present
     await waitFor(() => {
@@ -687,8 +691,10 @@ describe('remove handler', () => {
     } as Response);
     render(<McpResourcesList initialResources={[resource]} />);
 
-    // Act
+    // Act — open confirmation dialog then confirm
     await user.click(screen.getByRole('button', { name: /Remove/i }));
+    const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+    await user.click(confirmButton);
 
     // Assert
     await waitFor(() => {
