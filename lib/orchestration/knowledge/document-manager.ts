@@ -14,9 +14,56 @@ import {
   chunkMarkdownDocument,
   parseMetadataComments,
 } from '@/lib/orchestration/knowledge/chunker';
+import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
+import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
+
+/**
+ * Insert chunks with embeddings into the database using raw SQL for pgvector.
+ * Extracted from the three callers (upload, confirm, rechunk) that all had
+ * identical 15-parameter INSERT statements.
+ */
+async function insertChunks(
+  documentId: string,
+  chunks: Chunk[],
+  embeddings: number[][],
+  provenance: EmbeddingProvenance
+): Promise<void> {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const embeddingStr = `[${embeddings[i].join(',')}]`;
+
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO ai_knowledge_chunk (
+        id, "chunkKey", "documentId", content, embedding,
+        "chunkType", "patternNumber", "patternName", category,
+        section, keywords, "estimatedTokens", metadata,
+        "embeddingModel", "embeddingProvider", "embeddedAt"
+      ) VALUES (
+        gen_random_uuid()::text, $1, $2, $3, $4::vector,
+        $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+        $13, $14, $15
+      )`,
+      chunk.id,
+      documentId,
+      chunk.content,
+      embeddingStr,
+      chunk.chunkType,
+      chunk.patternNumber,
+      chunk.patternName,
+      chunk.category,
+      chunk.section,
+      chunk.keywords,
+      chunk.estimatedTokens,
+      JSON.stringify(null),
+      provenance.model,
+      provenance.provider,
+      provenance.embeddedAt
+    );
+  }
+}
 
 /**
  * Extract a document-level category from metadata comments.
@@ -102,43 +149,10 @@ export async function uploadDocument(
       return document;
     }
 
-    // Generate embeddings for all chunks
+    // Generate embeddings and store chunks
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-
-    // Store chunks with embeddings using raw SQL for pgvector
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embeddingStr = `[${embeddings[i].join(',')}]`;
-
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ai_knowledge_chunk (
-          id, "chunkKey", "documentId", content, embedding,
-          "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata,
-          "embeddingModel", "embeddingProvider", "embeddedAt"
-        ) VALUES (
-          gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13, $14, $15
-        )`,
-        chunk.id,
-        document.id,
-        chunk.content,
-        embeddingStr,
-        chunk.chunkType,
-        chunk.patternNumber,
-        chunk.patternName,
-        chunk.category,
-        chunk.section,
-        chunk.keywords,
-        chunk.estimatedTokens,
-        JSON.stringify(null),
-        provenance.model,
-        provenance.provider,
-        provenance.embeddedAt
-      );
-    }
+    await insertChunks(document.id, chunks, embeddings, provenance);
 
     // Update document status
     const updated = await prisma.aiKnowledgeDocument.update({
@@ -355,39 +369,7 @@ export async function confirmPreview(
 
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embeddingStr = `[${embeddings[i].join(',')}]`;
-
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ai_knowledge_chunk (
-          id, "chunkKey", "documentId", content, embedding,
-          "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata,
-          "embeddingModel", "embeddingProvider", "embeddedAt"
-        ) VALUES (
-          gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13, $14, $15
-        )`,
-        chunk.id,
-        documentId,
-        chunk.content,
-        embeddingStr,
-        chunk.chunkType,
-        chunk.patternNumber,
-        chunk.patternName,
-        chunk.category,
-        chunk.section,
-        chunk.keywords,
-        chunk.estimatedTokens,
-        JSON.stringify(null),
-        provenance.model,
-        provenance.provider,
-        provenance.embeddedAt
-      );
-    }
+    await insertChunks(documentId, chunks, embeddings, provenance);
 
     const updated = await prisma.aiKnowledgeDocument.update({
       where: { id: documentId },
@@ -484,43 +466,10 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
       });
     }
 
-    // Re-embed
+    // Re-embed and store new chunks
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
-
-    // Store new chunks
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embeddingStr = `[${embeddings[i].join(',')}]`;
-
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ai_knowledge_chunk (
-          id, "chunkKey", "documentId", content, embedding,
-          "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata,
-          "embeddingModel", "embeddingProvider", "embeddedAt"
-        ) VALUES (
-          gen_random_uuid()::text, $1, $2, $3, $4::vector,
-          $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13, $14, $15
-        )`,
-        chunk.id,
-        documentId,
-        chunk.content,
-        embeddingStr,
-        chunk.chunkType,
-        chunk.patternNumber,
-        chunk.patternName,
-        chunk.category,
-        chunk.section,
-        chunk.keywords,
-        chunk.estimatedTokens,
-        JSON.stringify(null),
-        provenance.model,
-        provenance.provider,
-        provenance.embeddedAt
-      );
-    }
+    await insertChunks(documentId, chunks, embeddings, provenance);
 
     const updated = await prisma.aiKnowledgeDocument.update({
       where: { id: documentId },
