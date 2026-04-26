@@ -168,6 +168,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
     expect(body.data.webhookRetries).toBe(3);
@@ -193,6 +194,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     // The failed function should report an error string
     expect(body.data.webhookRetries).toEqual({
@@ -213,7 +215,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     const body = await parseJson<{ success: boolean; data: { skipped: boolean; reason: string } }>(
       response
     );
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.skipped).toBe(true);
     expect(body.data.reason).toBe('previous tick still running');
 

@@ -159,6 +159,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
       };
     }>(response);
 
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.execution.id).toBe(EXECUTION_ID);
     expect(data.data.execution.currentStep).toBe('step2');

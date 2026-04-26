@@ -115,10 +115,12 @@ describe('GET /api/v1/admin/orchestration/agents/:id/instructions-history', () =
           history: unknown[];
         };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.agentId).toBe(AGENT_ID);
       expect(data.data.slug).toBe('test-agent');
       expect(data.data.current).toBe('Current instructions.');
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.history)).toBe(true);
     });
 

@@ -329,6 +329,7 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
       success: boolean;
       data: { agent: Record<string, unknown>; restoredFromVersion: number; newVersion: number };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.agent).toMatchObject({ id: AGENT_ID });
     // version was 2, nextVersion = 2 + 1 = 3

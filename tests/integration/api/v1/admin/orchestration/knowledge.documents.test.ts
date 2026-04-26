@@ -148,6 +148,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/documents', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
@@ -229,6 +230,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const data = await parseJson<{ success: boolean; data: { document: { id: string } } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.document.id).toBe(DOC_ID);
     });

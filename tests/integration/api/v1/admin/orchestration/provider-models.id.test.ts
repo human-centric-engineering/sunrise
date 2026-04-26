@@ -172,7 +172,9 @@ describe('GET /api/v1/admin/orchestration/provider-models/:id', () => {
       data: { slug: string; configured: boolean; configuredActive: boolean };
     }>(response);
     expect(data.data.slug).toBe('anthropic-claude-opus-4');
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.configured).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.configuredActive).toBe(true);
   });
 });
@@ -599,6 +601,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(response.status).toBe(200);
 
     const data = await parseJson<{ data: { id: string; deleted: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.deleted).toBe(true);
 
     expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(

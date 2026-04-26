@@ -203,7 +203,9 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
         success: boolean;
         data: { success: boolean; executionId: string };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.success).toBe(true);
       expect(data.data.executionId).toBe(EXECUTION_ID);
     });

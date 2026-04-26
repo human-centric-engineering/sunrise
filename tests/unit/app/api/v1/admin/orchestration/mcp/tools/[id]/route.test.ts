@@ -163,6 +163,7 @@ describe('PATCH /mcp/tools/:id', () => {
 
     const response = await PATCH(makePatchRequest({ isEnabled: false }), makeParams(TOOL_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -238,7 +239,9 @@ describe('PATCH /mcp/tools/:id', () => {
 
     await PATCH(makePatchRequest({ isEnabled: false }), makeParams(TOOL_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpToolCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpToolsChanged).toHaveBeenCalled();
   });
 
@@ -277,6 +280,7 @@ describe('DELETE /mcp/tools/:id', () => {
 
     const response = await DELETE(makeDeleteRequest(), makeParams(TOOL_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -310,6 +314,7 @@ describe('DELETE /mcp/tools/:id', () => {
 
     const body = await parseJson<{ data: { id: string; deleted: boolean } }>(response);
     expect(body.data.id).toBe(TOOL_ID);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.deleted).toBe(true);
   });
 
@@ -320,7 +325,9 @@ describe('DELETE /mcp/tools/:id', () => {
 
     await DELETE(makeDeleteRequest(), makeParams(TOOL_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpToolCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpToolsChanged).toHaveBeenCalled();
   });
 });

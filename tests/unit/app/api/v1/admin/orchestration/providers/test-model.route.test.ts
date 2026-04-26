@@ -226,7 +226,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
         success: boolean;
         data: { ok: boolean; latencyMs: number; model: string };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.data.ok).toBe(true);
       expect(typeof body.data.latencyMs).toBe('number');
       expect(body.data.latencyMs).toBeGreaterThanOrEqual(0);
@@ -284,6 +286,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
         success: boolean;
         data: { ok: boolean; latencyMs: null; model: string };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.ok).toBe(false);
       expect(body.data.latencyMs).toBeNull();

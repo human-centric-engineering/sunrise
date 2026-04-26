@@ -153,6 +153,7 @@ describe('GET /api/v1/admin/orchestration/conversations/:id', () => {
       }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(CONV_ID);
       expect(data.data.title).toBe('Test Conversation');

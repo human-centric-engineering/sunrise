@@ -173,6 +173,7 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
         data: Array<{ _count: unknown; _budget: unknown }>;
         meta: unknown;
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(2);
       expect(data.meta).toBeDefined();
@@ -189,6 +190,7 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(0);
     });
@@ -302,6 +304,7 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
 
       expect(response.status).toBe(201);
       const data = await parseJson<{ success: boolean; data: unknown }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject({ slug: 'test-agent' });
     });

@@ -213,6 +213,7 @@ describe('DELETE /agents/:id/embed-tokens/:tokenId', () => {
     expect(response.status).toBe(200);
     expect(prisma.aiAgentEmbedToken.delete).toHaveBeenCalledWith({ where: { id: TOKEN_ID } });
     const body = await parseJson<{ data: { deleted: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.deleted).toBe(true);
   });
 });

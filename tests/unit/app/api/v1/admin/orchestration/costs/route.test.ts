@@ -130,6 +130,7 @@ describe('GET /api/v1/admin/orchestration/costs', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.groupBy).toBe('day');
     expect(body.data.rows).toHaveLength(1);

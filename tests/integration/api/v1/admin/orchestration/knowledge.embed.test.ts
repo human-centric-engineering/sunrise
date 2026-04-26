@@ -127,6 +127,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/embed', () => {
       const body = await parseJson<{ success: boolean; data: typeof embedResult }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data).toEqual(embedResult);
       expect(vi.mocked(embedChunks)).toHaveBeenCalledOnce();

@@ -152,6 +152,7 @@ describe('PATCH /mcp/resources/:id', () => {
 
     const response = await PATCH(makePatchRequest({ name: 'Updated' }), makeParams(RESOURCE_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -209,7 +210,9 @@ describe('PATCH /mcp/resources/:id', () => {
 
     await PATCH(makePatchRequest({ isEnabled: false }), makeParams(RESOURCE_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
   });
 
@@ -254,6 +257,7 @@ describe('DELETE /mcp/resources/:id', () => {
 
     const response = await DELETE(makeDeleteRequest(), makeParams(RESOURCE_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -289,6 +293,7 @@ describe('DELETE /mcp/resources/:id', () => {
 
     const body = await parseJson<{ data: { id: string; deleted: boolean } }>(response);
     expect(body.data.id).toBe(RESOURCE_ID);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.deleted).toBe(true);
   });
 
@@ -299,7 +304,9 @@ describe('DELETE /mcp/resources/:id', () => {
 
     await DELETE(makeDeleteRequest(), makeParams(RESOURCE_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
   });
 });

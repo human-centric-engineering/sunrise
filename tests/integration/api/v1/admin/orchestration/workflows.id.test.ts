@@ -146,6 +146,7 @@ describe('GET /api/v1/admin/orchestration/workflows/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(WORKFLOW_ID);
     });
@@ -243,6 +244,7 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
     });
 
@@ -399,6 +401,7 @@ describe('DELETE /api/v1/admin/orchestration/workflows/:id', () => {
       const data = await parseJson<{ success: boolean; data: { id: string; isActive: boolean } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.isActive).toBe(false);
 

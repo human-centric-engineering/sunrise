@@ -86,6 +86,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(2);
     expect(body.data[0].patternName).toBe('Chain of Thought');
@@ -100,6 +101,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(0);
   });

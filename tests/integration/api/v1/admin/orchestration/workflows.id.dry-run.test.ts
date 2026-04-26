@@ -236,10 +236,14 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/dry-run', () => {
         data: { ok: boolean; errors: string[]; warnings: string[]; extractedVariables: string[] };
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.ok).toBe(true);
       expect(data.data.errors).toHaveLength(0);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.warnings)).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.extractedVariables)).toBe(true);
     });
 
@@ -298,7 +302,9 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/dry-run', () => {
         data: { ok: boolean; warnings: string[]; extractedVariables: string[] };
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.ok).toBe(true); // warnings don't set ok=false
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.warnings.some((w) => w.includes('city'))).toBe(true);
       expect(data.data.extractedVariables).toContain('name');
       expect(data.data.extractedVariables).toContain('city');

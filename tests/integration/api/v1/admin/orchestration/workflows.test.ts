@@ -162,6 +162,7 @@ describe('GET /api/v1/admin/orchestration/workflows', () => {
         data: Array<{ _count: { executions: number } }>;
         meta: unknown;
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
@@ -265,6 +266,7 @@ describe('POST /api/v1/admin/orchestration/workflows', () => {
 
       expect(response.status).toBe(201);
       const data = await parseJson<{ success: boolean; data: { slug: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.slug).toBe('test-workflow');
     });

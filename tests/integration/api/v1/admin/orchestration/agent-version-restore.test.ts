@@ -160,6 +160,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restor
       success: boolean;
       data: { restoredFromVersion: number; newVersion: number };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.restoredFromVersion).toBe(3);
     expect(body.data.newVersion).toBe(6);

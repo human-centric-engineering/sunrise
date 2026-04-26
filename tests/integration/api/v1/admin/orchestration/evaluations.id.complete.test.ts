@@ -156,10 +156,12 @@ describe('POST /api/v1/admin/orchestration/evaluations/:id/complete', () => {
           };
         };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.session.sessionId).toBe(SESSION_ID);
       expect(data.data.session.status).toBe('completed');
       expect(data.data.session.summary).toBe('The evaluation went well.');
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.session.improvementSuggestions)).toBe(true);
       expect(data.data.session.tokenUsage).toEqual({ input: 1000, output: 500 });
       expect(data.data.session.costUsd).toBe(0.05);

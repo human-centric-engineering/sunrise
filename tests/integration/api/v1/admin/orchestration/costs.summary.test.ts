@@ -112,10 +112,14 @@ describe('GET /api/v1/admin/orchestration/costs/summary', () => {
           trend: unknown[];
         };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.totals).toMatchObject({ today: 0.5, week: 3.2, month: 12.8 });
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.byAgent)).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.byModel)).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.trend)).toBe(true);
     });
 

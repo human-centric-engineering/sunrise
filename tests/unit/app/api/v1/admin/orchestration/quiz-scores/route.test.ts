@@ -89,6 +89,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
     const body = await res.json();
 
     expect(res.status).toBe(201);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.correct).toBe(3);
     expect(body.data.total).toBe(5);
@@ -143,6 +144,7 @@ describe('GET /api/v1/admin/orchestration/quiz-scores', () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(1);
     expect(body.data[0].correct).toBe(3);

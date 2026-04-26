@@ -239,6 +239,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       const data = await parseJson<{ success: boolean; data: { slug: string; name: string } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.slug).toBe('my-agent-copy');
       expect(data.data.name).toBe('My Agent (Copy)');
@@ -266,6 +267,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
     it('always creates clone with isActive: false regardless of source state', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const activeSource = makeSourceAgent();
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(activeSource.isActive).toBe(true); // Confirm source is active
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(activeSource as never);
 

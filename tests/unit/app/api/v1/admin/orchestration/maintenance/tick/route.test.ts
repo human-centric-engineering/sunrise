@@ -210,6 +210,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     // Assert
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
   });
 
@@ -319,6 +320,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     // Assert: 200 despite partial failure
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
 
     // Other tasks still return their results
@@ -368,6 +370,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     // Assert: response is still 200 with error fields
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.schedules).toHaveProperty('error');
     expect(body.data.webhookRetries).toHaveProperty('error');

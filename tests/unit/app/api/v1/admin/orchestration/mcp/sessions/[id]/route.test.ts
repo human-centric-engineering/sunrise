@@ -110,6 +110,7 @@ describe('DELETE /mcp/sessions/:id', () => {
 
     const response = await DELETE(makeDeleteRequest(), makeParams(SESSION_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -134,6 +135,7 @@ describe('DELETE /mcp/sessions/:id', () => {
 
     const body = await parseJson<{ data: { id: string; destroyed: boolean } }>(response);
     expect(body.data.id).toBe(SESSION_ID);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.destroyed).toBe(true);
   });
 });

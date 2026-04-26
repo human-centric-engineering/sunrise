@@ -142,6 +142,7 @@ describe('POST /webhooks/:id/test', () => {
       })
     );
     const body = await parseJson<{ data: { success: boolean; statusCode: number } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.success).toBe(true);
     expect(body.data.statusCode).toBe(200);
   });

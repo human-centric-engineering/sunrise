@@ -162,6 +162,7 @@ describe('GET /mcp/tools', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -227,6 +228,7 @@ describe('POST /mcp/tools', () => {
 
     const response = await POST(makePostRequest(VALID_TOOL_BODY));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -248,7 +250,9 @@ describe('POST /mcp/tools', () => {
 
     await POST(makePostRequest(VALID_TOOL_BODY));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpToolCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpToolsChanged).toHaveBeenCalled();
   });
 

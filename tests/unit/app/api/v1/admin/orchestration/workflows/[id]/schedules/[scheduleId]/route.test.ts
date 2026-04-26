@@ -140,6 +140,7 @@ describe('GET /workflows/:id/schedules/:scheduleId', () => {
 
     // Assert: handler wraps result in success envelope
     expect(res.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(json.success).toBe(true);
     expect(json.data.schedule.id).toBe(VALID_SCHED_ID);
   });
@@ -227,6 +228,7 @@ describe('PATCH /workflows/:id/schedules/:scheduleId', () => {
 
     // Assert: route wraps updated record in envelope
     expect(res.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(json.success).toBe(true);
     expect(json.data.schedule.name).toBe('Renamed');
     // Verify update was called with correct id
@@ -399,7 +401,9 @@ describe('DELETE /workflows/:id/schedules/:scheduleId', () => {
 
     // Assert: handler returns success envelope with deleted flag
     expect(res.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(json.success).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(json.data.deleted).toBe(true);
     // Verify delete was called with the resolved schedule id
     expect(prisma.aiWorkflowSchedule.delete).toHaveBeenCalledWith(

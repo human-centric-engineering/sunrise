@@ -166,9 +166,11 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
         success: boolean;
         data: { version: string; exportedAt: string; agents: unknown[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.version).toBe('1');
       expect(data.data.exportedAt).toBeDefined();
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.agents)).toBe(true);
       expect(data.data.agents).toHaveLength(1);
     });
@@ -226,6 +228,7 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       const data = await parseJson<{
         data: { agents: Array<{ isSystem: boolean }> };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.agents[0].isSystem).toBe(true);
     });
 

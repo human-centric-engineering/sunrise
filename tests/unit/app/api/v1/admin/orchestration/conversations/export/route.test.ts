@@ -158,6 +158,7 @@ describe('GET /conversations/export', () => {
     const body = await parseJson<{ success: boolean; data: unknown[]; meta: { total: number } }>(
       response
     );
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(1);
     expect(body.meta.total).toBe(1);

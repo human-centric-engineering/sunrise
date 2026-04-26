@@ -136,6 +136,7 @@ describe('GET /mcp/settings', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -150,6 +151,7 @@ describe('GET /mcp/settings', () => {
     const body = await parseJson<{
       data: { isEnabled: boolean; serverName: string; auditRetentionDays: number };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.isEnabled).toBe(true);
     expect(body.data.serverName).toBe('Sunrise MCP Server');
     expect(body.data.auditRetentionDays).toBe(90);
@@ -161,6 +163,7 @@ describe('GET /mcp/settings', () => {
 
     await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(getMcpServerConfig).toHaveBeenCalled();
   });
 });
@@ -188,6 +191,7 @@ describe('PATCH /mcp/settings', () => {
 
     const response = await PATCH(makePatchRequest({ isEnabled: false }));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -242,6 +246,7 @@ describe('PATCH /mcp/settings', () => {
 
     await PATCH(makePatchRequest({ isEnabled: true }));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(invalidateMcpConfigCache).toHaveBeenCalled();
   });
 

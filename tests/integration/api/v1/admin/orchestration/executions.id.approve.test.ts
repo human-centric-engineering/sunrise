@@ -185,6 +185,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
       success: boolean;
       data: { success: boolean; resumeStepId: string };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.resumeStepId).toBe('approval-step');
 
@@ -238,6 +239,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
       success: boolean;
       data: { success: boolean; resumeStepId: string };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
 
     // The trace should be passed through unchanged (no mutation since awaitingIdx === -1)

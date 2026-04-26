@@ -116,6 +116,7 @@ describe('GET /api/v1/admin/orchestration/provider-models/recommend', () => {
         success: boolean;
         data: { intent: string; recommendations: Array<{ slug: string; score: number }> };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.intent).toBe('thinking');
       expect(data.data.recommendations).toHaveLength(1);

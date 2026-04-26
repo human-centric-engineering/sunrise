@@ -146,6 +146,7 @@ describe('POST /api/v1/admin/orchestration/conversations/clear', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { deletedCount: number } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.deletedCount).toBe(3);
     });
@@ -176,6 +177,7 @@ describe('POST /api/v1/admin/orchestration/conversations/clear', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { deletedCount: number } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.deletedCount).toBe(1);
     });

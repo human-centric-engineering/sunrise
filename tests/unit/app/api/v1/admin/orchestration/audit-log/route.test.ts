@@ -124,6 +124,7 @@ describe('GET /audit-log', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(1);
   });

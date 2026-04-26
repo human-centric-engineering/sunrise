@@ -153,6 +153,7 @@ describe('GET /api/v1/admin/orchestration/executions', () => {
       }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta.total).toBe(1);

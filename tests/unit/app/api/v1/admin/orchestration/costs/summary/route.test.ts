@@ -94,6 +94,7 @@ describe('GET /api/v1/admin/orchestration/costs/summary', () => {
 
       // Assert
       expect(res.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(json.success).toBe(true);
       expect(json.data.totals.today).toBe(1.23);
       expect(json.data.totals.month).toBe(32.0);

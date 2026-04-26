@@ -158,7 +158,9 @@ describe('GET /api/v1/admin/orchestration/evaluations/:id/logs', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { logs: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.logs)).toBe(true);
     });
 

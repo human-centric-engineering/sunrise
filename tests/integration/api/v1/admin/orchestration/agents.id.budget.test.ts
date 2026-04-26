@@ -116,7 +116,9 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
         success: boolean;
         data: { withinBudget: boolean; spent: number; limit: number; remaining: number };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.withinBudget).toBe(true);
       expect(data.data.limit).toBe(100.0);
       expect(data.data.remaining).toBe(80.0);
@@ -134,7 +136,9 @@ describe('GET /api/v1/admin/orchestration/agents/:id/budget', () => {
         success: boolean;
         data: { withinBudget: boolean; limit: null; remaining: null };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.withinBudget).toBe(true);
       expect(data.data.limit).toBeNull();
       expect(data.data.remaining).toBeNull();

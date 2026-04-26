@@ -202,6 +202,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/definition-revert', () 
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(WORKFLOW_ID);
     });

@@ -103,6 +103,7 @@ describe('GET /api/v1/admin/orchestration/models', () => {
         success: boolean;
         data: { models: unknown[]; refreshed: boolean };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.refreshed).toBe(false);
       expect(data.data.models).toHaveLength(1);
@@ -145,6 +146,7 @@ describe('GET /api/v1/admin/orchestration/models', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ data: { refreshed: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.refreshed).toBe(true);
     });
 

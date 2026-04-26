@@ -148,6 +148,7 @@ describe('GET /mcp/keys', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -226,6 +227,7 @@ describe('POST /mcp/keys', () => {
 
     const response = await POST(makePostRequest({ name: 'Test Key', scopes: ['tools:list'] }));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });

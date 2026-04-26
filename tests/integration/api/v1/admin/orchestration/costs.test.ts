@@ -170,8 +170,10 @@ describe('GET /api/v1/admin/orchestration/costs', () => {
         success: boolean;
         data: { groupBy: string; rows: unknown[]; totals: unknown };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.groupBy).toBe('day');
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.rows)).toBe(true);
       expect(data.data.totals).toBeDefined();
     });

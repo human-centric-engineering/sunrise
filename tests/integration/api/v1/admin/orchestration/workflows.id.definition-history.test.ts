@@ -179,10 +179,12 @@ describe('GET /api/v1/admin/orchestration/workflows/:id/definition-history', () 
         };
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.workflowId).toBe(WORKFLOW_ID);
       expect(data.data.slug).toBe('test-workflow');
       expect(data.data.current).toBeDefined();
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data.history)).toBe(true);
     });
 

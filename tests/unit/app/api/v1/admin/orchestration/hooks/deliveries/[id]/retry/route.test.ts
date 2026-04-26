@@ -111,6 +111,7 @@ describe('POST /hooks/deliveries/:id/retry', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ data: { retried: boolean; deliveryId: string } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.retried).toBe(true);
     expect(body.data.deliveryId).toBe(DELIVERY_ID);
   });

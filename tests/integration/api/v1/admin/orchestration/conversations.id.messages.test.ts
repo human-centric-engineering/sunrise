@@ -144,6 +144,7 @@ describe('GET /api/v1/admin/orchestration/conversations/:id/messages', () => {
         success: boolean;
         data: { conversation: { userId: string }; messages: unknown[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.messages).toHaveLength(2);
       expect(data.data.conversation.userId).toBe(USER_ID);

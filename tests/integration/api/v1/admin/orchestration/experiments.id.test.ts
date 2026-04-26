@@ -164,6 +164,7 @@ describe('GET /api/v1/admin/orchestration/experiments/:id', () => {
 
     expect(response.status).toBe(200);
     const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.id).toBe(EXPERIMENT_ID);
   });
@@ -229,6 +230,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
     expect(response.status).toBe(200);
     const data = await parseJson<{ success: boolean; data: { name: string } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'experiment.update' })
@@ -362,7 +364,9 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
 
     expect(response.status).toBe(200);
     const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.deleted).toBe(true);
     expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'experiment.delete' })
@@ -379,6 +383,7 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
 
     expect(response.status).toBe(200);
     const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.deleted).toBe(true);
   });
 });

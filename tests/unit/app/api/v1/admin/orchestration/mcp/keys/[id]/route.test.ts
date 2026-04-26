@@ -149,6 +149,7 @@ describe('PATCH /mcp/keys/:id', () => {
 
     const response = await PATCH(makePatchRequest({ name: 'Updated' }), makeParams(KEY_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -246,6 +247,7 @@ describe('DELETE /mcp/keys/:id', () => {
 
     const response = await DELETE(makeDeleteRequest(), makeParams(KEY_ID));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -279,6 +281,7 @@ describe('DELETE /mcp/keys/:id', () => {
 
     const body = await parseJson<{ data: { id: string; deleted: boolean } }>(response);
     expect(body.data.id).toBe(KEY_ID);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.deleted).toBe(true);
   });
 });
