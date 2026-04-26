@@ -80,7 +80,7 @@ export function parseTxt(buffer: Buffer, fileName: string): ParsedDocument {
     title,
     sections,
     fullText,
-    metadata: {},
+    metadata: { format: 'txt' },
     warnings,
   };
 }

@@ -47,7 +47,7 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
     const epub = new EPub(tempPath);
     await epub.parse();
 
-    const metadata: Record<string, string> = {};
+    const metadata: Record<string, string> = { format: 'epub' };
     if (epub.metadata.title) metadata.title = epub.metadata.title;
     if (epub.metadata.creator) metadata.author = epub.metadata.creator;
     if (epub.metadata.language) metadata.language = epub.metadata.language;

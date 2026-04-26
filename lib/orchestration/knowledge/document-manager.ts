@@ -387,7 +387,15 @@ export async function confirmPreview(
         data: {
           status: 'ready',
           chunkCount: chunks.length,
-          metadata: { format: extname(document.fileName).toLowerCase(), rawContent: content },
+          metadata: {
+            format: extname(document.fileName).toLowerCase(),
+            rawContent: content,
+            parsedTitle: (metadata?.parsedTitle as string) ?? null,
+            parsedAuthor: (metadata?.parsedAuthor as string) ?? null,
+            sectionCount: (metadata?.sectionCount as number) ?? null,
+            warnings: (metadata?.warnings as string[]) ?? [],
+            corrected: !!correctedContent,
+          },
         },
       });
     });
