@@ -60,6 +60,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     entityType: 'mcp_api_key',
     entityId: id,
     entityName: updated.name,
+    // Shallow copy to plain objects for change comparison
     changes: computeChanges({ ...existing }, { ...updated }),
     clientIp: clientIP,
   });

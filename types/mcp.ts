@@ -44,13 +44,19 @@ export interface JsonRpcError {
   data?: unknown;
 }
 
-/** Standard JSON-RPC 2.0 error codes */
+/** Standard JSON-RPC 2.0 error codes + application-level codes */
 export const JsonRpcErrorCode = {
   PARSE_ERROR: -32700,
   INVALID_REQUEST: -32600,
   METHOD_NOT_FOUND: -32601,
   INVALID_PARAMS: -32602,
   INTERNAL_ERROR: -32603,
+  /** Application-level: authentication failed (invalid or missing API key) */
+  UNAUTHORIZED: -32001,
+  /** Application-level: session not found or expired */
+  SESSION_NOT_FOUND: -32002,
+  /** Application-level: MCP server is disabled */
+  SERVER_DISABLED: -32003,
 } as const;
 export type JsonRpcErrorCode = (typeof JsonRpcErrorCode)[keyof typeof JsonRpcErrorCode];
 

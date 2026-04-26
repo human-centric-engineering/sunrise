@@ -30,13 +30,13 @@ const PROMPTS: Record<string, PromptHandler> = {
     },
     generate(args) {
       const num = Number(args.pattern_number);
-      if (!Number.isInteger(num) || num < 1) {
+      if (!Number.isInteger(num) || num < 1 || num > 21) {
         return [
           {
             role: 'user',
             content: {
               type: 'text',
-              text: 'Invalid pattern_number: must be a positive integer.',
+              text: 'Invalid pattern_number: must be an integer between 1 and 21.',
             },
           },
         ];

@@ -195,7 +195,7 @@ describe('POST /mcp', () => {
 
     expect(response.status).toBe(401);
     const body = await parseJson<{ error: { code: number } }>(response);
-    expect(body.error.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
   });
 
   it('returns 503 when MCP server is disabled', async () => {
@@ -207,7 +207,8 @@ describe('POST /mcp', () => {
     const response = await POST(makePostRequest(makeRpcRequest('tools/list')));
 
     expect(response.status).toBe(503);
-    const body = await parseJson<{ error: { message: string } }>(response);
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SERVER_DISABLED);
     expect(body.error.message).toContain('disabled');
   });
 
@@ -499,7 +500,7 @@ describe('GET /mcp', () => {
 
     expect(response.status).toBe(401);
     const body = await parseJson<{ error: { code: number; message: string } }>(response);
-    expect(body.error.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
     expect(body.error.message).toBe('Unauthorized');
   });
 
@@ -512,7 +513,8 @@ describe('GET /mcp', () => {
     const response = await GET(makeGetRequest());
 
     expect(response.status).toBe(503);
-    const body = await parseJson<{ error: { message: string } }>(response);
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SERVER_DISABLED);
     expect(body.error.message).toContain('disabled');
   });
 
@@ -680,7 +682,7 @@ describe('DELETE /mcp', () => {
 
     expect(response.status).toBe(401);
     const body = await parseJson<{ error: { code: number; message: string } }>(response);
-    expect(body.error.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
     expect(body.error.message).toBe('Unauthorized');
   });
 
@@ -721,7 +723,7 @@ describe('DELETE /mcp', () => {
 
     expect(response.status).toBe(404);
     const body = await parseJson<{ error: { code: number; message: string } }>(response);
-    expect(body.error.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SESSION_NOT_FOUND);
     expect(body.error.message).toBe('Session not found');
   });
 
