@@ -246,8 +246,8 @@
 - **Path:** `tests/unit/lib/orchestration/chat/`
 - **Triage:** `/test-triage scan lib/orchestration/chat`
 - **Ceiling pass:** YES — critical user-facing path
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (2026-04-26)
+- **Notes:** 10 files scanned. 4 zero-hit Clean. 3 ctn FP Clean (clearAllMocks in beforeEach). input-guard was Bad (me=2: output_manipulation+encoding_evasion), fixed +14 tests. output-guard tbt=8 annotated → Clean. streaming-handler was Bad (hpo=1,mp=1,me=1), fixed: tightened 4 bare toHaveBeenCalled, +2 crash-path tests. 2 degenerate .some().toBe(true) remain as Minor. 163 tests across 10 files.
 
 ### Step 3f — `capabilities/` (9 test files)
 

@@ -448,3 +448,18 @@ Scanned 2026-04-25 on branch `triage/phase-2-core-infra` at HEAD `4ef4fd5`.
 | tests/unit/lib/orchestration/workflows/semantic-validator.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 2c3a904dc9d6f92308efe66b4c2a01c42dcc4908 | 2026-04-26T08:36:34Z | Was Bad (mp=1,tcm=1 mock path mismatch). Fixed mock to target barrel @/lib/orchestration/llm. tbt=8+ctn=1 annotated. |
 | tests/unit/lib/orchestration/workflows/template-scanner.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 01ecf97562556ae8504930930738f636b36c6c4b | 2026-04-26T08:36:34Z | Zero-hit file. |
 | tests/unit/lib/orchestration/workflows/templates/index.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 92 | 641759acc18e588e48a6b1429715adf9f1706637 | 2026-04-26T08:36:34Z | tbt=1 annotated (entryStepId structural). tcm=1 was metadata issue (triage used wrong source path). |
+
+## lib/orchestration/chat
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|--------------|-------|
+| tests/unit/lib/orchestration/chat/context-builder.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | e21384404b495bee762a445d2ce0e3bbe41b77f5 | 2026-04-26T09:47:42Z | ctn=1 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/chat/error-messages.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 660cab0b792d87fc967af64d455c991225382bc7 | 2026-04-26T09:47:42Z | Zero-hit file. |
+| tests/unit/lib/orchestration/chat/index.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 2 | 41933b797058228d3cac269d29046f0fc4293125 | 2026-04-26T09:47:42Z | Zero-hit file. |
+| tests/unit/lib/orchestration/chat/input-guard.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | 6f0a3b18da0dc2fc125072c79f37dabf8cac214e | 2026-04-26T09:47:42Z | Was Bad (me=2: output_manipulation + encoding_evasion untested). tbt=10 annotated (result.flagged structural). +14 tests (5 output_manipulation, 6 encoding_evasion, 3 normalizeForScan). |
+| tests/unit/lib/orchestration/chat/message-builder.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 79649d544ec39a5f1694ad78737281212314682c | 2026-04-26T09:47:42Z | Zero-hit file. |
+| tests/unit/lib/orchestration/chat/message-embedder.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 817a2e56755951391829bd6dd434f7316ada2e91 | 2026-04-26T09:47:42Z | ctn=1 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/chat/output-guard.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 2c3a904dc9d6f92308efe66b4c2a01c42dcc4908 | 2026-04-26T09:47:42Z | tbt=8 annotated (result.flagged structural on OutputScanResult). |
+| tests/unit/lib/orchestration/chat/streaming-handler.test.ts | unit | Minor | 2 | hpo=0,mp=0,me=0,tcm=0 | 47 | bc84b7f56ec4589e6e70755198b4173e995f1ea2 | 2026-04-26T09:47:42Z | Was Bad (hpo=1,mp=1,me=1). Tightened 4 bare toHaveBeenCalled→CalledTimes(1). +2 crash-path error-marker tests. tbt=1 annotated (result.success structural). 2 degenerate .some().toBe(true) remain (lines 413, 1423). ctn=1 mid-test clearAllMocks at line 734 (known, not fixed). |
+| tests/unit/lib/orchestration/chat/summarizer.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 6a19709e8da34e7ab47a70381037066c7b9ff73a | 2026-04-26T09:47:42Z | ctn=1 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/chat/token-estimator.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 79649d544ec39a5f1694ad78737281212314682c | 2026-04-26T09:47:42Z | Zero-hit file. |

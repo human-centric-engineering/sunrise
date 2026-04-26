@@ -144,4 +144,25 @@ describe('summarizeMessages', () => {
     const result = await summarizeMessages(MESSAGES, 'anthropic', []);
     expect(result).toContain('Summary unavailable');
   });
+
+  it('logs stringified non-Error rejection value and returns fallback', async () => {
+    // Arrange: provider whose chat() rejects with a plain string, not an Error object
+    const mockProvider = {
+      ...makeMockProvider(),
+      chat: vi.fn().mockRejectedValue('network failure'),
+    };
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
+
+    // Act
+    const result = await summarizeMessages(MESSAGES, 'anthropic', []);
+
+    // Assert: logger.warn is called with String(err) rather than err.message
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'Conversation summarization failed, using fallback',
+      expect.objectContaining({ error: 'network failure' })
+    );
+
+    // Assert: fallback message is returned (never throws)
+    expect(result).toContain('Summary unavailable');
+  });
 });

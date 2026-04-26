@@ -106,8 +106,7 @@ describe('buildMessages', () => {
     const marker = messages.find((m) =>
       getTextContent(m.content).includes('older messages omitted')
     );
-    expect(marker).toBeDefined();
-    expect(marker?.role).toBe('system');
+    expect(marker).toMatchObject({ role: 'system' });
     expect(marker?.content).toContain('5 older messages omitted');
 
     // Last history message must be the newest (msg 24).
@@ -152,8 +151,7 @@ describe('buildMessages', () => {
     const summaryMsg = messages.find((m) =>
       getTextContent(m.content).includes('Conversation summary')
     );
-    expect(summaryMsg).toBeDefined();
-    expect(summaryMsg?.role).toBe('system');
+    expect(summaryMsg).toMatchObject({ role: 'system' });
     expect(summaryMsg?.content).toContain('3 earlier messages');
     expect(summaryMsg?.content).toContain('User asked about deployment');
 
