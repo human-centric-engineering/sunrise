@@ -35,6 +35,11 @@ vi.mock('@/lib/orchestration/knowledge/seeder', () => ({
   embedChunks: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>

@@ -19,6 +19,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { embedChunks } from '@/lib/orchestration/knowledge/seeder';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -32,6 +33,15 @@ export const POST = withAdminAuth(async (request, session) => {
   const result = await embedChunks();
 
   log.info('Embedding generation completed', { adminId: session.user.id, ...result });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_embedding.generate',
+    entityType: 'knowledge_base',
+    entityId: 'knowledge-embed',
+    metadata: result,
+    clientIp: clientIP,
+  });
 
   return successResponse(result);
 });
