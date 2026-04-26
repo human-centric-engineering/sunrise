@@ -1015,7 +1015,7 @@ curl -X POST /api/v1/admin/orchestration/knowledge/documents/fetch-url \
   -d '{ "url": "https://example.com/guide.md", "category": "reference" }'
 ```
 
-Fetches a document from a remote URL with **SSRF protection** and 50 MB size limit. `url` is validated (absolute HTTP(S), max 2000 chars). Extension inferred from response. Text files go through `uploadDocument`; binary formats through `uploadDocumentFromBuffer`. PDFs throw — use the multipart upload with preview flow instead. Returns 201 with the created document. Rate-limited. Audit-logged with `sourceUrl` in metadata.
+Fetches a document from a remote URL with **SSRF protection** and 50 MB size limit. `url` is validated (absolute HTTP(S), max 2000 chars). Extension inferred from response. Text files go through `uploadDocument`; binary formats through `uploadDocumentFromBuffer`. PDFs and other preview-requiring formats return **422 `PREVIEW_REQUIRED`** — download the file and use the multipart upload with preview flow instead. Returns 201 with the created document on success. Rate-limited. Audit-logged with `sourceUrl` in metadata.
 
 ### Embed (backfill)
 
