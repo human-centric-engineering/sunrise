@@ -283,7 +283,13 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium">Total Cost</CardTitle>
+            <CardTitle className="text-xs font-medium">
+              Total Cost{' '}
+              <FieldHelp title="How cost is calculated">
+                Each LLM step reports its token cost based on the provider&apos;s pricing. The total
+                here is the sum across all steps. Non-LLM steps (guards, external calls) report $0.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <span className="text-lg font-bold">${execution.totalCostUsd.toFixed(4)}</span>
@@ -331,7 +337,13 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium">Duration</CardTitle>
+            <CardTitle className="text-xs font-medium">
+              Duration{' '}
+              <FieldHelp title="Execution duration">
+                Wall-clock time from when the engine started processing to completion. For running
+                executions this updates on each page load. Includes wait time for approval steps.
+              </FieldHelp>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <span className="text-lg font-bold">{duration ?? '—'}</span>
