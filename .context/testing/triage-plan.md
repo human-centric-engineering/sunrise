@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3c complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3d complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -233,8 +233,13 @@
 
 - **Path:** `tests/unit/lib/orchestration/knowledge/`
 - **Triage:** `/test-triage scan lib/orchestration/knowledge`
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-26)
 - **Notes:**
+  - Grade distribution: 8 Clean (embedder, embedder.voyage, search, url-fetcher, docx-parser, epub-parser, pdf-parser, txt-parser), 2 Minor (chunker, seeder), 2 Bad (document-manager, parsers/index) → 11 Clean + 1 Minor after fixes
+  - Minor: chunker tbt=1 annotated (Array.some boolean), tcm=1 minor (estimatedTokens imprecise). seeder nac=1 minor (bare toHaveBeenCalled in context — not annotated, stays Minor)
+  - Bad: document-manager (hpo=3, mp=1, me=3) — tightened bare toHaveBeenCalled, +3 error propagation tests (deleteDocument DB fail, previewDocument parse fail, uploadDocumentFromBuffer parse fail)
+  - Bad: parsers/index (mp=2) — tightened 2 bare toHaveBeenCalled to toHaveBeenCalledWith with buffer+filename args, 1 ctn annotated
+  - 267 total tests across 12 files, all passing
 
 ### Step 3e — `chat/` (10 test files)
 
@@ -465,7 +470,7 @@ Update this table after completing each step.
 | 3a   | orchestration/engine             | 25    | 25C (was 1R, 2M, 22C)     | YES (pending) | DONE        |
 | 3b   | orchestration/llm                | 20    | 20C (was 2R, 3B, 4M, 11C) | No            | DONE        |
 | 3c   | orchestration/mcp                | 13    | 4C+7M+2B → 13C            | No            | DONE        |
-| 3d   | orchestration/knowledge          | 12    |                           | No            | NOT STARTED |
+| 3d   | orchestration/knowledge          | 12    | 8C+2M+2B → 11C+1M         | No            | DONE        |
 | 3e   | orchestration/chat               | 10    |                           | YES           | NOT STARTED |
 | 3f   | orchestration/capabilities       | 9     |                           | No            | NOT STARTED |
 | 3g   | orchestration/workflows          | 4     |                           | No            | NOT STARTED |

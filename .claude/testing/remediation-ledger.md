@@ -408,3 +408,20 @@ Scanned 2026-04-25 on branch `triage/phase-2-core-infra` at HEAD `4ef4fd5`.
 | tests/unit/lib/orchestration/mcp/resources/workflow-list.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | tbt=1 annotated (isTemplate boolean field). |
 | tests/unit/lib/orchestration/mcp/tool-registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Was Bad (mp=1, me=1). Tightened 2 bare toHaveBeenCalled to toHaveBeenCalledWith, +2 error propagation tests, 4 tbt + 1 ctn annotated. |
 | tests/unit/lib/orchestration/mcp/resources/knowledge-search.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 7e860aca3223e38840c732e221f760169f39669b | 2026-04-25T21:33:00Z | Was Bad (me=1). +1 rejection propagation test, 2 ctn annotated. |
+
+## lib/orchestration/knowledge
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+| ---- | ---- | ----- | -------- | -------------- | ---------- | --------- | ------------ | ----- |
+| tests/unit/lib/orchestration/knowledge/chunker.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=1 | 30 | dd55f212c89a20a90aba52c39542538801462a20 | 2026-04-26T08:08:49Z | tbt=1 annotated (Array.some boolean). tcm=1 minor: estimatedTokens test asserts imprecise relationship. Low density — Clean. |
+| tests/unit/lib/orchestration/knowledge/document-manager.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 43 | 5c6b4690a15599f2e02f2be71d803954005dc078 | 2026-04-26T08:08:49Z | Was Bad (hpo=3, mp=1, me=3). Tightened bare toHaveBeenCalled, +3 error propagation tests. |
+| tests/unit/lib/orchestration/knowledge/embedder.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | 48c4c579be945960c588b529c40571bfe8b25d37 | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/embedder.voyage.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 48c4c579be945960c588b529c40571bfe8b25d37 | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/search.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 29 | 48c4c579be945960c588b529c40571bfe8b25d37 | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/seeder.test.ts | unit | Minor | 1 | hpo=0,mp=0,me=0,tcm=0 | 15 | 48c4c579be945960c588b529c40571bfe8b25d37 | 2026-04-26T08:08:49Z | nac=1 (bare toHaveBeenCalled on create — minor, other assertions in same test use toHaveBeenCalledWith). Sonnet: all error paths covered. |
+| tests/unit/lib/orchestration/knowledge/url-fetcher.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 5c6b4690a15599f2e02f2be71d803954005dc078 | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/parsers/docx-parser.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/parsers/epub-parser.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/parsers/index.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T08:08:49Z | Was Bad (mp=2). Tightened 2 bare toHaveBeenCalled to toHaveBeenCalledWith, 1 ctn annotated. |
+| tests/unit/lib/orchestration/knowledge/parsers/pdf-parser.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T08:08:49Z | Zero-hit file. |
+| tests/unit/lib/orchestration/knowledge/parsers/txt-parser.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T08:08:49Z | Zero-hit file. |
