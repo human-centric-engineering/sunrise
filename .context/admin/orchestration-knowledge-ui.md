@@ -12,16 +12,18 @@ The server page fetches documents from `GET /api/v1/admin/orchestration/knowledg
 
 ## Components
 
-| Component             | Type   | File                                                                 | Purpose                                               |
-| --------------------- | ------ | -------------------------------------------------------------------- | ----------------------------------------------------- |
-| `KnowledgeView`       | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`        | Tabbed layout (Manage / Explore / Visualize / Errors) |
-| `ManageTab`           | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`            | Document table, seed/rechunk/delete, meta-tag panel   |
-| `DocumentUploadZone`  | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`  | Staged file upload with category input                |
-| `PdfPreviewModal`     | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`     | Review/correct PDF extraction before chunking         |
-| `DocumentChunksModal` | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx` | View all chunks for a document                        |
-| `ExploreTab`          | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`           | Vector search testing interface                       |
-| `VisualizeTab`        | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`         | Interactive knowledge graph                           |
-| `ErrorsTab`           | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`            | Failed document recovery                              |
+| Component               | Type   | File                                                                   | Purpose                                               |
+| ----------------------- | ------ | ---------------------------------------------------------------------- | ----------------------------------------------------- |
+| `KnowledgeView`         | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`          | Tabbed layout (Manage / Explore / Visualize / Errors) |
+| `ManageTab`             | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`              | Document table, seed/rechunk/delete, meta-tag panel   |
+| `DocumentUploadZone`    | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`    | Staged file upload with category input                |
+| `PdfPreviewModal`       | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`       | Review/correct PDF extraction before chunking         |
+| `DocumentChunksModal`   | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`   | View all chunks for a document                        |
+| `ExploreTab`            | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`             | Vector search testing interface                       |
+| `VisualizeTab`          | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`           | Interactive knowledge graph                           |
+| `ErrorsTab`             | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`              | Failed document recovery                              |
+| `CompareProvidersModal` | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx` | Embedding model comparison table with guide           |
+| `EmbeddingStatusBanner` | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx` | Warning banner when embeddings are incomplete         |
 
 ## Features
 
@@ -71,12 +73,12 @@ Shows embedding progress (X/Y embedded) and "Last seeded" timestamp.
 
 ### File upload (staged flow)
 
-Two-step upload: drop/select a file → the file is staged (not uploaded yet) → optionally assign a category → click Upload.
+Staged upload: drop/select one or more files → files are staged (not uploaded yet) → optionally assign a category → click Upload. Maximum 10 files per batch.
 
-1. **Drag-and-drop zone** with file input fallback. Client-side validation: max 50 MB, `.md` / `.markdown` / `.txt` / `.epub` / `.docx` / `.pdf`
-2. **Staged preview** shows file name, size, and a category text input with autocomplete (populated from `GET /knowledge/meta-tags`)
-3. **Upload button** posts multipart `FormData` (with `file` and optional `category` fields) to `POST /knowledge/documents`
-4. **Clear button** (×) unstages the file without uploading
+1. **Drag-and-drop zone** with file input fallback (supports `multiple`). Client-side validation: max 50 MB per file, `.md` / `.markdown` / `.txt` / `.epub` / `.docx` / `.pdf`
+2. **Staged preview** shows file names with sizes, and a category text input with autocomplete (populated from `GET /knowledge/meta-tags`)
+3. **Upload button** — single file posts multipart `FormData` to `POST /knowledge/documents`; multiple files use `POST /knowledge/documents/bulk`
+4. **Clear button** (×) unstages all files without uploading
 
 **PDF flow:** When a PDF is uploaded, the API returns a preview response. The upload zone calls `onPdfPreview` which opens the `PdfPreviewModal` for review.
 

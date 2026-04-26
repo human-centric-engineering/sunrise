@@ -52,6 +52,11 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/knowledge/document-manager', () => ({
   rechunkDocument: vi.fn(),
 }));

@@ -13,10 +13,16 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { getPatternParamSchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth<{ number: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { number: rawNumber } = await params;
 

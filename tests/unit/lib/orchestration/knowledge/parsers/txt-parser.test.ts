@@ -243,9 +243,9 @@ describe('parseTxt', () => {
       expect(result.warnings).toEqual([]);
     });
 
-    it('should return an empty metadata object', () => {
+    it('should return metadata with format txt', () => {
       const result = parseTxt(toBuffer('Some text.'), 'meta.txt');
-      expect(result.metadata).toEqual({});
+      expect(result.metadata).toEqual({ format: 'txt' });
     });
   });
 });

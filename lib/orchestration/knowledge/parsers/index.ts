@@ -48,17 +48,20 @@ export async function parseDocument(buffer: Buffer, fileName: string): Promise<P
     case '.txt':
       result = parseTxt(buffer, fileName);
       break;
-    case '.md':
+    case '.md': {
       // Markdown is passed through as a single section — the existing
       // chunkMarkdownDocument() handles the structural splitting.
+      // Normalize CRLF → LF so the chunker's regex (/^(## .+)$/gm) matches correctly.
+      const mdText = buffer.toString('utf-8').replace(/\r\n/g, '\n');
       result = {
         title: fileName.replace(/\.[^.]+$/, ''),
-        sections: [{ title: '', content: buffer.toString('utf-8'), order: 0 }],
-        fullText: buffer.toString('utf-8'),
+        sections: [{ title: '', content: mdText, order: 0 }],
+        fullText: mdText,
         metadata: { format: 'markdown' },
         warnings: [],
       };
       break;
+    }
     case '.epub':
       result = await parseEpub(buffer, fileName);
       break;

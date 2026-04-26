@@ -18,6 +18,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { rechunkDocument } from '@/lib/orchestration/knowledge/document-manager';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -50,5 +51,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const document = await rechunkDocument(id);
 
   log.info('Document retried', { documentId: id, adminId: session.user.id });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_document.retry',
+    entityType: 'knowledge_document',
+    entityId: id,
+    entityName: existing.fileName,
+    metadata: { previousStatus: 'failed' },
+    clientIp: clientIP,
+  });
+
   return successResponse({ document });
 });

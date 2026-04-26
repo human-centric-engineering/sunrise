@@ -38,6 +38,7 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { listPatterns } from '@/lib/orchestration/knowledge/search';
+import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -111,5 +112,18 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
 
     const res = await GET(makeRequest());
     expect(res.status).toBe(403);
+  });
+
+  it('returns 429 when rate limited', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({
+      success: false,
+      limit: 100,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
+
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(429);
   });
 });

@@ -23,6 +23,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -38,6 +39,15 @@ export const POST = withAdminAuth(async (request, session) => {
   await seedChunks(chunksPath);
 
   log.info('Knowledge seed completed', { adminId: session.user.id });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_seed.create',
+    entityType: 'knowledge_base',
+    entityId: 'knowledge-seed',
+    metadata: { chunksPath },
+    clientIp: clientIP,
+  });
 
   return successResponse({ seeded: true, lastSeededAt: new Date().toISOString() });
 });

@@ -280,14 +280,119 @@ describe('ErrorsTab', () => {
 
   // ── Fetch failure (non-ok response) ───────────────────────────────────────
 
-  it('shows empty state when fetch returns non-ok response', async () => {
-    mockFetch.mockResolvedValue({ ok: false });
+  it('shows error state when fetch returns non-ok response', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
 
     render(<ErrorsTab />);
 
     await waitFor(() => {
-      // Loading ends and empty state shown (fetch failure → empty documents)
+      expect(screen.getByText('Failed to load error list (500)')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Retry button in fetch error state and refetches on click', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ success: true, data: [] }),
+    });
+
+    const user = userEvent.setup();
+    render(<ErrorsTab />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load error list (503)')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => {
       expect(screen.getByText('No failed documents')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when initial fetch throws', async () => {
+    mockFetch.mockRejectedValue(new Error('offline'));
+
+    render(<ErrorsTab />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error — could not reach the server.')).toBeInTheDocument();
+    });
+  });
+
+  // ── Retry failure ─────────────────────────────────────────────────────────
+
+  it('shows retry error when retry endpoint returns non-ok with error message', async () => {
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && url.includes('/retry')) {
+        return Promise.resolve({
+          ok: false,
+          status: 422,
+          json: () =>
+            Promise.resolve({ success: false, error: { message: 'Cannot retry this document' } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(FAILED_DOCS_RESPONSE),
+      });
+    });
+
+    const user = userEvent.setup();
+    render(<ErrorsTab />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /retry/i })).toHaveLength(2);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: /retry/i })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Cannot retry this document')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when retry fetch throws', async () => {
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && url.includes('/retry')) {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(FAILED_DOCS_RESPONSE),
+      });
+    });
+
+    const user = userEvent.setup();
+    render(<ErrorsTab />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /retry/i })).toHaveLength(2);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: /retry/i })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error — could not reach the server.')).toBeInTheDocument();
+    });
+  });
+
+  // ── Single document count ─────────────────────────────────────────────────
+
+  it('shows singular text for a single failed document', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [makeDocument({ id: 'doc-solo', name: 'Solo Fail' })],
+        }),
+    });
+
+    render(<ErrorsTab />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 document failed during processing/i)).toBeInTheDocument();
     });
   });
 });

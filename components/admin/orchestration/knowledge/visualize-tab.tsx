@@ -80,22 +80,29 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
 
   const [view, setView] = useState<'structure' | 'embedded'>('structure');
 
+  const [graphError, setGraphError] = useState<string | null>(null);
+
   const fetchGraph = useCallback(async () => {
     setLoading(true);
     setGraphData(null);
+    setSelectedNode(null);
+    setGraphError(null);
     try {
       const params = new URLSearchParams({ view });
       if (scope) params.set('scope', scope);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_GRAPH}?${params.toString()}`, {
         cache: 'no-store',
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setGraphError(`Failed to load graph (${res.status})`);
+        return;
+      }
       const body = graphResponseSchema.parse(await res.json());
       if (body.success && body.data) {
         setGraphData(body.data);
       }
     } catch {
-      // Silently handle
+      setGraphError('Network error — could not reach the server.');
     } finally {
       setLoading(false);
     }
@@ -360,6 +367,14 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
           ))}
         </div>
         <div className="bg-muted/30 h-96 animate-pulse rounded-lg border" />
+      </div>
+    );
+  }
+
+  if (graphError) {
+    return (
+      <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
+        <p className="text-destructive text-sm font-medium">{graphError}</p>
       </div>
     );
   }

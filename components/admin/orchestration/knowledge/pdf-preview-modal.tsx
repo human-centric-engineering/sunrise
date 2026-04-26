@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle, FileText } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,16 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
   const [category, setCategory] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
+
+  // Reset state when a different document is opened
+  useEffect(() => {
+    setCorrectedContent(data?.preview.extractedText ?? '');
+    setCategory('');
+    setError(null);
+    setDiscardError(null);
+  }, [data?.document.id, data?.preview.extractedText]);
 
   const handleConfirm = useCallback(async () => {
     if (!data) return;
@@ -67,18 +77,25 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
 
   const handleDiscard = useCallback(async () => {
     if (!data) return;
+    setDiscarding(true);
+    setDiscardError(null);
 
     try {
-      await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(data.document.id), {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(data.document.id), {
         method: 'DELETE',
       });
+      if (!res.ok) {
+        setDiscardError(`Failed to discard document (${res.status})`);
+        return;
+      }
+      setCorrectedContent('');
+      setCategory('');
+      onOpenChange(false);
     } catch {
-      // Best-effort cleanup
+      setDiscardError('Network error — could not reach the server.');
+    } finally {
+      setDiscarding(false);
     }
-
-    setCorrectedContent('');
-    setCategory('');
-    onOpenChange(false);
   }, [data, onOpenChange]);
 
   if (!data) return null;
@@ -147,7 +164,7 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
             <Textarea
               id="pdf-content"
               className="max-h-[300px] min-h-[200px] font-mono text-xs"
-              defaultValue={preview.extractedText}
+              value={correctedContent}
               onChange={(e) => setCorrectedContent(e.target.value)}
               placeholder="Extracted text appears here..."
             />
@@ -171,11 +188,16 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
           </div>
 
           {error && <p className="text-destructive text-sm">{error}</p>}
+          {discardError && <p className="text-destructive text-sm">{discardError}</p>}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="ghost" onClick={() => void handleDiscard()} disabled={confirming}>
-            Discard
+          <Button
+            variant="ghost"
+            onClick={() => void handleDiscard()}
+            disabled={confirming || discarding}
+          >
+            {discarding ? 'Discarding...' : 'Discard'}
           </Button>
           <Button onClick={() => void handleConfirm()} disabled={confirming}>
             <CheckCircle className="mr-1.5 h-4 w-4" />

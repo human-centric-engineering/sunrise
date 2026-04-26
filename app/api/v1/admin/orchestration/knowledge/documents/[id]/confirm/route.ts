@@ -20,6 +20,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { confirmPreview } from '@/lib/orchestration/knowledge/document-manager';
 import { confirmDocumentPreviewSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -48,6 +49,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     documentId: document.id,
     chunkCount: document.chunkCount,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'knowledge_document.confirm',
+    entityType: 'knowledge_document',
+    entityId: document.id,
+    entityName: document.fileName,
+    metadata: { chunkCount: document.chunkCount },
+    clientIp: clientIP,
   });
 
   return successResponse({ document });

@@ -214,7 +214,7 @@ export function CompareProvidersModal({ open, onOpenChange }: CompareProvidersMo
 
         <div className="flex items-center justify-between border-t pt-3">
           <p className="text-muted-foreground text-xs">
-            Pricing as of April 2026. Check provider docs for current rates.
+            Prices are approximate. Check provider docs for current rates.
           </p>
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Close

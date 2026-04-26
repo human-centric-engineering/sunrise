@@ -236,17 +236,19 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
   });
 
   describe('PDF file (requiresPreview path)', () => {
-    it('calls uploadDocumentFromBuffer for PDF files', async () => {
+    it('returns 422 with PREVIEW_REQUIRED for PDF files', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(fetchDocumentFromUrl).mockResolvedValue(
         makeFetchedDocument({ fileName: 'report.pdf', mimeType: 'application/pdf' }) as never
       );
-      vi.mocked(uploadDocumentFromBuffer).mockResolvedValue(makeDocument() as never);
 
       const response = await POST(makePostRequest({ url: VALID_URL }));
+      const body = (await response.json()) as { success: boolean; error?: { code?: string } };
 
-      expect(response.status).toBe(201);
-      expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalled();
+      expect(response.status).toBe(422);
+      expect(body.success).toBe(false);
+      expect(body.error?.code).toBe('PREVIEW_REQUIRED');
+      expect(vi.mocked(uploadDocumentFromBuffer)).not.toHaveBeenCalled();
       expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
     });
   });

@@ -889,7 +889,7 @@ Prefer this over `EventSource` — `EventSource` doesn't support POST bodies, cu
 
 ## Knowledge Base
 
-Six routes wrapping `documentManager`, `searchKnowledge`, `getPatternDetail`, and `seedFromChunksJson`. See [`knowledge.md`](./knowledge.md) for the underlying library API and document lifecycle.
+Sixteen routes (8 top-level paths with nested sub-routes) wrapping `document-manager`, `search`, `seeder`, `embedder`, and `url-fetcher`. See [`knowledge.md`](./knowledge.md) for the underlying library API and document lifecycle.
 
 ### Search
 
@@ -920,7 +920,7 @@ Path param validated by `getPatternParamSchema` (`number` coerced positive integ
 curl '/api/v1/admin/orchestration/knowledge/documents?page=1&limit=20&status=ready&q=react'
 ```
 
-`GET` paginates via `listDocumentsQuerySchema`. Filters: `status` (`pending` / `processing` / `ready` / `failed`), `q` (substring match on title, case-insensitive). Each row includes `_count.chunks`.
+`GET` paginates via `listDocumentsQuerySchema`. Filters: `status` (`pending` / `processing` / `ready` / `failed` / `pending_review`), `scope` (`system` / `app`), `category`, `q` (substring match on name, case-insensitive). Each row includes `_count.chunks`.
 
 ```bash
 # Upload — MULTIPART, not JSON
@@ -962,7 +962,92 @@ Empty body. Re-runs the chunker + embedder on an existing document — use it af
 curl -X POST /api/v1/admin/orchestration/knowledge/seed
 ```
 
-Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedFromChunksJson`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
+Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedChunks`. **Idempotent** — if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Safe to call on every deploy. Returns `{ seeded: true }`.
+
+### List patterns
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/patterns
+```
+
+Returns a summary of every distinct pattern in the knowledge base with pattern number, name, description, complexity, and chunk count. Used by the pattern explorer card grid.
+
+### Document chunks
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/documents/<id>/chunks
+```
+
+Returns all chunks for a document ordered by `chunkKey`. Each chunk includes `content`, `chunkType`, `patternNumber`, `patternName`, `section`, `category`, `keywords`, `estimatedTokens`. No pagination — documents are typically bounded to a few hundred chunks. 404 if document missing, 400 if malformed CUID.
+
+### Confirm preview
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/documents/<id>/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{ "documentId": "<id>", "correctedContent": "...", "category": "reports" }'
+```
+
+Confirms a `pending_review` document (PDF) and proceeds with chunking + embedding. Body validated by `confirmDocumentPreviewSchema`. `documentId` must match the URL param. `correctedContent` (optional, max 5 MB) replaces auto-extracted text. `category` (optional) overrides document category. Rate-limited.
+
+### Retry failed
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/documents/<id>/retry
+```
+
+Empty body. Resets a `failed` document to `pending` (clearing `errorMessage`) and re-runs the chunker pipeline via `rechunkDocument`. **409** if the document is not in `failed` state. Rate-limited.
+
+### Bulk upload
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/documents/bulk \
+  -F 'files=@file1.md' -F 'files=@file2.txt' -F 'category=sales'
+```
+
+Multipart upload of up to **10 files per batch**. Same per-file validation as the single upload route (50 MB, extension whitelist). PDFs are skipped in bulk (status `skipped_pdf` in results) — use the single upload route for PDF preview flow. Returns per-file results array with `status` + `documentId` or `error`. Rate-limited.
+
+### Fetch from URL
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/documents/fetch-url \
+  -H 'Content-Type: application/json' \
+  -d '{ "url": "https://example.com/guide.md", "category": "reference" }'
+```
+
+Fetches a document from a remote URL with **SSRF protection** and 50 MB size limit. `url` is validated (absolute HTTP(S), max 2000 chars). Extension inferred from response. Text files go through `uploadDocument`; binary formats through `uploadDocumentFromBuffer`. PDFs and other preview-requiring formats return **422 `PREVIEW_REQUIRED`** — download the file and use the multipart upload with preview flow instead. Returns 201 with the created document on success. Rate-limited. Audit-logged with `sourceUrl` in metadata.
+
+### Embed (backfill)
+
+```bash
+curl -X POST /api/v1/admin/orchestration/knowledge/embed
+```
+
+Empty body. Finds every chunk where `embedding IS NULL` and embeds in batches via `embedChunks()`. **Idempotent** — only processes chunks that still need embeddings. A completed run is a cheap no-op. Rate-limited.
+
+### Embedding status
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/embedding-status
+```
+
+Returns `{ total, embedded, pending, hasActiveProvider }`. `hasActiveProvider` is `true` when either an active `AiProviderConfig` exists or `OPENAI_API_KEY` is set in env. Rate-limited.
+
+### Meta-tags
+
+```bash
+curl /api/v1/admin/orchestration/knowledge/meta-tags
+```
+
+Returns all distinct category and keyword values across chunks, grouped by scope (`app` vs `system`), with chunk and document counts per value. Used by the upload form for category autocomplete and by the meta-tag panel. Rate-limited.
+
+### Graph
+
+```bash
+curl '/api/v1/admin/orchestration/knowledge/graph?view=structure&scope=app'
+```
+
+Builds a hierarchical node/link graph: central KB node → document nodes → chunk nodes (if total < 500 chunks). Query params: `scope` (`system` | `app`, optional), `view` (`structure` | `embedded`, default `structure`). The `embedded` view filters to chunks with non-NULL embeddings. Returns `{ nodes, links, categories, stats }`. Rate-limited.
 
 ## Conversations
 

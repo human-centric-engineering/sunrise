@@ -71,24 +71,29 @@ export function ExploreTab({ scope }: ExploreTabProps) {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const [selected, setSelected] = useState<KnowledgeSearchResult | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const doSearch = useCallback(
     async (q: string) => {
       setSearching(true);
+      setSearchError(null);
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_SEARCH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: q, limit: 20, ...(scope ? { scope } : {}) }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          setSearchError(`Search failed (${res.status})`);
+          return;
+        }
         const body = searchResponseSchema.parse(await res.json());
         if (body.success && body.data) {
           setResults(body.data.results);
         }
       } catch {
-        // Silently handle — no results shown
+        setSearchError('Network error — could not reach the server.');
       } finally {
         setSearching(false);
         setSearched(true);
@@ -164,7 +169,9 @@ export function ExploreTab({ scope }: ExploreTabProps) {
         </div>
       )}
 
-      {!searching && searched && results.length === 0 && (
+      {searchError && <p className="text-destructive text-sm">{searchError}</p>}
+
+      {!searching && !searchError && searched && results.length === 0 && (
         <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
           <p className="text-sm font-medium">No results found</p>
           <p className="mt-1 text-xs">

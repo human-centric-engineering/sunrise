@@ -182,13 +182,13 @@ describe('VisualizeTab', () => {
     });
   });
 
-  it('shows empty state when fetch returns non-ok', async () => {
-    mockFetch.mockResolvedValue({ ok: false });
+  it('shows error state when fetch returns non-ok', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
 
     render(<VisualizeTab />);
 
     await waitFor(() => {
-      expect(screen.getByText(/no.*knowledge base data/i)).toBeInTheDocument();
+      expect(screen.getByText(/failed to load graph/i)).toBeInTheDocument();
     });
   });
 
@@ -502,19 +502,19 @@ describe('VisualizeTab', () => {
 
   // ── New: Fetch error (thrown) → empty state ────────────────────────────────
 
-  it('shows empty state when fetch throws a network error', async () => {
+  it('shows error state when fetch throws a network error', async () => {
     mockFetch.mockRejectedValue(new Error('network'));
 
     render(<VisualizeTab />);
 
     await waitFor(() => {
-      expect(screen.getByText(/no\s+knowledge base data/i)).toBeInTheDocument();
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
     });
   });
 
   // ── New: Schema parse failure → empty state (no crash) ────────────────────
 
-  it('shows empty state when response JSON does not match expected schema', async () => {
+  it('shows error state when response JSON does not match expected schema', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ not: 'valid' }),
@@ -523,7 +523,7 @@ describe('VisualizeTab', () => {
     render(<VisualizeTab />);
 
     await waitFor(() => {
-      expect(screen.getByText(/no\s+knowledge base data/i)).toBeInTheDocument();
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
     });
   });
 

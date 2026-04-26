@@ -2,18 +2,19 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`).
 
 ## Module Layout
 
-| File                  | Exports                                                                                                                                                 | Purpose                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                          |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                         |
-| `seeder.ts`           | `seedFromChunksJson`                                                                                                                                    | Idempotent seeder for the "Agentic Design Patterns" doc                                           |
-| `chunker.ts`          | `chunkMarkdownDocument`, `parseMetadataComments`                                                                                                        | Markdown → chunks with type classification; metadata comment parser                               |
-| `embedder.ts`         | `embedBatch`                                                                                                                                            | Generates embeddings for chunks                                                                   |
-| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md)) |
+| File                  | Exports                                                                                                                                                 | Purpose                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                              |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                             |
+| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                           |
+| `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?)`, `parseMetadataComments`                                                                            | Markdown → chunks with type classification; optional `documentId` prefix prevents chunkKey collisions |
+| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                               | Generates embeddings for text and chunk batches                                                       |
+| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                      |
+| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md))     |
 
 ## Quick Start
 
@@ -26,7 +27,7 @@ import {
   listMetaTags,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge/search';
-import { seedFromChunksJson } from '@/lib/orchestration/knowledge/seeder';
+import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 
 // Upload text content (admin flow — content is a string)
 const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
@@ -57,7 +58,7 @@ const results = await searchKnowledge(
 const pattern = await getPatternDetail(3);
 
 // Seed (idempotent — see below)
-await seedFromChunksJson('prisma/seeds/data/chunks/chunks.json');
+await seedChunks('prisma/seeds/data/chunks/chunks.json');
 ```
 
 ## Document Lifecycle
@@ -66,8 +67,9 @@ await seedFromChunksJson('prisma/seeds/data/chunks/chunks.json');
 
 ```
 pending → processing → ready
+              ↘ failed
     ↘ pending_review → (confirm) → processing → ready
-                    ↘ failed
+                                        ↘ failed
 ```
 
 | Status           | Meaning                                                                                                |
@@ -149,7 +151,7 @@ The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping uses `AiA
 
 ## Search
 
-`searchKnowledge(query, filters?, limit?, threshold?)` runs a hybrid cosine-similarity + keyword-boost search via pgvector. Filters support `documentId` and `chunkType` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
+`searchKnowledge(query, filters?, limit?, threshold?)` runs a hybrid cosine-similarity + keyword-boost search via pgvector. Filters support `chunkType`, `patternNumber`, `category`, `categories` (array), `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
 
 Results are ranked chunks with their parent document metadata — the admin search route (`POST /knowledge/search`) surfaces this directly. POST (not GET) because the filter payload can contain arbitrary text and we don't want query bodies in URL logs.
 
@@ -167,7 +169,7 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 ## Seeder
 
-`seedFromChunksJson(chunksJsonPath)` loads a pre-built chunks file and upserts a single canonical document — the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on.
+`seedChunks(chunksJsonPath)` loads a pre-built chunks file and upserts a single canonical document — the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on.
 
 **The seeder is idempotent.** Safe to call on every deploy: if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Don't wrap calls in existence checks — that's the seeder's job.
 
@@ -183,6 +185,8 @@ Chunks are written with `embedding: NULL` when no active embedding provider is c
 | `/api/v1/admin/orchestration/knowledge/embedding-status` | `GET`  | Polling snapshot: `{ total, embedded, pending, hasActiveProvider }`         |
 
 **Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive — the seed flow also calls it after inserting chunks. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when either `AiProviderConfig` has an active row **or** `OPENAI_API_KEY` is set in env, so the admin UI can disable the "Generate Embeddings" button until at least one is configured.
+
+**Provider priority:** `resolveProvider()` in `embedder.ts` selects the embedding provider in this order: (1) Voyage AI — best retrieval quality, free tier; (2) Local provider (e.g. Ollama) — cheaper/faster; (3) OpenAI-compatible with custom `baseUrl`; (4) OpenAI API directly via `OPENAI_API_KEY`. This chain is internal to the embedder — callers don't specify the provider.
 
 **Idempotency:** `/embed` only touches chunks with `NULL` embeddings, so it is safe to call repeatedly. A completed run is a cheap no-op.
 

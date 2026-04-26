@@ -6,6 +6,7 @@
  * automatic provider detection from AiProviderConfig.
  */
 
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
@@ -92,6 +93,12 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
 
   // Default: OpenAI API directly
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
+  if (!openaiKey) {
+    throw new Error(
+      'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
+        'or configure an embedding provider in the admin settings.'
+    );
+  }
   return {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: openaiKey,
@@ -150,9 +157,10 @@ async function callEmbeddingApi(
     throw new Error(`Embedding API error (${response.status}): ${message}`);
   }
 
-  const result = (await response.json()) as {
-    data: Array<{ embedding: number[]; index: number }>;
-  };
+  const embeddingResponseSchema = z.object({
+    data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
+  });
+  const result = embeddingResponseSchema.parse(await response.json());
 
   // Sort by index to maintain input order
   return result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
@@ -219,6 +227,11 @@ export async function embedBatch(
     });
 
     const embeddings = await callEmbeddingApi(provider, batch, inputType);
+    if (embeddings.length !== batch.length) {
+      throw new Error(
+        `Embedding API returned ${embeddings.length} embeddings for ${batch.length} texts`
+      );
+    }
     allEmbeddings.push(...embeddings);
 
     // Rate limit between batches (skip for last batch)

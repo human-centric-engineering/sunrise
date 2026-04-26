@@ -42,6 +42,16 @@ vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
   embedBatch: vi.fn(),
 }));
 
+// executeTransaction mock — forwards callback to the prisma mock.
+// We import prisma after mocks are set up, so use a lazy reference.
+// eslint-disable-next-line prefer-const
+let _prismaMock: unknown;
+vi.mock('@/lib/db/utils', () => ({
+  executeTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
+    return cb(_prismaMock);
+  }),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: {
     info: vi.fn(),
@@ -59,6 +69,7 @@ vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
 // --- Imports after mocks ---
 
 import { prisma } from '@/lib/db/client';
+_prismaMock = prisma;
 import {
   chunkMarkdownDocument,
   parseMetadataComments,
@@ -195,7 +206,7 @@ describe('uploadDocument', () => {
 
     await uploadDocument(content, 'doc.md', 'user-001');
 
-    expect(chunkMarkdownDocument).toHaveBeenCalledWith(content, 'doc');
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(content, 'doc', 'doc-id-001');
   });
 
   it('calls embedBatch with the text content of every chunk', async () => {
@@ -257,7 +268,7 @@ describe('uploadDocument', () => {
 
     expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith({
       where: { id: 'doc-123' },
-      data: { status: 'ready', chunkCount: 2 },
+      data: { status: 'ready', chunkCount: 2, metadata: { rawContent: '# Doc' } },
     });
   });
 
@@ -430,7 +441,8 @@ describe('rechunkDocument', () => {
     // Content reconstructed with \n\n---\n\n separator
     expect(chunkMarkdownDocument).toHaveBeenCalledWith(
       'First section\n\n---\n\nSecond section',
-      'My Doc'
+      'My Doc',
+      'doc-rechunk'
     );
     // Old chunks deleted
     expect(prisma.aiKnowledgeChunk.deleteMany).toHaveBeenCalledWith({
@@ -821,7 +833,7 @@ describe('uploadDocumentFromBuffer', () => {
     await uploadDocumentFromBuffer(buffer, 'doc.md', 'user-1');
 
     // chunkMarkdownDocument should receive the raw markdown, not the parsed text
-    expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'doc');
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'doc', 'doc-id-001');
   });
 
   it('propagates parseDocument errors without creating a document record', async () => {
@@ -942,7 +954,11 @@ describe('confirmPreview', () => {
 
     const result = await confirmPreview('doc-confirm', 'user-1');
 
-    expect(chunkMarkdownDocument).toHaveBeenCalledWith('The extracted content here.', 'my-doc');
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(
+      'The extracted content here.',
+      'my-doc',
+      'doc-confirm'
+    );
     expect(result.status).toBe('ready');
   });
 
@@ -962,7 +978,11 @@ describe('confirmPreview', () => {
 
     await confirmPreview('doc-corrected', 'user-1', 'The corrected clean text.');
 
-    expect(chunkMarkdownDocument).toHaveBeenCalledWith('The corrected clean text.', 'report');
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(
+      'The corrected clean text.',
+      'report',
+      'doc-corrected'
+    );
   });
 
   it('marks document failed and re-throws when embedding fails during confirm', async () => {

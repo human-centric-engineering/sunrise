@@ -39,9 +39,10 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
-/** Strip mermaid diagram code blocks (not useful for embeddings) */
-function stripMermaidBlocks(content: string): string {
-  return content.replace(/```mermaid[\s\S]*?```/g, '').trim();
+/** Strip all fenced code blocks (not useful for embeddings, and prevents
+ *  false heading detection on `###` lines inside code examples). */
+function stripCodeBlocks(content: string): string {
+  return content.replace(/```[\s\S]*?```/g, '').trim();
 }
 
 /**
@@ -187,9 +188,9 @@ function normalizeChunkSizes(
         result.push({ header: section.header, body: currentBody, combinedContent: content });
       }
     } else if (tokens < MIN_CHUNK_TOKENS && buffer) {
-      // Merge with buffer
-      buffer.body += `\n\n${section.combinedContent}`;
-      buffer.combinedContent += `\n\n${section.combinedContent}`;
+      // Merge with buffer — append body only (not combinedContent which includes the header)
+      buffer.body += `\n\n${section.body}`;
+      buffer.combinedContent = buffer.header ? `${buffer.header}\n\n${buffer.body}` : buffer.body;
     } else if (tokens < MIN_CHUNK_TOKENS && !buffer) {
       buffer = { ...section };
     } else {
@@ -321,11 +322,17 @@ function chunkGenericSection(
  *
  * @param content - Raw markdown content
  * @param documentName - Name of the document (used for chunk IDs)
+ * @param documentId - Unique document ID (first 8 chars used in chunk keys to prevent collisions)
  * @returns Array of structured chunks ready for embedding
  */
-export function chunkMarkdownDocument(content: string, documentName: string): Chunk[] {
-  const documentSlug = slugify(documentName);
-  const cleaned = stripMermaidBlocks(content);
+export function chunkMarkdownDocument(
+  content: string,
+  documentName: string,
+  documentId?: string
+): Chunk[] {
+  const idPrefix = documentId ? documentId.slice(0, 8) : '';
+  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
+  const cleaned = stripCodeBlocks(content);
   const globalMetadata = parseMetadataComments(cleaned);
 
   const topSections = splitOnHeadings(cleaned, '##');

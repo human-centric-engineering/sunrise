@@ -50,25 +50,31 @@ interface ErrorsTabProps {
 export function ErrorsTab({ scope }: ErrorsTabProps) {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const fetchFailed = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const params = new URLSearchParams({ status: 'failed' });
       if (scope) params.set('scope', scope);
       const res = await fetch(
         `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?${params.toString()}`
       );
-      if (!res.ok) return;
+      if (!res.ok) {
+        setFetchError(`Failed to load error list (${res.status})`);
+        return;
+      }
       const body = apiResponseSchema.parse(await res.json());
       if (body.success && body.data) {
         setDocuments(body.data);
       }
     } catch {
-      // Silently ignore — will show empty state
+      setFetchError('Network error — could not reach the server.');
     } finally {
       setLoading(false);
     }
@@ -80,14 +86,21 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
 
   const handleRetry = useCallback(async (docId: string) => {
     setRetryingId(docId);
+    setRetryError(null);
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentRetry(docId), {
         method: 'POST',
       });
-      if (res.ok) {
-        // Remove from list — it's no longer failed
-        setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      if (!res.ok) {
+        const raw = apiResponseSchema.safeParse(await res.json().catch(() => null));
+        setRetryError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Retry failed (${res.status})`
+        );
+        return;
       }
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch {
+      setRetryError('Network error — could not reach the server.');
     } finally {
       setRetryingId(null);
     }
@@ -119,6 +132,19 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
     );
   }
 
+  if (fetchError) {
+    return (
+      <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
+        <AlertTriangle className="text-destructive mx-auto mb-3 h-10 w-10 opacity-60" />
+        <p className="text-destructive text-sm font-medium">{fetchError}</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => void fetchFailed()}>
+          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
   if (documents.length === 0) {
     return (
       <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
@@ -140,6 +166,8 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
           Refresh
         </Button>
       </div>
+
+      {retryError && <p className="text-destructive text-sm">{retryError}</p>}
 
       <div className="space-y-3">
         {documents.map((doc) => (
