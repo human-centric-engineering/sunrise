@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event';
 import { ExecutionsTable } from '@/components/admin/orchestration/executions-table';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
 import type { PaginationMeta } from '@/types/api';
-import type { ExecutionListItem } from '@/app/admin/orchestration/executions/page';
+import type { ExecutionListItem } from '@/types/orchestration';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 

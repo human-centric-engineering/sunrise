@@ -8,6 +8,7 @@ import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import type { PaginationMeta } from '@/types/api';
+import type { ExecutionListItem } from '@/types/orchestration';
 
 export const metadata: Metadata = {
   title: 'Executions · AI Orchestration',
@@ -20,18 +21,6 @@ const EMPTY_META: PaginationMeta = {
   total: 0,
   totalPages: 1,
 };
-
-export interface ExecutionListItem {
-  id: string;
-  workflowId: string;
-  status: string;
-  totalTokensUsed: number;
-  totalCostUsd: number;
-  startedAt: string | null;
-  createdAt: string;
-  completedAt: string | null;
-  workflow: { id: string; name: string };
-}
 
 interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

@@ -27,6 +27,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
+import { formatDuration } from '@/lib/utils/format-duration';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
@@ -56,26 +57,16 @@ export interface ExecutionDetailViewProps {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  completed: 'default',
   running: 'default',
-  pending: 'outline',
+  completed: 'secondary',
   failed: 'destructive',
-  paused_for_approval: 'secondary',
   cancelled: 'outline',
+  paused_for_approval: 'outline',
+  pending: 'outline',
 };
 
 function formatStatus(status: string): string {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatDuration(startedAt: string | null, completedAt: string | null): string | null {
-  if (!startedAt) return null;
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  if (Number.isNaN(start)) return null;
-  const ms = end - start;
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 // ─── Collapsible JSON card ──────────────────────────────────────────────────

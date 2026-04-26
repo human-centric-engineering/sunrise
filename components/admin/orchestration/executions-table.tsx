@@ -34,9 +34,10 @@ import {
 import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { formatDuration } from '@/lib/utils/format-duration';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
-import type { ExecutionListItem } from '@/app/admin/orchestration/executions/page';
+import type { ExecutionListItem } from '@/types/orchestration';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
@@ -121,16 +122,6 @@ export function ExecutionsTable({
     },
     [fetchExecutions]
   );
-
-  function formatDuration(start: string | null, end: string | null): string {
-    if (!start) return '—';
-    const startMs = new Date(start).getTime();
-    const endMs = end ? new Date(end).getTime() : Date.now();
-    if (Number.isNaN(startMs)) return '—';
-    const ms = endMs - startMs;
-    if (ms < 1000) return `${ms} ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
-  }
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {

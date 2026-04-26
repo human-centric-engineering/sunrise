@@ -285,6 +285,19 @@ export interface WorkflowExecutionSummary {
   currentStep: string | null;
 }
 
+/** Shape returned by the executions list API and consumed by the table component. */
+export interface ExecutionListItem {
+  id: string;
+  workflowId: string;
+  status: string;
+  totalTokensUsed: number;
+  totalCostUsd: number;
+  startedAt: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  workflow: { id: string; name: string };
+}
+
 // ============================================================================
 // Streaming Chat Events
 // ============================================================================
