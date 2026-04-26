@@ -766,4 +766,115 @@ describe('ManageTab', () => {
     expect(nameLink).toBeInTheDocument();
     expect(nameLink.tagName.toLowerCase()).toBe('button');
   });
+
+  // ── Delete error states ──────────────────────────────────────────────────
+
+  it('shows delete error when DELETE endpoint returns non-ok with message', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') {
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          json: () => Promise.resolve({ error: { message: 'Not allowed' } }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    // Open delete confirm
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) await user.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^yes$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Not allowed')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when DELETE fetch throws', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) await user.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^yes$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Rechunk error states ─────────────────────────────────────────────────
+
+  it('shows rechunk error when rechunk endpoint returns non-ok with message', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && url.includes('/rechunk')) {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          json: () => Promise.resolve({ error: { message: 'Document is processing' } }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
+    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
+    expect(actionButton).toBeDefined();
+    await user.click(actionButton!);
+
+    await waitFor(() => {
+      expect(screen.getByText('Document is processing')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when rechunk fetch throws', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && url.includes('/rechunk')) {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
+    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
+    expect(actionButton).toBeDefined();
+    await user.click(actionButton!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
+    });
+  });
 });
