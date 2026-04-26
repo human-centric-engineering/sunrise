@@ -87,6 +87,7 @@ const MOCK_EXECUTION = {
   startedAt: '2025-01-01T10:00:00.000Z',
   completedAt: '2025-01-01T10:01:30.000Z',
   createdAt: '2025-01-01T10:00:00.000Z',
+  workflow: { id: WORKFLOW_ID, name: 'Test Workflow' },
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
