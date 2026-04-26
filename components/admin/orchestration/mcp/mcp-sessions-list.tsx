@@ -47,6 +47,16 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function handleTerminate(sessionId: string) {
+    setError(null);
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpSessionById(sessionId));
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch {
+      setError('Failed to terminate session.');
+    }
+  }
+
   async function handleRefresh() {
     setRefreshing(true);
     setError(null);
@@ -113,12 +123,13 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
                   <span>Duration</span>
                 </Tip>
               </TableHead>
+              <TableHead className="w-[100px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {sessions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                   No active sessions. Sessions appear when MCP clients connect and send requests.
                 </TableCell>
               </TableRow>
@@ -144,6 +155,16 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {formatDuration(now - session.createdAt)}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleTerminate(session.id)}
+                      className="text-destructive text-xs"
+                    >
+                      Terminate
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
