@@ -14,8 +14,17 @@ export async function handleKnowledgeSearch(
   uri: string,
   _config: Record<string, unknown> | null
 ): Promise<McpResourceContent> {
-  const url = new URL(uri.replace('sunrise://', 'https://placeholder/'));
-  const query = url.searchParams.get('q') ?? '';
+  let query = '';
+  try {
+    const url = new URL(uri.replace('sunrise://', 'https://placeholder/'));
+    query = url.searchParams.get('q') ?? '';
+  } catch {
+    return {
+      uri,
+      mimeType: 'application/json',
+      text: JSON.stringify({ error: 'Malformed URI — could not parse query parameters' }),
+    };
+  }
 
   if (!query.trim()) {
     return {
