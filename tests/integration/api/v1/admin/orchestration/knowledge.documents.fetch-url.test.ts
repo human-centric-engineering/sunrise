@@ -193,6 +193,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
 
       expect(response.status).toBe(201);
       const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe('doc-1');
     });

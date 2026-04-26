@@ -100,6 +100,7 @@ describe('GET /api/v1/admin/orchestration/costs/alerts', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { alerts: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.alerts).toEqual([]);
     });

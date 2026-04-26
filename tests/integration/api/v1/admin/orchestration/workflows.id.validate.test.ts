@@ -210,7 +210,9 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/validate', () => {
       const data = await parseJson<{ success: boolean; data: { ok: boolean; errors: unknown[] } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.ok).toBe(true);
       expect(data.data.errors).toHaveLength(0);
     });

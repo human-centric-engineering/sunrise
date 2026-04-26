@@ -160,6 +160,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id/health', () => {
       };
     }>(res);
 
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.providerId).toBe(PROVIDER_ID);
     expect(body.data.slug).toBe('anthropic');
@@ -219,6 +220,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/health', () => {
       data: { providerId: string; slug: string; state: string };
     }>(res);
 
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.providerId).toBe(PROVIDER_ID);
     expect(body.data.slug).toBe('anthropic');

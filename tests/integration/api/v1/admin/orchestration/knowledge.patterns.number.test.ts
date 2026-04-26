@@ -116,6 +116,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns/:number', () => {
         success: boolean;
         data: { patternNumber: number; chunks: unknown[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.patternNumber).toBe(4);
       expect(data.data.chunks).toHaveLength(2);

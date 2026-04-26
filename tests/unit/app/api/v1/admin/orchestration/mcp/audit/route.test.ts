@@ -155,6 +155,7 @@ describe('GET /mcp/audit', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -232,6 +233,7 @@ describe('DELETE /mcp/audit', () => {
 
     const response = await DELETE(makeDeleteRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });

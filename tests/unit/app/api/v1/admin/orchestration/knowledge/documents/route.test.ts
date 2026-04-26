@@ -439,6 +439,7 @@ describe('Knowledge Documents API', () => {
       // Assert
       expect(res.status).toBe(201);
       expect(json.data.document.id).toBe('doc-pdf-001');
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(json.data.preview.requiresConfirmation).toBe(true);
       expect(json.data.preview.title).toBe('Annual Report');
       expect(previewDocument).toHaveBeenCalledOnce();

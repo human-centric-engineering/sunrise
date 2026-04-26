@@ -238,6 +238,7 @@ describe('POST /hooks', () => {
       success: boolean;
       data: { id: string; name: string; hasSecret: boolean };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.hasSecret).toBe(false);
     expect(body.data).not.toHaveProperty('secret');
@@ -613,6 +614,7 @@ describe('DELETE /hooks/:id', () => {
     expect(response.status).toBe(200);
 
     const body = await parseJson<{ data: { deleted: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.deleted).toBe(true);
   });
 

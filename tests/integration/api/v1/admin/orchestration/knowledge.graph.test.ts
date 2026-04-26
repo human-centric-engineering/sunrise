@@ -191,6 +191,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/graph', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: GraphResponse }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.nodes).toHaveLength(1);
     expect(body.data.nodes[0].id).toBe('kb');

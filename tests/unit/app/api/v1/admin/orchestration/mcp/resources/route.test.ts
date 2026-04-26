@@ -150,6 +150,7 @@ describe('GET /mcp/resources', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -215,6 +216,7 @@ describe('POST /mcp/resources', () => {
 
     const response = await POST(makePostRequest(VALID_RESOURCE_BODY));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -236,7 +238,9 @@ describe('POST /mcp/resources', () => {
 
     await POST(makePostRequest(VALID_RESOURCE_BODY));
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
   });
 

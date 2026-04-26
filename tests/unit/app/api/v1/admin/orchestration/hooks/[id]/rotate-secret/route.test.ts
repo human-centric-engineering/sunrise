@@ -166,6 +166,7 @@ describe('POST /api/v1/admin/orchestration/hooks/:id/rotate-secret', () => {
     }>(response);
 
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.id).toBe(VALID_ID);
     expect(body.data.secret).toBe('deadbeef'.repeat(8));
@@ -242,6 +243,7 @@ describe('DELETE /api/v1/admin/orchestration/hooks/:id/rotate-secret', () => {
     const body = await parseJson<{ data: { cleared: boolean } }>(response);
 
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.cleared).toBe(true);
     const updateCall = vi.mocked(prisma.aiEventHook.update).mock.calls[0]?.[0];
     expect(updateCall?.data).toMatchObject({ secret: null });

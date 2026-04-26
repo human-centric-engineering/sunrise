@@ -147,6 +147,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(AGENT_ID);
     });
@@ -269,6 +270,7 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
         changedAt: string;
         changedBy: string;
       }>;
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(history)).toBe(true);
       expect(history).toHaveLength(1);
       expect(history[0].instructions).toBe('Old instructions.');
@@ -544,6 +546,7 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { isActive: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.isActive).toBe(false);
 

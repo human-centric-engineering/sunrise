@@ -168,6 +168,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
         success: boolean;
         data: { providerId: string; slug: string; models: string[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.providerId).toBe(PROVIDER_ID);
       expect(data.data.slug).toBe('anthropic');

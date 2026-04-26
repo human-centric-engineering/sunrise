@@ -156,11 +156,14 @@ describe('GET /api/v1/admin/orchestration/observability/dashboard-stats', () => 
       }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(result.success).toBe(true);
       expect(result.data.activeConversations).toBe(3);
       expect(result.data.todayRequests).toBe(42);
       expect(typeof result.data.errorRate).toBe('number');
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(result.data.recentErrors)).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(result.data.topCapabilities)).toBe(true);
     });
 

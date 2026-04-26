@@ -148,6 +148,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id', () => {
         success: boolean;
         data: { id: string; apiKeyPresent: boolean };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(PROVIDER_ID);
       expect(typeof data.data.apiKeyPresent).toBe('boolean');
@@ -249,6 +250,7 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       const data = await parseJson<{ success: boolean; data: { apiKeyPresent: boolean } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(typeof data.data.apiKeyPresent).toBe('boolean');
     });
@@ -439,6 +441,7 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id', () => {
       const data = await parseJson<{ success: boolean; data: { id: string; isActive: boolean } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.isActive).toBe(false);
 

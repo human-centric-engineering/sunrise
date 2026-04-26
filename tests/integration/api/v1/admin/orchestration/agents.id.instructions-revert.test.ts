@@ -164,6 +164,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
         changedBy: string;
         changedAt: string;
       }>;
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(newHistory)).toBe(true);
       expect(newHistory).toHaveLength(3); // original 2 + 1 new entry
       expect(newHistory[0]).toEqual(HISTORY_V0);

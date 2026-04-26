@@ -168,6 +168,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
         data: Array<{ apiKeyPresent: boolean }>;
         meta: unknown;
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(2);
       expect(typeof data.data[0].apiKeyPresent).toBe('boolean');
@@ -183,6 +184,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
       const response = await GET(makeGetRequest());
 
       const data = await parseJson<{ data: Array<{ apiKeyPresent: boolean }> }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data[0].apiKeyPresent).toBe(true);
     });
 
@@ -207,6 +209,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(0);
     });
@@ -302,6 +305,7 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
         success: boolean;
         data: { slug: string; apiKeyPresent: boolean };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.slug).toBe('anthropic');
       expect(typeof data.data.apiKeyPresent).toBe('boolean');

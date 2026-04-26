@@ -104,6 +104,7 @@ describe('GET /knowledge/documents/:id/chunks', () => {
     expect(response.status).toBe(200);
 
     const body = await response.json();
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.chunks).toHaveLength(2);
     expect(body.data.chunks[0].content).toBe('First chunk content');

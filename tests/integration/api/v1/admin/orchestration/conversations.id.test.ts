@@ -135,7 +135,9 @@ describe('DELETE /api/v1/admin/orchestration/conversations/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
     });
 

@@ -174,7 +174,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test', () => {
       const data = await parseJson<{ success: boolean; data: { ok: boolean; models: string[] } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.ok).toBe(true);
       expect(data.data.models).toContain('claude-3-5-sonnet-20241022');
     });
@@ -197,6 +199,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test', () => {
       const data = await parseJson<{ success: boolean; data: { ok: boolean; error?: string } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.ok).toBe(false);
       expect(data.data.error).toBeDefined();
@@ -216,6 +219,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test', () => {
       const data = await parseJson<{ success: boolean; data: { ok: boolean; error?: string } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.ok).toBe(false);
       // The raw SDK error must NOT be forwarded to the client —

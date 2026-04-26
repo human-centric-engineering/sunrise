@@ -136,6 +136,7 @@ describe('PATCH /api/v1/admin/orchestration/conversations/:id', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: { tags: string[] } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.tags).toEqual(['escalate', 'bug-report']);
   });

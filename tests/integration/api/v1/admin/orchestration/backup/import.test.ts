@@ -188,6 +188,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: typeof makeImportResult }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject({
         agents: { created: 1, updated: 1 },

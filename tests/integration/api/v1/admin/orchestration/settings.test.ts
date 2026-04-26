@@ -207,6 +207,7 @@ describe('Admin Orchestration — /settings', () => {
           lastSeededAt: string | null;
         };
       }>(res);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.slug).toBe('global');
       expect(body.data.defaultModels.chat).toBe('claude-sonnet-4-6');

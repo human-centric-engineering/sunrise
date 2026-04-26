@@ -118,6 +118,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { results: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.results).toHaveLength(2);
     });
@@ -130,6 +131,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { results: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.results).toHaveLength(0);
     });

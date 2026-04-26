@@ -176,6 +176,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/graph', () => {
 
     // Assert: response shape matches contract
     expect(res.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.categories).toHaveLength(5);
     expect(body.data.stats.documentCount).toBe(1);

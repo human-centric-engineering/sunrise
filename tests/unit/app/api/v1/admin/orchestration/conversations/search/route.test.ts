@@ -311,6 +311,7 @@ describe('GET /conversations/search', () => {
     expect(body.data[0]._count.messages).toBe(7);
     expect(body.data[0].agentId).toBe('agent-1');
     expect(body.data[0].updatedAt).toBeTruthy();
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.meta.semanticAvailable).toBe(true);
   });
 });

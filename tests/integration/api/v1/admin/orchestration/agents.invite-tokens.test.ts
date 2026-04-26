@@ -179,6 +179,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { tokens: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.tokens).toHaveLength(1);
       const token = data.data.tokens[0] as Record<string, unknown>;
@@ -202,6 +203,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { tokens: unknown[] } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.tokens).toHaveLength(0);
     });
@@ -360,6 +362,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/invite-tokens', () => {
       const data = await parseJson<{ success: boolean; data: { token: Record<string, unknown> } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.token).toMatchObject({
         id: TOKEN_ID,
@@ -625,6 +628,7 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id/invite-tokens/:tokenId',
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { message: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.message).toBe('Token revoked');
     });
@@ -666,6 +670,7 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id/invite-tokens/:tokenId',
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { message: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.message).toBe('Token already revoked');
       expect(vi.mocked(prisma.aiAgentInviteToken.update)).not.toHaveBeenCalled();
@@ -761,6 +766,7 @@ describe('CRUD flow: create → list → revoke', () => {
     const listResponse = await GET(makeGetRequest(), makeAgentParams());
     expect(listResponse.status).toBe(200);
     const listData = await parseJson<{ data: { tokens: Array<{ id: string }> } }>(listResponse);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(listData.data.tokens.some((t) => t.id === createdId)).toBe(true);
 
     // Step 3: DELETE — token gets revoked

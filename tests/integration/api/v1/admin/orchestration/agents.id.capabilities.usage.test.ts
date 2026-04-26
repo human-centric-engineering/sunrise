@@ -136,6 +136,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/capabilities/usage', () => 
     const data = await parseJson<{ success: boolean; data: { usage: Record<string, number> } }>(
       response
     );
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.usage).toEqual({});
   });

@@ -231,6 +231,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         success: boolean;
         data: { imported: number; skipped: number; overwritten: number; warnings: string[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.imported).toBe(1);
       expect(data.data.skipped).toBe(0);

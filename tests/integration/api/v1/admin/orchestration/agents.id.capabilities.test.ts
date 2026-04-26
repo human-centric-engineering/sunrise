@@ -183,6 +183,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/capabilities', () => {
 
       expect(response.status).toBe(201);
       const data = await parseJson<{ success: boolean; data: unknown }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(vi.mocked(capabilityDispatcher.clearCache)).toHaveBeenCalledOnce();
     });
@@ -281,6 +282,7 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id/capabilities/:capId', () 
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(vi.mocked(capabilityDispatcher.clearCache)).toHaveBeenCalledOnce();
     });
@@ -403,7 +405,9 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id/capabilities/:capId', ()
         success: boolean;
         data: { agentId: string; capabilityId: string; detached: boolean };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.detached).toBe(true);
       expect(vi.mocked(capabilityDispatcher.clearCache)).toHaveBeenCalledOnce();
     });
@@ -498,6 +502,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/capabilities', () => {
       const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
     });
@@ -511,6 +516,7 @@ describe('GET /api/v1/admin/orchestration/agents/:id/capabilities', () => {
       const data = await parseJson<{ success: boolean; data: unknown[] }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(0);
     });

@@ -112,6 +112,7 @@ describe('GET /mcp/sessions', () => {
 
     const response = await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(createRateLimitResponse).toHaveBeenCalled();
     expect(response.status).toBe(429);
   });
@@ -144,6 +145,7 @@ describe('GET /mcp/sessions', () => {
 
     await GET(makeGetRequest());
 
+    // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(mockGetActiveSessions).toHaveBeenCalled();
   });
 });

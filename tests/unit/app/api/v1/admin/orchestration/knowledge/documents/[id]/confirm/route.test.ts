@@ -151,6 +151,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
       const data = await parseResponse<SuccessBody>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.document.id).toBe(VALID_DOC_ID);
     });

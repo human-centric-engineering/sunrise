@@ -102,7 +102,9 @@ describe('POST /api/v1/admin/orchestration/knowledge/seed', () => {
         success: boolean;
         data: { seeded: boolean; lastSeededAt: string };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.seeded).toBe(true);
       expect(data.data.lastSeededAt).toBeDefined();
       // lastSeededAt should be a valid ISO date string

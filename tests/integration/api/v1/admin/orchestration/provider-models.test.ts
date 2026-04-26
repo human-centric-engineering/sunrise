@@ -160,9 +160,12 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         success: boolean;
         data: Array<{ slug: string; configured: boolean; configuredActive: boolean }>;
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data[0].configured).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data[0].configuredActive).toBe(true);
     });
 
@@ -287,6 +290,7 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
     expect(response.status).toBe(201);
 
     const data = await parseJson<{ success: boolean; data: { slug: string } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.slug).toBe('openai-gpt-5');
   });

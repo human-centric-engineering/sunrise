@@ -268,6 +268,7 @@ describe('GET /api/v1/admin/orchestration/workflows/:id/definition-history', () 
         success: boolean;
         data: { workflowId: string; current: unknown; history: unknown[] };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.workflowId).toBe(WORKFLOW_ID);
       expect(data.data.current).toEqual(DEF_V2);

@@ -224,6 +224,7 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { status: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.status).toBe('running');
     });

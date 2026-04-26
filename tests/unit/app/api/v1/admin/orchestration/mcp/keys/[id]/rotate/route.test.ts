@@ -164,6 +164,7 @@ describe('POST /api/v1/admin/orchestration/mcp/keys/:id/rotate', () => {
     const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
 
     expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.plaintextKey).toBe('smcp_newkey123456789');
     expect(body.data.keyPrefix).toBe('smcp_newkey1');

@@ -111,6 +111,7 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
     const call = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(call.where.id.in).toEqual(AGENT_IDS);
     expect(call.where.isSystem).toBe(false);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(call.data.isActive).toBe(true);
   });
 

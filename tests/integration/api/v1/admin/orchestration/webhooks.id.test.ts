@@ -193,6 +193,7 @@ describe('GET /api/v1/admin/orchestration/webhooks/:id', () => {
       const data = await parseJson<{ success: boolean; data: { id: string; url: string } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(WEBHOOK_ID);
       expect(data.data.url).toBe('https://example.com/webhook');
@@ -298,6 +299,7 @@ describe('PATCH /api/v1/admin/orchestration/webhooks/:id', () => {
       const data = await parseJson<{ success: boolean; data: { id: string; isActive: boolean } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(WEBHOOK_ID);
       expect(data.data.isActive).toBe(false);
@@ -409,7 +411,9 @@ describe('DELETE /api/v1/admin/orchestration/webhooks/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
     });
 

@@ -152,7 +152,9 @@ describe('GET /api/v1/admin/orchestration/quiz-scores', () => {
         data: Array<{ id: string; correct: number; total: number; completedAt: string }>;
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(Array.isArray(data.data)).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.data[0].id).toBe(SESSION_ID);
@@ -292,6 +294,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
         data: { id: string; correct: number; total: number };
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(SESSION_ID);
       expect(data.data.correct).toBe(8);

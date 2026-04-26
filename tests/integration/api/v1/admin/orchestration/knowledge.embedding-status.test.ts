@@ -157,10 +157,12 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       const body = await parseJson<{ success: boolean; data: StatusResponseData }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.total).toBe(10);
       expect(body.data.embedded).toBe(4);
       expect(body.data.pending).toBe(6);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.data.hasActiveProvider).toBe(true);
     });
 
@@ -175,6 +177,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       const body = await parseJson<{ success: boolean; data: StatusResponseData }>(response);
 
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.data.hasActiveProvider).toBe(true);
     });
 

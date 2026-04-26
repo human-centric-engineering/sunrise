@@ -142,6 +142,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/rechunk', () 
       const data = await parseJson<{ success: boolean; data: { document: { id: string } } }>(
         response
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.document.id).toBe(DOC_ID);
     });

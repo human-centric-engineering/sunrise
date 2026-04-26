@@ -148,6 +148,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/documents/:id', () => {
         success: boolean;
         data: { document: { id: string; _count: { chunks: number } } };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.document.id).toBe(DOC_ID);
       expect(data.data.document._count.chunks).toBe(8);
@@ -210,7 +211,9 @@ describe('DELETE /api/v1/admin/orchestration/knowledge/documents/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
     });
 

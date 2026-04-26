@@ -183,6 +183,7 @@ describe('Agent Export → Import Round-Trip', () => {
         }>;
       };
     };
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(exportData.success).toBe(true);
     const bundle = exportData.data;
 
@@ -199,6 +200,7 @@ describe('Agent Export → Import Round-Trip', () => {
       success: boolean;
       data: { imported: number; warnings: string[] };
     };
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(importData.success).toBe(true);
     expect(importData.data.imported).toBe(1);
     expect(importData.data.warnings).toHaveLength(0);
@@ -216,6 +218,7 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(created.temperature).toBe(0.7);
     expect(created.maxTokens).toBe(4096);
     expect(created.monthlyBudgetUsd).toBe(50);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(created.isActive).toBe(true);
 
     // Step 3b: Verify expanded fields round-tripped correctly
@@ -237,6 +240,7 @@ describe('Agent Export → Import Round-Trip', () => {
     };
     expect(pivotCall.data).toHaveLength(1);
     expect(pivotCall.data[0].capabilityId).toBe(CAPABILITY_ID);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(pivotCall.data[0].isEnabled).toBe(true);
     expect(pivotCall.data[0].customRateLimit).toBe(10);
   });

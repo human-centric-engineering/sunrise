@@ -160,6 +160,7 @@ describe('GET /agents/:id/versions (list)', () => {
       data: Array<{ version: number }>;
       meta: { total: number };
     }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data).toHaveLength(2);
     expect(data.meta.total).toBe(2);

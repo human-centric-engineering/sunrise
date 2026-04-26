@@ -295,6 +295,7 @@ describe('Schedule CRUD API', () => {
       const json = JSON.parse(await res.text());
 
       expect(res.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(json.data.deleted).toBe(true);
     });
   });

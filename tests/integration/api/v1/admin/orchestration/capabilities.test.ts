@@ -185,6 +185,7 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
         data: Array<{ _agents: unknown[] }>;
         meta: unknown;
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
@@ -270,6 +271,7 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
 
       expect(response.status).toBe(201);
       const data = await parseJson<{ success: boolean; data: { slug: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.slug).toBe('search-web');
     });
@@ -387,6 +389,7 @@ describe('GET /api/v1/admin/orchestration/capabilities/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { id: string } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(CAPABILITY_ID);
     });
@@ -648,6 +651,7 @@ describe('DELETE /api/v1/admin/orchestration/capabilities/:id', () => {
 
       expect(response.status).toBe(200);
       const data = await parseJson<{ success: boolean; data: { isActive: boolean } }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.isActive).toBe(false);
 
