@@ -26,6 +26,10 @@ import {
 import { jsonRpcRequestSchema } from '@/lib/validations/mcp';
 import { JsonRpcErrorCode, type JsonRpcResponse } from '@/types/mcp';
 
+function jsonRpcErrorResponse(code: JsonRpcErrorCode, message: string, status: number): Response {
+  return Response.json({ jsonrpc: '2.0', id: null, error: { code, message } }, { status });
+}
+
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 const MAX_BATCH_SIZE = 20;
 const MCP_SESSION_HEADER = 'mcp-session-id';
@@ -49,7 +53,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         {
           jsonrpc: '2.0',
           id: null,
-          error: { code: JsonRpcErrorCode.INTERNAL_ERROR, message: 'Unauthorized' },
+          error: { code: JsonRpcErrorCode.UNAUTHORIZED, message: 'Unauthorized' },
         },
         { status: 401 }
       );
@@ -62,7 +66,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         {
           jsonrpc: '2.0',
           id: null,
-          error: { code: JsonRpcErrorCode.INTERNAL_ERROR, message: 'MCP server is disabled' },
+          error: { code: JsonRpcErrorCode.SERVER_DISABLED, message: 'MCP server is disabled' },
         },
         { status: 503 }
       );
@@ -194,7 +198,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           {
             jsonrpc: '2.0',
             id: validRequests[0].id ?? null,
-            error: { code: JsonRpcErrorCode.INTERNAL_ERROR, message: 'Max sessions exceeded' },
+            error: { code: JsonRpcErrorCode.SESSION_NOT_FOUND, message: 'Max sessions exceeded' },
           },
           { status: 429 }
         );
@@ -207,7 +211,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             jsonrpc: '2.0',
             id: validRequests[0].id ?? null,
             error: {
-              code: JsonRpcErrorCode.INTERNAL_ERROR,
+              code: JsonRpcErrorCode.SESSION_NOT_FOUND,
               message: 'Session not found or expired',
             },
           },
@@ -284,12 +288,12 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const auth = await authenticateMcpRequest(bearerToken, clientIp, userAgent);
     if (!auth) {
-      return new Response('Unauthorized', { status: 401 });
+      return jsonRpcErrorResponse(JsonRpcErrorCode.UNAUTHORIZED, 'Unauthorized', 401);
     }
 
     const serverState = await getMcpServerConfig();
     if (!serverState.isEnabled) {
-      return new Response('MCP server is disabled', { status: 503 });
+      return jsonRpcErrorResponse(JsonRpcErrorCode.SERVER_DISABLED, 'MCP server is disabled', 503);
     }
 
     const sessionId = request.headers.get(MCP_SESSION_HEADER);
@@ -364,18 +368,22 @@ export async function DELETE(request: NextRequest): Promise<Response> {
 
     const auth = await authenticateMcpRequest(bearerToken, clientIp, userAgent);
     if (!auth) {
-      return new Response('Unauthorized', { status: 401 });
+      return jsonRpcErrorResponse(JsonRpcErrorCode.UNAUTHORIZED, 'Unauthorized', 401);
     }
 
     const sessionId = request.headers.get(MCP_SESSION_HEADER);
     if (!sessionId) {
-      return new Response('Missing Mcp-Session-Id header', { status: 400 });
+      return jsonRpcErrorResponse(
+        JsonRpcErrorCode.INVALID_REQUEST,
+        'Missing Mcp-Session-Id header',
+        400
+      );
     }
 
     const sessionManager = getMcpSessionManager();
     const session = sessionManager.getSession(sessionId);
     if (session && session.apiKeyId !== auth.apiKeyId) {
-      return new Response('Session not found', { status: 404 });
+      return jsonRpcErrorResponse(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found', 404);
     }
     const destroyed = session ? sessionManager.destroySession(sessionId) : false;
 

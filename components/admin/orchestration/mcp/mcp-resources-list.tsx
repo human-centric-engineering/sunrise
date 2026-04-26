@@ -42,7 +42,27 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { resourceRowSchema, type ResourceRow } from '@/lib/validations/mcp';
+
+const EMPTY_RESOURCE_FORM = {
+  name: '',
+  uri: '',
+  description: '',
+  mimeType: 'application/json',
+  resourceType: '',
+  isEnabled: false,
+};
 
 interface McpResourcesListProps {
   initialResources: ResourceRow[];
@@ -83,57 +103,47 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
   const [resources, setResources] = useState(initialResources);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({
-    name: '',
-    uri: '',
-    description: '',
-    mimeType: 'application/json',
-    resourceType: '',
-    isEnabled: false,
-  });
+  const [form, setForm] = useState(EMPTY_RESOURCE_FORM);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleToggle(resourceId: string, isEnabled: boolean) {
+    setError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
         body: { isEnabled },
       });
       setResources((prev) => prev.map((r) => (r.id === resourceId ? { ...r, isEnabled } : r)));
     } catch {
-      // silent
+      setError('Failed to toggle resource.');
     }
   }
 
   async function handleCreate() {
     if (!form.name.trim() || !form.uri.trim() || !form.resourceType) return;
     setCreating(true);
+    setError(null);
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
         body: form,
       });
       const data = resourceRowSchema.parse(raw);
       setResources((prev) => [...prev, data]);
-      setForm({
-        name: '',
-        uri: '',
-        description: '',
-        mimeType: 'application/json',
-        resourceType: '',
-        isEnabled: false,
-      });
+      setForm(EMPTY_RESOURCE_FORM);
       setCreateOpen(false);
     } catch {
-      // silent
+      setError('Failed to create resource.');
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRemove(resourceId: string) {
+    setError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId));
       setResources((prev) => prev.filter((r) => r.id !== resourceId));
     } catch {
-      // silent
+      setError('Failed to remove resource.');
     }
   }
 
@@ -150,8 +160,15 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
 
   return (
     <div className="space-y-4">
+      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Create Resource Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (!open) setForm(EMPTY_RESOURCE_FORM);
+        }}
+      >
         <DialogTrigger asChild>
           <Button size="sm" data-testid="create-resource-trigger">
             Create Resource
@@ -348,14 +365,31 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleRemove(resource.id)}
-                      className="text-destructive text-xs"
-                    >
-                      Remove
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                          Remove
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Remove resource?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will remove the resource from MCP. Connected clients will no longer
+                            be able to read it.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => void handleRemove(resource.id)}
+                          >
+                            Remove
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </TableCell>
                 </TableRow>
               ))}

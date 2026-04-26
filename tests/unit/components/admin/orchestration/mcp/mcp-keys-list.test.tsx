@@ -184,12 +184,19 @@ describe('McpKeysList', () => {
       expect(screen.queryByText('Rotate')).not.toBeInTheDocument();
     });
 
-    it('calls apiClient.patch when Revoke is clicked', async () => {
+    it('calls apiClient.patch when Revoke is confirmed via dialog', async () => {
       vi.mocked(apiClient.patch).mockResolvedValue({});
       render(<McpKeysList initialKeys={[ACTIVE_KEY]} />);
 
+      // Click the Revoke trigger to open confirmation dialog
       await act(async () => {
         fireEvent.click(screen.getByText('Revoke'));
+      });
+
+      // Click the confirmation button inside the AlertDialog
+      const confirmButton = await screen.findByRole('button', { name: /^Revoke$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
       });
 
       await waitFor(() => {
@@ -437,8 +444,15 @@ describe('McpKeysList', () => {
       vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('network error'));
       render(<McpKeysList initialKeys={[ACTIVE_KEY]} />);
 
+      // Click the Revoke trigger to open confirmation dialog
       await act(async () => {
         fireEvent.click(screen.getByText('Revoke'));
+      });
+
+      // Click the confirmation button inside the AlertDialog
+      const confirmButton = await screen.findByRole('button', { name: /^Revoke$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
       });
 
       // Wait for promise to settle

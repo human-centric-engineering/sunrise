@@ -408,7 +408,7 @@ function decodeCursor(cursor: unknown, defaultLimit: number): { offset: number; 
   }
   try {
     const decoded = parseInt(Buffer.from(cursor, 'base64').toString('utf-8'), 10);
-    if (isNaN(decoded) || decoded < 0) return { offset: 0, limit: defaultLimit };
+    if (!Number.isSafeInteger(decoded) || decoded < 0) return { offset: 0, limit: defaultLimit };
     return { offset: decoded, limit: defaultLimit };
   } catch {
     return { offset: 0, limit: defaultLimit };

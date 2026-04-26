@@ -75,6 +75,8 @@ Audit log (fire-and-forget → McpAuditLog)
 4. `tools/call` dispatches through `capabilityDispatcher.dispatch()` using the `mcp-system` agent
 5. Full 9-step pipeline applies: validation, rate limiting, execution, cost tracking
 
+If `capabilityDispatcher.dispatch()` throws an unexpected exception (as opposed to returning `{ success: false }`), `callMcpTool` catches it and returns an MCP error content block (`isError: true`) with a generic message rather than escalating to a JSON-RPC protocol error.
+
 ## Resource Handlers
 
 | Type               | URI Pattern                             | Handler                          |
@@ -84,12 +86,18 @@ Audit log (fire-and-forget → McpAuditLog)
 | `agent_list`       | `sunrise://agents`                      | Active agents list               |
 | `workflow_list`    | `sunrise://workflows`                   | Active workflows list            |
 
+Each `McpExposedResource` has an optional `handlerConfig` JSON field passed to the resource handler as its second argument, allowing per-resource configuration (e.g., custom search parameters, filters). Stored as Prisma JSON and validated as `Record<string, unknown> | null`.
+
+When a URI does not match any registered resource exactly, `readMcpResource` falls back to pattern matching against all enabled resources. Pattern matching uses first-match-wins order (database insertion order). If multiple resource patterns could match the same URI, the first match is used. Both exact and pattern-match handler calls are wrapped in try-catch — handler failures return an error content block instead of propagating.
+
 ## Session Management
 
 - In-memory `Map<string, McpSession>`, 1hr TTL
 - Created on `initialize`, identified by `Mcp-Session-Id` header
 - `maxSessionsPerKey` enforced per API key
 - Sessions lost on restart (clients re-initialize per MCP spec)
+- Expired sessions are evicted lazily on `getSession()` access, not by a proactive timer — an expired session may still appear in the admin sessions list until it is next accessed or the list is refreshed
+- Admin can force-terminate sessions via `DELETE /api/v1/admin/orchestration/mcp/sessions/:id` or the Sessions page UI
 
 ## Admin Pages
 

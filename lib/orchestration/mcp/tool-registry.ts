@@ -122,7 +122,19 @@ export async function callMcpTool(
     agentId,
   };
 
-  const result = await capabilityDispatcher.dispatch(tool.slug, args ?? {}, context);
+  let result;
+  try {
+    result = await capabilityDispatcher.dispatch(tool.slug, args ?? {}, context);
+  } catch (err) {
+    logger.error('MCP tool call: dispatcher threw', {
+      toolSlug: tool.slug,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      content: [{ type: 'text', text: 'Tool execution failed unexpectedly' }],
+      isError: true,
+    };
+  }
 
   if (result.success) {
     const content: McpContentBlock[] = [{ type: 'text', text: JSON.stringify(result.data ?? {}) }];

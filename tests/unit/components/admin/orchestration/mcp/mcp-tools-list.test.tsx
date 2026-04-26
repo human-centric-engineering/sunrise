@@ -146,16 +146,100 @@ describe('McpToolsList', () => {
   });
 
   describe('Remove', () => {
-    it('calls apiClient.delete when Remove is clicked', async () => {
+    it('calls apiClient.delete when Remove is confirmed via dialog', async () => {
       vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+      render(<McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY]} />);
+
+      // Click the Remove trigger to open confirmation dialog
+      await act(async () => {
+        fireEvent.click(screen.getByText('Remove'));
+      });
+
+      // Click the confirmation button inside the AlertDialog
+      const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/mcp/tools/tool-1'));
+      });
+    });
+  });
+
+  describe('Error states', () => {
+    it('shows error when toggle fails', async () => {
+      vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('fail'));
+      render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+
+      const toggle = screen.getByRole('switch', { name: /enable send email/i });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to toggle tool.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows error when add fails', async () => {
+      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('fail'));
+      render(<McpToolsList initialTools={[]} capabilities={[UNUSED_CAPABILITY]} />);
+
+      // Select a capability — trigger the select change via the hidden select
+      const select = screen.getByRole('combobox');
+      await act(async () => {
+        fireEvent.click(select);
+      });
+
+      // Pick the option
+      const option = await screen.findByRole('option', { name: /search knowledge/i });
+      await act(async () => {
+        fireEvent.click(option);
+      });
+
+      // Click Add Tool
+      await act(async () => {
+        fireEvent.click(screen.getByText('Add Tool'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to add tool.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows error when remove fails', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValueOnce(new Error('fail'));
       render(<McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY]} />);
 
       await act(async () => {
         fireEvent.click(screen.getByText('Remove'));
       });
 
+      const confirmButton = await screen.findByRole('button', { name: /^Remove$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
+      });
+
       await waitFor(() => {
-        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/mcp/tools/tool-1'));
+        expect(screen.getByText('Failed to remove tool.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows error when edit save fails', async () => {
+      vi.mocked(apiClient.patch).mockRejectedValueOnce(new Error('fail'));
+      render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /edit send email/i }));
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Save Changes'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to save tool changes.')).toBeInTheDocument();
       });
     });
   });
@@ -201,6 +285,83 @@ describe('McpToolsList', () => {
             }),
           })
         );
+      });
+    });
+
+    it('saves with filled-in values and closes dialog', async () => {
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+      render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+
+      // Open edit
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /edit send email/i }));
+      });
+
+      // Fill in custom name
+      const nameInput = document.getElementById('edit-custom-name') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: 'my_tool' } });
+      });
+
+      // Fill in custom description
+      const descInput = document.getElementById('edit-custom-desc') as HTMLTextAreaElement;
+      await act(async () => {
+        fireEvent.change(descInput, { target: { value: 'My custom description' } });
+      });
+
+      // Fill in rate limit
+      const rateInput = document.getElementById('edit-rate-limit') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(rateInput, { target: { value: '100' } });
+      });
+
+      // Fill in scope
+      const scopeInput = document.getElementById('edit-requires-scope') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(scopeInput, { target: { value: 'admin:write' } });
+      });
+
+      // Save
+      await act(async () => {
+        fireEvent.click(screen.getByText('Save Changes'));
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/mcp/tools/tool-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              customName: 'my_tool',
+              customDescription: 'My custom description',
+              rateLimitPerKey: 100,
+              requiresScope: 'admin:write',
+            }),
+          })
+        );
+      });
+
+      // Dialog should close after save
+      await waitFor(() => {
+        expect(screen.queryByText(/edit tool: send email/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('closes edit dialog when dismissed', async () => {
+      render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /edit send email/i }));
+      });
+
+      expect(screen.getByText(/edit tool: send email/i)).toBeInTheDocument();
+
+      // Close via ESC
+      await act(async () => {
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText(/edit tool: send email/i)).not.toBeInTheDocument();
       });
     });
   });

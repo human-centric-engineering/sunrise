@@ -40,6 +40,17 @@ import {
 } from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { exposedToolRowSchema, type ExposedToolRow } from '@/lib/validations/mcp';
@@ -76,24 +87,27 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
     requiresScope: '',
   });
   const [editSaving, setEditSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const exposedCapabilityIds = new Set(tools.map((t) => t.capabilityId));
   const availableCapabilities = capabilities.filter((c) => !exposedCapabilityIds.has(c.id));
 
   async function handleToggle(toolId: string, isEnabled: boolean) {
+    setError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpToolById(toolId), {
         body: { isEnabled },
       });
       setTools((prev) => prev.map((t) => (t.id === toolId ? { ...t, isEnabled } : t)));
     } catch {
-      // silent
+      setError('Failed to toggle tool.');
     }
   }
 
   async function handleAdd() {
     if (!selectedCapabilityId) return;
     setAdding(true);
+    setError(null);
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_TOOLS, {
         body: { capabilityId: selectedCapabilityId, isEnabled: false },
@@ -102,18 +116,19 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       setTools((prev) => [...prev, data]);
       setSelectedCapabilityId('');
     } catch {
-      // silent
+      setError('Failed to add tool.');
     } finally {
       setAdding(false);
     }
   }
 
   async function handleRemove(toolId: string) {
+    setError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpToolById(toolId));
       setTools((prev) => prev.filter((t) => t.id !== toolId));
     } catch {
-      // silent
+      setError('Failed to remove tool.');
     }
   }
 
@@ -130,6 +145,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
   async function handleEditSave() {
     if (!editingTool) return;
     setEditSaving(true);
+    setError(null);
     try {
       const body: Record<string, unknown> = {};
       const name = editForm.customName.trim();
@@ -158,7 +174,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       );
       setEditingTool(null);
     } catch {
-      // silent
+      setError('Failed to save tool changes.');
     } finally {
       setEditSaving(false);
     }
@@ -166,6 +182,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
 
   return (
     <div className="space-y-4">
+      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Edit Tool Dialog */}
       <Dialog
         open={editingTool !== null}
@@ -371,14 +388,31 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                         <Pencil className="mr-1 h-3 w-3" />
                         Edit
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleRemove(tool.id)}
-                        className="text-destructive text-xs"
-                      >
-                        Remove
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                            Remove
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Remove tool?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will remove the tool from MCP. Connected clients will no longer
+                              be able to call it.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              onClick={() => void handleRemove(tool.id)}
+                            >
+                              Remove
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </TableCell>
                 </TableRow>

@@ -82,6 +82,26 @@ describe('getMcpPrompt', () => {
       const messages = getMcpPrompt('analyze-pattern', { pattern_number: '12' });
       expect(messages![0].content.text).toContain('12');
     });
+
+    it('returns error for pattern_number above 21', () => {
+      const messages = getMcpPrompt('analyze-pattern', { pattern_number: 22 });
+      expect(messages![0].content.text).toContain('Invalid');
+    });
+
+    it('returns error for pattern_number of 0', () => {
+      const messages = getMcpPrompt('analyze-pattern', { pattern_number: 0 });
+      expect(messages![0].content.text).toContain('Invalid');
+    });
+
+    it('returns error for non-integer pattern_number', () => {
+      const messages = getMcpPrompt('analyze-pattern', { pattern_number: 3.5 });
+      expect(messages![0].content.text).toContain('Invalid');
+    });
+
+    it('returns error for undefined pattern_number', () => {
+      const messages = getMcpPrompt('analyze-pattern', {});
+      expect(messages![0].content.text).toContain('Invalid');
+    });
   });
 
   describe('search-knowledge', () => {

@@ -173,6 +173,24 @@ export function parsePaginationMeta(value: unknown): z.infer<typeof paginationMe
 }
 
 /**
+ * Safe boolean coercion for query string parameters.
+ *
+ * Unlike `z.coerce.boolean()`, this correctly treats the string `"false"` as `false`.
+ * (`z.coerce.boolean()` uses `Boolean("false")` which returns `true` in JavaScript.)
+ *
+ * @example
+ * ```ts
+ * const schema = z.object({ isActive: queryBooleanSchema.optional() });
+ * schema.parse({ isActive: 'false' }); // { isActive: false }
+ * schema.parse({ isActive: true });    // { isActive: true }
+ * ```
+ */
+export const queryBooleanSchema = z.union([
+  z.boolean(),
+  z.enum(['true', 'false']).transform((v) => v === 'true'),
+]);
+
+/**
  * Type inference helpers
  *
  * Export inferred types for use in other files.

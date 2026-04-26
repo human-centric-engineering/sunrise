@@ -7,7 +7,12 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema, slugSchema } from '@/lib/validations/common';
+import {
+  paginationQuerySchema,
+  cuidSchema,
+  slugSchema,
+  queryBooleanSchema,
+} from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
@@ -261,7 +266,7 @@ export const updateAgentSchema = z.object({
  * Pagination + filters. `q` searches name/slug/description.
  */
 export const listAgentsQuerySchema = paginationQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
   provider: z.string().trim().max(50).optional(),
   q: z.string().trim().max(200).optional(),
 });
@@ -483,7 +488,7 @@ export const updateCapabilitySchema = z
  * List capabilities query schema — GET /api/v1/admin/orchestration/capabilities
  */
 export const listCapabilitiesQuerySchema = paginationQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
   category: z.string().trim().max(50).optional(),
   executionType: executionTypeSchema.optional(),
   q: z.string().trim().max(200).optional(),
@@ -623,9 +628,7 @@ export const updateWebhookSchema = z.object({
 });
 
 export const listWebhooksQuerySchema = paginationQuerySchema.extend({
-  isActive: z
-    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
-    .optional(),
+  isActive: queryBooleanSchema.optional(),
 });
 
 /**
@@ -1128,9 +1131,9 @@ export const updateProviderConfigSchema = z
 
 /** List providers query schema — GET /api/v1/admin/orchestration/providers */
 export const listProvidersQuerySchema = paginationQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
   providerType: providerTypeSchema.optional(),
-  isLocal: z.coerce.boolean().optional(),
+  isLocal: queryBooleanSchema.optional(),
   q: z.string().trim().max(200).optional(),
 });
 
@@ -1273,7 +1276,7 @@ export const updateProviderModelSchema = z.object({
 
 /** List provider models query — GET /api/v1/admin/orchestration/provider-models */
 export const listProviderModelsQuerySchema = paginationQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
   tierRole: tierRoleSchema.optional(),
   capability: capabilitySchema.optional(),
   providerSlug: z.string().trim().max(50).optional(),
@@ -1286,8 +1289,8 @@ export type ListProviderModelsQuery = z.infer<typeof listProviderModelsQuerySche
 
 /** List workflows query schema — GET /api/v1/admin/orchestration/workflows */
 export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
-  isTemplate: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
+  isTemplate: queryBooleanSchema.optional(),
   q: z.string().trim().max(200).optional(),
 });
 
@@ -1379,9 +1382,7 @@ export const chatStreamRequestSchema = z.object({
  */
 export const listConversationsQuerySchema = paginationQuerySchema.extend({
   agentId: cuidSchema.optional(),
-  isActive: z
-    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
-    .optional(),
+  isActive: queryBooleanSchema.optional(),
   q: z.string().trim().min(1).max(200).optional(),
   /** Full-text search across message content (case-insensitive). */
   messageSearch: z.string().trim().min(1).max(500).optional(),
@@ -1410,9 +1411,7 @@ export const updateConversationSchema = z.object({
 export const conversationExportQuerySchema = z.object({
   format: z.enum(['json', 'csv']).default('json'),
   agentId: cuidSchema.optional(),
-  isActive: z
-    .union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
-    .optional(),
+  isActive: queryBooleanSchema.optional(),
   /** Title substring search (case-insensitive). */
   q: z.string().trim().min(1).max(200).optional(),
   /** Full-text search across message content (case-insensitive). */

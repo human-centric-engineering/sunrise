@@ -18,6 +18,17 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
@@ -45,14 +56,26 @@ function formatDuration(ms: number): string {
 export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
   const [sessions, setSessions] = useState(initialSessions);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleTerminate(sessionId: string) {
+    setError(null);
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpSessionById(sessionId));
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch {
+      setError('Failed to terminate session.');
+    }
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
+    setError(null);
     try {
       const data = await apiClient.get<SessionRow[]>(API.ADMIN.ORCHESTRATION.MCP_SESSIONS);
       setSessions(data);
     } catch {
-      // silent
+      setError('Failed to refresh sessions.');
     } finally {
       setRefreshing(false);
     }
@@ -75,6 +98,7 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
           {sessions.length} active session{sessions.length !== 1 ? 's' : ''}
         </span>
       </div>
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <div className="rounded-md border">
         <Table>
@@ -110,12 +134,13 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
                   <span>Duration</span>
                 </Tip>
               </TableHead>
+              <TableHead className="w-[100px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {sessions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                   No active sessions. Sessions appear when MCP clients connect and send requests.
                 </TableCell>
               </TableRow>
@@ -141,6 +166,33 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {formatDuration(now - session.createdAt)}
+                  </TableCell>
+                  <TableCell>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                          Terminate
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Terminate session?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will immediately disconnect the MCP client. Any in-flight requests
+                            will fail.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => void handleTerminate(session.id)}
+                          >
+                            Terminate
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </TableCell>
                 </TableRow>
               ))

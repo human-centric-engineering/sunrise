@@ -62,13 +62,16 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
+// Capture the iterable passed to sseResponse so tests can consume the generator
+let capturedIterable: AsyncIterable<{ type: string; data?: string }> | null = null;
+
 vi.mock('@/lib/api/sse', () => ({
-  sseResponse: vi.fn(
-    () =>
-      new Response('data: connected\n\n', {
-        headers: { 'Content-Type': 'text/event-stream' },
-      })
-  ),
+  sseResponse: vi.fn((iterable: AsyncIterable<{ type: string; data?: string }>) => {
+    capturedIterable = iterable;
+    return new Response('data: connected\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  }),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -155,6 +158,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  capturedIterable = null;
 
   // Restore default mock behaviours
   vi.mocked(apiLimiter.check).mockReturnValue({ success: true } as never);
@@ -191,7 +195,7 @@ describe('POST /mcp', () => {
 
     expect(response.status).toBe(401);
     const body = await parseJson<{ error: { code: number } }>(response);
-    expect(body.error.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
   });
 
   it('returns 503 when MCP server is disabled', async () => {
@@ -203,7 +207,8 @@ describe('POST /mcp', () => {
     const response = await POST(makePostRequest(makeRpcRequest('tools/list')));
 
     expect(response.status).toBe(503);
-    const body = await parseJson<{ error: { message: string } }>(response);
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SERVER_DISABLED);
     expect(body.error.message).toContain('disabled');
   });
 
@@ -488,16 +493,18 @@ describe('GET /mcp', () => {
     expect(response.status).toBe(429);
   });
 
-  it('returns 401 when authentication fails', async () => {
+  it('returns 401 JSON-RPC error when authentication fails', async () => {
     vi.mocked(authenticateMcpRequest).mockResolvedValue(null);
 
     const response = await GET(makeGetRequest());
 
     expect(response.status).toBe(401);
-    expect(await response.text()).toContain('Unauthorized');
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
+    expect(body.error.message).toBe('Unauthorized');
   });
 
-  it('returns 503 when MCP server is disabled', async () => {
+  it('returns 503 JSON-RPC error when MCP server is disabled', async () => {
     vi.mocked(getMcpServerConfig).mockResolvedValue({
       ...mockServerState,
       isEnabled: false,
@@ -506,7 +513,9 @@ describe('GET /mcp', () => {
     const response = await GET(makeGetRequest());
 
     expect(response.status).toBe(503);
-    expect(await response.text()).toContain('disabled');
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SERVER_DISABLED);
+    expect(body.error.message).toContain('disabled');
   });
 
   it('returns SSE stream for authenticated request', async () => {
@@ -529,6 +538,117 @@ describe('GET /mcp', () => {
     const [iterable] = vi.mocked(sseResponse).mock.calls[0];
     expect(iterable).toBeDefined();
     expect(typeof (iterable as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe('function');
+  });
+
+  it('SSE generator yields connected event and processes notifications', async () => {
+    // Capture the notification callback registered by the generator
+    let notificationCallback: ((notification: unknown) => void) | null = null;
+    mockSessionManager.registerSseListener.mockImplementation(
+      (_id: string, cb: (notification: unknown) => void) => {
+        notificationCallback = cb;
+      }
+    );
+
+    const controller = new AbortController();
+    const request = new NextRequest(BASE_URL, {
+      method: 'GET',
+      headers: {
+        Authorization: BEARER,
+        [MCP_SESSION_HEADER]: mockSession.id,
+      },
+      signal: controller.signal,
+    });
+
+    await GET(request);
+
+    // The mock captures the generator but doesn't iterate it — start manually
+    expect(capturedIterable).not.toBeNull();
+    const iterator = capturedIterable![Symbol.asyncIterator]();
+
+    // First next() starts the generator body → yields 'connected'
+    const first = await iterator.next();
+    expect(first.value).toEqual({ type: 'connected' });
+
+    // Second next() continues execution: registers SSE listener, enters while loop,
+    // and awaits the queue promise. Don't await yet — it suspends at the promise.
+    const secondP = iterator.next();
+
+    // By now registerSseListener has been called synchronously
+    expect(notificationCallback).not.toBeNull();
+    notificationCallback!({ jsonrpc: '2.0', method: 'test', params: {} });
+
+    // The queued notification resolves the while-loop yield
+    const second = await secondP;
+    expect(second.value).toEqual({
+      type: 'notification',
+      data: expect.stringContaining('"method":"test"'),
+    });
+
+    // Abort to stop the generator — start next() then abort
+    const finalP = iterator.next();
+    controller.abort();
+    const final = await finalP;
+    expect(final.done).toBe(true);
+
+    // Verify cleanup
+    expect(mockSessionManager.unregisterSseListener).toHaveBeenCalledWith(mockSession.id);
+  });
+
+  it('SSE generator stops when request is aborted while waiting', async () => {
+    const controller = new AbortController();
+    const request = new NextRequest(BASE_URL, {
+      method: 'GET',
+      headers: {
+        Authorization: BEARER,
+        [MCP_SESSION_HEADER]: mockSession.id,
+      },
+      signal: controller.signal,
+    });
+
+    await GET(request);
+
+    expect(capturedIterable).not.toBeNull();
+    const iterator = capturedIterable![Symbol.asyncIterator]();
+
+    // Consume the 'connected' event (starts generator body)
+    await iterator.next();
+
+    // Start next iteration (generator enters while loop, awaits queue promise)
+    const nextP = iterator.next();
+
+    // Abort while generator is waiting for notifications
+    controller.abort();
+    const result = await nextP;
+    expect(result.done).toBe(true);
+  });
+
+  it('SSE generator does not register listener when no session header', async () => {
+    const controller = new AbortController();
+    const request = new NextRequest(BASE_URL, {
+      method: 'GET',
+      headers: {
+        Authorization: BEARER,
+      },
+      signal: controller.signal,
+    });
+
+    await GET(request);
+
+    expect(capturedIterable).not.toBeNull();
+    const iterator = capturedIterable![Symbol.asyncIterator]();
+
+    // Consume connected event (starts generator body)
+    await iterator.next();
+
+    // Start next iteration to execute the registerSseListener path
+    const nextP = iterator.next();
+
+    // No session header → registerSseListener should NOT be called
+    expect(mockSessionManager.registerSseListener).not.toHaveBeenCalled();
+
+    // Abort to clean up
+    controller.abort();
+    await nextP;
   });
 
   it('returns error response when getMcpServerConfig throws', async () => {
@@ -555,20 +675,24 @@ describe('DELETE /mcp', () => {
     expect(response.status).toBe(429);
   });
 
-  it('returns 401 when authentication fails', async () => {
+  it('returns 401 JSON-RPC error when authentication fails', async () => {
     vi.mocked(authenticateMcpRequest).mockResolvedValue(null);
 
     const response = await DELETE(makeDeleteRequest());
 
     expect(response.status).toBe(401);
-    expect(await response.text()).toContain('Unauthorized');
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.UNAUTHORIZED);
+    expect(body.error.message).toBe('Unauthorized');
   });
 
-  it('returns 400 when session header is missing', async () => {
+  it('returns 400 JSON-RPC error when session header is missing', async () => {
     const response = await DELETE(makeDeleteRequest());
 
     expect(response.status).toBe(400);
-    expect(await response.text()).toContain('Missing Mcp-Session-Id');
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+    expect(body.error.message).toContain('Missing Mcp-Session-Id');
   });
 
   it('returns 204 when session is successfully destroyed', async () => {
@@ -589,7 +713,7 @@ describe('DELETE /mcp', () => {
     expect(response.status).toBe(404);
   });
 
-  it('returns 404 when session belongs to a different api key', async () => {
+  it('returns 404 JSON-RPC error when session belongs to a different api key', async () => {
     mockSessionManager.getSession.mockReturnValue({
       ...mockSession,
       apiKeyId: 'different-key',
@@ -598,6 +722,9 @@ describe('DELETE /mcp', () => {
     const response = await DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
 
     expect(response.status).toBe(404);
+    const body = await parseJson<{ error: { code: number; message: string } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SESSION_NOT_FOUND);
+    expect(body.error.message).toBe('Session not found');
   });
 
   it('calls logMcpAudit after session destroy', async () => {

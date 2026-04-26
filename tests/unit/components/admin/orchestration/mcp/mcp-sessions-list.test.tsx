@@ -90,5 +90,69 @@ describe('McpSessionsList', () => {
         expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/mcp/sessions'));
       });
     });
+
+    it('shows error message when refresh fails', async () => {
+      vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('network'));
+
+      render(<McpSessionsList initialSessions={[SESSION]} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Refresh'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to refresh sessions.')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Terminate', () => {
+    it('calls apiClient.delete and removes session when confirmed', async () => {
+      vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+
+      render(<McpSessionsList initialSessions={[SESSION]} />);
+
+      // Open confirmation dialog
+      await act(async () => {
+        fireEvent.click(screen.getByText('Terminate'));
+      });
+
+      // Confirm termination
+      const confirmButton = await screen.findByRole('button', { name: /^Terminate$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining(SESSION.id));
+      });
+
+      // Session row removed, empty state shown
+      await waitFor(() => {
+        expect(screen.getByText(/no active sessions/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows error message when terminate fails', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValueOnce(new Error('fail'));
+
+      render(<McpSessionsList initialSessions={[SESSION]} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Terminate'));
+      });
+
+      const confirmButton = await screen.findByRole('button', { name: /^Terminate$/i });
+      await act(async () => {
+        fireEvent.click(confirmButton);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to terminate session.')).toBeInTheDocument();
+      });
+
+      // Session still in list
+      expect(screen.getByText('session-...')).toBeInTheDocument();
+    });
   });
 });

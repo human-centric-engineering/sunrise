@@ -283,6 +283,72 @@ describe('readMcpResource', () => {
     expect(result).toBeNull();
   });
 
+  it('returns error content when exact-match handler throws', async () => {
+    const row = makeResourceRow({ resourceType: 'knowledge_search' });
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
+    vi.mocked(handleKnowledgeSearch).mockRejectedValue(new Error('handler boom'));
+
+    const result = await readMcpResource('sunrise://knowledge/search');
+
+    expect(result).toEqual({
+      uri: 'sunrise://knowledge/search',
+      mimeType: 'application/json',
+      text: 'Resource handler error',
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'MCP resource handler failed',
+      expect.objectContaining({ error: 'handler boom' })
+    );
+  });
+
+  it('returns error content when pattern-match handler throws', async () => {
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(null);
+    const patternRow = makeResourceRow({
+      uri: 'sunrise://knowledge/patterns/{number}',
+      resourceType: 'pattern_detail',
+    });
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([patternRow] as never);
+    vi.mocked(handlePatternDetail).mockRejectedValue(new Error('pattern boom'));
+
+    const result = await readMcpResource('sunrise://knowledge/patterns/5');
+
+    expect(result).toEqual({
+      uri: 'sunrise://knowledge/patterns/5',
+      mimeType: 'application/json',
+      text: 'Resource handler error',
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'MCP resource handler failed (pattern match)',
+      expect.objectContaining({ error: 'pattern boom' })
+    );
+  });
+
+  it('logs non-Error throws with String() in exact-match handler', async () => {
+    const row = makeResourceRow({ resourceType: 'knowledge_search' });
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
+    vi.mocked(handleKnowledgeSearch).mockRejectedValue('string error');
+
+    await readMcpResource('sunrise://knowledge/search');
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'MCP resource handler failed',
+      expect.objectContaining({ error: 'string error' })
+    );
+  });
+
+  it('skips pattern row when no handler exists for its resourceType', async () => {
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(null);
+    const noHandlerRow = makeResourceRow({
+      uri: 'sunrise://knowledge/',
+      resourceType: 'nonexistent_type',
+    });
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([noHandlerRow] as never);
+
+    const result = await readMcpResource('sunrise://knowledge/search');
+
+    expect(result).toBeNull();
+  });
+
   it('treats non-object handlerConfig as null', async () => {
     const row = makeResourceRow({ resourceType: 'agent_list', handlerConfig: ['array', 'value'] });
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
