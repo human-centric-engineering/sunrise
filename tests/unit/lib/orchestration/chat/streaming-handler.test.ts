@@ -24,7 +24,22 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/logging', () => ({
-  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    withContext: vi.fn().mockReturnValue({
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+  },
+}));
+
+vi.mock('@/lib/orchestration/llm/model-registry', () => ({
+  getModel: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
@@ -124,6 +139,8 @@ const { scanOutput } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
 const { withAgentBudgetLock } = await import('@/lib/orchestration/llm/budget-mutex');
+// Ensure the model-registry mock is loaded (module itself is used by source via vi.mock above)
+await import('@/lib/orchestration/llm/model-registry');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -186,6 +203,8 @@ function makeConversation(overrides: Partial<Record<string, unknown>> = {}) {
     contextId: null,
     metadata: null,
     isActive: true,
+    summary: null,
+    summaryUpToMessageId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -277,6 +296,28 @@ describe('StreamingChatHandler', () => {
     expect(getProviderWithFallbacks).not.toHaveBeenCalled();
     expect(prisma.aiConversation.create).not.toHaveBeenCalled();
     expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+  });
+
+  // 2b — budget_exceeded with null limit (uses "its" instead of dollar amount) -
+  it('yields budget_exceeded error with "its" in message when limit is null', async () => {
+    // Arrange: limit is null so the message falls back to "its" not "$N.NN"
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      limit: null,
+      spent: 100,
+      remaining: null,
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: error event emitted with budget_exceeded code
+    expect(events).toHaveLength(1);
+    const errEvt = events[0] as { type: string; code: string; message: string };
+    expect(errEvt).toMatchObject({ type: 'error', code: 'budget_exceeded' });
+    // The message should use "its" when limit is null
+    expect(errEvt.message).toContain('its');
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
   });
 
   // 3 -----------------------------------------------------------------------
@@ -714,9 +755,9 @@ describe('StreamingChatHandler', () => {
     expect(invalidateContext).toHaveBeenCalledWith('pattern', '5');
   });
 
-  // 14 ----------------------------------------------------------------------
-  it('logCost called once per turn that reaches a done chunk', async () => {
-    // Single-turn completes: logCost fires once
+  // 14a ---------------------------------------------------------------------
+  it('logCost called exactly once for a single-turn completion', async () => {
+    // Arrange: single-turn that reaches a done chunk
     const provider1 = mockProvider([
       [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
     ]);
@@ -725,37 +766,18 @@ describe('StreamingChatHandler', () => {
       usedSlug: 'anthropic',
     });
 
+    // Act
     await collect(streamChat(baseRequest));
 
+    // Assert: logCost fires exactly once after the single done chunk
     await Promise.resolve();
     await Promise.resolve();
     expect(logCost).toHaveBeenCalledTimes(1);
+  });
 
-    vi.clearAllMocks();
-
-    // Reset defaults after clearAllMocks
-    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
-      withinBudget: true,
-      spent: 0,
-      limit: null,
-      remaining: null,
-    });
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(makeAgent());
-    (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeConversation()
-    );
-    (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      async ({ data }: { data: Record<string, unknown> }) =>
-        makeMessage({ ...data, id: `m_${Math.random()}` })
-    );
-
-    // Two-turn scenario: turn 1 (tool call) and turn 2 (final) both reach a
-    // `done` chunk, so logCost fires twice — once per LLM turn.
+  // 14b ---------------------------------------------------------------------
+  it('logCost called once per turn — twice for a two-turn tool-call round-trip', async () => {
+    // Arrange: turn 1 (tool call) + turn 2 (final) both reach a done chunk
     const provider2 = mockProvider([
       [
         {
@@ -775,8 +797,10 @@ describe('StreamingChatHandler', () => {
       data: {},
     });
 
+    // Act
     await collect(streamChat(baseRequest));
 
+    // Assert: logCost fires once per LLM turn that captured usage
     await Promise.resolve();
     await Promise.resolve();
     expect(logCost).toHaveBeenCalledTimes(2);
@@ -840,6 +864,52 @@ describe('StreamingChatHandler', () => {
     const assistantMsgs = createCalls.filter((c: any) => c[0].data.role === 'assistant');
     // Turn-2 produces an assistant row, turn-1 should NOT (empty text)
     expect(assistantMsgs).toHaveLength(1);
+  });
+
+  // 16b — tool call with no done chunk (usage=null): logCost skipped, tool dispatch proceeds --
+  it('tool dispatch still proceeds and logCost is not called when stream yields no done chunk', async () => {
+    // Arrange: provider yields tool_call chunks but no 'done' chunk — usage stays null
+    const provider = {
+      name: 'mock',
+      isLocal: false,
+      chat: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+      chatStream: vi.fn(async function* () {
+        // Turn 1: tool_call only, stream ends without a done chunk
+        yield { type: 'tool_call', toolCall: { id: 'tc-no-done', name: 'search', arguments: {} } };
+        // No done chunk — usage remains null
+      }),
+    };
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {},
+      skipFollowup: true,
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: tool was dispatched despite missing done chunk
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search',
+      {},
+      expect.objectContaining({ userId: 'u1', agentId: 'agent-1' })
+    );
+
+    // Assert: logCost was NOT called because usage is null (if branch at L531 skipped)
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logCost).not.toHaveBeenCalled();
+
+    // Assert: stream terminates with a done event (skipFollowup short-circuits)
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+    expect(types).toContain('done');
   });
 
   // 17 ----------------------------------------------------------------------
@@ -1222,7 +1292,7 @@ describe('StreamingChatHandler', () => {
       type: 'capability_results';
       results: Array<{ capabilitySlug: string; result: unknown }>;
     };
-    expect(capResults).toBeDefined();
+    expect(capResults).toMatchObject({ type: 'capability_results', results: expect.any(Array) });
     expect(capResults.results).toHaveLength(2);
     expect(capResults.results[0].capabilitySlug).toBe('search_knowledge_base');
     expect(capResults.results[1].capabilitySlug).toBe('get_weather');
@@ -1638,10 +1708,10 @@ describe('mid-loop budget re-check', () => {
     });
 
     // Act
-    vi.mocked(withAgentBudgetLock).mockClear();
     await collect(streamChat(baseRequest));
 
-    // Assert: lock acquired at least twice — once for initial check, once for mid-loop
+    // Assert: lock acquired at least twice — once for initial check, once for mid-loop.
+    // beforeEach calls vi.clearAllMocks(), so this count starts fresh each test.
     expect(vi.mocked(withAgentBudgetLock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -2084,5 +2154,544 @@ describe('crash-path error-marker persistence', () => {
       'Failed to persist error-marker assistant message',
       expect.objectContaining({ conversationId: 'conv-1' })
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New branch-coverage tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test 1: withToolTimeout — timeout reject fires
+// ---------------------------------------------------------------------------
+
+describe('withToolTimeout fires when dispatch hangs', () => {
+  it('yields execution_error in capability_result when tool dispatch exceeds timeout', async () => {
+    // Arrange: tool call script + dispatcher that never settles (hang)
+    // Ensure input guard does not flag the message
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-hang', name: 'hang_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: follow-up after the timed-out result
+      [
+        { type: 'text', content: 'Handled timeout.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Dispatcher returns a promise that never resolves — the timeout must fire first.
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise(() => {
+        /* intentionally never resolves */
+      })
+    );
+
+    vi.useFakeTimers();
+    try {
+      // Act: start collecting without awaiting yet
+      const streamPromise = collect(streamChat(baseRequest));
+
+      // Advance past the 30 000 ms TOOL_DISPATCH_TIMEOUT_MS
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      const events = await streamPromise;
+
+      // Assert: the capability_result event contains an execution_error
+      const capResult = events.find(
+        (e) => (e as { type: string }).type === 'capability_result'
+      ) as { type: 'capability_result'; result: { success: boolean; error?: { code: string } } };
+
+      expect(capResult).toBeDefined();
+      expect(capResult.result.success).toBe(false);
+      expect(capResult.result.error?.code).toBe('execution_error');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2: Conversation length cap reached
+// ---------------------------------------------------------------------------
+
+describe('conversation length cap', () => {
+  it('yields conversation_length_cap_reached error when history meets the cap', async () => {
+    // Arrange: capSettings has maxMessagesPerConversation = 5; history returns 5 messages
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      maxConversationsPerUser: null,
+      maxMessagesPerConversation: 5,
+    });
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) =>
+        makeMessage({ id: `m-${i}`, content: `msg ${i}`, role: i % 2 === 0 ? 'user' : 'assistant' })
+      )
+    );
+
+    // Act: use an existing conversationId so findFirst is called
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ id: 'conv-capped' })
+    );
+
+    const events = await collect(streamChat({ ...baseRequest, conversationId: 'conv-capped' }));
+
+    // Assert: error event with the correct code
+    const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as {
+      type: 'error';
+      code: string;
+    };
+    expect(errorEvt).toBeDefined();
+    expect(errorEvt.code).toBe('conversation_length_cap_reached');
+
+    // Provider should never be invoked — request terminated before LLM call
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 3: Per-user conversation cap reached
+// ---------------------------------------------------------------------------
+
+describe('per-user conversation cap', () => {
+  it('yields conversation_cap_reached error when active conversations meet the cap', async () => {
+    // Arrange: capSettings has maxConversationsPerUser = 3; count returns 3
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      maxConversationsPerUser: 3,
+      maxMessagesPerConversation: null,
+    });
+    (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+
+    // Act: no conversationId in request → the handler tries to create a new conversation
+    const events = await collect(streamChat({ ...baseRequest }));
+
+    // Assert: error event with the correct code
+    const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as {
+      type: 'error';
+      code: string;
+    };
+    expect(errorEvt).toBeDefined();
+    expect(errorEvt.code).toBe('conversation_cap_reached');
+
+    // New conversation should never be created
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 4: Input guard falls back to global settings ('block')
+// ---------------------------------------------------------------------------
+
+describe('input guard global settings fallback (block)', () => {
+  it("blocks request when agent has no inputGuardMode and global settings return 'block'", async () => {
+    // Arrange: scanner flags; agent has inputGuardMode=null; global settings return 'block'
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['injection_pattern'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: null })
+    );
+    (getOrchestrationSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      inputGuardMode: 'block',
+      outputGuardMode: 'log_only',
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Should not appear' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: input_blocked error is emitted
+    const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as
+      | { type: 'error'; code: string }
+      | undefined;
+    expect(errorEvt).toBeDefined();
+    expect(errorEvt?.code).toBe('input_blocked');
+
+    // Provider must NOT be invoked — request short-circuited
+    expect(provider.chatStream).not.toHaveBeenCalled();
+
+    // getOrchestrationSettings fetched to resolve the guard mode
+    expect(getOrchestrationSettings).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: Output guard 'warn_and_continue' yields warning event
+// ---------------------------------------------------------------------------
+
+describe('output guard warn_and_continue', () => {
+  it("yields warning event with code 'output_flagged' then done when outputGuardMode='warn_and_continue'", async () => {
+    // Arrange: output guard flags content; agent has outputGuardMode='warn_and_continue'
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ outputGuardMode: 'warn_and_continue', topicBoundaries: ['competitor'] })
+    );
+    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      topicMatches: ['competitor'],
+      builtInMatches: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Talking about a competitor.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: warning event with 'output_flagged' code is present
+    const warningEvt = events.find(
+      (e) =>
+        (e as { type: string }).type === 'warning' &&
+        (e as { code?: string }).code === 'output_flagged'
+    );
+    expect(warningEvt).toBeDefined();
+    expect(warningEvt).toMatchObject({ type: 'warning', code: 'output_flagged' });
+
+    // Assert: stream still ends with done — not blocked
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+
+    // Assert: no 'output_blocked' error event was emitted
+    const blockedEvt = events.find(
+      (e) =>
+        (e as { type: string }).type === 'error' &&
+        (e as { code?: string }).code === 'output_blocked'
+    );
+    expect(blockedEvt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 6: Tool failure threshold in parallel dispatch
+// ---------------------------------------------------------------------------
+
+describe('tool failure threshold in parallel dispatch', () => {
+  it('skips a broken tool and logs warning when failure count reaches threshold in parallel path', async () => {
+    // Strategy: run 3 iterations.
+    // Turn 1 (serial): broken_tool fails → failCount = 1
+    // Turn 2 (serial): broken_tool fails → failCount = 2 (threshold reached)
+    // Turn 3 (parallel): broken_tool + good_tool — broken_tool skipped, good_tool dispatched
+    // Turn 4: text-only → done
+
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+
+    const provider = mockProvider([
+      // Turn 1: single broken_tool call
+      [
+        { type: 'tool_call', toolCall: { id: 'tc1', name: 'broken_tool', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: single broken_tool call again
+      [
+        { type: 'tool_call', toolCall: { id: 'tc2', name: 'broken_tool', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 3: parallel — broken_tool and good_tool
+      [
+        { type: 'tool_call', toolCall: { id: 'tc3', name: 'broken_tool', arguments: {} } },
+        { type: 'tool_call', toolCall: { id: 'tc4', name: 'good_tool', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 4: final text-only answer
+      [
+        { type: 'text', content: 'Done despite broken tool.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // broken_tool always fails; good_tool succeeds
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (slug: string) => {
+        if (slug === 'broken_tool') {
+          return Promise.resolve({
+            success: false,
+            error: { code: 'execution_error', message: 'broken' },
+          });
+        }
+        return Promise.resolve({ success: true, data: {} });
+      }
+    );
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: warning logged that broken_tool was skipped in parallel path
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Skipping tool after repeated failures (parallel)',
+      expect.objectContaining({ tool: 'broken_tool', failures: 2 })
+    );
+
+    // Assert: good_tool was dispatched (broken_tool skipped at threshold)
+    const dispatchCalls = (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mock.calls;
+    const goodToolCalls = dispatchCalls.filter((c: unknown[]) => c[0] === 'good_tool');
+    expect(goodToolCalls.length).toBeGreaterThanOrEqual(1);
+
+    // Assert: stream ended normally
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 7: Tool execution catch path in serial dispatch
+// ---------------------------------------------------------------------------
+
+describe('tool execution catch path (serial dispatch)', () => {
+  it('produces execution_error result when capabilityDispatcher.dispatch rejects', async () => {
+    // Arrange: single tool call; dispatcher rejects with an Error
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc-err', name: 'error_tool', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: follow-up after the error result
+      [
+        { type: 'text', content: 'The tool errored.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const rejectionError = new Error('Capability crashed unexpectedly');
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockRejectedValue(rejectionError);
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: capability_result event has success=false and code='execution_error'
+    const capResult = events.find((e) => (e as { type: string }).type === 'capability_result') as {
+      type: 'capability_result';
+      result: { success: boolean; error?: { code: string; message: string } };
+    };
+
+    expect(capResult).toBeDefined();
+    expect(capResult.result.success).toBe(false);
+    expect(capResult.result.error?.code).toBe('execution_error');
+    expect(capResult.result.error?.message).toBe('Capability crashed unexpectedly');
+
+    // Assert: stream ended with done — not with an uncaught error
+    expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 8: Context invalidation after parallel capability results
+// ---------------------------------------------------------------------------
+
+describe('context invalidation after parallel capability results', () => {
+  it('calls invalidateContext after parallel tool results when contextType/contextId are set', async () => {
+    // Arrange: two tool calls in the same turn + request carries contextType/contextId
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+    (buildContext as ReturnType<typeof vi.fn>).mockResolvedValue('=== LOCKED CONTEXT ===\ndata');
+    (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ contextType: 'page', contextId: 'page-1' })
+    );
+
+    const provider = mockProvider([
+      // Turn 1: parallel tool calls
+      [
+        { type: 'tool_call', toolCall: { id: 'tc-a', name: 'tool_alpha', arguments: {} } },
+        { type: 'tool_call', toolCall: { id: 'tc-b', name: 'tool_beta', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: final text
+      [
+        { type: 'text', content: 'Context updated.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    // Act: include contextType and contextId in the request
+    const request = { ...baseRequest, contextType: 'page', contextId: 'page-1' };
+    await collect(streamChat(request));
+
+    // Assert: invalidateContext was called with the correct arguments (parallel path L781-782)
+    expect(invalidateContext).toHaveBeenCalledWith('page', 'page-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: Budget re-check during tool loop — limit:null ternary
+// ---------------------------------------------------------------------------
+
+describe('mid-loop budget re-check with limit:null', () => {
+  it('formats budget_exceeded message as "its" when mid-loop budget limit is null', async () => {
+    // Arrange: initial budget OK; after tool call, budget exceeded with limit=null
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+
+    let budgetCallCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    (checkBudget as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      budgetCallCount++;
+      if (budgetCallCount === 1) {
+        return Promise.resolve({ withinBudget: true, spent: 0, limit: null, remaining: null });
+      }
+      // Mid-loop re-check: exceeded with no limit set
+      return Promise.resolve({ withinBudget: false, spent: 50, limit: null, remaining: null });
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc-mid', name: 'tool_x', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'tool_use' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    // Act
+    const events = await collect(streamChat(baseRequest));
+
+    // Assert: budget_exceeded error event emitted after the tool call
+    const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as
+      | { type: 'error'; code: string; message: string }
+      | undefined;
+    expect(errorEvt).toBeDefined();
+    expect(errorEvt?.code).toBe('budget_exceeded');
+    // When limit is null, the message should use "its" rather than "$X.XX"
+    expect(errorEvt?.message).toContain('its');
+    expect(errorEvt?.message).not.toMatch(/\$\d/);
+
+    // Budget was checked at least twice
+    expect(budgetCallCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 10: History summarization — reuses existing summary
+// ---------------------------------------------------------------------------
+
+describe('history summarization — existing summary reuse', () => {
+  const HISTORY_SIZE = 52; // exceeds MAX_HISTORY_MESSAGES (50) by 2
+
+  function makeHistoryMessages(count: number) {
+    return Array.from({ length: count }, (_, i) =>
+      makeMessage({
+        id: `reuse-msg-${i}`,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `Content ${i}`,
+        conversationId: 'conv-reuse',
+      })
+    );
+  }
+
+  it('does not call summarizeMessages when conversation.summary matches the last dropped message id', async () => {
+    // Arrange: 52 history messages; last dropped = index 1 (droppedCount=2)
+    // Ensure input guard does not flag the message (clear any bleed from test 4)
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: false,
+      patterns: [],
+    });
+
+    const history = makeHistoryMessages(HISTORY_SIZE);
+    const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
+
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({
+        id: 'conv-reuse',
+        summary: 'previously-generated-summary',
+        summaryUpToMessageId: lastDroppedId,
+      })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Using cached summary.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // Act
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-reuse' }));
+
+    // Assert: summarizeMessages was NOT called — summary was reused from cache
+    expect(summarizeMessages).not.toHaveBeenCalled();
+
+    // Assert: no update with summary key was made (no re-persistence needed)
+    const updateCalls = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls;
+    const summaryUpdateCall = updateCalls.find(
+      (c: unknown[]) =>
+        typeof (c[0] as Record<string, unknown>).data === 'object' &&
+        'summary' in ((c[0] as Record<string, unknown>).data as object)
+    );
+    expect(summaryUpdateCall).toBeUndefined();
   });
 });

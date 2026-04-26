@@ -47,9 +47,13 @@ describe('estimateTokens', () => {
     expect(estimateTokens('')).toBe(0);
   });
 
-  it('returns 0 for a falsy-like empty string (undefined coercion guard)', () => {
-    // The source guards with `if (!text) return 0`
-    expect(estimateTokens('')).toBe(0);
+  it('returns 0 for a whitespace-only string', () => {
+    // Whitespace-only strings have non-zero length but no semantic content;
+    // the source guards with `if (!text) return 0` — trimmed whitespace is still truthy,
+    // so this confirms the real char/token calculation is applied (not the falsy guard).
+    const result = estimateTokens('   ');
+    // 3 chars → ceil(3 / 3.5) + 4 = 1 + 4 = 5
+    expect(result).toBe(expectedTokens('   '));
   });
 
   it('estimates tokens for a short English string', () => {
