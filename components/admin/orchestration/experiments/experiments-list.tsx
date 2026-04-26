@@ -8,9 +8,19 @@
  */
 
 import * as React from 'react';
-import { Loader2, Play, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle, Loader2, Play, Plus, Trash2, X } from 'lucide-react';
 import { Tip } from '@/components/ui/tooltip';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -300,6 +310,10 @@ export function ExperimentsList(): React.ReactElement {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
+  const [runningId, setRunningId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [completingId, setCompletingId] = React.useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<Experiment | null>(null);
 
   const fetchExperiments = React.useCallback(async () => {
     try {
@@ -317,20 +331,42 @@ export function ExperimentsList(): React.ReactElement {
   }, [fetchExperiments]);
 
   async function handleRun(id: string): Promise<void> {
+    setError(null);
+    setRunningId(id);
     try {
       await apiClient.post(`${ENDPOINT}/${id}/run`);
       await fetchExperiments();
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to start experiment');
+    } finally {
+      setRunningId(null);
+    }
+  }
+
+  async function handleComplete(id: string): Promise<void> {
+    setError(null);
+    setCompletingId(id);
+    try {
+      await apiClient.patch(`${ENDPOINT}/${id}`, { body: { status: 'completed' } });
+      await fetchExperiments();
+    } catch (err) {
+      setError(err instanceof APIClientError ? err.message : 'Failed to complete experiment');
+    } finally {
+      setCompletingId(null);
     }
   }
 
   async function handleDelete(id: string): Promise<void> {
+    setError(null);
+    setDeletingId(id);
     try {
       await apiClient.delete(`${ENDPOINT}/${id}`);
       setExperiments((prev) => prev.filter((e) => e.id !== id));
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Failed to delete experiment');
+    } finally {
+      setDeletingId(null);
+      setDeleteTarget(null);
     }
   }
 
@@ -428,13 +464,47 @@ export function ExperimentsList(): React.ReactElement {
                   <TableCell>
                     <div className="flex items-center gap-1">
                       {exp.status === 'draft' && (
-                        <Button variant="outline" size="sm" onClick={() => void handleRun(exp.id)}>
-                          <Play className="mr-1 h-3 w-3" />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={runningId === exp.id}
+                          onClick={() => void handleRun(exp.id)}
+                        >
+                          {runningId === exp.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Play className="mr-1 h-3 w-3" />
+                          )}
                           Run
                         </Button>
                       )}
-                      <Button variant="ghost" size="sm" onClick={() => void handleDelete(exp.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      {exp.status === 'running' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={completingId === exp.id}
+                          onClick={() => void handleComplete(exp.id)}
+                        >
+                          {completingId === exp.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <CheckCircle className="mr-1 h-3 w-3" />
+                          )}
+                          Complete
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Delete experiment"
+                        disabled={deletingId === exp.id}
+                        onClick={() => setDeleteTarget(exp)}
+                      >
+                        {deletingId === exp.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        )}
                       </Button>
                     </div>
                   </TableCell>
@@ -444,6 +514,29 @@ export function ExperimentsList(): React.ReactElement {
           </TableBody>
         </Table>
       </div>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete experiment</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? This will
+              permanently remove the experiment and all its variants.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && void handleDelete(deleteTarget.id)}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={!!deletingId}
+            >
+              {deletingId ? 'Deleting\u2026' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
