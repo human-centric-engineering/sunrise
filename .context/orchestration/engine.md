@@ -222,18 +222,25 @@ If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
 
 ## Execution statuses
 
-| Status                | Meaning                                                          |
-| --------------------- | ---------------------------------------------------------------- |
-| `pending`             | Row created, engine not yet started (rare — transitions quickly) |
-| `running`             | Engine is actively processing steps                              |
-| `paused_for_approval` | Waiting for a human to approve a `human_approval` step           |
-| `completed`           | All steps finished successfully                                  |
-| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped)     |
-| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`              |
+| Status                | Meaning                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------- |
+| `pending`             | Ready to run but no engine attached — set by approve/retry before the client reconnects |
+| `running`             | Engine is actively processing steps                                                     |
+| `paused_for_approval` | Waiting for a human to approve a `human_approval` step                                  |
+| `completed`           | All steps finished successfully                                                         |
+| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped, or abandoned approval)     |
+| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`                                     |
+
+The `pending` → `running` transition happens inside `initRun()` when the engine picks up a resume. This gap prevents the zombie reaper from sweeping rows before the client reconnects.
 
 ## Zombie reaper
 
-If the process dies mid-execution, the row stays in `running` indefinitely. The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for rows stuck in `running` beyond a 30-minute threshold and marks them `failed` with an explanatory `errorMessage`. It is called by the unified maintenance tick endpoint.
+The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
+
+- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect).
+- **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
+
+Called by the unified maintenance tick endpoint.
 
 ## Adding a new step type
 
