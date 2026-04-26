@@ -3,12 +3,8 @@
  *
  * POST /api/v1/admin/orchestration/experiments/:id/run
  *
- * Starts an experiment run: transitions status to "running",
- * creates evaluation sessions per variant using the agent version
- * snapshots, and returns the experiment with updated status.
- *
- * Currently sets status to running — full eval session integration
- * is a future enhancement that ties into the evaluation runner.
+ * Transitions a draft experiment to "running". Validates that the
+ * experiment is in draft status and has at least 2 variants.
  *
  * Authentication: Admin role required.
  */

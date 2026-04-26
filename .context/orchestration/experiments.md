@@ -65,14 +65,32 @@ Response 200: { success: true, data: Experiment }
 
 ```
 PATCH /api/v1/admin/orchestration/experiments/:id
-Body: { name?, description? }   — at least one field required
+Authorization: Admin
+Rate limit: adminLimiter
+
+Body: { name?, description?, status? }   — at least one field required
+
+Status transitions are validated:
+  draft    → running, completed
+  running  → completed
+  completed → (none — terminal state)
+
+Invalid transitions return 400 VALIDATION_ERROR.
+
 Response 200: { success: true, data: Experiment }
+Audit: experiment.update
 ```
 
 ### Delete experiment
 
 ```
 DELETE /api/v1/admin/orchestration/experiments/:id
+Authorization: Admin
+Rate limit: adminLimiter
+
+Validation:
+  - status must not be "running" → 400 "Cannot delete a running experiment"
+
 Response 200: { success: true, data: { deleted: true } }
 Audit: experiment.delete
 ```
@@ -97,12 +115,15 @@ Audit: experiment.run
 
 ```
 draft → running → completed
-         ↑
-    POST /run
+  │        ↑          (terminal)
+  │   POST /run
+  └──────────────► completed   (skip running via PATCH)
 ```
 
-- Only `draft` experiments can be run.
-- Transitioning to `completed` is manual (PATCH) — no automated stop today.
+- Only `draft` experiments can be run via `POST /run`.
+- `running → completed` via PATCH or the UI "Complete" button.
+- `draft → completed` via PATCH (cancel without running).
+- `completed` is terminal — no transitions out.
 
 ## Variant shape
 
@@ -112,8 +133,8 @@ interface ExperimentVariant {
   experimentId: string;
   label: string; // e.g. "Control", "Treatment A"
   agentVersionId?: string | null; // pin to a snapshot; null = current live config
+  evaluationSessionId?: string | null; // filled when experiment runs
   score?: number | null; // filled in after evaluation
-  createdAt: Date;
 }
 ```
 
@@ -139,12 +160,13 @@ Completed experiments inline each variant's score under the name cell (`Variant 
 
 **Per-row actions:**
 
-| Action | Visibility                 | Call                                                |
-| ------ | -------------------------- | --------------------------------------------------- |
-| Run    | Only for `status: 'draft'` | `POST /experiments/:id/run` → refetch list          |
-| Delete | Always                     | `DELETE /experiments/:id` → optimistic local remove |
+| Action   | Visibility                   | Call                                                                      |
+| -------- | ---------------------------- | ------------------------------------------------------------------------- |
+| Run      | Only for `status: 'draft'`   | `POST /experiments/:id/run` → refetch list                                |
+| Complete | Only for `status: 'running'` | `PATCH /experiments/:id` with `{ status: 'completed' }` → refetch list    |
+| Delete   | Always (except running)      | `DELETE /experiments/:id` → confirmation dialog → optimistic local remove |
 
-No stop button. Status transitions to `completed` happen through a `PATCH` — not wired to the list today.
+All action buttons show a loading spinner and disable during the request to prevent double-clicks.
 
 **Create form (`CreateExperimentForm`):** collapsed into a "New Experiment" button until clicked, then expands to an inline Card.
 
@@ -168,5 +190,7 @@ Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md conte
 | Rate limited                    | 429  | `RATE_LIMIT_EXCEEDED` |
 | Experiment not found            | 404  | `NOT_FOUND`           |
 | Already running/completed       | 400  | `VALIDATION_ERROR`    |
+| Invalid status transition       | 400  | `VALIDATION_ERROR`    |
+| Delete while running            | 400  | `VALIDATION_ERROR`    |
 | < 2 variants on run             | 400  | `VALIDATION_ERROR`    |
 | Too few/many variants on create | 400  | `VALIDATION_ERROR`    |

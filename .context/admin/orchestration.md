@@ -127,6 +127,7 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 | Settings      | 1 route   | Global orchestration settings                                                         |
 | Webhooks      | 2 routes  | CRUD for webhook subscriptions                                                        |
 | Evaluations   | 4 routes  | CRUD, logs, AI completion                                                             |
+| Experiments   | 4 routes  | A/B testing — create, update, delete, run                                             |
 | Observability | 1 route   | Dashboard stats                                                                       |
 | Quiz          | 1 route   | Quiz scores                                                                           |
 
