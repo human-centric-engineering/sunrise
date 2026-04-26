@@ -16,15 +16,17 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/orchestration/llm/model-registry', () => ({
-  getModel: vi.fn(),
+vi.mock('@/lib/orchestration/llm', () => ({
+  modelRegistry: {
+    getModel: vi.fn(),
+  },
 }));
 
 // ─── Imports after mocks ────────────────────────────────────────────────────
 
 import { semanticValidateWorkflow } from '@/lib/orchestration/workflows/semantic-validator';
 import { prisma } from '@/lib/db/client';
-import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { modelRegistry } from '@/lib/orchestration/llm';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -74,11 +76,12 @@ describe('semanticValidateWorkflow', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
-    vi.mocked(getModel).mockReturnValue(undefined);
+    vi.mocked(modelRegistry.getModel).mockReturnValue(undefined);
   });
 
   it('returns ok when no LLM steps have modelOverride and no tool_call steps', async () => {
     const result = await semanticValidateWorkflow(makeDef([llmStep('s1')]));
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -92,7 +95,7 @@ describe('semanticValidateWorkflow', () => {
   });
 
   it('returns INACTIVE_PROVIDER when model exists but provider is not active', async () => {
-    vi.mocked(getModel).mockReturnValue({
+    vi.mocked(modelRegistry.getModel).mockReturnValue({
       id: 'claude-sonnet-4-6',
       provider: 'anthropic',
       name: 'Claude Sonnet',
@@ -114,7 +117,7 @@ describe('semanticValidateWorkflow', () => {
   });
 
   it('returns no error when model exists and provider is active', async () => {
-    vi.mocked(getModel).mockReturnValue({
+    vi.mocked(modelRegistry.getModel).mockReturnValue({
       id: 'claude-sonnet-4-6',
       provider: 'anthropic',
       name: 'Claude Sonnet',
@@ -128,6 +131,7 @@ describe('semanticValidateWorkflow', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'anthropic' }] as never);
 
     const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]));
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -144,6 +148,7 @@ describe('semanticValidateWorkflow', () => {
     vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([{ slug: 'web-search' }] as never);
 
     const result = await semanticValidateWorkflow(makeDef([toolStep('s1', 'web-search')]));
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -154,14 +159,16 @@ describe('semanticValidateWorkflow', () => {
       { id: 's2', name: 's2', type: 'human_approval', config: { prompt: 'ok?' }, nextSteps: [] },
     ]);
     const result = await semanticValidateWorkflow(def);
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
+    // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies fast-path skips DB
     // No DB calls should have been made (fast path)
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
     expect(prisma.aiCapability.findMany).not.toHaveBeenCalled();
   });
 
   it('batches — multiple steps with same model produce one getModel call', async () => {
-    vi.mocked(getModel).mockReturnValue({
+    vi.mocked(modelRegistry.getModel).mockReturnValue({
       id: 'gpt-4o',
       provider: 'openai',
       name: 'GPT-4o',
@@ -180,9 +187,10 @@ describe('semanticValidateWorkflow', () => {
       llmStep('s3', 'gpt-4o'),
     ]);
     const result = await semanticValidateWorkflow(def);
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     // getModel called once per unique model id, not per step
-    expect(getModel).toHaveBeenCalledTimes(1);
+    expect(modelRegistry.getModel).toHaveBeenCalledTimes(1);
   });
 
   it('checks all LLM step types: route, reflect, guard, evaluate', async () => {
@@ -219,6 +227,7 @@ describe('semanticValidateWorkflow', () => {
 
     const result = await semanticValidateWorkflow(makeDef([agentStep('s1', 'my-agent')]));
 
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -230,6 +239,7 @@ describe('semanticValidateWorkflow', () => {
     const def = makeDef([agentStep('s1', 'shared-agent'), agentStep('s2', 'shared-agent')]);
     const result = await semanticValidateWorkflow(def);
 
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     // The validator batches by unique slug — only one DB call regardless of step count.
     expect(prisma.aiAgent.findMany).toHaveBeenCalledTimes(1);
@@ -246,6 +256,7 @@ describe('semanticValidateWorkflow', () => {
     const result = await semanticValidateWorkflow(def);
 
     // Fast path — no DB queries fired.
+    // test-review:accept tobe_true — boolean field `ok` on SemanticValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();

@@ -394,6 +394,15 @@ describe('deleteDocument', () => {
       where: { id: 'doc-to-delete' },
     });
   });
+
+  it('propagates Prisma rejection when the DB delete fails', async () => {
+    // Arrange
+    const dbError = new Error('Record to delete does not exist');
+    vi.mocked(prisma.aiKnowledgeDocument.delete).mockRejectedValue(dbError);
+
+    // Act & Assert: the error propagates — source has no try/catch around delete
+    await expect(deleteDocument('doc-ghost')).rejects.toThrow('Record to delete does not exist');
+  });
 });
 
 describe('rechunkDocument', () => {
@@ -755,8 +764,15 @@ describe('uploadDocumentFromBuffer', () => {
     await uploadDocumentFromBuffer(buffer, 'notes.txt', 'user-1');
 
     expect(parseDocument).toHaveBeenCalledWith(buffer, 'notes.txt');
-    // Document was created — the upload pipeline ran
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalled();
+    // Document was created with the expected shape — the upload pipeline ran
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          fileName: 'notes.txt',
+          status: 'processing',
+        }),
+      })
+    );
   });
 
   it('logs warnings when parseDocument returns them', async () => {
@@ -807,6 +823,21 @@ describe('uploadDocumentFromBuffer', () => {
     // chunkMarkdownDocument should receive the raw markdown, not the parsed text
     expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'doc');
   });
+
+  it('propagates parseDocument errors without creating a document record', async () => {
+    // Arrange
+    vi.mocked(requiresPreview).mockReturnValue(false);
+    const parseError = new Error('Unsupported encoding');
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockRejectedValue(parseError);
+
+    // Act & Assert: the error propagates — source has no try/catch around parseDocument
+    await expect(
+      uploadDocumentFromBuffer(Buffer.from('data'), 'corrupt.docx', 'user-1')
+    ).rejects.toThrow('Unsupported encoding');
+
+    // No document record should have been created
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+  });
 });
 
 // ─── previewDocument ──────────────────────────────────────────────────────────
@@ -854,6 +885,20 @@ describe('previewDocument', () => {
     const result = await previewDocument(Buffer.from('pdf'), 'doc.pdf', 'user-1');
 
     expect(result.warnings).toEqual(['Could not parse page 4']);
+  });
+
+  it('propagates parseDocument errors without creating a document record', async () => {
+    // Arrange
+    const parseError = new Error('PDF decryption failed');
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockRejectedValue(parseError);
+
+    // Act & Assert: the error propagates — source has no try/catch around parseDocument
+    await expect(
+      previewDocument(Buffer.from('encrypted pdf'), 'secure.pdf', 'user-1')
+    ).rejects.toThrow('PDF decryption failed');
+
+    // No document record should have been created
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
   });
 });
 

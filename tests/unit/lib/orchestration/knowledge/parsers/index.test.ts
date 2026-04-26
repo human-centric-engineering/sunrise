@@ -155,6 +155,7 @@ describe('parseDocument', () => {
     it('should not call parseTxt, parseDocx, or parsePdf for markdown', async () => {
       await parseDocument(toBuffer('# Hello'), 'doc.md');
 
+      // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies correct parser routing
       expect(mockParseTxt).not.toHaveBeenCalled();
       expect(mockParseDocx).not.toHaveBeenCalled();
       expect(mockParsePdf).not.toHaveBeenCalled();
@@ -228,18 +229,20 @@ describe('parseDocument', () => {
       const doc = makeDoc();
       mockParsePdf.mockResolvedValue(doc);
 
-      await parseDocument(toBuffer(), 'DOCUMENT.PDF');
+      const buffer = toBuffer();
+      await parseDocument(buffer, 'DOCUMENT.PDF');
 
-      expect(mockParsePdf).toHaveBeenCalled();
+      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'DOCUMENT.PDF');
     });
 
     it('should accept .TXT (uppercase) and route to parseTxt', async () => {
       const doc = makeDoc();
       mockParseTxt.mockReturnValue(doc);
 
-      await parseDocument(toBuffer(), 'NOTES.TXT');
+      const buffer = toBuffer();
+      await parseDocument(buffer, 'NOTES.TXT');
 
-      expect(mockParseTxt).toHaveBeenCalled();
+      expect(mockParseTxt).toHaveBeenCalledWith(buffer, 'NOTES.TXT');
     });
   });
 });

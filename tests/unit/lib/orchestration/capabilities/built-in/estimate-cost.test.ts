@@ -63,6 +63,7 @@ describe('EstimateCostCapability', () => {
       expect(getModelsByTier).toHaveBeenCalledWith(tier);
       // 5 steps * 1500 in / 500 out per step.
       expect(calculateCost).toHaveBeenCalledWith('test-model', 7500, 2500);
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
       expect(result.success).toBe(true);
       expect(result.skipFollowup).toBe(true);
       expect(result.data).toMatchObject({
@@ -92,6 +93,7 @@ describe('EstimateCostCapability', () => {
 
     // 1000 steps * 1500 input = 1,500,000; 1000 * 500 output = 500,000
     expect(calculateCost).toHaveBeenCalledWith('frontier-model', 1_500_000, 500_000);
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       totalSteps: 1000,
@@ -125,6 +127,7 @@ describe('EstimateCostCapability', () => {
       context
     );
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.cost).toEqual({
       inputCostUsd: 0,
@@ -144,6 +147,7 @@ describe('EstimateCostCapability', () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.code).toBe('no_model_for_tier');
+    // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies no cost calculation when model missing
     expect(calculateCost).not.toHaveBeenCalled();
   });
 });

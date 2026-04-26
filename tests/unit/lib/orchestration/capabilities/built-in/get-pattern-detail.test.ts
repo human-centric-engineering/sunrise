@@ -51,6 +51,7 @@ describe('GetPatternDetailCapability', () => {
     const result = await cap.execute({ pattern_number: 1 }, context);
 
     expect(getPatternDetail).toHaveBeenCalledWith(1);
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       patternNumber: 1,

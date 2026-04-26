@@ -68,6 +68,7 @@ describe('SearchKnowledgeCapability', () => {
       select: { knowledgeCategories: true },
     });
     expect(searchKnowledge).toHaveBeenCalledWith('reason + act', undefined, 10, 0.7);
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       results: [{ chunkId: 'c1', patternNumber: 1, similarity: 0.91 }],
@@ -171,6 +172,7 @@ describe('SearchKnowledgeCapability', () => {
 
     // No category filter applied — search proceeds unfiltered
     expect(searchKnowledge).toHaveBeenCalledWith('anything', undefined, 10, 0.7);
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
   });
 
@@ -192,5 +194,29 @@ describe('SearchKnowledgeCapability', () => {
     const cap = new SearchKnowledgeCapability();
     const longQuery = 'a'.repeat(501);
     expect(() => cap.validate({ query: longQuery })).toThrow(CapabilityValidationError);
+  });
+
+  it('propagates searchKnowledge rejection when the vector store is unavailable', async () => {
+    // Arrange: agent lookup succeeds but the vector store throws
+    const storeError = new Error('vector store unavailable');
+    (searchKnowledge as ReturnType<typeof vi.fn>).mockRejectedValue(storeError);
+    const cap = new SearchKnowledgeCapability();
+
+    // Act + Assert: error propagates out of execute()
+    await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow(
+      'vector store unavailable'
+    );
+  });
+
+  it('propagates DB errors from agent lookup when prisma.aiAgent.findUnique rejects', async () => {
+    // Arrange: DB throws before searchKnowledge is ever called
+    const dbError = new Error('connection timeout');
+    vi.mocked(prisma.aiAgent.findUnique).mockRejectedValue(dbError);
+    const cap = new SearchKnowledgeCapability();
+
+    // Act + Assert: error propagates out of execute()
+    await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow('connection timeout');
+    // searchKnowledge must not have been called
+    expect(searchKnowledge).not.toHaveBeenCalled();
   });
 });

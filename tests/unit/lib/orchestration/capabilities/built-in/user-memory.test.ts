@@ -53,6 +53,7 @@ describe('ReadUserMemoryCapability', () => {
     const cap = new ReadUserMemoryCapability();
     const result = await cap.execute({}, context);
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.memories).toHaveLength(2);
     expect(result.data?.memories[0]).toMatchObject({ key: 'language', value: 'TypeScript' });
@@ -84,6 +85,7 @@ describe('ReadUserMemoryCapability', () => {
         where: expect.objectContaining({ key: 'language' }),
       })
     );
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.memories).toHaveLength(1);
     expect(result.data?.memories[0].key).toBe('language');
@@ -95,6 +97,7 @@ describe('ReadUserMemoryCapability', () => {
     const cap = new ReadUserMemoryCapability();
     const result = await cap.execute({}, context);
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.memories).toEqual([]);
   });
@@ -118,6 +121,18 @@ describe('ReadUserMemoryCapability', () => {
     const calledWhere = findMany.mock.calls[0][0].where as Record<string, unknown>;
     expect(calledWhere).not.toHaveProperty('key');
   });
+
+  it('propagates DB errors from findMany', async () => {
+    // Arrange: simulate a database failure
+    const dbError = new Error('Connection lost');
+    findMany.mockRejectedValue(dbError);
+
+    // Act
+    const cap = new ReadUserMemoryCapability();
+
+    // Assert: the error propagates unmodified
+    await expect(cap.execute({}, context)).rejects.toThrow('Connection lost');
+  });
 });
 
 // ── WriteUserMemoryCapability ─────────────────────────────────────────────────
@@ -130,6 +145,7 @@ describe('WriteUserMemoryCapability', () => {
     const cap = new WriteUserMemoryCapability();
     const result = await cap.execute({ key: 'language', value: 'Rust' }, context);
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.action).toBe('created');
     expect(result.data?.key).toBe('language');
@@ -142,6 +158,7 @@ describe('WriteUserMemoryCapability', () => {
     const cap = new WriteUserMemoryCapability();
     const result = await cap.execute({ key: 'language', value: 'Rust' }, context);
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data?.action).toBe('updated');
     expect(result.data?.key).toBe('language');
@@ -190,5 +207,20 @@ describe('WriteUserMemoryCapability', () => {
         value: 'sunrise',
       },
     });
+  });
+
+  it('propagates DB errors on upsert', async () => {
+    // Arrange: findUnique succeeds, upsert fails
+    findUnique.mockResolvedValue(null);
+    const dbError = new Error('Deadlock detected');
+    upsert.mockRejectedValue(dbError);
+
+    // Act
+    const cap = new WriteUserMemoryCapability();
+
+    // Assert: the error propagates unmodified
+    await expect(cap.execute({ key: 'language', value: 'Rust' }, context)).rejects.toThrow(
+      'Deadlock detected'
+    );
   });
 });

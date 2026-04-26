@@ -27,6 +27,7 @@ describe('validateWorkflow', () => {
         steps: [{ id: 'start', name: 'Start', type: 'llm_call', config: {}, nextSteps: [] }],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
   });
@@ -47,6 +48,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -218,6 +220,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -247,6 +250,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -276,6 +280,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -305,6 +310,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -334,6 +340,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 
@@ -363,6 +370,7 @@ describe('validateWorkflow', () => {
         ],
       })
     );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
 });

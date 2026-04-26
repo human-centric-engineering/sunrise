@@ -259,6 +259,7 @@ Enough text here to satisfy the minimum token requirement for proper chunk sizin
 
     // Section-level metadata should override the document-level category
     const hasResilienceCategory = chunks.some((c) => c.category === 'resilience');
+    // test-review:accept tobe_true — boolean result of Array.some(); structural assertion verifying section-level category override
     expect(hasResilienceCategory).toBe(true);
   });
 
