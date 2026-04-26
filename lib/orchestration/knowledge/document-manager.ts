@@ -500,6 +500,7 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     const chunks = chunkMarkdownDocument(content, document.name, documentId);
 
     if (chunks.length === 0) {
+      await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId } });
       return await prisma.aiKnowledgeDocument.update({
         where: { id: documentId },
         data: { status: 'ready', chunkCount: 0 },
