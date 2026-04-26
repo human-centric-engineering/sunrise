@@ -20,17 +20,18 @@ The orchestration layer lives in `lib/orchestration/` and powers the Sunrise adm
 
 ## Documentation
 
-| Topic         | File                                             | Covers                                                                         |
-| ------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
-| LLM Providers | [`llm-providers.md`](./llm-providers.md)         | Chat, streaming, embeddings, cost tracking, model registry                     |
-| Capabilities  | [`capabilities.md`](./capabilities.md)           | Dispatcher, built-in capabilities, rate limits, approval gating                |
-| Chat          | [`chat.md`](./chat.md)                           | Streaming chat handler, tool loop, context builder, error codes                |
-| Knowledge     | [`knowledge.md`](./knowledge.md)                 | Document ingestion, chunking, vector search, seeder                            |
-| Workflows     | [`workflows.md`](./workflows.md)                 | DAG validator, step types, error codes                                         |
-| Engine        | [`engine.md`](./engine.md)                       | Runtime executor, executor registry, events, checkpoints, error strategies     |
-| Resilience    | [`resilience.md`](./resilience.md)               | Circuit breaker, provider fallback, budget UX, input guard, error registry     |
-| Admin API     | [`admin-api.md`](./admin-api.md)                 | Agents, capabilities, providers, workflows, chat, knowledge, costs, executions |
-| Maturity      | [`maturity-analysis.md`](./maturity-analysis.md) | Competitive analysis, capability matrices, prioritised improvements            |
+| Topic         | File                                                          | Covers                                                                         |
+| ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| LLM Providers | [`llm-providers.md`](./llm-providers.md)                      | Chat, streaming, embeddings, cost tracking, model registry                     |
+| Capabilities  | [`capabilities.md`](./capabilities.md)                        | Dispatcher, built-in capabilities, rate limits, approval gating                |
+| Chat          | [`chat.md`](./chat.md)                                        | Streaming chat handler, tool loop, context builder, error codes                |
+| Knowledge     | [`knowledge.md`](./knowledge.md)                              | Document ingestion, chunking, vector search, seeder                            |
+| Workflows     | [`workflows.md`](./workflows.md)                              | DAG validator, step types, error codes                                         |
+| Engine        | [`engine.md`](./engine.md)                                    | Runtime executor, executor registry, events, checkpoints, error strategies     |
+| Resilience    | [`resilience.md`](./resilience.md)                            | Circuit breaker, provider fallback, budget UX, input guard, error registry     |
+| Admin API     | [`admin-api.md`](./admin-api.md)                              | Agents, capabilities, providers, workflows, chat, knowledge, costs, executions |
+| Maturity      | [`maturity-analysis.md`](./meta/maturity-analysis.md)         | Competitive analysis, capability matrices, prioritised improvements            |
+| Applications  | [`business-applications.md`](./meta/business-applications.md) | Real-world use cases, venture studio opportunities, worked examples            |
 
 ### Admin UI (`.context/admin/`)
 
