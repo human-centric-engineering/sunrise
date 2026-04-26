@@ -511,11 +511,21 @@ describe('listExposedToolsQuerySchema', () => {
     expect(result.success && result.data.isEnabled).toBe(true);
   });
 
-  it('accepts isEnabled as coerced boolean — string "false" coerces to true (JS Boolean cast)', () => {
-    // z.coerce.boolean() uses Boolean('false') which is truthy in JavaScript
+  it('correctly parses string "false" as boolean false', () => {
     const result = listExposedToolsQuerySchema.safeParse({ isEnabled: 'false' });
-    // test-review:accept tobe_true — compound Zod safeParse success + boolean schema field; structural assertion
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.isEnabled).toBe(false);
+  });
+
+  it('correctly parses string "true" as boolean true', () => {
+    const result = listExposedToolsQuerySchema.safeParse({ isEnabled: 'true' });
+    expect(result.success).toBe(true);
     expect(result.success && result.data.isEnabled).toBe(true);
+  });
+
+  it('rejects invalid boolean strings', () => {
+    expect(listExposedToolsQuerySchema.safeParse({ isEnabled: 'yes' }).success).toBe(false);
+    expect(listExposedToolsQuerySchema.safeParse({ isEnabled: '1' }).success).toBe(false);
   });
 
   it('accepts page and limit overrides', () => {
@@ -559,8 +569,14 @@ describe('listExposedResourcesQuerySchema', () => {
     ).toBe(false);
   });
 
-  it('accepts isEnabled as coerced boolean', () => {
-    expect(listExposedResourcesQuerySchema.safeParse({ isEnabled: 'true' }).success).toBe(true);
+  it('correctly parses boolean strings for isEnabled', () => {
+    const trueResult = listExposedResourcesQuerySchema.safeParse({ isEnabled: 'true' });
+    expect(trueResult.success).toBe(true);
+    expect(trueResult.success && trueResult.data.isEnabled).toBe(true);
+
+    const falseResult = listExposedResourcesQuerySchema.safeParse({ isEnabled: 'false' });
+    expect(falseResult.success).toBe(true);
+    expect(falseResult.success && falseResult.data.isEnabled).toBe(false);
   });
 });
 
@@ -576,10 +592,14 @@ describe('listApiKeysQuerySchema', () => {
     expect(result.success && result.data.page).toBe(1);
   });
 
-  it('accepts isActive as coerced boolean', () => {
-    const result = listApiKeysQuerySchema.safeParse({ isActive: 'true' });
-    // test-review:accept tobe_true — compound Zod safeParse success + boolean schema field; structural assertion
-    expect(result.success && result.data.isActive).toBe(true);
+  it('correctly parses boolean strings for isActive', () => {
+    const trueResult = listApiKeysQuerySchema.safeParse({ isActive: 'true' });
+    expect(trueResult.success).toBe(true);
+    expect(trueResult.success && trueResult.data.isActive).toBe(true);
+
+    const falseResult = listApiKeysQuerySchema.safeParse({ isActive: 'false' });
+    expect(falseResult.success).toBe(true);
+    expect(falseResult.success && falseResult.data.isActive).toBe(false);
   });
 
   it('accepts pagination overrides', () => {

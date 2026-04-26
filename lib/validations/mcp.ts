@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema } from '@/lib/validations/common';
+import { paginationQuerySchema, cuidSchema, queryBooleanSchema } from '@/lib/validations/common';
 import { McpScope, ALL_MCP_SCOPES, McpResourceType } from '@/types/mcp';
 
 // ============================================================================
@@ -92,7 +92,7 @@ export type UpdateExposedTool = z.infer<typeof updateExposedToolSchema>;
  */
 export const listExposedToolsQuerySchema = z.object({
   ...paginationQuerySchema.shape,
-  isEnabled: z.coerce.boolean().optional(),
+  isEnabled: queryBooleanSchema.optional(),
 });
 
 export type ListExposedToolsQuery = z.infer<typeof listExposedToolsQuerySchema>;
@@ -149,7 +149,7 @@ export type UpdateExposedResource = z.infer<typeof updateExposedResourceSchema>;
  */
 export const listExposedResourcesQuerySchema = z.object({
   ...paginationQuerySchema.shape,
-  isEnabled: z.coerce.boolean().optional(),
+  isEnabled: queryBooleanSchema.optional(),
   resourceType: resourceTypeSchema.optional(),
 });
 
@@ -215,7 +215,7 @@ export type McpApiKeyRotate = z.infer<typeof mcpApiKeyRotateSchema>;
  */
 export const listApiKeysQuerySchema = z.object({
   ...paginationQuerySchema.shape,
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBooleanSchema.optional(),
 });
 
 export type ListApiKeysQuery = z.infer<typeof listApiKeysQuerySchema>;
