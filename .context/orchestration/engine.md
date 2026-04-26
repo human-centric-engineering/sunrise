@@ -238,6 +238,7 @@ The `pending` → `running` transition happens inside `initRun()` when the engin
 The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
 
 - **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect).
+- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry).
 - **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
 
 Called by the unified maintenance tick endpoint.
