@@ -280,14 +280,13 @@ describe('ErrorsTab', () => {
 
   // ── Fetch failure (non-ok response) ───────────────────────────────────────
 
-  it('shows empty state when fetch returns non-ok response', async () => {
-    mockFetch.mockResolvedValue({ ok: false });
+  it('shows error state when fetch returns non-ok response', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
 
     render(<ErrorsTab />);
 
     await waitFor(() => {
-      // Loading ends and empty state shown (fetch failure → empty documents)
-      expect(screen.getByText('No failed documents')).toBeInTheDocument();
+      expect(screen.getByText('Failed to load error list (500)')).toBeInTheDocument();
     });
   });
 });

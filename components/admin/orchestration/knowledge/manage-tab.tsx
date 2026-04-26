@@ -211,6 +211,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
 
@@ -323,15 +324,22 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const handleDelete = useCallback(
     async (docId: string) => {
       setDeletingId(docId);
+      setDeleteError(null);
       try {
         const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(docId), {
           method: 'DELETE',
         });
-        if (res.ok) {
-          onRefresh();
-          void fetchMetaTags();
-          void fetchEmbeddingStatus();
+        if (!res.ok) {
+          const body: unknown = await res.json().catch(() => null);
+          const parsed = body as { error?: { message?: string } } | null;
+          setDeleteError(parsed?.error?.message ?? `Delete failed (${res.status})`);
+          return;
         }
+        onRefresh();
+        void fetchMetaTags();
+        void fetchEmbeddingStatus();
+      } catch {
+        setDeleteError('Network error — could not reach the server.');
       } finally {
         setDeletingId(null);
         setDeleteConfirmId(null);
@@ -630,6 +638,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         ) : (
           <>
             {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
+            {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
             <div className="overflow-x-auto rounded-lg border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
