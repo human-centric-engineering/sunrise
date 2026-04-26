@@ -91,6 +91,7 @@ function CreateExperimentForm({
 }): React.ReactElement {
   const [agents, setAgents] = React.useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = React.useState(true);
+  const [agentFetchError, setAgentFetchError] = React.useState(false);
   const [name, setName] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [agentId, setAgentId] = React.useState('');
@@ -105,6 +106,7 @@ function CreateExperimentForm({
         setAgents(data);
       } catch {
         setAgents([]);
+        setAgentFetchError(true);
       } finally {
         setLoadingAgents(false);
       }
@@ -212,6 +214,8 @@ function CreateExperimentForm({
             </Label>
             {loadingAgents ? (
               <p className="text-muted-foreground text-xs">Loading agents...</p>
+            ) : agentFetchError ? (
+              <p className="text-xs text-red-600">Failed to load agents. Please try again.</p>
             ) : agents.length === 0 ? (
               <p className="text-xs text-amber-600">
                 No agents found. Create an agent first under Build &rarr; Agents.

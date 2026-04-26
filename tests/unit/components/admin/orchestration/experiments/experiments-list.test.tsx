@@ -478,7 +478,7 @@ describe('ExperimentsList', () => {
       });
     });
 
-    it('shows "No agents found" when agents fetch throws (catch path)', async () => {
+    it('shows "Failed to load agents" when agents fetch throws (catch path)', async () => {
       const user = userEvent.setup();
       mockGet
         .mockResolvedValueOnce([]) // experiments
@@ -490,7 +490,7 @@ describe('ExperimentsList', () => {
       await user.click(screen.getByRole('button', { name: /new experiment/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/no agents found/i)).toBeInTheDocument();
+        expect(screen.getByText(/failed to load agents/i)).toBeInTheDocument();
       });
     });
 
