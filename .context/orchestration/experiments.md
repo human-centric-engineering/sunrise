@@ -23,6 +23,7 @@ Prisma model: `AiExperiment` with `AiExperimentVariant[]`.
 ```
 GET /api/v1/admin/orchestration/experiments
 Authorization: Admin
+Rate limit: adminLimiter
 Query:
   page        integer (default 1)
   limit       integer (default 20)
@@ -92,7 +93,7 @@ Authorization: Admin
 Rate limit: adminLimiter
 
 Validation:
-  - status must not be "running" → 400 "Cannot delete a running experiment"
+  - status must not be "running" → 400 "Cannot delete a running experiment — stop it first"
 
 Response 200: { success: true, data: { deleted: true } }
 Audit: experiment.delete
