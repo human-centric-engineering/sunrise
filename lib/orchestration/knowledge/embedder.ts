@@ -92,6 +92,12 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
 
   // Default: OpenAI API directly
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
+  if (!openaiKey) {
+    throw new Error(
+      'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
+        'or configure an embedding provider in the admin settings.'
+    );
+  }
   return {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: openaiKey,
@@ -219,6 +225,11 @@ export async function embedBatch(
     });
 
     const embeddings = await callEmbeddingApi(provider, batch, inputType);
+    if (embeddings.length !== batch.length) {
+      throw new Error(
+        `Embedding API returned ${embeddings.length} embeddings for ${batch.length} texts`
+      );
+    }
     allEmbeddings.push(...embeddings);
 
     // Rate limit between batches (skip for last batch)

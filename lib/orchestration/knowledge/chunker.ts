@@ -187,9 +187,9 @@ function normalizeChunkSizes(
         result.push({ header: section.header, body: currentBody, combinedContent: content });
       }
     } else if (tokens < MIN_CHUNK_TOKENS && buffer) {
-      // Merge with buffer
-      buffer.body += `\n\n${section.combinedContent}`;
-      buffer.combinedContent += `\n\n${section.combinedContent}`;
+      // Merge with buffer — append body only (not combinedContent which includes the header)
+      buffer.body += `\n\n${section.body}`;
+      buffer.combinedContent = buffer.header ? `${buffer.header}\n\n${buffer.body}` : buffer.body;
     } else if (tokens < MIN_CHUNK_TOKENS && !buffer) {
       buffer = { ...section };
     } else {
