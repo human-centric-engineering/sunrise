@@ -377,9 +377,9 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
           <p className="text-muted-foreground py-4 text-sm">No trace entries recorded.</p>
         ) : (
           <div className="space-y-2">
-            {trace.map((entry) => (
+            {trace.map((entry, idx) => (
               <ExecutionTraceEntryRow
-                key={entry.stepId}
+                key={`${entry.stepId}-${idx}`}
                 stepId={entry.stepId}
                 stepType={entry.stepType}
                 label={entry.label}

@@ -66,10 +66,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     };
   }
 
+  // Use PENDING (not RUNNING) to signal "approved, ready to resume but no
+  // engine attached yet". The engine's initRun() flips to RUNNING when
+  // the client reconnects via ?resumeFromExecutionId=. This prevents the
+  // zombie reaper from sweeping the row before reconnection.
   await prisma.aiWorkflowExecution.update({
     where: { id },
     data: {
-      status: WorkflowStatus.RUNNING,
+      status: WorkflowStatus.PENDING,
       executionTrace: trace as unknown as object,
     },
   });

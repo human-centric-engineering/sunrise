@@ -171,7 +171,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(response.status).toBe(400);
   });
 
-  it('transitions the row to RUNNING and returns resumeStepId on happy path', async () => {
+  it('transitions the row to PENDING and returns resumeStepId on happy path', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
 
@@ -192,7 +192,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     const updateArg = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as unknown as {
       data: { status: string; executionTrace: Array<{ stepId: string; status: string }> };
     };
-    expect(updateArg.data.status).toBe('running');
+    expect(updateArg.data.status).toBe('pending');
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
   });
 

@@ -81,10 +81,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const lastEntry = keptTrace.length > 0 ? keptTrace[keptTrace.length - 1] : null;
   const currentStep = lastEntry?.stepId ?? null;
 
+  // Use PENDING (not RUNNING) to signal "ready to resume but no engine
+  // attached yet". This prevents the zombie reaper from sweeping the row
+  // before the client reconnects via ?resumeFromExecutionId=.
   await prisma.aiWorkflowExecution.update({
     where: { id },
     data: {
-      status: WorkflowStatus.RUNNING,
+      status: WorkflowStatus.PENDING,
       executionTrace: keptTrace as unknown as object,
       totalTokensUsed,
       totalCostUsd,

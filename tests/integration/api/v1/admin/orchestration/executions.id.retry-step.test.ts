@@ -256,7 +256,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/retry-step', () => {
     expect(updateData.totalCostUsd).toBe(0.01); // step-1 cost
 
     // Status and error reset
-    expect(updateData.status).toBe('running');
+    expect(updateData.status).toBe('pending');
     expect(updateData.errorMessage).toBeNull();
     expect(updateData.completedAt).toBeNull();
 

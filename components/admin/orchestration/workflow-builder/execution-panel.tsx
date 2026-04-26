@@ -398,9 +398,9 @@ export function ExecutionPanel({
         {entries.length === 0 ? (
           <p className="text-muted-foreground text-center text-xs">Waiting for first step…</p>
         ) : (
-          entries.map((entry) => (
+          entries.map((entry, idx) => (
             <ExecutionTraceEntryRow
-              key={entry.stepId}
+              key={`${entry.stepId}-${idx}`}
               stepId={entry.stepId}
               stepType={String(entry.stepType)}
               label={entry.label}
