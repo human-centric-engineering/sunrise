@@ -28,12 +28,14 @@ import { ExperimentsList } from '@/components/admin/orchestration/experiments/ex
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
+    patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
   APIClientError: class APIClientError extends Error {
@@ -300,8 +302,64 @@ describe('ExperimentsList', () => {
     });
   });
 
+  describe('Complete action', () => {
+    it('shows "Complete" button for running experiment', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /complete/i })).toBeInTheDocument();
+      });
+    });
+
+    it('does not show "Complete" button for draft experiment', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'draft' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.queryByRole('button', { name: /complete/i })).not.toBeInTheDocument();
+    });
+
+    it('calls apiClient.patch with status completed and refetches', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+      mockPatch.mockResolvedValue(undefined);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: /complete/i }));
+      await user.click(screen.getByRole('button', { name: /complete/i }));
+
+      await waitFor(() => {
+        expect(mockPatch).toHaveBeenCalledWith(
+          '/api/v1/admin/orchestration/experiments/exp-1',
+          expect.objectContaining({ body: { status: 'completed' } })
+        );
+      });
+      // fetchExperiments called twice: initial mount + after complete
+      expect(mockGet).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows error message when complete fails', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+      mockPatch.mockRejectedValue(new Error('Complete failed'));
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: /complete/i }));
+      await user.click(screen.getByRole('button', { name: /complete/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to complete experiment')).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('Delete action', () => {
-    it('calls apiClient.delete and removes experiment from table', async () => {
+    it('opens confirmation dialog, then calls apiClient.delete on confirm', async () => {
       const user = userEvent.setup();
       mockGet.mockResolvedValue([makeExperiment()]);
       mockDelete.mockResolvedValue(undefined);
@@ -310,17 +368,16 @@ describe('ExperimentsList', () => {
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
 
-      // Delete button is the one with Trash2 icon — no accessible name text, find by role
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      expect(deleteButton).toBeDefined();
-      await user.click(deleteButton!);
+      // Click the delete button (now has aria-label)
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();
+      });
+
+      // Confirm the delete
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(mockDelete).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments/exp-1');
@@ -331,6 +388,26 @@ describe('ExperimentsList', () => {
       });
     });
 
+    it('does not delete when confirmation is cancelled', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([makeExperiment()]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();
+      });
+
+      // Cancel the delete
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      expect(mockDelete).not.toHaveBeenCalled();
+      expect(screen.getByText('Formal vs Casual')).toBeInTheDocument();
+    });
+
     it('shows error message when delete fails with generic error', async () => {
       const user = userEvent.setup();
       mockGet.mockResolvedValue([makeExperiment()]);
@@ -339,16 +416,9 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
-
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      await user.click(deleteButton!);
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+      await waitFor(() => screen.getByText(/are you sure/i));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed to delete experiment')).toBeInTheDocument();
@@ -364,16 +434,9 @@ describe('ExperimentsList', () => {
       render(<ExperimentsList />);
 
       await waitFor(() => screen.getByText('Formal vs Casual'));
-
-      const deleteButton = screen
-        .getAllByRole('button')
-        .find(
-          (btn) =>
-            btn.querySelector('svg') &&
-            !btn.textContent?.includes('Run') &&
-            !btn.textContent?.includes('New')
-        );
-      await user.click(deleteButton!);
+      await user.click(screen.getByRole('button', { name: /delete experiment/i }));
+      await waitFor(() => screen.getByText(/are you sure/i));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Forbidden')).toBeInTheDocument();

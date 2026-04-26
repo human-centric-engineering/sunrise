@@ -234,6 +234,67 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
       expect.objectContaining({ action: 'experiment.update' })
     );
   });
+
+  it('allows valid status transition draft → completed', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'draft' }) as never
+    );
+    vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
+      makeExperiment({ status: 'completed' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'completed' }), makeContext());
+
+    expect(response.status).toBe(200);
+  });
+
+  it('allows valid status transition running → completed', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'running' }) as never
+    );
+    vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
+      makeExperiment({ status: 'completed' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'completed' }), makeContext());
+
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects invalid status transition completed → draft', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'completed' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'draft' }), makeContext());
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects invalid status transition running → draft', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'running' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'draft' }), makeContext());
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects invalid status transition completed → running', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'completed' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'running' }), makeContext());
+
+    expect(response.status).toBe(400);
+  });
 });
 
 describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
@@ -270,7 +331,19 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
     expect(response.status).toBe(404);
   });
 
-  it('deletes experiment and returns { deleted: true }', async () => {
+  it('returns 400 when deleting a running experiment', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'running' }) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(), makeContext());
+
+    expect(response.status).toBe(400);
+    expect(vi.mocked(prisma.aiExperiment.delete)).not.toHaveBeenCalled();
+  });
+
+  it('deletes draft experiment and returns { deleted: true }', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
     const response = await DELETE(makeDeleteRequest(), makeContext());
@@ -282,5 +355,18 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
     expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'experiment.delete' })
     );
+  });
+
+  it('deletes completed experiment and returns { deleted: true }', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'completed' }) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
+    expect(data.data.deleted).toBe(true);
   });
 });
