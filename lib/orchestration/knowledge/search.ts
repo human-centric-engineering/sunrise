@@ -145,8 +145,9 @@ export async function searchKnowledge(
   // The keyword boost adds a configurable score bonus for full-text matches.
   // Weights are resolved from AiOrchestrationSettings (admin-tunable) with
   // built-in defaults when no override is stored.
-  const kwBoostStrong = weights.keywordBoostStrong;
-  const kwBoost = weights.keywordBoost;
+  const queryParamIdx = paramIdx;
+  const boostStrongParamIdx = paramIdx + 1;
+  const boostParamIdx = paramIdx + 2;
 
   const sql = `
     SELECT
@@ -166,11 +167,11 @@ export async function searchKnowledge(
       (c.embedding <=> $1::vector) AS distance,
       CASE
         WHEN c.keywords IS NOT NULL
-          AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.keywords)
-        THEN ${kwBoostStrong}
+          AND plainto_tsquery('english', $${queryParamIdx}) @@ to_tsvector('english', c.keywords)
+        THEN $${boostStrongParamIdx}::float
         WHEN c.content IS NOT NULL
-          AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.content)
-        THEN ${kwBoost}
+          AND plainto_tsquery('english', $${queryParamIdx}) @@ to_tsvector('english', c.content)
+        THEN $${boostParamIdx}::float
         ELSE 0
       END AS keyword_boost
     FROM ai_knowledge_chunk c
@@ -180,18 +181,18 @@ export async function searchKnowledge(
     ORDER BY (c.embedding <=> $1::vector) + (
       CASE
         WHEN c.keywords IS NOT NULL
-          AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.keywords)
-        THEN ${kwBoostStrong}
+          AND plainto_tsquery('english', $${queryParamIdx}) @@ to_tsvector('english', c.keywords)
+        THEN $${boostStrongParamIdx}::float
         WHEN c.content IS NOT NULL
-          AND plainto_tsquery('english', $${paramIdx}) @@ to_tsvector('english', c.content)
-        THEN ${kwBoost}
+          AND plainto_tsquery('english', $${queryParamIdx}) @@ to_tsvector('english', c.content)
+        THEN $${boostParamIdx}::float
         ELSE 0
       END
     ) ASC
     LIMIT $3
   `;
 
-  params.push(query); // keyword search param
+  params.push(query, weights.keywordBoostStrong, weights.keywordBoost);
 
   const results = await prisma.$queryRawUnsafe<
     Array<

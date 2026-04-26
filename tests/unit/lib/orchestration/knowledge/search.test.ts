@@ -215,11 +215,13 @@ describe('searchKnowledge', () => {
     // SQL should reference $9 for the keyword placeholder
     expect(sql).toContain('$9');
 
-    // 9 params total: embeddingStr + threshold + limit + 5 filters + keyword
-    expect(params).toHaveLength(9);
+    // 11 params total: embeddingStr + threshold + limit + 5 filters + keyword + 2 boost weights
+    expect(params).toHaveLength(11);
 
-    // Last param is the keyword query string
+    // Keyword query at position 8, followed by boost weights
     expect(params[8]).toBe('test query');
+    expect(typeof params[9]).toBe('number'); // kwBoostStrong
+    expect(typeof params[10]).toBe('number'); // kwBoost
   });
 
   it('should call embedText with the search query', async () => {
