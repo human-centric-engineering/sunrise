@@ -91,8 +91,21 @@ export async function readMcpResource(uri: string): Promise<McpResourceContent |
     return null;
   }
 
-  const config = toRecordOrNull(row.handlerConfig);
-  return handler(uri, config);
+  try {
+    const config = toRecordOrNull(row.handlerConfig);
+    return await handler(uri, config);
+  } catch (err) {
+    logger.error('MCP resource handler failed', {
+      uri,
+      resourceType: row.resourceType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      uri,
+      mimeType: row.mimeType ?? 'text/plain',
+      text: 'Resource handler error',
+    };
+  }
 }
 
 /**
@@ -110,8 +123,21 @@ async function readMcpResourceByPattern(uri: string): Promise<McpResourceContent
     if (uri.startsWith(row.uri.replace(/\{[^}]+\}/g, '').replace(/\?.*$/, ''))) {
       const handler = HANDLERS[row.resourceType];
       if (handler) {
-        const config = toRecordOrNull(row.handlerConfig);
-        return handler(uri, config);
+        try {
+          const config = toRecordOrNull(row.handlerConfig);
+          return await handler(uri, config);
+        } catch (err) {
+          logger.error('MCP resource handler failed (pattern match)', {
+            uri,
+            resourceType: row.resourceType,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return {
+            uri,
+            mimeType: row.mimeType ?? 'text/plain',
+            text: 'Resource handler error',
+          };
+        }
       }
     }
   }

@@ -357,7 +357,7 @@ describe('callMcpTool', () => {
     expect(result.content[0].text).toBe('Tool execution failed');
   });
 
-  it('propagates dispatcher exceptions (throw, not { success: false })', async () => {
+  it('catches dispatcher exceptions and returns MCP error content', async () => {
     // Arrange: dispatcher throws instead of returning a failure result
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
     vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
@@ -368,10 +368,10 @@ describe('callMcpTool', () => {
       new Error('Dispatcher internal error')
     );
 
-    // Act + Assert: the source does not catch dispatcher throws, so it propagates
-    await expect(callMcpTool('search_knowledge', {}, 'user-1')).rejects.toThrow(
-      'Dispatcher internal error'
-    );
+    // Act: callMcpTool catches the throw and returns an error content block
+    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('Tool execution failed unexpectedly');
   });
 
   it('passes empty object when args is undefined', async () => {
