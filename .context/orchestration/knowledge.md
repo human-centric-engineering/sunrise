@@ -2,7 +2,7 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`).
 
 ## Module Layout
 
@@ -67,8 +67,9 @@ await seedChunks('prisma/seeds/data/chunks/chunks.json');
 
 ```
 pending → processing → ready
+              ↘ failed
     ↘ pending_review → (confirm) → processing → ready
-                    ↘ failed
+                                        ↘ failed
 ```
 
 | Status           | Meaning                                                                                                |
@@ -150,7 +151,7 @@ The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping uses `AiA
 
 ## Search
 
-`searchKnowledge(query, filters?, limit?, threshold?)` runs a hybrid cosine-similarity + keyword-boost search via pgvector. Filters support `documentId` and `chunkType` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
+`searchKnowledge(query, filters?, limit?, threshold?)` runs a hybrid cosine-similarity + keyword-boost search via pgvector. Filters support `chunkType`, `patternNumber`, `category`, `categories` (array), `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
 
 Results are ranked chunks with their parent document metadata — the admin search route (`POST /knowledge/search`) surfaces this directly. POST (not GET) because the filter payload can contain arbitrary text and we don't want query bodies in URL logs.
 
