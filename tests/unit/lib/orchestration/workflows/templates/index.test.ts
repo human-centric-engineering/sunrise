@@ -45,6 +45,7 @@ describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
     '%s passes validateWorkflow() with no errors',
     (_name, template) => {
       const result = validateWorkflow(template.workflowDefinition);
+      // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
       expect(result.ok).toBe(true);
       expect(result.errors).toEqual([]);
     }

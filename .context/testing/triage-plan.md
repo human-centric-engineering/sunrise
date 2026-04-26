@@ -253,15 +253,15 @@
 
 - **Path:** `tests/unit/lib/orchestration/capabilities/`
 - **Triage:** `/test-triage scan lib/orchestration/capabilities`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (2026-04-26)
+- **Notes:** 9 files scanned. 3 Bad (escalate-to-human tcm=1, search-knowledge me=1, user-memory me=1) fixed via Path A. 1 Minor (escalation-notifier tcm=1) accepted. 5 Clean after annotation. All 9 Clean in ledger (1 Minor).
 
 ### Step 3g — `workflows/` (4 test files)
 
 - **Path:** `tests/unit/lib/orchestration/workflows/`
 - **Triage:** `/test-triage scan lib/orchestration/workflows`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (2026-04-26)
+- **Notes:** 4 files scanned. 1 Bad (semantic-validator mp=1+tcm=1 mock path mismatch) fixed — mock retargeted to barrel. validator tbt=8 annotated (me=1 stays Minor density). templates tbt=1 annotated. All 4 Clean in ledger.
 
 ### Step 3h — Remaining orchestration (14 test files)
 

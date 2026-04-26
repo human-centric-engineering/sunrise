@@ -8,11 +8,17 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/capabilities/built-in/escalation-notifier', () => ({
+  notifyEscalation: vi.fn(),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 const { dispatchWebhookEvent } = await import('@/lib/orchestration/webhooks/dispatcher');
+const { notifyEscalation } =
+  await import('@/lib/orchestration/capabilities/built-in/escalation-notifier');
 const { EscalateToHumanCapability } =
   await import('@/lib/orchestration/capabilities/built-in/escalate-to-human');
 const { CapabilityValidationError } =
@@ -33,6 +39,7 @@ describe('EscalateToHumanCapability', () => {
       context
     );
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data).toEqual({
       escalated: true,
@@ -88,11 +95,40 @@ describe('EscalateToHumanCapability', () => {
 
     const result = await cap.execute({ reason: 'Need help' }, noConvContext);
 
+    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(dispatchWebhookEvent).toHaveBeenCalledWith(
       'conversation_escalated',
       expect.objectContaining({ conversationId: null })
     );
+  });
+
+  it('calls notifyEscalation with the full escalation payload', async () => {
+    const cap = new EscalateToHumanCapability();
+
+    // Arrange: full payload with all fields
+    await cap.execute(
+      { reason: 'User needs billing help', priority: 'high', metadata: { ticketId: 'T-42' } },
+      context
+    );
+
+    // Assert: notifyEscalation receives the same shaped payload as dispatchWebhookEvent
+    expect(notifyEscalation).toHaveBeenCalledWith({
+      agentId: 'a1',
+      userId: 'u1',
+      conversationId: 'conv-1',
+      reason: 'User needs billing help',
+      priority: 'high',
+      metadata: { ticketId: 'T-42' },
+    });
+  });
+
+  it('calls notifyEscalation once per execute call', async () => {
+    const cap = new EscalateToHumanCapability();
+
+    await cap.execute({ reason: 'Need help', priority: 'low' }, context);
+
+    expect(notifyEscalation).toHaveBeenCalledTimes(1);
   });
 
   it('rejects empty reason via validate()', () => {

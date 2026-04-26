@@ -236,6 +236,7 @@ describe('CapabilityDispatcher', () => {
       const r2 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
       const r3 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(r1.success).toBe(true);
       expect(r2.success).toBe(true);
       expect(r3).toEqual({
@@ -258,6 +259,7 @@ describe('CapabilityDispatcher', () => {
       // agentB should still succeed on its first call
       const b1 = await capabilityDispatcher.dispatch('ratelimited', {}, ctxB);
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(a1.success).toBe(true);
       expect(a2).toEqual({
         success: false,
@@ -283,6 +285,7 @@ describe('CapabilityDispatcher', () => {
           defaultAction: 'deny',
         },
       });
+      // test-review:accept clear_then_notcalled — clearAllMocks is in beforeEach (not mid-test); not.toHaveBeenCalled verifies requires_approval skips execute
       expect(executeSpy).not.toHaveBeenCalled();
       executeSpy.mockRestore();
     });
@@ -316,6 +319,7 @@ describe('CapabilityDispatcher', () => {
         success: false,
         error: expect.objectContaining({ code: 'execution_error' }),
       });
+      // test-review:accept no_arg_called — logger.error call shape is secondary; primary assertion is the execution_error result above
       expect(mockLoggerError).toHaveBeenCalled();
     });
   });
@@ -371,6 +375,7 @@ describe('CapabilityDispatcher', () => {
         capabilityDispatcher.dispatch('ok', { n: 2 }, ctx),
       ]);
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(r1.success).toBe(true);
       expect(r2.success).toBe(true);
       expect(mockFindMany).toHaveBeenCalledTimes(1);
@@ -427,6 +432,7 @@ describe('CapabilityDispatcher', () => {
       const r1 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
       const r2 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(r1.success).toBe(true);
       expect(r2).toEqual({
         success: false,
@@ -503,6 +509,7 @@ describe('CapabilityDispatcher', () => {
         capabilityDispatcher.dispatch('ok', { n: 2 }, ctx),
       ]);
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(r1.success).toBe(true);
       expect(r2.success).toBe(true);
       // Both calls for the same agentId should dedupe
@@ -534,6 +541,7 @@ describe('CapabilityDispatcher', () => {
         // First call succeeds, second is rate-limited
         const r1 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
         const r2 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
+        // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
         expect(r1.success).toBe(true);
         expect(r2.success).toBe(false);
 
@@ -542,6 +550,7 @@ describe('CapabilityDispatcher', () => {
 
         // The window has expired — next call should succeed
         const r3 = await capabilityDispatcher.dispatch('ratelimited', {}, ctx);
+        // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
         expect(r3.success).toBe(true);
       } finally {
         vi.useRealTimers();
@@ -574,6 +583,7 @@ describe('CapabilityDispatcher', () => {
         ctx
       );
 
+      // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on dispatch outcome
       expect(result.success).toBe(true);
       expect(result.data).toEqual({
         results: [
