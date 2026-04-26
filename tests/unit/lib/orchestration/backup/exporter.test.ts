@@ -132,8 +132,8 @@ describe('exportOrchestrationConfig', () => {
 
     expect(typeof payload.exportedAt).toBe('string');
     // exportedAt should be a valid ISO date between before and after
-    expect(payload.exportedAt >= before).toBe(true);
-    expect(payload.exportedAt <= after).toBe(true);
+    expect(payload.exportedAt.localeCompare(before)).toBeGreaterThanOrEqual(0);
+    expect(payload.exportedAt.localeCompare(after)).toBeLessThanOrEqual(0);
   });
 
   it('maps agents array from DB rows', async () => {

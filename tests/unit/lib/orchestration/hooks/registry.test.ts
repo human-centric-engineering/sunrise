@@ -135,6 +135,7 @@ describe('emitHookEvent', () => {
 
     emitHookEvent('conversation.started', { conversationId: 'conv-1' });
 
+    // test-review:accept no_arg_called — polling guard inside vi.waitFor; primary assertions follow
     await vi.waitFor(() => {
       expect(prisma.aiEventHook.findMany).toHaveBeenCalled();
     });
@@ -152,6 +153,7 @@ describe('emitHookEvent', () => {
     ] as never);
 
     emitHookEvent('message.created', { agentSlug: 'sales-bot' });
+    // test-review:accept no_arg_called — polling guard inside vi.waitFor; primary assertions follow
     await vi.waitFor(() => {
       expect(prisma.aiEventHook.findMany).toHaveBeenCalled();
     });
@@ -331,6 +333,7 @@ describe('retryHookDelivery', () => {
 
     const result = await retryHookDelivery('del-1');
 
+    // test-review:accept tobe_true — boolean return from retryHookDelivery; structural assertion on retry outcome
     expect(result).toBe(true);
     expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -755,7 +758,7 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
     // Act
     const result = await retryHookDelivery(deliveryId);
 
-    // Assert — returns true
+    // test-review:accept tobe_true — boolean return from retryHookDelivery; structural assertion on retry outcome
     expect(result).toBe(true);
 
     // First update call sets status: 'pending' (the reset before re-dispatch)
@@ -850,6 +853,7 @@ describe('dispatchToHooks (filter negative match)', () => {
     // Act
     emitHookEvent('message.created', { agentSlug: 'different-bot' });
 
+    // test-review:accept no_arg_called — polling guard inside vi.waitFor; primary assertions follow
     await vi.waitFor(() => {
       expect(prisma.aiEventHook.findMany).toHaveBeenCalled();
     });

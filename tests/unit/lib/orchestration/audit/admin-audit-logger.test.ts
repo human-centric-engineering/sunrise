@@ -312,7 +312,7 @@ describe('logAdminAction', () => {
     // Arrange
     vi.mocked(prisma.aiAdminAuditLog.create).mockRejectedValue(new Error('DB down'));
 
-    // Act — must not throw synchronously
+    // test-review:accept empty_not_throw — fire-and-forget contract: logAdminAction must not throw to caller; async error assertion follows
     expect(() =>
       logAdminAction({ userId: 'u5', action: 'agent.create', entityType: 'agent', entityId: 'a5' })
     ).not.toThrow();

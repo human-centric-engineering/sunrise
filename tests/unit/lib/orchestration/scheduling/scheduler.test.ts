@@ -148,6 +148,7 @@ describe('getNextRunAt', () => {
 });
 
 describe('isValidCron', () => {
+  // test-review:accept tobe_true — boolean return from isValidCron; structural assertion on validator outcome
   it('returns true for valid cron expressions', () => {
     expect(isValidCron('0 9 * * *')).toBe(true);
     expect(isValidCron('*/5 * * * *')).toBe(true);

@@ -255,6 +255,7 @@ describe('importOrchestrationConfig', () => {
     const result = await importOrchestrationConfig(payload, 'user-1');
 
     expect(mockTx.aiOrchestrationSettings.upsert).toHaveBeenCalledOnce();
+    // test-review:accept tobe_true — boolean field `settingsUpdated` on ImportResult; structural assertion on import outcome
     expect(result.settingsUpdated).toBe(true);
   });
 

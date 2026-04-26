@@ -463,3 +463,24 @@ Scanned 2026-04-25 on branch `triage/phase-2-core-infra` at HEAD `4ef4fd5`.
 | tests/unit/lib/orchestration/chat/streaming-handler.test.ts | unit | Minor | 2 | hpo=0,mp=0,me=0,tcm=0 | 47 | bc84b7f56ec4589e6e70755198b4173e995f1ea2 | 2026-04-26T09:47:42Z | Was Bad (hpo=1,mp=1,me=1). Tightened 4 bare toHaveBeenCalled→CalledTimes(1). +2 crash-path error-marker tests. tbt=1 annotated (result.success structural). 2 degenerate .some().toBe(true) remain (lines 413, 1423). ctn=1 mid-test clearAllMocks at line 734 (known, not fixed). |
 | tests/unit/lib/orchestration/chat/summarizer.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 6a19709e8da34e7ab47a70381037066c7b9ff73a | 2026-04-26T09:47:42Z | ctn=1 false positive (clearAllMocks in beforeEach). |
 | tests/unit/lib/orchestration/chat/token-estimator.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 79649d544ec39a5f1694ad78737281212314682c | 2026-04-26T09:47:42Z | Zero-hit file. |
+
+## lib/orchestration/remaining (evaluations, scheduling, webhooks, hooks, analytics, utils, audit, backup)
+
+| test_file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|--------------|-------|
+| tests/unit/lib/orchestration/evaluations/complete-session.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | a2ff056d283a44772c61d1a21761df52e4d9d80d | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/evaluations/annotation-serializer.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 0b9348a37812c0dd93a8d542dccfc0655bb533c4 | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/scheduling/scheduler.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 7162920aa3777bd5b1d997ee8a37dc1d6c426cfa | 2026-04-26T12:50:43Z | tbt=3 annotated (isValidCron boolean return). ctn=2 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/scheduling/index.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/webhooks/dispatcher.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | 58940d27686218007abac8ca624bcc8f1edd5b5d | 2026-04-26T12:50:43Z | tbt=1 annotated (retryDelivery boolean return). ctn=5 false positive (all in beforeEach). |
+| tests/unit/lib/orchestration/hooks/registry.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 33 | ab83bb1b769f8596aaf73cc447a3575882e1c481 | 2026-04-26T12:50:43Z | tbt=2 annotated (retryHookDelivery boolean return). nac=3 annotated (vi.waitFor polling guards). ctn=1 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/hooks/signing.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | 262008581716938028b334ebf9641ea72805c482 | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/analytics/analytics-service.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 8e676111776a61eb42e1e5759cd2d7b6ba55f59e | 2026-04-26T12:50:43Z | ctn=5 false positive (all in beforeEach). |
+| tests/unit/lib/orchestration/analytics/date-range.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 1e21fbb5dbe47be430f5d37cc05682d4490298ad | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/analytics/index.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | aef317b4c4d536855e8fca7ada81830c6bd7ebdb | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/utils/extract-related-patterns.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 5d0c9ee8d1f12caa2ad41e4eaed335f9f8058195 | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/utils/extract-workflow-definition.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | d582b0e9fc09efab7e7c6754c2a33055c07ab87b | 2026-04-26T12:50:43Z | Zero-hit file. |
+| tests/unit/lib/orchestration/audit/admin-audit-logger.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 769d0487af1d8dc8456f60f4766ed3a6cf88eecc | 2026-04-26T12:50:43Z | ent=1 annotated (fire-and-forget .not.toThrow contract). ctn=1 false positive (clearAllMocks in beforeEach). |
+| tests/unit/lib/orchestration/backup/exporter.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | babbb67b6b03d5b57b908b84204e45bd2254dc20 | 2026-04-26T12:50:43Z | Was Bad (tbt=2: date comparison .toBe(true)). Fixed → .localeCompare assertions. |
+| tests/unit/lib/orchestration/backup/importer.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | bd7e3e532a97e603d6226fe60aa66aa3a003b57e | 2026-04-26T12:50:43Z | tbt=1 annotated (settingsUpdated boolean field on ImportResult). |
+| tests/unit/lib/orchestration/backup/schema.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | babbb67b6b03d5b57b908b84204e45bd2254dc20 | 2026-04-26T12:50:43Z | ent=1 annotated (Zod parse-success .not.toThrow contract). |
