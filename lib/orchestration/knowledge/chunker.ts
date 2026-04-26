@@ -39,9 +39,10 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
-/** Strip mermaid diagram code blocks (not useful for embeddings) */
-function stripMermaidBlocks(content: string): string {
-  return content.replace(/```mermaid[\s\S]*?```/g, '').trim();
+/** Strip all fenced code blocks (not useful for embeddings, and prevents
+ *  false heading detection on `###` lines inside code examples). */
+function stripCodeBlocks(content: string): string {
+  return content.replace(/```[\s\S]*?```/g, '').trim();
 }
 
 /**
@@ -331,7 +332,7 @@ export function chunkMarkdownDocument(
 ): Chunk[] {
   const idPrefix = documentId ? documentId.slice(0, 8) : '';
   const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
-  const cleaned = stripMermaidBlocks(content);
+  const cleaned = stripCodeBlocks(content);
   const globalMetadata = parseMetadataComments(cleaned);
 
   const topSections = splitOnHeadings(cleaned, '##');

@@ -163,6 +163,9 @@ export async function searchKnowledge(
       c.keywords,
       c."estimatedTokens",
       c.metadata,
+      c."embeddingModel",
+      c."embeddingProvider",
+      c."embeddedAt",
       d.name AS "documentName",
       (c.embedding <=> $1::vector) AS distance,
       CASE
@@ -223,9 +226,9 @@ export async function searchKnowledge(
       section: row.section,
       keywords: row.keywords,
       estimatedTokens: row.estimatedTokens,
-      embeddingModel: null,
-      embeddingProvider: null,
-      embeddedAt: null,
+      embeddingModel: row.embeddingModel,
+      embeddingProvider: row.embeddingProvider,
+      embeddedAt: row.embeddedAt,
       metadata: row.metadata,
     };
     return {
