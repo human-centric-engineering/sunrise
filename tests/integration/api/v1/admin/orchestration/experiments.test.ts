@@ -82,8 +82,8 @@ function makeExperiment(overrides: Record<string, unknown> = {}) {
     updatedAt: new Date('2025-01-01'),
     agent: { id: 'agent-1', name: 'Test Agent', slug: 'test-agent' },
     variants: [
-      { id: 'v1', label: 'Control', agentVersionId: null },
-      { id: 'v2', label: 'Variant A', agentVersionId: null },
+      { id: 'v1', label: 'Control', agentVersionId: null, evaluationSession: null },
+      { id: 'v2', label: 'Variant A', agentVersionId: null, evaluationSession: null },
     ],
     creator: { id: ADMIN_ID, name: 'Admin User' },
     ...overrides,
@@ -280,6 +280,39 @@ describe('POST /api/v1/admin/orchestration/experiments', () => {
         expect.objectContaining({
           action: 'experiment.create',
           entityType: 'experiment',
+        })
+      );
+    });
+
+    it('includes evaluationSession on variants in the response', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiExperiment.create).mockResolvedValue(makeExperiment() as never);
+
+      const response = await POST(makePostRequest(VALID_BODY));
+      const data = await parseJson<{
+        data: { variants: { evaluationSession: null }[] };
+      }>(response);
+
+      // evaluationSession must be explicitly null, not absent
+      expect(data.data.variants[0]).toHaveProperty('evaluationSession', null);
+      expect(data.data.variants[1]).toHaveProperty('evaluationSession', null);
+    });
+
+    it('uses consistent variant include with evaluationSession', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiExperiment.create).mockResolvedValue(makeExperiment() as never);
+
+      await POST(makePostRequest(VALID_BODY));
+
+      expect(vi.mocked(prisma.aiExperiment.create)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            variants: {
+              include: {
+                evaluationSession: { select: { id: true, status: true, completedAt: true } },
+              },
+            },
+          }),
         })
       );
     });

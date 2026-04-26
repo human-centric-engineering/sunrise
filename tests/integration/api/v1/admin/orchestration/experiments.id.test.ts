@@ -295,6 +295,18 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('rejects status transition draft → running (must use /run endpoint)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      makeExperiment({ status: 'draft' }) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ status: 'running' }), makeContext());
+
+    expect(response.status).toBe(400);
+    expect(vi.mocked(prisma.aiExperiment.update)).not.toHaveBeenCalled();
+  });
 });
 
 describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {

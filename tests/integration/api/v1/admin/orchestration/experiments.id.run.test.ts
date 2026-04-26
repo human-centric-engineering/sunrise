@@ -293,5 +293,26 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
         })
       );
     });
+
+    it('performs status check inside transaction (TOCTOU guard)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest(), makeContext());
+
+      // tx.aiExperiment.findUnique is called inside the transaction
+      expect(mockTxFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: EXPERIMENT_ID },
+          include: { variants: true },
+        })
+      );
+      // The outer prisma.aiExperiment.findUnique only does a lightweight 404 check
+      expect(vi.mocked(prisma.aiExperiment.findUnique)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: EXPERIMENT_ID },
+          select: { id: true },
+        })
+      );
+    });
   });
 });

@@ -473,6 +473,110 @@ describe('ExperimentsList', () => {
     });
   });
 
+  describe('Delete button visibility', () => {
+    it('hides delete button for running experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'running' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.queryByRole('button', { name: /delete experiment/i })).not.toBeInTheDocument();
+    });
+
+    it('shows delete button for draft experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'draft' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.getByRole('button', { name: /delete experiment/i })).toBeInTheDocument();
+    });
+
+    it('shows delete button for completed experiments', async () => {
+      mockGet.mockResolvedValue([makeExperiment({ status: 'completed' })]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByText('Formal vs Casual'));
+      expect(screen.getByRole('button', { name: /delete experiment/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Filter reset on create', () => {
+    it('resets filter to "all" after creating an experiment when filter is active', async () => {
+      const user = userEvent.setup();
+      // Use a dynamic mock: experiments endpoint returns [], agents endpoint returns agents
+      mockGet.mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/agents')) {
+          return Promise.resolve([{ id: 'agent-1', name: 'Support Bot', slug: 'support-bot' }]);
+        }
+        return Promise.resolve([]);
+      });
+      mockPost.mockResolvedValue(undefined);
+
+      render(<ExperimentsList />);
+
+      // Set filter to "Running"
+      await waitFor(() => screen.getByRole('button', { name: 'Running' }));
+      await user.click(screen.getByRole('button', { name: 'Running' }));
+
+      // Open create form
+      await waitFor(() => screen.getByRole('button', { name: /new experiment/i }));
+      await user.click(screen.getByRole('button', { name: /new experiment/i }));
+
+      // Fill name and select agent
+      await waitFor(() => screen.getByText('Support Bot'));
+      await user.type(screen.getByPlaceholderText(/e\.g\. Formal vs casual tone/i), 'New Exp');
+      const selectTrigger = screen.getByRole('combobox');
+      await user.click(selectTrigger);
+      const agentOption = await screen.findByRole('option', { name: 'Support Bot' });
+      await user.click(agentOption);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /create experiment/i })).not.toBeDisabled()
+      );
+
+      // Reset mock call count to track the refetch after create
+      mockGet.mockClear();
+      mockGet.mockResolvedValue([]);
+
+      await user.click(screen.getByRole('button', { name: /create experiment/i }));
+
+      // After create, filter resets to "all" → fetches without status param
+      await waitFor(() => {
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/admin/orchestration/experiments', {
+          params: undefined,
+        });
+      });
+    });
+  });
+
+  describe('Filter-aware empty state', () => {
+    it('shows filter-specific message when a status filter is active', async () => {
+      const user = userEvent.setup();
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => screen.getByRole('button', { name: 'Draft' }));
+      await user.click(screen.getByRole('button', { name: 'Draft' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('No draft experiments found.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic message when "All" filter is active', async () => {
+      mockGet.mockResolvedValue([]);
+
+      render(<ExperimentsList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No experiments found.')).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('Agents loading in create form', () => {
     it('shows "Loading agents..." while agents are being fetched', async () => {
       const user = userEvent.setup();
