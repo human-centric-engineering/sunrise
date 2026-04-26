@@ -398,7 +398,11 @@ export function ExperimentsList(): React.ReactElement {
         <CreateExperimentForm
           onCreated={() => {
             setShowCreate(false);
-            void fetchExperiments();
+            if (statusFilter !== 'all') {
+              setStatusFilter('all');
+            } else {
+              void fetchExperiments();
+            }
           }}
           onCancel={() => setShowCreate(false)}
         />
@@ -460,7 +464,11 @@ export function ExperimentsList(): React.ReactElement {
             {experiments.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
-                  {loading ? 'Loading\u2026' : 'No experiments found.'}
+                  {loading
+                    ? 'Loading\u2026'
+                    : statusFilter !== 'all'
+                      ? `No ${statusFilter} experiments found.`
+                      : 'No experiments found.'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -540,19 +548,21 @@ export function ExperimentsList(): React.ReactElement {
                           Complete
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label="Delete experiment"
-                        disabled={deletingId === exp.id}
-                        onClick={() => setDeleteTarget(exp)}
-                      >
-                        {deletingId === exp.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                        )}
-                      </Button>
+                      {exp.status !== 'running' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Delete experiment"
+                          disabled={deletingId === exp.id}
+                          onClick={() => setDeleteTarget(exp)}
+                        >
+                          {deletingId === exp.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
