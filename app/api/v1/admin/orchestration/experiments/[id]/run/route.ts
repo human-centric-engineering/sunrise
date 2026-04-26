@@ -79,7 +79,11 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       data: { status: 'running' },
       include: {
         agent: { select: { id: true, name: true, slug: true } },
-        variants: { include: { evaluationSession: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
+        },
         creator: { select: { id: true, name: true } },
       },
     });
