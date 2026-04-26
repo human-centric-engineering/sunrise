@@ -16,10 +16,16 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string };
+
+const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+  draft: ['running', 'completed'],
+  running: ['completed'],
+  completed: [],
+};
 
 const updateSchema = z
   .object({
@@ -61,6 +67,13 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
   const existing = await prisma.aiExperiment.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('Experiment not found');
 
+  if (body.status !== undefined) {
+    const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
+    if (!allowed.includes(body.status)) {
+      throw new ValidationError(`Cannot transition from '${existing.status}' to '${body.status}'`);
+    }
+  }
+
   const experiment = await prisma.aiExperiment.update({
     where: { id },
     data: {
@@ -99,6 +112,10 @@ export const DELETE = withAdminAuth<Params>(async (request, session, { params })
 
   const existing = await prisma.aiExperiment.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('Experiment not found');
+
+  if (existing.status === 'running') {
+    throw new ValidationError('Cannot delete a running experiment — stop it first');
+  }
 
   await prisma.aiExperiment.delete({ where: { id } });
 
