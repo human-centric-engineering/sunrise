@@ -91,21 +91,24 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
     resourceType: '',
     isEnabled: false,
   });
+  const [error, setError] = useState<string | null>(null);
 
   async function handleToggle(resourceId: string, isEnabled: boolean) {
+    setError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId), {
         body: { isEnabled },
       });
       setResources((prev) => prev.map((r) => (r.id === resourceId ? { ...r, isEnabled } : r)));
     } catch {
-      // silent
+      setError('Failed to toggle resource.');
     }
   }
 
   async function handleCreate() {
     if (!form.name.trim() || !form.uri.trim() || !form.resourceType) return;
     setCreating(true);
+    setError(null);
     try {
       const raw = await apiClient.post<unknown>(API.ADMIN.ORCHESTRATION.MCP_RESOURCES, {
         body: form,
@@ -122,18 +125,19 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
       });
       setCreateOpen(false);
     } catch {
-      // silent
+      setError('Failed to create resource.');
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRemove(resourceId: string) {
+    setError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.mcpResourceById(resourceId));
       setResources((prev) => prev.filter((r) => r.id !== resourceId));
     } catch {
-      // silent
+      setError('Failed to remove resource.');
     }
   }
 
@@ -150,6 +154,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
 
   return (
     <div className="space-y-4">
+      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Create Resource Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogTrigger asChild>

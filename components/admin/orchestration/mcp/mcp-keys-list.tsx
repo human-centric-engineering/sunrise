@@ -65,10 +65,12 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
     keyId: string;
     plaintext: string;
   } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleCreate() {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
     setCreating(true);
+    setError(null);
     try {
       const body: Record<string, unknown> = {
         name: newKeyName.trim(),
@@ -92,25 +94,27 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setNewKeyExpiry('');
       setNewKeyRateLimit('');
     } catch {
-      // apiClient throws — error is surfaced to user via the dialog remaining open
+      setError('Failed to create API key.');
     } finally {
       setCreating(false);
     }
   }
 
   async function handleRevoke(keyId: string) {
+    setError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.mcpKeyById(keyId), {
         body: { isActive: false },
       });
       setKeys((prev) => prev.map((k) => (k.id === keyId ? { ...k, isActive: false } : k)));
     } catch {
-      // silent — row stays unchanged
+      setError('Failed to revoke key.');
     }
   }
 
   async function handleRotate(keyId: string) {
     setRotatingId(keyId);
+    setError(null);
     try {
       const data = await apiClient.post<{ plaintextKey: string }>(
         API.ADMIN.ORCHESTRATION.mcpKeyRotate(keyId)
@@ -123,7 +127,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       });
       setKeys(z.array(apiKeyRowSchema).parse(rawList));
     } catch {
-      // silent
+      setError('Failed to rotate key.');
     } finally {
       setRotatingId(null);
     }
@@ -142,6 +146,7 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
 
   return (
     <div className="space-y-4">
+      {error && <p className="text-destructive text-sm">{error}</p>}
       {/* Rotated key plaintext dialog */}
       <Dialog
         open={rotatedPlaintext !== null}

@@ -37,11 +37,13 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
     initialSettings ?? DEFAULT_SETTINGS
   );
   const [toggling, setToggling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleToggle(enabled: boolean) {
     const prev = settings;
     setSettings((s) => ({ ...s, isEnabled: enabled }));
     setToggling(true);
+    setError(null);
     try {
       const raw = await apiClient.patch<unknown>(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, {
         body: { isEnabled: enabled },
@@ -49,6 +51,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       setSettings(mcpSettingsResponseSchema.parse(raw));
     } catch {
       setSettings(prev);
+      setError('Failed to toggle MCP server. Please try again.');
     } finally {
       setToggling(false);
     }
@@ -148,6 +151,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
               not terminated but cannot make new requests.
             </FieldHelp>
           </div>
+          {error && <p className="text-destructive mt-2 text-sm">{error}</p>}
         </CardContent>
       </Card>
 

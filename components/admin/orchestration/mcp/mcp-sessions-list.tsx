@@ -45,14 +45,16 @@ function formatDuration(ms: number): string {
 export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
   const [sessions, setSessions] = useState(initialSessions);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleRefresh() {
     setRefreshing(true);
+    setError(null);
     try {
       const data = await apiClient.get<SessionRow[]>(API.ADMIN.ORCHESTRATION.MCP_SESSIONS);
       setSessions(data);
     } catch {
-      // silent
+      setError('Failed to refresh sessions.');
     } finally {
       setRefreshing(false);
     }
@@ -75,6 +77,7 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
           {sessions.length} active session{sessions.length !== 1 ? 's' : ''}
         </span>
       </div>
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <div className="rounded-md border">
         <Table>
