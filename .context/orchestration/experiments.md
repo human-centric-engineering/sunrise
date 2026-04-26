@@ -71,9 +71,12 @@ Rate limit: adminLimiter
 Body: { name?, description?, status? }   — at least one field required
 
 Status transitions are validated:
-  draft    → running, completed
-  running  → completed
+  draft    → completed   (cancel without running)
+  running  → completed   (stop)
   completed → (none — terminal state)
+
+Note: Running state is only reachable via `POST /run`, which creates
+evaluation sessions. PATCH cannot transition to "running".
 
 Invalid transitions return 400 VALIDATION_ERROR.
 
@@ -189,7 +192,7 @@ Completed experiments inline each variant's score under the name cell (`Variant 
 | -------- | ---------------------------- | ------------------------------------------------------------------------- |
 | Run      | Only for `status: 'draft'`   | `POST /experiments/:id/run` → refetch list                                |
 | Complete | Only for `status: 'running'` | `PATCH /experiments/:id` with `{ status: 'completed' }` → refetch list    |
-| Delete   | Always (except running)      | `DELETE /experiments/:id` → confirmation dialog → optimistic local remove |
+| Delete   | Draft and completed only     | `DELETE /experiments/:id` → confirmation dialog → optimistic local remove |
 
 All action buttons show a loading spinner and disable during the request to prevent double-clicks.
 
