@@ -30,24 +30,31 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
   const { id } = await params;
   const log = await getRouteLogger(request);
 
-  const experiment = await prisma.aiExperiment.findUnique({
+  // Quick 404 check before opening a transaction
+  const exists = await prisma.aiExperiment.findUnique({
     where: { id },
-    include: { variants: true },
+    select: { id: true },
   });
-  if (!experiment) throw new NotFoundError('Experiment not found');
-
-  if (experiment.status !== 'draft') {
-    throw new ValidationError(`Experiment is already ${experiment.status}`);
-  }
-
-  if (experiment.variants.length < 2) {
-    throw new ValidationError('Experiment needs at least 2 variants to run');
-  }
+  if (!exists) throw new NotFoundError('Experiment not found');
 
   const now = new Date();
 
-  // Create evaluation sessions and link them to variants in a single transaction
+  // All reads and writes inside the transaction to prevent TOCTOU races
   const updated = await prisma.$transaction(async (tx) => {
+    const experiment = await tx.aiExperiment.findUnique({
+      where: { id },
+      include: { variants: true },
+    });
+    if (!experiment) throw new NotFoundError('Experiment not found');
+
+    if (experiment.status !== 'draft') {
+      throw new ValidationError(`Experiment is already ${experiment.status}`);
+    }
+
+    if (experiment.variants.length < 2) {
+      throw new ValidationError('Experiment needs at least 2 variants to run');
+    }
+
     // Create one evaluation session per variant
     for (const variant of experiment.variants) {
       const evalSession = await tx.aiEvaluationSession.create({
@@ -83,14 +90,14 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
     action: 'experiment.run',
     entityType: 'experiment',
     entityId: id,
-    entityName: experiment.name,
-    metadata: { variantCount: experiment.variants.length },
+    entityName: updated.name,
+    metadata: { variantCount: updated.variants.length },
     clientIp: clientIP,
   });
 
   log.info('Experiment run started', {
     experimentId: id,
-    variantCount: experiment.variants.length,
+    variantCount: updated.variants.length,
   });
 
   return successResponse(updated);

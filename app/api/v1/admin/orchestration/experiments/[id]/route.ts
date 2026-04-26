@@ -22,7 +22,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 type Params = { id: string };
 
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  draft: ['running', 'completed'],
+  draft: ['completed'],
   running: ['completed'],
   completed: [],
 };

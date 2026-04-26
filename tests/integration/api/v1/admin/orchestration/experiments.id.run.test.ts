@@ -27,22 +27,25 @@ vi.mock('next/headers', () => ({
 
 const mockEvalSessionCreate = vi.fn();
 const mockVariantUpdate = vi.fn();
+const mockTxFindUnique = vi.fn();
+const mockTxUpdate = vi.fn();
 
 vi.mock('@/lib/db/client', () => {
   const experimentFindUnique = vi.fn();
-  const experimentUpdate = vi.fn();
 
   const txProxy = {
     aiEvaluationSession: { create: (...args: unknown[]) => mockEvalSessionCreate(...args) },
     aiExperimentVariant: { update: (...args: unknown[]) => mockVariantUpdate(...args) },
-    aiExperiment: { update: (...args: unknown[]) => experimentUpdate(...args) },
+    aiExperiment: {
+      findUnique: (...args: unknown[]) => mockTxFindUnique(...args),
+      update: (...args: unknown[]) => mockTxUpdate(...args),
+    },
   };
 
   return {
     prisma: {
       aiExperiment: {
         findUnique: experimentFindUnique,
-        update: experimentUpdate,
       },
       $transaction: vi.fn((cb: (tx: typeof txProxy) => Promise<unknown>) => cb(txProxy)),
     },
@@ -133,10 +136,11 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
-    vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
-      makeExperimentWithAgent({ status: 'running' }) as never
-    );
+    // Outer findUnique: 404 check (select: { id: true })
+    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+    // Inner tx findUnique: full experiment with variants
+    mockTxFindUnique.mockResolvedValue(makeExperiment() as never);
+    mockTxUpdate.mockResolvedValue(makeExperimentWithAgent({ status: 'running' }) as never);
     mockEvalSessionCreate.mockResolvedValue({ id: 'eval-session-1' });
     mockVariantUpdate.mockResolvedValue({});
   });
@@ -182,9 +186,7 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
   describe('Validation errors', () => {
     it('returns 400 when experiment is already running', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
-        makeExperiment({ status: 'running' }) as never
-      );
+      mockTxFindUnique.mockResolvedValue(makeExperiment({ status: 'running' }) as never);
 
       const response = await POST(makePostRequest(), makeContext());
 
@@ -195,9 +197,7 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
 
     it('returns 400 when experiment is already completed', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
-        makeExperiment({ status: 'completed' }) as never
-      );
+      mockTxFindUnique.mockResolvedValue(makeExperiment({ status: 'completed' }) as never);
 
       const response = await POST(makePostRequest(), makeContext());
 
@@ -206,7 +206,7 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
 
     it('returns 400 when experiment has fewer than 2 variants', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+      mockTxFindUnique.mockResolvedValue(
         makeExperiment({ variants: [{ id: 'v1', label: 'Control' }] }) as never
       );
 
@@ -228,12 +228,12 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
       expect(data.data.status).toBe('running');
     });
 
-    it('calls aiExperiment.update with status "running"', async () => {
+    it('calls tx.aiExperiment.update with status "running"', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
       await POST(makePostRequest(), makeContext());
 
-      expect(vi.mocked(prisma.aiExperiment.update)).toHaveBeenCalledWith(
+      expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: EXPERIMENT_ID },
           data: { status: 'running' },
