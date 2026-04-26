@@ -186,6 +186,8 @@ Chunks are written with `embedding: NULL` when no active embedding provider is c
 
 **Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive — the seed flow also calls it after inserting chunks. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when either `AiProviderConfig` has an active row **or** `OPENAI_API_KEY` is set in env, so the admin UI can disable the "Generate Embeddings" button until at least one is configured.
 
+**Provider priority:** `resolveProvider()` in `embedder.ts` selects the embedding provider in this order: (1) Voyage AI — best retrieval quality, free tier; (2) Local provider (e.g. Ollama) — cheaper/faster; (3) OpenAI-compatible with custom `baseUrl`; (4) OpenAI API directly via `OPENAI_API_KEY`. This chain is internal to the embedder — callers don't specify the provider.
+
 **Idempotency:** `/embed` only touches chunks with `NULL` embeddings, so it is safe to call repeatedly. A completed run is a cheap no-op.
 
 **UI pairing:** See [Knowledge Base UI — Seed & Embed](../admin/orchestration-knowledge-ui.md#seed--embed-two-step-flow) for the two-step "Load patterns → Generate embeddings" flow that consumes these endpoints.
