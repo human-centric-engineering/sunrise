@@ -6,6 +6,7 @@
  * automatic provider detection from AiProviderConfig.
  */
 
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
@@ -156,9 +157,10 @@ async function callEmbeddingApi(
     throw new Error(`Embedding API error (${response.status}): ${message}`);
   }
 
-  const result = (await response.json()) as {
-    data: Array<{ embedding: number[]; index: number }>;
-  };
+  const embeddingResponseSchema = z.object({
+    data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
+  });
+  const result = embeddingResponseSchema.parse(await response.json());
 
   // Sort by index to maintain input order
   return result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);

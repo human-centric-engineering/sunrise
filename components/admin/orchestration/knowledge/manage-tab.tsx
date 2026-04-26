@@ -305,9 +305,9 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           method: 'POST',
         });
         if (!res.ok) {
-          const body: unknown = await res.json().catch(() => null);
-          const parsed = body as { error?: { message?: string } } | null;
-          const msg = parsed?.error?.message ?? `Rechunk failed (${res.status})`;
+          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+          const msg =
+            (raw.success ? raw.data?.error?.message : null) ?? `Rechunk failed (${res.status})`;
           setRechunkError(msg);
           return;
         }
@@ -330,9 +330,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           method: 'DELETE',
         });
         if (!res.ok) {
-          const body: unknown = await res.json().catch(() => null);
-          const parsed = body as { error?: { message?: string } } | null;
-          setDeleteError(parsed?.error?.message ?? `Delete failed (${res.status})`);
+          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+          setDeleteError(
+            (raw.success ? raw.data?.error?.message : null) ?? `Delete failed (${res.status})`
+          );
           return;
         }
         onRefresh();

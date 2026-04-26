@@ -92,9 +92,10 @@ export function ErrorsTab({ scope }: ErrorsTabProps) {
         method: 'POST',
       });
       if (!res.ok) {
-        const body: unknown = await res.json().catch(() => null);
-        const parsed = body as { error?: { message?: string } } | null;
-        setRetryError(parsed?.error?.message ?? `Retry failed (${res.status})`);
+        const raw = apiResponseSchema.safeParse(await res.json().catch(() => null));
+        setRetryError(
+          (raw.success ? raw.data?.error?.message : null) ?? `Retry failed (${res.status})`
+        );
         return;
       }
       setDocuments((prev) => prev.filter((d) => d.id !== docId));

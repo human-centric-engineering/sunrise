@@ -8,6 +8,7 @@
 
 import { createHash } from 'crypto';
 import { extname } from 'path';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { executeTransaction } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
@@ -20,6 +21,27 @@ import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
+
+/** Schema for document metadata stored as Prisma JSON field */
+const documentMetadataSchema = z
+  .object({
+    rawContent: z.string().optional(),
+    extractedText: z.string().optional(),
+    parsedTitle: z.string().nullable().optional(),
+    parsedAuthor: z.string().nullable().optional(),
+    sectionCount: z.number().nullable().optional(),
+    warnings: z.array(z.string()).optional(),
+    format: z.string().optional(),
+    corrected: z.boolean().optional(),
+  })
+  .passthrough()
+  .nullable();
+
+/** Safely parse document metadata from Prisma JSON field */
+function parseDocumentMetadata(raw: unknown) {
+  const result = documentMetadataSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
 
 /** Transaction client type used by insertChunks */
 type TxClient = Parameters<Parameters<typeof executeTransaction>[0]>[0];
@@ -338,8 +360,8 @@ export async function confirmPreview(
     );
   }
 
-  const metadata = document.metadata as Record<string, unknown> | null;
-  const extractedText = metadata?.extractedText as string | undefined;
+  const metadata = parseDocumentMetadata(document.metadata);
+  const extractedText = metadata?.extractedText;
   const content = correctedContent || extractedText || '';
 
   if (!content.trim()) {
@@ -390,10 +412,10 @@ export async function confirmPreview(
           metadata: {
             format: extname(document.fileName).toLowerCase(),
             rawContent: content,
-            parsedTitle: (metadata?.parsedTitle as string) ?? null,
-            parsedAuthor: (metadata?.parsedAuthor as string) ?? null,
-            sectionCount: (metadata?.sectionCount as number) ?? null,
-            warnings: (metadata?.warnings as string[]) ?? [],
+            parsedTitle: metadata?.parsedTitle ?? null,
+            parsedAuthor: metadata?.parsedAuthor ?? null,
+            sectionCount: metadata?.sectionCount ?? null,
+            warnings: metadata?.warnings ?? [],
             corrected: !!correctedContent,
           },
         },
@@ -462,11 +484,10 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
   }
 
   // Prefer stored original content; fall back to lossy chunk reconstruction
-  const meta = document.metadata as Record<string, unknown> | null;
-  const content =
-    typeof meta?.rawContent === 'string' && meta.rawContent.trim()
-      ? meta.rawContent
-      : document.chunks.map((c) => c.content).join('\n\n---\n\n');
+  const meta = parseDocumentMetadata(document.metadata);
+  const content = meta?.rawContent?.trim()
+    ? meta.rawContent
+    : document.chunks.map((c) => c.content).join('\n\n---\n\n');
 
   // Set status to processing
   await prisma.aiKnowledgeDocument.update({
