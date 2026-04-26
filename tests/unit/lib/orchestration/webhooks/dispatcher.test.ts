@@ -260,6 +260,7 @@ describe('retryDelivery', () => {
 
     const result = await retryDelivery('del-1');
 
+    // test-review:accept tobe_true — boolean return from retryDelivery; structural assertion on retry outcome
     expect(result).toBe(true);
     expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
       expect.objectContaining({

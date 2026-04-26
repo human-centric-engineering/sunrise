@@ -94,6 +94,7 @@ describe('backupSchema', () => {
       },
     });
 
+    // test-review:accept empty_not_throw — Zod parse-success contract; parse not throwing IS the test
     expect(() => backupSchema.parse(payload)).not.toThrow();
   });
 
