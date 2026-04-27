@@ -23,9 +23,11 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { apiLimiter, apiKeyChatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
+import { slugSchema } from '@/lib/validations/common';
 
 const SYSTEM_USER_ID = 'webhook-trigger';
 
+const triggerSlugSchema = slugSchema.pipe(z.string().max(100));
 const webhookInputSchema = z.record(z.string(), z.unknown());
 
 export async function POST(
@@ -60,8 +62,8 @@ export async function POST(
 
   const { slug } = await params;
 
-  if (!slug || slug.trim().length === 0) {
-    return errorResponse('Missing workflow slug', {
+  if (!triggerSlugSchema.safeParse(slug).success) {
+    return errorResponse('Invalid workflow slug format', {
       code: 'VALIDATION_ERROR',
       status: 400,
     });
