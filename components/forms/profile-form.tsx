@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { FieldHelp } from '@/components/ui/field-help';
 import { FormError } from '@/components/forms/form-error';
 import { getTimezonesByRegion, getTimezoneRegions } from '@/lib/utils/timezones';
 
@@ -159,7 +160,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       {/* Bio */}
       <div className="space-y-2">
-        <Label htmlFor="bio">Bio</Label>
+        <Label htmlFor="bio" className="flex items-center gap-1">
+          Bio
+          <FieldHelp title="Public bio">
+            A short description visible on your profile. Max 500 characters.
+          </FieldHelp>
+        </Label>
         <Textarea
           id="bio"
           placeholder="Tell us about yourself..."
@@ -175,7 +181,13 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       {/* Phone */}
       <div className="space-y-2">
-        <Label htmlFor="phone">Phone</Label>
+        <Label htmlFor="phone" className="flex items-center gap-1">
+          Phone
+          <FieldHelp title="Phone number">
+            Optional contact number. Only visible to administrators. Accepts international formats
+            with +, digits, spaces, dashes, and parentheses.
+          </FieldHelp>
+        </Label>
         <Input
           id="phone"
           type="tel"
@@ -188,7 +200,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       {/* Timezone */}
       <div className="space-y-2">
-        <Label htmlFor="timezone">Timezone</Label>
+        <Label htmlFor="timezone" className="flex items-center gap-1">
+          Timezone
+          <FieldHelp title="Your timezone">
+            Used for displaying dates and scheduling notifications in your local time.
+          </FieldHelp>
+        </Label>
         <Select
           value={currentTimezone || 'UTC'}
           onValueChange={(value) => setValue('timezone', value)}
@@ -219,7 +236,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       {/* Location */}
       <div className="space-y-2">
-        <Label htmlFor="location">Location</Label>
+        <Label htmlFor="location" className="flex items-center gap-1">
+          Location
+          <FieldHelp title="Location">
+            Free-form location (e.g. &ldquo;London, UK&rdquo;). Visible on your profile.
+          </FieldHelp>
+        </Label>
         <Input
           id="location"
           placeholder="City, Country"
