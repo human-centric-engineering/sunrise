@@ -32,6 +32,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     mcpServerConfig: {
+      findUnique: vi.fn(),
       upsert: vi.fn(),
     },
   },
@@ -55,6 +56,11 @@ vi.mock('@/lib/api/context', () => ({
 vi.mock('@/lib/orchestration/mcp', () => ({
   getMcpServerConfig: vi.fn(),
   invalidateMcpConfigCache: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(() => ({})),
 }));
 
 // ─── Imports ─────────────────────────────────────────────────────────────────
