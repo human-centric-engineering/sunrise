@@ -152,8 +152,10 @@ if (isEdit) {
   // The UPDATE schema accepts .nullable().optional() for these fields.
   payload.baseUrl = baseUrl ?? null;
   payload.apiKeyEnvVar = apiKeyEnvVar ?? null;
-  payload.timeoutMs = isFiniteNumber(data.timeoutMs) ? data.timeoutMs : null;
-  payload.maxRetries = isFiniteNumber(data.maxRetries) ? data.maxRetries : null;
+  payload.timeoutMs =
+    typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs) ? data.timeoutMs : null;
+  payload.maxRetries =
+    typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries) ? data.maxRetries : null;
 
   const updated = await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(provider.id), {
     body: payload,
@@ -165,8 +167,10 @@ if (isEdit) {
   // The CREATE schema uses .optional() without .nullable() — null would fail validation.
   if (baseUrl) payload.baseUrl = baseUrl;
   if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
-  if (isFiniteNumber(data.timeoutMs)) payload.timeoutMs = data.timeoutMs;
-  if (isFiniteNumber(data.maxRetries)) payload.maxRetries = data.maxRetries;
+  if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
+    payload.timeoutMs = data.timeoutMs;
+  if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
+    payload.maxRetries = data.maxRetries;
 
   const created = await apiClient.post(API.ADMIN.ORCHESTRATION.PROVIDERS, { body: payload });
   router.push(`/admin/orchestration/providers/${created.id}`);
