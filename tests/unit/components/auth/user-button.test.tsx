@@ -365,7 +365,7 @@ describe('components/auth/user-button', () => {
       await user.click(signOutButton);
 
       // Verify signOut was called (the loading state is internal)
-      expect(mockSignOut).toHaveBeenCalled();
+      expect(mockSignOut).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
 
       // Clean up - resolve the promise
       resolveSignOut!();

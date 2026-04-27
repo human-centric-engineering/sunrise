@@ -198,7 +198,7 @@ describe('GET /api/v1/admin/feature-flags/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag }>(response);
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data.name).toBe('TEST_FLAG');
     });
 
@@ -276,8 +276,8 @@ describe('PATCH /api/v1/admin/feature-flags/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag }>(response);
-      expect(data.success).toBe(true);
-      expect(data.data.enabled).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(data.data.enabled).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should update flag description', async () => {
@@ -325,7 +325,7 @@ describe('PATCH /api/v1/admin/feature-flags/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag }>(response);
-      expect(data.data.enabled).toBe(true);
+      expect(data.data.enabled).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data.description).toBe('New description');
     });
   });
@@ -429,9 +429,9 @@ describe('DELETE /api/v1/admin/feature-flags/[id]', () => {
         success: boolean;
         data: { id: string; deleted: boolean };
       }>(response);
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data.id).toBe(TEST_FLAG_ID);
-      expect(data.data.deleted).toBe(true);
+      expect(data.data.deleted).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 

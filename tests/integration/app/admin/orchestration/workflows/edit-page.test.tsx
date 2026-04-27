@@ -160,7 +160,7 @@ describe('EditWorkflowPage (server component)', () => {
     render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
 
     expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
-    expect(notFoundMock).not.toHaveBeenCalled();
+    expect(notFoundMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('calls notFound when serverFetch returns ok=false for the workflow', async () => {
@@ -258,7 +258,7 @@ describe('EditWorkflowPage (server component)', () => {
     const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
     const body = options?.body as Record<string, unknown>;
     const def = body.workflowDefinition as { steps: Array<{ id: string; type: string }> };
-    expect(Array.isArray(def.steps)).toBe(true);
+    expect(Array.isArray(def.steps)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     expect(def.steps).toHaveLength(2);
   });
 });

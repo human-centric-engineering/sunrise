@@ -502,7 +502,7 @@ describe('components/forms/password-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
       });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should display error message for incorrect current password', async () => {

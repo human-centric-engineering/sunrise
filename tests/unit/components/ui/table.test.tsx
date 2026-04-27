@@ -171,7 +171,7 @@ describe('components/ui/table', () => {
 
         // Assert: Should have correct properties
         expect(tagName).toBe('TABLE');
-        expect(hasClass).toBe(true);
+        expect(hasClass).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 

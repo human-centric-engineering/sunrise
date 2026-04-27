@@ -180,7 +180,7 @@ describe('GET /api/v1/admin/invitations', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data).toHaveLength(2);
       expect(body.data[0]).toMatchObject({
         email: 'alice@example.com',
@@ -309,7 +309,7 @@ describe('GET /api/v1/admin/invitations', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data).toHaveLength(0);
       expect(body.meta.total).toBe(0);
     });
@@ -353,7 +353,7 @@ describe('GET /api/v1/admin/invitations', () => {
       expect(response.status).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(getAllPendingInvitations).not.toHaveBeenCalled();
+      expect(getAllPendingInvitations).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when user is not admin', async () => {
@@ -371,7 +371,7 @@ describe('GET /api/v1/admin/invitations', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
       expect(body.error.message).toBe('Admin access required');
-      expect(getAllPendingInvitations).not.toHaveBeenCalled();
+      expect(getAllPendingInvitations).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -526,7 +526,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.message).toBe('Invitation for alice@example.com has been deleted');
 
       // Assert: Should check if invitation exists
@@ -595,8 +595,8 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(response.status).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(getValidInvitation).not.toHaveBeenCalled();
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
+      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when user is not admin', async () => {
@@ -615,8 +615,8 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
       expect(body.error.message).toBe('Admin access required');
-      expect(getValidInvitation).not.toHaveBeenCalled();
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
+      expect(getValidInvitation).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -642,7 +642,7 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       expect(body.error.message).toBe('Invitation not found or already expired');
 
       // Assert: Should not attempt deletion
-      expect(deleteInvitationToken).not.toHaveBeenCalled();
+      expect(deleteInvitationToken).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 when invitation has expired', async () => {

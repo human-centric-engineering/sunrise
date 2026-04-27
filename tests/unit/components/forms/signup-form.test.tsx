@@ -702,8 +702,8 @@ describe('components/forms/signup-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalled();
-        expect(mockTrack).toHaveBeenCalled();
+        expect(mockIdentify).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+        expect(mockTrack).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       // Verify call order: identifyUser should be called before trackSignup
@@ -748,7 +748,7 @@ describe('components/forms/signup-form', () => {
       });
 
       // identifyUser should NOT be called when no session exists
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });

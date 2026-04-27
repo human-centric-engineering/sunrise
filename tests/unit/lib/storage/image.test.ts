@@ -39,7 +39,7 @@ describe('lib/storage/image', () => {
 
       const result = validateImageMagicBytes(jpegBuffer);
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.detectedType).toBe('image/jpeg');
     });
 
@@ -51,7 +51,7 @@ describe('lib/storage/image', () => {
 
       const result = validateImageMagicBytes(pngBuffer);
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.detectedType).toBe('image/png');
     });
 
@@ -63,7 +63,7 @@ describe('lib/storage/image', () => {
 
       const result = validateImageMagicBytes(gifBuffer);
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.detectedType).toBe('image/gif');
     });
 
@@ -75,7 +75,7 @@ describe('lib/storage/image', () => {
 
       const result = validateImageMagicBytes(gifBuffer);
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.detectedType).toBe('image/gif');
     });
 
@@ -89,7 +89,7 @@ describe('lib/storage/image', () => {
 
       const result = validateImageMagicBytes(webpBuffer);
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.detectedType).toBe('image/webp');
     });
 
@@ -182,10 +182,10 @@ describe('lib/storage/image', () => {
     it('should return true for supported types', async () => {
       const { isSupportedImageType } = await import('@/lib/storage/image');
 
-      expect(isSupportedImageType('image/jpeg')).toBe(true);
-      expect(isSupportedImageType('image/png')).toBe(true);
-      expect(isSupportedImageType('image/webp')).toBe(true);
-      expect(isSupportedImageType('image/gif')).toBe(true);
+      expect(isSupportedImageType('image/jpeg')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(isSupportedImageType('image/png')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(isSupportedImageType('image/webp')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(isSupportedImageType('image/gif')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false for unsupported types', async () => {
@@ -266,7 +266,7 @@ describe('lib/storage/image', () => {
       const result = await processImage(webpBuffer);
 
       expect(result.mimeType).toBe('image/webp');
-      expect(mockSharpInstance.webp).toHaveBeenCalled();
+      expect(mockSharpInstance.webp).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should convert GIF to PNG when no format specified', async () => {

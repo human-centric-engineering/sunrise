@@ -192,7 +192,7 @@ describe('McpAuditPage', () => {
     // Assert
     const auditLog = screen.getByTestId('mcp-audit-log');
     expect(auditLog).toHaveAttribute('data-count', '0');
-    expect(parseApiResponse).not.toHaveBeenCalled();
+    expect(parseApiResponse).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // Test 10: When parseApiResponse returns { success: false }, renders empty array

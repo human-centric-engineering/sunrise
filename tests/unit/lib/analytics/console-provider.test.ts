@@ -44,8 +44,8 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('init');
@@ -59,7 +59,7 @@ describe('lib/analytics/providers/console', () => {
         mockConsoleLog.mockClear();
         await provider.init();
 
-        expect(mockConsoleLog).not.toHaveBeenCalled();
+        expect(mockConsoleLog).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should set ready flag to true', async () => {
@@ -67,7 +67,7 @@ describe('lib/analytics/providers/console', () => {
 
         expect(provider.isReady()).toBe(false);
         await provider.init();
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -81,7 +81,7 @@ describe('lib/analytics/providers/console', () => {
 
         expect(result).toEqual({ success: true });
         // Verify console.log was called with the correct number of arguments
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('identify');
@@ -104,7 +104,7 @@ describe('lib/analytics/providers/console', () => {
 
         expect(result).toEqual({ success: true });
         // Verify console.log was called
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('identify');
@@ -124,7 +124,7 @@ describe('lib/analytics/providers/console', () => {
         mockConsoleLog.mockClear();
         await provider.track('test_event');
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[5]).toBe('test_event');
         expect(call[6]).toMatchObject({
@@ -142,7 +142,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.track('button_clicked');
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('track');
@@ -164,7 +164,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.track('button_clicked', properties);
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('track');
@@ -186,7 +186,7 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.track('button_clicked');
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[5]).toBe('button_clicked');
         expect(call[6]).toMatchObject({ _userId: 'user-123' });
@@ -202,7 +202,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.page();
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('page');
@@ -217,7 +217,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.page('Dashboard');
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('page');
@@ -240,7 +240,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.page('Dashboard', properties);
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('page');
@@ -263,7 +263,7 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.page('Dashboard');
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[5]).toBe('Dashboard');
         expect(call[6]).toMatchObject({ _userId: 'user-123' });
@@ -281,7 +281,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('reset');
@@ -298,7 +298,7 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.track('button_clicked');
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[5]).toBe('button_clicked');
         expect(call[6]).toMatchObject({ _userId: null });
@@ -312,7 +312,7 @@ describe('lib/analytics/providers/console', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[Analytics]');
         expect(call[0]).toContain('reset');
@@ -332,7 +332,7 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -357,14 +357,14 @@ describe('lib/analytics/providers/console', () => {
         const provider = new ConsoleProvider({ debug: true });
         await provider.init();
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       it('should not log when debug is disabled', async () => {
         const provider = new ConsoleProvider({ debug: false });
         await provider.init();
 
-        expect(mockConsoleLog).not.toHaveBeenCalled();
+        expect(mockConsoleLog).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should not log track events when debug is disabled', async () => {
@@ -374,7 +374,7 @@ describe('lib/analytics/providers/console', () => {
 
         await provider.track('test_event');
 
-        expect(mockConsoleLog).not.toHaveBeenCalled();
+        expect(mockConsoleLog).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -383,7 +383,7 @@ describe('lib/analytics/providers/console', () => {
         const provider = new ConsoleProvider({ prefix: '[CustomAnalytics]' });
         await provider.init();
 
-        expect(mockConsoleLog).toHaveBeenCalled();
+        expect(mockConsoleLog).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
         const call = mockConsoleLog.mock.calls[0];
         expect(call[0]).toContain('[CustomAnalytics]');
       });

@@ -283,7 +283,7 @@ describe('McpDashboardPage', () => {
     expect(dashboard).toHaveAttribute('data-resources', '0');
     expect(dashboard).toHaveAttribute('data-keys', '0');
     // getStats outer catch does NOT log; settings succeeded so no logger.error either
-    expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // 11. Full failure: settings throws AND all stat fetches throw

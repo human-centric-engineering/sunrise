@@ -62,7 +62,7 @@ describe('lib/analytics/config', () => {
   describe('isBrowser', () => {
     it('should return true when window is defined', () => {
       // In vitest environment, window is defined
-      expect(isBrowser()).toBe(true);
+      expect(isBrowser()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -70,7 +70,7 @@ describe('lib/analytics/config', () => {
     it('should return true when NODE_ENV is development', () => {
       vi.stubEnv('NODE_ENV', 'development');
 
-      expect(isDevelopment()).toBe(true);
+      expect(isDevelopment()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when NODE_ENV is production', () => {
@@ -141,7 +141,7 @@ describe('lib/analytics/config', () => {
       it('should return true when GA4 measurement ID is set', () => {
         vi.stubEnv('NEXT_PUBLIC_GA4_MEASUREMENT_ID', 'G-XXXXXXXXXX');
 
-        expect(isGA4Configured()).toBe(true);
+        expect(isGA4Configured()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should return false when GA4 measurement ID is not set', () => {
@@ -162,7 +162,7 @@ describe('lib/analytics/config', () => {
         expect(config).toBeTruthy();
         expect(config?.measurementId).toBe('G-XXXXXXXXXX');
         // API secret can be undefined or empty string depending on environment
-        expect(config?.apiSecret === undefined || config?.apiSecret === '').toBe(true);
+        expect(config?.apiSecret === undefined || config?.apiSecret === '').toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should return config with measurement ID and API secret', () => {
@@ -190,7 +190,7 @@ describe('lib/analytics/config', () => {
       it('should return true when PostHog key is set', () => {
         vi.stubEnv('NEXT_PUBLIC_POSTHOG_KEY', 'phc_xxxxxxxxxx');
 
-        expect(isPostHogConfigured()).toBe(true);
+        expect(isPostHogConfigured()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should return false when PostHog key is not set', () => {
@@ -238,7 +238,7 @@ describe('lib/analytics/config', () => {
       it('should return true when Plausible domain is set', () => {
         vi.stubEnv('NEXT_PUBLIC_PLAUSIBLE_DOMAIN', 'example.com');
 
-        expect(isPlausibleConfigured()).toBe(true);
+        expect(isPlausibleConfigured()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should return false when Plausible domain is not set', () => {
@@ -357,7 +357,7 @@ describe('lib/analytics/config', () => {
       vi.stubEnv('NODE_ENV', 'development');
       vi.stubEnv('NEXT_PUBLIC_ANALYTICS_PROVIDER', '');
 
-      expect(isAnalyticsEnabled()).toBe(true);
+      expect(isAnalyticsEnabled()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when no provider is detected', () => {

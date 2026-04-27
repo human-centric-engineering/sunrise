@@ -66,7 +66,7 @@ describe('lib/email/send', () => {
 
       const result: SendEmailResult = await sendEmail(options);
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.id).toBe('email-123');
       expect(render).toHaveBeenCalledWith(options.react);
       expect(mockSend).toHaveBeenCalledWith({
@@ -104,7 +104,7 @@ describe('lib/email/send', () => {
 
       const result: SendEmailResult = await sendEmail(options);
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(mockSend).toHaveBeenCalledWith(
         expect.objectContaining({
           to: ['user1@example.com', 'user2@example.com'],
@@ -242,7 +242,7 @@ describe('lib/email/send', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Resend client not available');
-      expect(logger.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
   });
 
@@ -263,7 +263,7 @@ describe('lib/email/send', () => {
 
       const result: SendEmailResult = await sendEmail(options);
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.id).toMatch(/^mock-\d+$/);
       expect(logger.debug).toHaveBeenCalledWith(
         expect.stringContaining('returning mock success in development'),
@@ -287,7 +287,7 @@ describe('lib/email/send', () => {
 
       const result: SendEmailResult = await sendEmail(options);
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.id).toMatch(/^mock-test-\d+$/);
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('returning mock success in test environment'),

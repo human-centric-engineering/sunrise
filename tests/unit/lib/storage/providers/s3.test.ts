@@ -321,7 +321,7 @@ describe('lib/storage/providers/s3', () => {
 
         const result = await provider.deletePrefix('avatars/user-999/');
 
-        expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+        expect(DeleteObjectsCommand).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         expect(result).toEqual({ success: true, key: 'avatars/user-999/' });
         expect(logger.debug).toHaveBeenCalledWith('No objects found for prefix', {
           prefix: 'avatars/user-999/',

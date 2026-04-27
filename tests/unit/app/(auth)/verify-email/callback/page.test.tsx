@@ -270,7 +270,7 @@ describe('VerifyCallbackClientContent', () => {
         });
 
         // Assert: Router replace is NOT called
-        expect(mockRouter.replace).not.toHaveBeenCalled();
+        expect(mockRouter.replace).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -784,7 +784,7 @@ describe('VerifyCallbackClientContent', () => {
       });
 
       // Assert: Router replace is NOT called
-      expect(mockRouter.replace).not.toHaveBeenCalled();
+      expect(mockRouter.replace).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });

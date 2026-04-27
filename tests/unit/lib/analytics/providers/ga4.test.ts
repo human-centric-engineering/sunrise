@@ -71,7 +71,7 @@ describe('lib/analytics/providers/ga4', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(mockGtag).toHaveBeenCalledWith('js', expect.any(Date));
         expect(mockGtag).toHaveBeenCalledWith('config', 'G-TEST123', {
           send_page_view: false,
@@ -97,7 +97,7 @@ describe('lib/analytics/providers/ga4', () => {
         mockGtag.mockClear();
         await provider.init();
 
-        expect(mockGtag).not.toHaveBeenCalled();
+        expect(mockGtag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should set ready flag to true', async () => {
@@ -105,7 +105,7 @@ describe('lib/analytics/providers/ga4', () => {
 
         expect(provider.isReady()).toBe(false);
         await provider.init();
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should disable automatic page view tracking', async () => {
@@ -128,7 +128,7 @@ describe('lib/analytics/providers/ga4', () => {
         const result = await provider.identify('user-123');
 
         expect(result).toEqual({ success: false, error: 'GA4 not initialized' });
-        expect(mockGtag).not.toHaveBeenCalled();
+        expect(mockGtag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should set user ID via gtag config', async () => {
@@ -195,7 +195,7 @@ describe('lib/analytics/providers/ga4', () => {
         const result = await provider.track('button_clicked');
 
         expect(result).toEqual({ success: false, error: 'GA4 not initialized' });
-        expect(mockGtag).not.toHaveBeenCalled();
+        expect(mockGtag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track event without properties', async () => {
@@ -318,7 +318,7 @@ describe('lib/analytics/providers/ga4', () => {
         const result = await provider.page();
 
         expect(result).toEqual({ success: false, error: 'GA4 not initialized' });
-        expect(mockGtag).not.toHaveBeenCalled();
+        expect(mockGtag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track page view with default values', async () => {
@@ -398,7 +398,7 @@ describe('lib/analytics/providers/ga4', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: false, error: 'GA4 not initialized' });
-        expect(mockGtag).not.toHaveBeenCalled();
+        expect(mockGtag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should clear user ID', async () => {
@@ -469,7 +469,7 @@ describe('lib/analytics/providers/ga4', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 

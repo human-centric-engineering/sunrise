@@ -296,7 +296,7 @@ describe('app/global-error', () => {
       await user.click(goHomeButton);
 
       // Assert
-      expect(mockReset).not.toHaveBeenCalled();
+      expect(mockReset).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -480,8 +480,8 @@ describe('app/global-error', () => {
       // Assert: Should still render and log
       expect(screen.getByText('Application Error')).toBeInTheDocument();
       await waitFor(() => {
-        expect(logger.error).toHaveBeenCalled();
-        expect(trackError).toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+        expect(trackError).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 

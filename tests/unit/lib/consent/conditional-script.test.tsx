@@ -181,7 +181,7 @@ describe('lib/consent/conditional-script', () => {
         </ConsentProvider>
       );
 
-      expect(mockFn).not.toHaveBeenCalled();
+      expect(mockFn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should call function children on re-render with consent', async () => {
@@ -211,7 +211,7 @@ describe('lib/consent/conditional-script', () => {
       );
 
       await waitFor(() => {
-        expect(mockFn).toHaveBeenCalled();
+        expect(mockFn).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });
@@ -375,7 +375,7 @@ describe('lib/consent/conditional-script', () => {
         </ConsentProvider>
       );
 
-      expect(onConsentChange).toHaveBeenCalled();
+      expect(onConsentChange).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should be called when consent changes from false to true', async () => {

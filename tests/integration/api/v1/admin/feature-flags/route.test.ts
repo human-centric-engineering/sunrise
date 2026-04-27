@@ -159,7 +159,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag[] }>(response);
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data).toHaveLength(2);
       expect(data.data[0].name).toBe('MAINTENANCE_MODE');
       expect(data.data[1].name).toBe('BETA_FEATURES');
@@ -176,7 +176,7 @@ describe('GET /api/v1/admin/feature-flags', () => {
       // Assert
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag[] }>(response);
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data).toHaveLength(0);
     });
   });
@@ -238,9 +238,9 @@ describe('POST /api/v1/admin/feature-flags', () => {
       // Assert
       expect(response.status).toBe(201);
       const data = await parseResponse<{ success: boolean; data: FeatureFlag }>(response);
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data.name).toBe('NEW_FEATURE');
-      expect(data.data.enabled).toBe(true);
+      expect(data.data.enabled).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should create flag with defaults when only name provided', async () => {

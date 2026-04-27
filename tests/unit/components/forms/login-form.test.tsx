@@ -819,8 +819,8 @@ describe('components/forms/login-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockIdentify).toHaveBeenCalled();
-        expect(mockTrack).toHaveBeenCalled();
+        expect(mockIdentify).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+        expect(mockTrack).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       // Verify identify was called before track using invocationCallOrder

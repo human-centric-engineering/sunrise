@@ -194,7 +194,7 @@ describe('components/ui/separator', () => {
 
       // Assert: Should have correct properties
       expect(tagName).toBe('DIV');
-      expect(hasClass).toBe(true);
+      expect(hasClass).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 

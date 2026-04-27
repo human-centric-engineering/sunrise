@@ -172,7 +172,7 @@ describe('lib/storage/client', () => {
       resetStorageClient();
       const result = isStorageEnabled();
 
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when storage is not configured', async () => {

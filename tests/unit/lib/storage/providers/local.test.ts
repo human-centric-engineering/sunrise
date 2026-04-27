@@ -94,7 +94,7 @@ describe('lib/storage/providers/local', () => {
           contentType: 'image/jpeg',
         });
 
-        expect(mkdir).not.toHaveBeenCalled();
+        expect(mkdir).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should return correct file size', async () => {
@@ -137,7 +137,7 @@ describe('lib/storage/providers/local', () => {
 
         const result = await provider.delete('nonexistent.jpg');
 
-        expect(unlink).not.toHaveBeenCalled();
+        expect(unlink).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         expect(result).toEqual({ success: true, key: 'nonexistent.jpg' });
       });
 
@@ -184,7 +184,7 @@ describe('lib/storage/providers/local', () => {
 
         const result = await provider.deletePrefix('avatars/user-999/');
 
-        expect(rm).not.toHaveBeenCalled();
+        expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         expect(result).toEqual({ success: true, key: 'avatars/user-999/' });
         expect(logger.debug).toHaveBeenCalledWith(
           'Directory not found for deletion',

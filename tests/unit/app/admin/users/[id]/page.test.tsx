@@ -190,7 +190,7 @@ describe('AdminUserProfilePage', () => {
 
       // Act & Assert
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should fetch user data when session exists', async () => {
@@ -227,7 +227,7 @@ describe('AdminUserProfilePage', () => {
 
       // Act & Assert
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should call notFound when API returns success: false', async () => {
@@ -244,7 +244,7 @@ describe('AdminUserProfilePage', () => {
 
       // Act & Assert
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should call notFound when fetch throws', async () => {
@@ -254,7 +254,7 @@ describe('AdminUserProfilePage', () => {
 
       // Act & Assert
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled();
+      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
   });
 

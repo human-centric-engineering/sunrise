@@ -391,7 +391,7 @@ describe('components/ui/dropdown-menu', () => {
       await user.click(screen.getByText('Clickable'));
 
       // Assert: onClick should be called
-      expect(onClick).toHaveBeenCalled();
+      expect(onClick).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should forward ref to checkbox item element', () => {
@@ -562,7 +562,7 @@ describe('components/ui/dropdown-menu', () => {
       await user.click(screen.getByText('Select Me'));
 
       // Assert: onSelect should be called
-      expect(onSelect).toHaveBeenCalled();
+      expect(onSelect).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should forward ref to radio item element', () => {

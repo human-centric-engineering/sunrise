@@ -239,7 +239,7 @@ describe('EditProviderModelPage (server component)', () => {
         searchParams: Promise.resolve({}),
       })
     ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled();
+    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
   });
 
   it('calls notFound() when serverFetch rejects', async () => {
@@ -255,7 +255,7 @@ describe('EditProviderModelPage (server component)', () => {
         searchParams: Promise.resolve({}),
       })
     ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled();
+    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
   });
 
   it('calls notFound() when serverFetch returns not ok', async () => {
@@ -271,6 +271,6 @@ describe('EditProviderModelPage (server component)', () => {
         searchParams: Promise.resolve({}),
       })
     ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled();
+    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
   });
 });

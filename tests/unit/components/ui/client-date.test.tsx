@@ -132,7 +132,7 @@ describe('components/ui/client-date', () => {
         // Using a more flexible regex to match time in various formats
         const text = span?.textContent || '';
         const hasTime = /\d{1,2}:\d{2}/.test(text) || /\d{1,2}\s?[AP]M/i.test(text);
-        expect(hasTime).toBe(true);
+        expect(hasTime).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 

@@ -484,7 +484,7 @@ describe('components/forms/profile-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
       });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should NOT track analytics on profile update failure', async () => {
@@ -510,7 +510,7 @@ describe('components/forms/profile-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/email already in use/i)).toBeInTheDocument();
       });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should refresh router on successful update', async () => {
@@ -533,7 +533,7 @@ describe('components/forms/profile-form', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockRouter.refresh).toHaveBeenCalled();
+        expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 

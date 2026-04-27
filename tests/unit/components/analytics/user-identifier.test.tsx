@@ -125,8 +125,8 @@ describe('components/analytics/user-identifier', () => {
       });
 
       // Assert: Should NOT call identify or page
-      expect(mockIdentify).not.toHaveBeenCalled();
-      expect(mockPage).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should not track when session is still loading', () => {
@@ -147,8 +147,8 @@ describe('components/analytics/user-identifier', () => {
       render(<UserIdentifier />);
 
       // Assert: Should NOT call identify or page
-      expect(mockIdentify).not.toHaveBeenCalled();
-      expect(mockPage).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should track when both analytics is ready and session finished loading', async () => {
@@ -173,7 +173,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -201,7 +201,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should track page with correct parameters', async () => {
@@ -354,7 +354,7 @@ describe('components/analytics/user-identifier', () => {
       });
 
       // Assert: track was NOT called (no pending OAuth login)
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should track page with correct parameters after identify', async () => {
@@ -408,7 +408,7 @@ describe('components/analytics/user-identifier', () => {
 
       // Assert: Should still only be called once
       expect(mockPage).toHaveBeenCalledTimes(1);
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should only track once per page load (with user)', async () => {
@@ -711,7 +711,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle null user ID gracefully', async () => {
@@ -729,7 +729,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle identify promise rejection gracefully', async () => {
@@ -762,7 +762,7 @@ describe('components/analytics/user-identifier', () => {
       expect(mockIdentify).toHaveBeenCalledWith('user-123');
 
       // Assert: page was NOT called — identify rejected before await page() could run
-      expect(mockPage).not.toHaveBeenCalled();
+      expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle page promise rejection gracefully', async () => {
@@ -835,7 +835,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should NOT call page() when sessionStorage.getItem throws', async () => {
@@ -872,7 +872,7 @@ describe('components/analytics/user-identifier', () => {
       });
 
       // Assert: page did NOT fire — the throw aborted initialize() before reaching page()
-      expect(mockPage).not.toHaveBeenCalled();
+      expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Restore the original getItem
       Object.defineProperty(sessionStorage, 'getItem', {
@@ -1036,7 +1036,7 @@ describe('components/analytics/user-identifier', () => {
         expect(mockPage).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       // Marker is left in storage (block was never entered)
       expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');
     });
@@ -1197,7 +1197,7 @@ describe('components/analytics/user-identifier', () => {
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockTrack).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should NOT call track when marker is empty string', async () => {
@@ -1218,7 +1218,7 @@ describe('components/analytics/user-identifier', () => {
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockTrack).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should only call identify and page in sequence', async () => {
@@ -1248,7 +1248,7 @@ describe('components/analytics/user-identifier', () => {
           expect(callOrder).toEqual(['identify', 'page']);
         });
 
-        expect(mockTrack).not.toHaveBeenCalled();
+        expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -1270,8 +1270,8 @@ describe('components/analytics/user-identifier', () => {
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrack).not.toHaveBeenCalled();
+        expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should leave OAuth marker in sessionStorage if not logged in', async () => {
@@ -1336,7 +1336,7 @@ describe('components/analytics/user-identifier', () => {
 
         // Assert: page did NOT fire — the throw aborted initialize() before reaching page()
         // (aligns with the same assertion in Edge Cases > should NOT call page() when sessionStorage.getItem throws)
-        expect(mockPage).not.toHaveBeenCalled();
+        expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
         // Restore the original getItem
         Object.defineProperty(sessionStorage, 'getItem', {
@@ -1387,7 +1387,7 @@ describe('components/analytics/user-identifier', () => {
         });
 
         // Assert: page was NOT called — track rejected before await page() could run
-        expect(mockPage).not.toHaveBeenCalled();
+        expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should handle page() rejection when no user is logged in (anonymous path)', async () => {
@@ -1417,7 +1417,7 @@ describe('components/analytics/user-identifier', () => {
         });
 
         // Assert: identify was never called (anonymous path skips identify)
-        expect(mockIdentify).not.toHaveBeenCalled();
+        expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should call sessionStorage.removeItem before track() on OAuth login', async () => {
@@ -1492,8 +1492,8 @@ describe('components/analytics/user-identifier', () => {
           expect(mockPage).toHaveBeenCalledTimes(1);
         });
 
-        expect(mockIdentify).not.toHaveBeenCalled();
-        expect(mockTrack).not.toHaveBeenCalled();
+        expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
         // OAuth marker should remain (wasn't processed)
         expect(sessionStorage.getItem('oauth_login_pending')).toBe('google');

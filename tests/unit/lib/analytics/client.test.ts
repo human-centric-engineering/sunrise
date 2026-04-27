@@ -384,7 +384,7 @@ describe('lib/analytics/client', () => {
       resetAnalyticsClient();
       const result = isAnalyticsEnabled();
 
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when client is not available', async () => {

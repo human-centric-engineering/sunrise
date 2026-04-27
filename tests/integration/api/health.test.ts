@@ -125,7 +125,7 @@ describe('GET /api/health', () => {
       // Assert
       expect(response.status).toBe(200);
       expect(body.status).toBe('ok');
-      expect(body.services.database.connected).toBe(true);
+      expect(body.services.database.connected).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.services.database.status).toBe('operational');
       expect(body.services.database.latency).toBe(5);
     });
@@ -212,7 +212,7 @@ describe('GET /api/health', () => {
       expect(body.memory?.heapTotal).toBeDefined();
       expect(body.memory?.rss).toBeDefined();
       expect(body.memory?.percentage).toBeDefined();
-      expect(vi.mocked(getMemoryUsage)).toHaveBeenCalled();
+      expect(vi.mocked(getMemoryUsage)).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should return ok status without latency when latency is undefined', async () => {
@@ -227,7 +227,7 @@ describe('GET /api/health', () => {
 
       // Assert
       expect(response.status).toBe(200);
-      expect(body.services.database.connected).toBe(true);
+      expect(body.services.database.connected).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.services.database.latency).toBeUndefined();
       expect(body.services.database.status).toBe('operational');
     });
@@ -266,7 +266,7 @@ describe('GET /api/health', () => {
       // Assert
       expect(response.status).toBe(200);
       expect(body.services.database.status).toBe('degraded');
-      expect(body.services.database.connected).toBe(true);
+      expect(body.services.database.connected).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return outage status when database is disconnected', async () => {

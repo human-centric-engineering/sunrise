@@ -62,7 +62,7 @@ describe('lib/analytics/events', () => {
 
       eventNames.forEach((name) => {
         const hasPastTense = expectedPastTensePatterns.some((pattern) => name.includes(pattern));
-        expect(hasPastTense).toBe(true);
+        expect(hasPastTense).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });

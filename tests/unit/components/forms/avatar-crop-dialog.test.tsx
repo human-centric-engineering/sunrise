@@ -228,7 +228,7 @@ describe('components/forms/avatar-crop-dialog', () => {
       // Click Apply without simulating onCropComplete
       await user.click(screen.getByRole('button', { name: /apply/i }));
 
-      expect(mockOnConfirm).not.toHaveBeenCalled();
+      expect(mockOnConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should call onConfirm with blob on successful crop', async () => {
@@ -317,7 +317,7 @@ describe('components/forms/avatar-crop-dialog', () => {
 
       await waitFor(() => {
         expect(mockOnCancel).toHaveBeenCalledTimes(1);
-        expect(mockOnConfirm).not.toHaveBeenCalled();
+        expect(mockOnConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       global.Image = origImage;
@@ -368,7 +368,7 @@ describe('components/forms/avatar-crop-dialog', () => {
 
       await waitFor(() => {
         expect(mockOnCancel).toHaveBeenCalledTimes(1);
-        expect(mockOnConfirm).not.toHaveBeenCalled();
+        expect(mockOnConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       global.Image = origImage;
@@ -422,7 +422,7 @@ describe('components/forms/avatar-crop-dialog', () => {
 
       await waitFor(() => {
         expect(mockOnCancel).toHaveBeenCalledTimes(1);
-        expect(mockOnConfirm).not.toHaveBeenCalled();
+        expect(mockOnConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       global.Image = origImage;

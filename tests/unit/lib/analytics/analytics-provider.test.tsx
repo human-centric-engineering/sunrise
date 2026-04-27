@@ -202,7 +202,7 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Assert
       expect(result).toEqual({ success: false, error: 'Analytics not available' });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return no-op result from identify when no consent', async () => {
@@ -232,7 +232,7 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Assert
       expect(result).toEqual({ success: false, error: 'Analytics not available' });
-      expect(mockIdentify).not.toHaveBeenCalled();
+      expect(mockIdentify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return no-op result from page when no consent', async () => {
@@ -262,7 +262,7 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Assert
       expect(result).toEqual({ success: false, error: 'Analytics not available' });
-      expect(mockPage).not.toHaveBeenCalled();
+      expect(mockPage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -301,7 +301,7 @@ describe('lib/analytics/analytics-provider', () => {
       );
 
       // Assert
-      expect(mockInitAnalytics).not.toHaveBeenCalled();
+      expect(mockInitAnalytics).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle initialization errors gracefully', async () => {
@@ -322,7 +322,7 @@ describe('lib/analytics/analytics-provider', () => {
       ).not.toThrow();
 
       await waitFor(() => {
-        expect(mockInitAnalytics).toHaveBeenCalled();
+        expect(mockInitAnalytics).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });
@@ -336,7 +336,7 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Act & Assert
       renderWithContext((value) => {
-        expect(value.isEnabled).toBe(true);
+        expect(value.isEnabled).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -348,7 +348,7 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Act & Assert
       renderWithContext((value) => {
-        expect(value.isReady).toBe(true);
+        expect(value.isReady).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -511,8 +511,8 @@ describe('lib/analytics/analytics-provider', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockReset).toHaveBeenCalled();
-        expect(mockResetAnalyticsClient).toHaveBeenCalled();
+        expect(mockReset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+        expect(mockResetAnalyticsClient).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -539,8 +539,8 @@ describe('lib/analytics/analytics-provider', () => {
       );
 
       // Assert
-      expect(mockReset).not.toHaveBeenCalled();
-      expect(mockResetAnalyticsClient).toHaveBeenCalled(); // Still resets the client singleton
+      expect(mockReset).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(mockResetAnalyticsClient).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard; // Still resets the client singleton
     });
 
     it('should handle reset errors silently', async () => {
@@ -571,7 +571,7 @@ describe('lib/analytics/analytics-provider', () => {
       ).not.toThrow();
 
       await waitFor(() => {
-        expect(mockReset).toHaveBeenCalled();
+        expect(mockReset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });

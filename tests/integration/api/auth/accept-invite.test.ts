@@ -249,7 +249,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Response structure and values
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data).toMatchObject({
         message: 'Invitation accepted successfully. Redirecting to dashboard...',
       });
@@ -288,7 +288,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(vi.mocked(deleteInvitationToken)).toHaveBeenCalledWith('john@example.com');
 
       // Assert: Welcome email was NOT sent by endpoint (handled by database hook)
-      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Success logged with stable User ID
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -527,7 +527,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Success despite no cookies
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Assert: No cookies logged (should not call logger.info for cookies)
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -569,7 +569,7 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Assert: No invitation metadata lookup was performed
-      expect(vi.mocked(prisma.verification.findFirst)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.verification.findFirst)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Warning logged
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -634,7 +634,7 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: No signup attempt was made
-      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 when invitation has no metadata', async () => {
@@ -676,7 +676,7 @@ describe('POST /api/auth/accept-invite', () => {
       });
 
       // Assert: No signup attempt was made
-      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(auth.api.signUpEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -702,7 +702,7 @@ describe('POST /api/auth/accept-invite', () => {
       expect(body.error.details).toBeDefined();
 
       // Assert: No token validation was attempted
-      expect(vi.mocked(validateInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(validateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when password is too weak', async () => {
@@ -1078,10 +1078,10 @@ describe('POST /api/auth/accept-invite', () => {
       );
 
       // Assert: No user update was attempted
-      expect(vi.mocked(prisma.user.update)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.user.update)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: No token deletion was attempted
-      expect(vi.mocked(deleteInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(deleteInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should verify invitation token is deleted after successful acceptance', async () => {
@@ -1135,7 +1135,7 @@ describe('POST /api/auth/accept-invite', () => {
 
       // Assert: Success
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Assert: Token deletion was called AFTER user update but BEFORE sign-in
       expect(vi.mocked(deleteInvitationToken)).toHaveBeenCalledWith('deletion@example.com');

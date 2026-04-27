@@ -383,7 +383,7 @@ describe('components/ui/password-input', () => {
       await user.type(input, 'a');
 
       // Assert: onChange should be called
-      expect(onChange).toHaveBeenCalled();
+      expect(onChange).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should handle onBlur callback', async () => {
@@ -399,7 +399,7 @@ describe('components/ui/password-input', () => {
       await user.tab();
 
       // Assert: onBlur should be called
-      expect(onBlur).toHaveBeenCalled();
+      expect(onBlur).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should handle onFocus callback', async () => {
@@ -413,7 +413,7 @@ describe('components/ui/password-input', () => {
       input.focus();
 
       // Assert: onFocus should be called
-      expect(onFocus).toHaveBeenCalled();
+      expect(onFocus).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
   });
 

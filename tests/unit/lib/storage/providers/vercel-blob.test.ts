@@ -76,7 +76,7 @@ describe('lib/storage/providers/vercel-blob', () => {
           'https://blob.vercel-storage.com/avatars/user-123/avatar.jpg',
           { token: 'test-token' }
         );
-        expect(result.success).toBe(true);
+        expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should handle errors gracefully', async () => {
@@ -124,7 +124,7 @@ describe('lib/storage/providers/vercel-blob', () => {
           ],
           { token: 'test-token' }
         );
-        expect(result.success).toBe(true);
+        expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should handle empty prefix results', async () => {
@@ -138,8 +138,8 @@ describe('lib/storage/providers/vercel-blob', () => {
 
         const result = await provider.deletePrefix('avatars/user-999/');
 
-        expect(del).not.toHaveBeenCalled();
-        expect(result.success).toBe(true);
+        expect(del).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(logger.debug).toHaveBeenCalledWith('No blobs found for prefix', {
           prefix: 'avatars/user-999/',
         });

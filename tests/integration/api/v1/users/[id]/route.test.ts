@@ -268,7 +268,7 @@ describe('GET /api/v1/users/:id', () => {
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       // test-review:accept tobe_true — structural boolean assertion on API response field
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       // Handler-derived fields — these come from the DB fixture, not the request, proving
       // the handler fetched the row and wrapped it, rather than echoing session data.
       expect(body.data.id).toBe(SELF_USER_ID);
@@ -302,7 +302,7 @@ describe('GET /api/v1/users/:id', () => {
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       // test-review:accept tobe_true — structural boolean assertion on API response field
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.id).toBe(TARGET_USER_ID);
       expect(body.data.email).toBe('target@example.com');
       // The handler uses a `select` that excludes `password` — confirm the contract
@@ -425,7 +425,7 @@ describe('PATCH /api/v1/users/:id', () => {
         }>(response);
         // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
         // test-review:accept tobe_true — structural boolean assertion on API response field
-        expect(body.success).toBe(true);
+        expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         // DB-state readback: updatedAt in the response comes from the update return value,
         // not from the request body — proving the handler actually persisted the change.
         expect(new Date(body.data.updatedAt).getTime()).toBe(afterUpdatedAt.getTime());
@@ -647,7 +647,7 @@ describe('DELETE /api/v1/users/:id', () => {
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
       // test-review:accept tobe_true — structural boolean assertion on API response field
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data).toEqual({ id: TARGET_USER_ID, deleted: true });
 
       // DB-state readback for DELETE: we cannot read the row back after deletion.

@@ -273,8 +273,8 @@ describe('McpToolsPage', () => {
     await McpToolsPage();
 
     const calls = vi.mocked(serverFetch).mock.calls.map(([url]) => url);
-    expect(calls.some((url) => url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS))).toBe(true);
-    expect(calls.some((url) => url.includes(API.ADMIN.ORCHESTRATION.CAPABILITIES))).toBe(true);
+    expect(calls.some((url) => url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+    expect(calls.some((url) => url.includes(API.ADMIN.ORCHESTRATION.CAPABILITIES))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   // 13. McpInfoModal rendered with title="MCP Tools"
