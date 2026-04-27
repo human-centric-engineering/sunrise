@@ -227,6 +227,10 @@ export class OrchestrationEngine {
 
       if (queue.length === 0) {
         // All remaining steps are pending with unmet dependencies — deadlock.
+        const pendingIds = [...pending].join(', ');
+        failureReason = `Workflow deadlocked: steps [${pendingIds}] have unmet dependencies`;
+        yield workflowFailed(failureReason);
+        failed = true;
         break;
       }
 
@@ -443,24 +447,29 @@ export class OrchestrationEngine {
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx));
       }
-      return Promise.race([
-        executor(step, snapshotContext(ctx)),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new ExecutorError(
-                  step.id,
-                  'step_timeout',
-                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
-                  undefined,
-                  false
-                )
-              ),
-            stepTimeoutMs
-          );
-        }),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          executor(step, snapshotContext(ctx)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ExecutorError(
+                    step.id,
+                    'step_timeout',
+                    `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                    undefined,
+                    false
+                  )
+                ),
+              stepTimeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
 
     if (strategy === 'retry') {
@@ -882,24 +891,29 @@ export class OrchestrationEngine {
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx));
       }
-      return Promise.race([
-        executor(step, snapshotContext(ctx)),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new ExecutorError(
-                  step.id,
-                  'step_timeout',
-                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
-                  undefined,
-                  false
-                )
-              ),
-            stepTimeoutMs
-          );
-        }),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          executor(step, snapshotContext(ctx)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ExecutorError(
+                    step.id,
+                    'step_timeout',
+                    `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                    undefined,
+                    false
+                  )
+                ),
+              stepTimeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
 
     if (strategy === 'retry') {

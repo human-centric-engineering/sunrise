@@ -51,7 +51,17 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     inputData = result.data;
   }
 
-  const budgetLimitUsd = url.searchParams.get('budgetLimitUsd');
+  const budgetLimitRaw = url.searchParams.get('budgetLimitUsd');
+  let budgetLimitUsd: number | undefined;
+  if (budgetLimitRaw !== null) {
+    const parsed = z.coerce.number().positive().safeParse(budgetLimitRaw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid budgetLimitUsd', {
+        budgetLimitUsd: ['Must be a positive number'],
+      });
+    }
+    budgetLimitUsd = parsed.data;
+  }
 
   const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
@@ -84,7 +94,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const engine = new OrchestrationEngine();
   const events = engine.executeWithSubscriber({ id: workflow.id, definition }, inputData, {
     userId: session.user.id,
-    budgetLimitUsd: budgetLimitUsd ? Number(budgetLimitUsd) : undefined,
+    budgetLimitUsd,
     signal: request.signal,
   });
 

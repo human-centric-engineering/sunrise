@@ -42,7 +42,15 @@ export interface SemanticValidationResult {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 /** Step types that accept an optional `modelOverride` in their config. */
-const LLM_STEP_TYPES = new Set(['llm_call', 'route', 'reflect', 'guard', 'evaluate']);
+const LLM_STEP_TYPES = new Set([
+  'llm_call',
+  'route',
+  'reflect',
+  'guard',
+  'evaluate',
+  'plan',
+  'orchestrator',
+]);
 
 // ── Validator ──────────────────────────────────────────────────────────────
 
