@@ -102,6 +102,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
+  const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
 
   // Lazy-fetch model counts for every visible provider after mount.
@@ -161,7 +162,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     setDeleteError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
-      setProviders((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      setProviders((prev) =>
+        prev.map((p) => (p.id === deleteTarget.id ? { ...p, isActive: false } : p))
+      );
       setDeleteTarget(null);
     } catch (err) {
       setDeleteError(
@@ -175,13 +178,18 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   }, [deleteTarget]);
 
   const handleReactivate = useCallback(async (providerId: string) => {
+    setReactivateError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
         body: { isActive: true },
       });
       setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
-    } catch {
-      // Silently fail — admin can retry or edit the provider directly
+    } catch (err) {
+      setReactivateError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't reactivate this provider. Try again in a moment."
+      );
     }
   }, []);
 
@@ -216,6 +224,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           </Link>
         </Button>
       </div>
+
+      {reactivateError && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
+          {reactivateError}
+        </div>
+      )}
 
       {providers.length === 0 ? (
         <div className="rounded-md border border-dashed py-12 text-center">

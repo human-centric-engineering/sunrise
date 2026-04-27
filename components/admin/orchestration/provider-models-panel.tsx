@@ -224,9 +224,7 @@ export function ProviderModelsPanel({
                         >
                           {result.ok
                             ? `${result.latencyMs} ms`
-                            : result.error
-                              ? `Failed: ${result.error}`
-                              : 'Failed'}
+                            : "Didn't respond — check server logs"}
                         </span>
                       ) : (
                         <Button

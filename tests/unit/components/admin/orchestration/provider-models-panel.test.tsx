@@ -306,7 +306,7 @@ describe('ProviderModelsPanel', () => {
       });
     });
 
-    it('shows "Failed" text when test-model request fails', async () => {
+    it('shows friendly error text when test-model request fails', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'));
@@ -322,7 +322,7 @@ describe('ProviderModelsPanel', () => {
       await user.click(testButtons[0]);
 
       await waitFor(() => {
-        expect(screen.getByText('Failed')).toBeInTheDocument();
+        expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
       });
     });
   });
