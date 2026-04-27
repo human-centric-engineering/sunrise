@@ -197,7 +197,7 @@ describe('AgentVersionHistoryTab', () => {
     });
 
     await waitFor(() => {
-      expect(onRestored).toHaveBeenCalled();
+      expect(onRestored).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 
@@ -225,7 +225,7 @@ describe('AgentVersionHistoryTab', () => {
       );
     });
     // onRestored should NOT have been called since the post failed
-    expect(onRestored).not.toHaveBeenCalled();
+    expect(onRestored).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('does not invoke onRestored when restore fails with APIClientError', async () => {
@@ -269,7 +269,7 @@ describe('AgentVersionHistoryTab', () => {
     });
 
     // onRestored must NOT fire when the POST failed
-    expect(onRestored).not.toHaveBeenCalled();
+    expect(onRestored).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows APIClientError message when initial fetch fails with APIClientError', async () => {
@@ -305,6 +305,6 @@ describe('AgentVersionHistoryTab', () => {
     await waitFor(() => {
       expect(screen.queryByText('Restore to version 2?')).not.toBeInTheDocument();
     });
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 });

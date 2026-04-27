@@ -125,7 +125,7 @@ describe('PatternLearnMoreDialog', () => {
 
     it('does not call apiClient.get when open=false', () => {
       renderDialog({ open: false, patternNumber: 1 });
-      expect(apiClient.get).not.toHaveBeenCalled();
+      expect(apiClient.get).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

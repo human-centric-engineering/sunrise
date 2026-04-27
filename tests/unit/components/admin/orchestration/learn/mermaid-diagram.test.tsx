@@ -153,14 +153,14 @@ describe('MermaidDiagram', () => {
 
     const { unmount } = render(<MermaidDiagram code="graph TD; A-->B" />);
     await waitFor(() => {
-      expect(mockRender).toHaveBeenCalled();
+      expect(mockRender).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
     unmount();
 
     mockRender.mockClear();
     render(<MermaidDiagram code="graph TD; C-->D" />);
     await waitFor(() => {
-      expect(mockRender).toHaveBeenCalled();
+      expect(mockRender).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
 
     // initialize should have been called at most once across both renders

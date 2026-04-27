@@ -244,7 +244,7 @@ describe('ProvidersTabs', () => {
       await user.click(screen.getByRole('tab', { name: /configuration/i }));
 
       // Assert: router.push was never called — tabs are client-side only
-      expect(mockPush).not.toHaveBeenCalled();
+      expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

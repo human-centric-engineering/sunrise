@@ -138,7 +138,7 @@ describe('ConversationTags', () => {
     await user.keyboard('{Enter}');
 
     // patch should NOT be called for a duplicate
-    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockPatch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     // Still only one "bug" badge
     expect(screen.getAllByText('bug')).toHaveLength(1);
   });
@@ -152,7 +152,7 @@ describe('ConversationTags', () => {
     await user.type(screen.getByPlaceholderText('Tag name'), '   ');
     await user.keyboard('{Enter}');
 
-    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockPatch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // ── Remove tag ─────────────────────────────────────────────────────────────

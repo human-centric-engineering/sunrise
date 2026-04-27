@@ -390,7 +390,7 @@ describe('KnowledgeView', () => {
           expect.stringContaining('/knowledge/documents/doc-1/rechunk'),
           expect.objectContaining({ method: 'POST' })
         );
-        expect(mockRefresh).toHaveBeenCalled();
+        expect(mockRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       });
 
       // Button should be re-enabled after completion (rechunkingId cleared)

@@ -98,7 +98,7 @@ describe('CliAuthoringHint', () => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     expect(stored).not.toBeNull();
     const parsed = Number(JSON.parse(stored!));
-    expect(Number.isFinite(parsed)).toBe(true);
+    expect(Number.isFinite(parsed)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     expect(parsed).toBeGreaterThan(0);
   });
 

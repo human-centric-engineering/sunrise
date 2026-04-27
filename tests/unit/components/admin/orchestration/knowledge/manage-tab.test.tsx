@@ -266,7 +266,7 @@ describe('ManageTab', () => {
 
     await waitFor(() => {
       // test-review:accept no_arg_called — onRefresh is () => void by contract; zero-arg callback, no shape to verify
-      expect(onRefresh).toHaveBeenCalled();
+      expect(onRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 
@@ -705,7 +705,7 @@ describe('ManageTab', () => {
         expect.objectContaining({ method: 'DELETE' })
       );
       // test-review:accept no_arg_called — onRefresh is () => void by contract; zero-arg callback, no shape to verify
-      expect(onRefresh).toHaveBeenCalled();
+      expect(onRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 

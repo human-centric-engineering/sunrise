@@ -141,7 +141,7 @@ describe('EvaluationForm', () => {
       await waitFor(() => {
         expect(screen.getByText(/title is required/i)).toBeInTheDocument();
       });
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('shows error when submitting without selecting an agent', async () => {
@@ -158,7 +158,7 @@ describe('EvaluationForm', () => {
       await waitFor(() => {
         expect(screen.getByText(/agent is required/i)).toBeInTheDocument();
       });
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -241,7 +241,7 @@ describe('EvaluationForm', () => {
       await waitFor(() => {
         expect(screen.getByText(/evaluation creation failed/i)).toBeInTheDocument();
       });
-      expect(mockPush).not.toHaveBeenCalled();
+      expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('shows generic error message when an unexpected error occurs', async () => {

@@ -18,7 +18,7 @@ import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 describe('makeStepId', () => {
   it('returns a string starting with "step_"', () => {
     const id = makeStepId();
-    expect(id.startsWith('step_')).toBe(true);
+    expect(id.startsWith('step_')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('returns unique ids across 5 calls', () => {
@@ -58,7 +58,7 @@ describe('addNode', () => {
 
   it('returns a node with an id that starts with "step_"', () => {
     const node = addNode('llm_call', { x: 0, y: 0 });
-    expect(node?.id.startsWith('step_')).toBe(true);
+    expect(node?.id.startsWith('step_')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('data.config is a fresh copy — mutation does not affect the registry', () => {

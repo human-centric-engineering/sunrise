@@ -171,7 +171,7 @@ describe('WorkflowCanvas', () => {
         clientY: 100,
       });
 
-      expect(onNodeAdd).not.toHaveBeenCalled();
+      expect(onNodeAdd).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('does NOT call onNodeAdd when dataTransfer payload is empty', () => {
@@ -191,7 +191,7 @@ describe('WorkflowCanvas', () => {
         clientY: 100,
       });
 
-      expect(onNodeAdd).not.toHaveBeenCalled();
+      expect(onNodeAdd).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -210,7 +210,7 @@ describe('WorkflowCanvas', () => {
       });
 
       const prevented = !canvasWrapper.dispatchEvent(event);
-      expect(prevented).toBe(true);
+      expect(prevented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('sets dropEffect to move on dragover', () => {

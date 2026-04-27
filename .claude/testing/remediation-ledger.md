@@ -652,3 +652,171 @@ All tbt hits are structural boolean assertions (data.success API envelope, Array
 | tests/integration/api/v1/users/me/preferences.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
 | tests/integration/api/v1/users/me.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
 | tests/integration/api/v1/users/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+
+## components/admin/orchestration/workflow-builder
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/workflow-builder/add-node.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-config-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 30 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/external-call-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 36 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/guard-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/human-approval-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/llm-call-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/parallel-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/route-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/simple-editors.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/block-editors/tool-call-editor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/builder-toolbar.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/execution-input-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/execution-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/execution-trace-entry.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/extra-checks.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/pattern-coverage-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/pattern-learn-more-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/pattern-node.test.tsx | unit | Minor | 1 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/pattern-palette.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/template-banner.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/template-description-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/template-types.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/validation-summary-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/workflow-builder.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 48 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/workflow-canvas.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/workflow-details-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/workflow-mappers.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+| tests/unit/components/admin/orchestration/workflow-builder/workflow-save.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:20:00Z | All sig hits FP (boolean fields, callback guards, robustness checks). Annotated. |
+
+## components/admin/orchestration/costs
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/costs/budget-alerts-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/cost-methodology.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/cost-summary-cards.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/cost-trend-chart.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/costs-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/local-vs-cloud-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/orchestration-settings-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/per-agent-cost-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/per-model-breakdown-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/costs/pricing-reference.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/admin/orchestration/knowledge
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/knowledge/compare-providers-modal.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/document-chunks-modal.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/document-upload-zone.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 32 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/embedding-status-banner.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/errors-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/explore-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/knowledge-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/manage-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 37 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/pdf-preview-modal.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/knowledge/visualize-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 39 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/admin/orchestration/learn
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/learn/discuss-pattern-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 2 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/learning-tabs-advisor.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/learning-tabs-quiz.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/learning-tabs.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/mermaid-diagram.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/pattern-card-grid.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/pattern-content.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/related-patterns.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/learn/use-pattern-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/admin/orchestration/mcp
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/mcp/mcp-audit-log.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-dashboard.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-info-modal.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-keys-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-resources-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 31 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-sessions-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-settings-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/mcp/mcp-tools-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 3de9a26 | 2026-04-27T10:27:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/admin/orchestration — remaining (agents, capabilities, providers, evaluations, observability, etc.)
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/admin/orchestration/agent-capabilities-tab-usage.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-capabilities-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-comparison-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-form-general.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-form-instructions.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-form-model.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-form-tabs.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-invite-tokens-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 34 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-test-card.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-test-chat.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agent-version-history-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/agents-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 51 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/analytics/analytics-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/audit-log/audit-log-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 32 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/backup-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/budget-alerts-banner.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capabilities-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capability-form-basic.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capability-form-execution.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capability-form-function-definition.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capability-form-safety.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/capability-stats-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/chat/chat-interface.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/cli-authoring-hint.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/conversation-tags.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/conversation-trace-viewer.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/conversations-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/dashboard-activity-feed.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/dashboard-stats-cards.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/delete-capability-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/delete-provider-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/duplicate-agent-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/embed-config-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/evaluation-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/evaluation-runner.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 43 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/evaluations-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/execution-detail-view.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 33 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/executions-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/experiments/experiments-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 53 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/import-agents-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/instructions-history-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/model-test-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/observability-stats-cards.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/orchestration-dashboard-parts.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/provider-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 36 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/provider-model-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/provider-models-matrix.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/provider-models-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 14 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/provider-test-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/providers-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/providers-tabs.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/quick-actions.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/recent-activity-list.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/recent-errors-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/settings-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/setup-wizard-launcher.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/setup-wizard-step-intro.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/setup-wizard-steps.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/setup-wizard.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/testing-tabs.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/top-capabilities-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/webhook-deliveries.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/webhook-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/webhook-test-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/webhooks-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/workflow-definition-history-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/workflow-schedules-tab.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/workflows-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 33 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/workflows/version-diff-viewer.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/admin/orchestration/workflows/version-history-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |

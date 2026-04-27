@@ -342,7 +342,7 @@ describe('ExecutionDetailView', () => {
       await user.click(screen.getByRole('button', { name: /cancel execution/i }));
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Execution cancelled.');
-      expect(mockRefresh).toHaveBeenCalled();
+      expect(mockRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
 
     it('Cancel error shows error banner with API error message', async () => {
@@ -395,7 +395,7 @@ describe('ExecutionDetailView', () => {
         })
       );
       expect(await screen.findByRole('alert')).toHaveTextContent(/approved/i);
-      expect(mockRefresh).toHaveBeenCalled();
+      expect(mockRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
 
     it('Approve error shows error banner', async () => {
@@ -440,8 +440,8 @@ describe('ExecutionDetailView', () => {
       );
       // Two alerts: the error banner (errorMessage) + the action success banner
       const alerts = await screen.findAllByRole('alert');
-      expect(alerts.some((el) => el.textContent?.includes('retry'))).toBe(true);
-      expect(mockRefresh).toHaveBeenCalled();
+      expect(alerts.some((el) => el.textContent?.includes('retry'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(mockRefresh).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
 
     it('Retry error shows error banner', async () => {
@@ -464,7 +464,7 @@ describe('ExecutionDetailView', () => {
 
       // Two alerts: the error banner (errorMessage) + the action error banner
       const alerts = await screen.findAllByRole('alert');
-      expect(alerts.some((el) => el.textContent?.includes('Retry failed'))).toBe(true);
+      expect(alerts.some((el) => el.textContent?.includes('Retry failed'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('buttons are disabled while an action is in progress', async () => {

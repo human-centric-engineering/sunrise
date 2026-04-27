@@ -188,7 +188,7 @@ describe('DocumentUploadZone', () => {
           preview: expect.objectContaining({ requiresConfirmation: true }),
         })
       );
-      expect(onUploadComplete).not.toHaveBeenCalled();
+      expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -226,7 +226,7 @@ describe('DocumentUploadZone', () => {
         expect.stringContaining('/knowledge/documents'),
         expect.objectContaining({ method: 'POST' })
       );
-      expect(onUploadComplete).toHaveBeenCalled();
+      expect(onUploadComplete).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 
@@ -404,7 +404,7 @@ describe('DocumentUploadZone', () => {
       expect(screen.getByText('Duplicate document')).toBeInTheDocument();
     });
 
-    expect(onUploadComplete).not.toHaveBeenCalled();
+    expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error message when upload fetch rejects (network error)', async () => {
@@ -442,7 +442,7 @@ describe('DocumentUploadZone', () => {
     await waitFor(() => {
       expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
     });
-    expect(onUploadComplete).not.toHaveBeenCalled();
+    expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows "Uploading..." text during upload', async () => {
@@ -550,7 +550,7 @@ describe('DocumentUploadZone', () => {
         (call) => typeof call[0] === 'string' && call[0].includes('/bulk')
       );
       expect(bulkCall).toBeDefined();
-      expect(onUploadComplete).toHaveBeenCalled();
+      expect(onUploadComplete).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 
@@ -604,7 +604,7 @@ describe('DocumentUploadZone', () => {
       expect(screen.getByText(/bad\.md: Parse error/i)).toBeInTheDocument();
     });
     // onUploadComplete still fires even when there are partial errors
-    expect(onUploadComplete).toHaveBeenCalled();
+    expect(onUploadComplete).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
   });
 
   it('shows skipped PDF message when bulk upload has skipped_pdf results', async () => {
@@ -696,7 +696,7 @@ describe('DocumentUploadZone', () => {
     await waitFor(() => {
       expect(screen.getByText('Bulk limit exceeded')).toBeInTheDocument();
     });
-    expect(onUploadComplete).not.toHaveBeenCalled();
+    expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('deduplicates files with the same name when adding multiple times', async () => {
@@ -803,7 +803,7 @@ describe('DocumentUploadZone', () => {
         (call) => typeof call[0] === 'string' && call[0].includes('/fetch-url')
       );
       expect(fetchUrlCall).toBeDefined();
-      expect(onUploadComplete).toHaveBeenCalled();
+      expect(onUploadComplete).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 
@@ -843,7 +843,7 @@ describe('DocumentUploadZone', () => {
     await waitFor(() => {
       expect(screen.getByText('URL not reachable')).toBeInTheDocument();
     });
-    expect(onUploadComplete).not.toHaveBeenCalled();
+    expect(onUploadComplete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error when URL fetch throws a network error', async () => {

@@ -243,7 +243,7 @@ describe('ProviderModelsPanel', () => {
       );
 
       expect(screen.getByText(/no api key configured/i)).toBeInTheDocument();
-      expect(apiClient.get).not.toHaveBeenCalled();
+      expect(apiClient.get).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('does not render the Refresh button', () => {

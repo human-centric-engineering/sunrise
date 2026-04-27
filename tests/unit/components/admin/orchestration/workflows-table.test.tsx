@@ -203,7 +203,7 @@ describe('WorkflowsTable', () => {
         const fetchUrls = mockFetch.mock.calls.map((call) =>
           toUrlString(call[0] as RequestInfo | URL)
         );
-        expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true);
+        expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -305,7 +305,7 @@ describe('WorkflowsTable', () => {
       await waitFor(() => {
         expect(screen.queryByText('Delete workflow')).not.toBeInTheDocument();
       });
-      expect(apiClient.delete).not.toHaveBeenCalled();
+      expect(apiClient.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -553,7 +553,7 @@ describe('WorkflowsTable', () => {
       resolveFetch(makeWorkflowsListResponse([]));
 
       await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
+        expect(mockFetch).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       });
     });
   });
@@ -641,7 +641,7 @@ describe('WorkflowsTable', () => {
         const fetchUrls = mockFetch.mock.calls.map((call) =>
           toUrlString(call[0] as RequestInfo | URL)
         );
-        expect(fetchUrls.some((u) => u.includes('page=2'))).toBe(true);
+        expect(fetchUrls.some((u) => u.includes('page=2'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 

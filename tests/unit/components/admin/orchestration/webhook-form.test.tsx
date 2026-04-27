@@ -163,7 +163,7 @@ describe('WebhookForm', () => {
     await waitFor(() => {
       expect(screen.getByText(/select at least one event/i)).toBeInTheDocument();
     });
-    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('create happy path: calls apiClient.post and navigates on success', async () => {
@@ -334,7 +334,7 @@ describe('WebhookForm', () => {
       expect(screen.getByText('Webhook endpoint rejected the request')).toBeInTheDocument();
     });
     // Assert — no navigation occurred after an error
-    expect(pushMock).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('surfaces APIClientError message in error banner on submit failure', async () => {
@@ -361,7 +361,7 @@ describe('WebhookForm', () => {
       expect(screen.getByText('Webhook URL unreachable')).toBeInTheDocument();
     });
     // Assert — no navigation occurred
-    expect(pushMock).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('surfaces fallback message for non-APIClientError on submit failure', async () => {

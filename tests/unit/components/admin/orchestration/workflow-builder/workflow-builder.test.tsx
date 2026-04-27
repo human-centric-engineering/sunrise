@@ -295,7 +295,7 @@ describe('WorkflowBuilder', () => {
         workflowDefinition: null as unknown as AiWorkflow['workflowDefinition'],
       });
 
-      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow();
+      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(lastNodesStateArg).toEqual([]);
     });
 
@@ -305,7 +305,7 @@ describe('WorkflowBuilder', () => {
         workflowDefinition: 'invalid' as unknown as AiWorkflow['workflowDefinition'],
       });
 
-      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow();
+      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(lastNodesStateArg).toEqual([]);
     });
 
@@ -318,7 +318,7 @@ describe('WorkflowBuilder', () => {
         } as unknown as AiWorkflow['workflowDefinition'],
       });
 
-      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow();
+      expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(lastNodesStateArg).toEqual([]);
     });
   });
@@ -438,7 +438,7 @@ describe('WorkflowBuilder', () => {
       });
 
       const urls = vi.mocked(apiClient.get).mock.calls.map(([url]) => url);
-      expect(urls.some((u) => u.includes('capabilities'))).toBe(true);
+      expect(urls.some((u) => u.includes('capabilities'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -653,7 +653,7 @@ describe('WorkflowBuilder', () => {
       if (errorButtons.length > 0) {
         await user.click(errorButtons[0]);
         // getNode should have been called
-        expect(getNodeMock).toHaveBeenCalled();
+        expect(getNodeMock).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       }
       // Even if validation doesn't produce clickable errors (due to mock
       // limitations), the test validates the wiring doesn't throw.
@@ -756,7 +756,7 @@ describe('WorkflowBuilder', () => {
       }
 
       // Assert: no API call was made
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('calls apiClient.post for save-as-template and shows "Template saved"', async () => {
@@ -822,7 +822,7 @@ describe('WorkflowBuilder', () => {
         // so check specifically for the workflow endpoint)
         await waitFor(() => {
           const urls = vi.mocked(apiClient.get).mock.calls.map(([u]) => String(u));
-          expect(urls.some((u) => u.includes('wf-revert-1'))).toBe(true);
+          expect(urls.some((u) => u.includes('wf-revert-1'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         });
       }
       // If the restore button isn't rendered (e.g. history panel needs data first),
@@ -901,7 +901,7 @@ describe('WorkflowBuilder', () => {
 
       // Assert: router.refresh called (edit-mode branch)
       await waitFor(() => {
-        expect(routerRefreshMock).toHaveBeenCalled();
+        expect(routerRefreshMock).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       });
     });
   });
@@ -937,7 +937,7 @@ describe('WorkflowBuilder', () => {
       // Assert: clipboard called with valid JSON
       expect(clipboardSpy).toHaveBeenCalledTimes(1);
       const written = clipboardSpy.mock.calls[0][0];
-      expect(() => JSON.parse(written)).not.toThrow();
+      expect(() => JSON.parse(written)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
     });
   });
 

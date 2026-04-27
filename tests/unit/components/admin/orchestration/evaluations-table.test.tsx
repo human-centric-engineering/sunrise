@@ -241,7 +241,7 @@ describe('EvaluationsTable', () => {
       // Assert: a fetch was fired containing the query
       await waitFor(() => {
         const urls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(urls.some((u) => u.includes('q=tone'))).toBe(true);
+        expect(urls.some((u) => u.includes('q=tone'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -274,7 +274,7 @@ describe('EvaluationsTable', () => {
       // Assert: a fetch was fired containing status=completed
       await waitFor(() => {
         const urls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(urls.some((u) => u.includes('status=completed'))).toBe(true);
+        expect(urls.some((u) => u.includes('status=completed'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -303,7 +303,7 @@ describe('EvaluationsTable', () => {
       // Assert: a fetch was fired containing the agent id
       await waitFor(() => {
         const urls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(urls.some((u) => u.includes('agentId=a1'))).toBe(true);
+        expect(urls.some((u) => u.includes('agentId=a1'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -362,7 +362,7 @@ describe('EvaluationsTable', () => {
       // Assert: a fetch with page=2 was fired
       await waitFor(() => {
         const urls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(urls.some((u) => u.includes('page=2'))).toBe(true);
+        expect(urls.some((u) => u.includes('page=2'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });

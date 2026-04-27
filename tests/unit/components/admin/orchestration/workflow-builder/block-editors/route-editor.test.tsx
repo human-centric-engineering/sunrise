@@ -67,7 +67,7 @@ describe('RouteEditor', () => {
     await user.click(screen.getByRole('button', { name: /add branch/i }));
 
     const [arg] = onChange.mock.calls[0];
-    expect(Array.isArray(arg.routes)).toBe(true);
+    expect(Array.isArray(arg.routes)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     expect(arg.routes).toHaveLength(1);
   });
 

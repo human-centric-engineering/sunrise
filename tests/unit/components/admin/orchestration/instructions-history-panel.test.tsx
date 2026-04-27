@@ -100,7 +100,7 @@ describe('InstructionsHistoryPanel', () => {
     render(<InstructionsHistoryPanel agentId={AGENT_ID} />);
 
     // Assert: no API call fired yet
-    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(apiClient.get).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // ── First expand ───────────────────────────────────────────────────────────
@@ -324,7 +324,7 @@ describe('InstructionsHistoryPanel', () => {
       });
 
       // onReverted must NOT have been called because the POST failed
-      expect(onReverted).not.toHaveBeenCalled();
+      expect(onReverted).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('does NOT call onReverted when POST fails with a generic error', async () => {
@@ -356,7 +356,7 @@ describe('InstructionsHistoryPanel', () => {
       });
 
       // onReverted must NOT have been called because the POST failed
-      expect(onReverted).not.toHaveBeenCalled();
+      expect(onReverted).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

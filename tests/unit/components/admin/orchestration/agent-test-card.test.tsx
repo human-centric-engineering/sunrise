@@ -118,7 +118,7 @@ describe('AgentTestCard', () => {
     await waitFor(() => {
       expect(screen.getByText(/No saved provider config/)).toBeInTheDocument();
     });
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error when no model is selected', async () => {

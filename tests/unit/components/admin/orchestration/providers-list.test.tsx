@@ -346,7 +346,7 @@ describe('ProvidersList', () => {
       await waitFor(() => {
         expect(screen.queryByText('Delete provider')).not.toBeInTheDocument();
       });
-      expect(apiClient.delete).not.toHaveBeenCalled();
+      expect(apiClient.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

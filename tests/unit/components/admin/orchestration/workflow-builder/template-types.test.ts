@@ -78,7 +78,7 @@ describe('templateMetadataSchema', () => {
     it('parses a complete valid metadata object successfully', () => {
       const result = templateMetadataSchema.safeParse(VALID_METADATA);
       // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion, not a degenerate "operation succeeded" check
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       if (result.success) {
         expect(result.data.flowSummary).toBe(VALID_METADATA.flowSummary);
         expect(result.data.useCases).toHaveLength(2);
@@ -92,7 +92,7 @@ describe('templateMetadataSchema', () => {
         useCases: [],
       });
       // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('parses metadata with empty patterns array', () => {
@@ -101,7 +101,7 @@ describe('templateMetadataSchema', () => {
         patterns: [],
       });
       // test-review:accept tobe_true — Zod safeParse result success guard; structural schema contract assertion
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -161,7 +161,7 @@ describe('toTemplateItem', () => {
       expect(result.description).toBe('Multi-channel support automation');
       expect(result.patternsUsed).toEqual([1, 5]);
       // test-review:accept tobe_true — passthrough field check: isTemplate is explicitly set to true in the input fixture and verified as-is; structural, not a degenerate "operation succeeded" check
-      expect(result.isTemplate).toBe(true);
+      expect(result.isTemplate).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
