@@ -706,5 +706,78 @@ describe('ProviderForm', () => {
         );
       });
     });
+
+    it('sends null for timeoutMs and maxRetries when fields are cleared', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Anthropic',
+        slug: 'anthropic',
+        apiKeyPresent: true,
+        baseUrl: null,
+        apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+        timeoutMs: null,
+        maxRetries: null,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <ProviderForm mode="edit" provider={makeProvider({ timeoutMs: 30000, maxRetries: 3 })} />
+      );
+
+      // Advanced settings auto-opens because provider has timeoutMs/maxRetries
+      const timeoutInput = document.getElementById('timeoutMs') as HTMLInputElement;
+      const retriesInput = document.getElementById('maxRetries') as HTMLInputElement;
+      await user.clear(timeoutInput);
+      await user.clear(retriesInput);
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        const call = (apiClient.patch as ReturnType<typeof vi.fn>).mock.calls[0];
+        const body = (call[1] as { body: Record<string, unknown> }).body;
+        expect(body.timeoutMs).toBeNull();
+        expect(body.maxRetries).toBeNull();
+      });
+    });
+
+    it('sends null for apiKeyEnvVar when flavor hides it in edit mode', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({
+        id: 'prov-1',
+        name: 'Ollama (Local)',
+        slug: 'ollama-local',
+        apiKeyPresent: false,
+        baseUrl: 'http://localhost:11434/v1',
+        apiKeyEnvVar: null,
+      });
+
+      const user = userEvent.setup();
+      // Start with an OpenAI provider that has an apiKeyEnvVar
+      render(
+        <ProviderForm
+          mode="edit"
+          provider={makeProvider({
+            name: 'OpenAI',
+            slug: 'openai',
+            providerType: 'openai-compatible',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKeyEnvVar: 'OPENAI_API_KEY',
+          })}
+        />
+      );
+
+      // Switch to Ollama flavor (which hides apiKeyEnvVar)
+      await selectFlavor(user, 'Ollama');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        const call = (apiClient.patch as ReturnType<typeof vi.fn>).mock.calls[0];
+        const body = (call[1] as { body: Record<string, unknown> }).body;
+        expect(body.apiKeyEnvVar).toBeNull();
+        expect(body.isLocal).toBe(true);
+      });
+    });
   });
 });

@@ -376,8 +376,15 @@ const providerFormSchema = z.object({
     .int()
     .min(1000, 'Minimum 1000 ms')
     .max(300000, 'Maximum 300000 ms')
-    .optional(),
-  maxRetries: z.number().int().min(0, 'Minimum 0').max(10, 'Maximum 10').optional(),
+    .optional()
+    .or(z.nan().transform(() => undefined)),
+  maxRetries: z
+    .number()
+    .int()
+    .min(0, 'Minimum 0')
+    .max(10, 'Maximum 10')
+    .optional()
+    .or(z.nan().transform(() => undefined)),
 });
 
 type ProviderFormData = z.infer<typeof providerFormSchema>;
@@ -520,12 +527,31 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         isLocal: meta.isLocal,
         isActive: data.isActive,
       };
-      if (baseUrl) payload.baseUrl = baseUrl;
-      if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
-      if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
-        payload.timeoutMs = data.timeoutMs;
-      if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
-        payload.maxRetries = data.maxRetries;
+
+      if (isEdit) {
+        // On edit, always send these fields so stale values are cleared when
+        // the admin switches to a flavor that hides them. The update schema
+        // accepts null; the create schema does not.
+        payload.baseUrl = baseUrl ?? null;
+        payload.apiKeyEnvVar = apiKeyEnvVar ?? null;
+        payload.timeoutMs =
+          typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs)
+            ? data.timeoutMs
+            : null;
+        payload.maxRetries =
+          typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries)
+            ? data.maxRetries
+            : null;
+      } else {
+        // On create, only include fields that have values (create schema
+        // uses .optional(), not .nullable()).
+        if (baseUrl) payload.baseUrl = baseUrl;
+        if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
+        if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
+          payload.timeoutMs = data.timeoutMs;
+        if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
+          payload.maxRetries = data.maxRetries;
+      }
 
       if (isEdit && provider) {
         const updated = await apiClient.patch<ProviderRowWithStatus>(
@@ -811,7 +837,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
               <Input
                 id="timeoutMs"
                 type="number"
-                {...register('timeoutMs')}
+                {...register('timeoutMs', { valueAsNumber: true })}
                 placeholder="e.g. 30000"
                 className="font-mono text-xs"
                 min={1000}
@@ -832,7 +858,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
               <Input
                 id="maxRetries"
                 type="number"
-                {...register('maxRetries')}
+                {...register('maxRetries', { valueAsNumber: true })}
                 placeholder="e.g. 3"
                 className="font-mono text-xs"
                 min={0}
