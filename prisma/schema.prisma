@@ -685,6 +685,7 @@ model AiWebhookSubscription {
   deliveries AiWebhookDelivery[]
 
   @@index([isActive])
+  @@index([createdBy])
   @@map("ai_webhook_subscription")
 }
 
