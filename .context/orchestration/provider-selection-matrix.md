@@ -104,6 +104,8 @@ Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pt
 | PATCH  | `/api/v1/admin/orchestration/provider-models/:id` | Update (flips `isDefault` to `false` on edit)                                           |
 | DELETE | `/api/v1/admin/orchestration/provider-models/:id` | Soft delete (`isActive = false`)                                                        |
 
+**Soft delete behaviour:** DELETE sets `isActive = false` (no `deletedAt` column). Inactive models are excluded from the matrix and `recommendModels()` by default. Agents that explicitly reference a deactivated model still resolve at runtime — the model is hidden from selection UI but not blocked from use.
+
 ### Recommendations
 
 | Method | Path                                                                    | Purpose                |
