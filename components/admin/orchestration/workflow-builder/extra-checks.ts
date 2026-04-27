@@ -246,6 +246,28 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         }
         break;
       }
+      case 'agent_call': {
+        if (!isNonEmptyString(config.agentSlug)) {
+          emit(`Agent Call "${label}" needs a selected agent`);
+        }
+        if (!isNonEmptyString(config.message)) {
+          emit(`Agent Call "${label}" needs a message template`);
+        }
+        break;
+      }
+      case 'send_notification': {
+        const channel = config.channel as string | undefined;
+        if (!isNonEmptyString(config.bodyTemplate)) {
+          emit(`Notification "${label}" needs a body template`);
+        }
+        if (channel === 'email' && !isNonEmptyString(config.to)) {
+          emit(`Notification "${label}" (email) needs recipients`);
+        }
+        if (channel === 'webhook' && !isNonEmptyString(config.webhookUrl)) {
+          emit(`Notification "${label}" (webhook) needs a URL`);
+        }
+        break;
+      }
       default:
         // chain / parallel have no required config.
         break;
