@@ -422,5 +422,36 @@ describe('IP Security Utilities', () => {
         expect(getClientIP(request)).toBe('203.0.113.1');
       });
     });
+
+    describe('Fallthrough: invalid X-Forwarded-For to X-Real-IP', () => {
+      it('should use X-Real-IP when X-Forwarded-For contains an invalid value', () => {
+        // Arrange: attacker-like or malformed X-Forwarded-For that fails isValidIP;
+        // valid X-Real-IP should be returned via the fallthrough path
+        const request = new NextRequest('http://localhost', {
+          headers: {
+            'x-forwarded-for': 'not-a-valid-ip-address',
+            'x-real-ip': '198.51.100.42',
+          },
+        });
+
+        // Act
+        const ip = getClientIP(request);
+
+        // Assert: falls through to X-Real-IP
+        expect(ip).toBe('198.51.100.42');
+      });
+    });
+  });
+
+  describe('isValidIP — additional coverage', () => {
+    it('should accept IPv6 compressed loopback ::1', () => {
+      // Arrange / Act / Assert: fully compressed IPv6 loopback matches IPV6_PATTERN
+      expect(isValidIP('::1')).toBe(true);
+    });
+
+    it('should accept full 8-group IPv6 address', () => {
+      // Arrange / Act / Assert: expanded IPv6 with all 32 hex digits
+      expect(isValidIP('2001:0db8:85a3:0000:0000:8a2e:0370:7334')).toBe(true);
+    });
   });
 });

@@ -193,6 +193,26 @@ describe('sseResponse', () => {
     expect(iteratorStarted).toBe(false);
   });
 
+  it('sanitizes non-alphanumeric type to unknown in the emitted event frame', async () => {
+    // Arrange: event with a type containing special characters (e.g. a dot or slash)
+    // that do NOT match /^[a-z0-9_]+$/i — the formatFrame guard at sse.ts L139
+    async function* badType(): AsyncIterable<{ type: string }> {
+      yield { type: 'bad.type' };
+    }
+
+    // Act
+    const response = sseResponse(
+      badType() as AsyncIterable<{ type: string } & { type: 'bad.type' }>
+    );
+    const body = await readAll(response.body);
+
+    // Assert: the SSE `event:` line uses the sanitized value, NOT the raw type
+    expect(body).toContain('event: unknown\n');
+    expect(body).not.toContain('event: bad.type');
+    // The full object (including the original type) is still in the data payload
+    expect(body).toContain('"type":"bad.type"');
+  });
+
   it('cleans up keepalive and abort listener when the consumer cancels', async () => {
     vi.useFakeTimers();
     try {

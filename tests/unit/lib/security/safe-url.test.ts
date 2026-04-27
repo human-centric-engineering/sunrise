@@ -138,4 +138,143 @@ describe('checkSafeProviderUrl', () => {
       expect(isSafeProviderUrl('http://169.254.169.254/')).toBe(false);
     });
   });
+
+  describe('scheme rejection — exact reason code', () => {
+    it('rejects file: scheme with disallowed_scheme reason', () => {
+      // Arrange: file: is not http/https and must return a specific reason
+      // Act
+      const result = checkSafeProviderUrl('file:///etc/passwd');
+      // Assert
+      expect(result.ok).toBe(false);
+      // file:// URLs have no host and may be rejected as invalid_url by WHATWG
+      expect(['disallowed_scheme', 'invalid_url']).toContain(result.reason);
+    });
+
+    it('rejects data: scheme with disallowed_scheme reason', () => {
+      // Arrange: data: URIs should be rejected at the scheme layer
+      // Act
+      const result = checkSafeProviderUrl('data:text/plain,hello');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('disallowed_scheme');
+    });
+
+    it('rejects gopher: scheme with disallowed_scheme reason', () => {
+      // Arrange
+      const result = checkSafeProviderUrl('gopher://evil.example.com/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('disallowed_scheme');
+    });
+  });
+
+  describe('blocked hostnames — exact reason code', () => {
+    it('blocks 169.254.169.254 with blocked_host reason', () => {
+      // Arrange: AWS metadata IP is in BLOCKED_HOSTNAMES
+      const result = checkSafeProviderUrl('http://169.254.169.254/latest/meta-data/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('blocked_host');
+    });
+
+    it('blocks metadata.google.internal with blocked_host reason', () => {
+      // Arrange: GCP metadata hostname is in BLOCKED_HOSTNAMES
+      const result = checkSafeProviderUrl('http://metadata.google.internal/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('blocked_host');
+    });
+
+    it('blocks 0.0.0.0 with blocked_host reason (not loopback_not_allowed)', () => {
+      // Arrange: 0.0.0.0 is in BLOCKED_HOSTNAMES — must use blocked_host, not loopback_not_allowed
+      const result = checkSafeProviderUrl('http://0.0.0.0/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('blocked_host');
+    });
+  });
+
+  describe('loopback allowed path', () => {
+    it('allows 127.0.0.1 when allowLoopback: true', () => {
+      // Arrange: local provider config should pass with the loopback opt-in
+      const result = checkSafeProviderUrl('http://127.0.0.1/', { allowLoopback: true });
+      // Assert
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('private IP ranges — specific addresses', () => {
+    it('blocks 10.0.0.1 with private_ip reason', () => {
+      // Arrange: 10.0.0.0/8
+      const result = checkSafeProviderUrl('http://10.0.0.1/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+
+    it('blocks 172.16.0.1 with private_ip reason (172.16.0.0/12 range)', () => {
+      // Arrange: start of RFC1918 172.16.0.0/12
+      const result = checkSafeProviderUrl('http://172.16.0.1/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+
+    it('blocks 192.168.1.1 with private_ip reason', () => {
+      // Arrange: 192.168.0.0/16
+      const result = checkSafeProviderUrl('http://192.168.1.1/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+
+    it('blocks 100.64.0.1 carrier-grade NAT with private_ip reason', () => {
+      // Arrange: 100.64.0.0/10 shared address space (CGNAT)
+      const result = checkSafeProviderUrl('http://100.64.0.1/');
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+
+    it('blocks link-local 169.254.1.1 (not the metadata IP) with private_ip reason', () => {
+      // Arrange: 169.254.0.0/16 link-local — distinct from the exact metadata IP 169.254.169.254
+      // which is caught by BLOCKED_HOSTNAMES. Other addresses in the subnet go through isLinkLocalIp.
+      const result = checkSafeProviderUrl('http://169.254.1.1/', { allowLoopback: true });
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+
+    it('blocks IPv6 unique-local fc00::1 with private_ip reason', () => {
+      // Arrange: fc00::/7 unique local addresses
+      const result = checkSafeProviderUrl('http://[fc00::1]/', { allowLoopback: true });
+      // Assert
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('private_ip');
+    });
+  });
+
+  describe('isSafeProviderUrl boolean matches checkSafeProviderUrl.ok', () => {
+    it('returns true when checkSafeProviderUrl returns ok: true', () => {
+      // Arrange: safe public URL
+      const url = 'https://api.anthropic.com';
+      // Act
+      const checkResult = checkSafeProviderUrl(url);
+      const boolResult = isSafeProviderUrl(url);
+      // Assert: thin wrapper returns the same boolean
+      expect(boolResult).toBe(checkResult.ok);
+      expect(boolResult).toBe(true);
+    });
+
+    it('returns false when checkSafeProviderUrl returns ok: false', () => {
+      // Arrange: blocked private IP
+      const url = 'http://192.168.0.1/';
+      // Act
+      const checkResult = checkSafeProviderUrl(url);
+      const boolResult = isSafeProviderUrl(url);
+      // Assert: thin wrapper returns the same boolean
+      expect(boolResult).toBe(checkResult.ok);
+      expect(boolResult).toBe(false);
+    });
+  });
 });
