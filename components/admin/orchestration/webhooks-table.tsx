@@ -89,6 +89,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   const fetchPage = useCallback(
     async (page: number) => {
       setLoading(true);
+      setListError(null);
       try {
         const params = new URLSearchParams({ page: String(page), limit: String(meta.limit) });
         if (activeFilter !== 'all') params.set('isActive', activeFilter);
@@ -98,6 +99,8 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           setWebhooks(body.data);
           setMeta(parsePaginationMeta(body.meta) ?? meta);
         }
+      } catch (err) {
+        setListError(err instanceof APIClientError ? err.message : 'Failed to load webhooks');
       } finally {
         setLoading(false);
       }
@@ -112,9 +115,16 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    setListError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.webhookById(deleteTarget.id));
       void fetchPage(meta.page);
+    } catch (err) {
+      setListError(
+        err instanceof APIClientError
+          ? `Delete failed: ${err.message}`
+          : 'Could not delete webhook. Try again.'
+      );
     } finally {
       setDeleteTarget(null);
     }
