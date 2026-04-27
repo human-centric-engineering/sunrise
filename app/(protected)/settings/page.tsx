@@ -18,7 +18,6 @@ import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
 import { parseUserPreferences } from '@/lib/validations/user';
-import type { UserPreferences } from '@/types';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 import { getInitials } from '@/lib/utils/initials';
 
@@ -64,7 +63,7 @@ export default async function SettingsPage() {
   }
 
   // Parse preferences from JSON
-  const preferences = parseUserPreferences(user.preferences) as UserPreferences;
+  const preferences = parseUserPreferences(user.preferences);
 
   // Check if user has a password account
   const hasPasswordAccount = user.accounts.some((account) => account.password !== null);
