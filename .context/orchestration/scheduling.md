@@ -129,6 +129,8 @@ Examples:
 
 Parsed by `cron-parser` v5 (`CronExpressionParser`).
 
+**Timezone:** All cron expressions are evaluated in the server's system timezone (typically UTC in production). There is no per-schedule timezone override. If the server timezone changes (e.g., during a migration), existing schedules will shift accordingly. Plan cron expressions in UTC to avoid ambiguity.
+
 ## Webhook SSRF Protection
 
 Webhook subscription URLs are validated via Zod schema refinements that call `checkSafeProviderUrl()` from `lib/security/safe-url.ts`. This prevents admins from pointing webhooks at internal services (RFC1918 ranges, cloud metadata endpoints like `169.254.169.254`, etc.). Validation runs on both `POST /webhooks` (create) and `PATCH /webhooks/:id` (update, if URL is present).
