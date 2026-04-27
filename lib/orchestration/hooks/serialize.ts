@@ -25,5 +25,20 @@ export type SafeHook = Omit<HookRow, 'secret'> & { hasSecret: boolean };
 
 export function toSafeHook(row: HookRow): SafeHook {
   const { secret: _secret, ...rest } = row;
-  return { ...rest, hasSecret: row.secret !== null };
+
+  // Redact header values in action to prevent auth token leakage
+  let safeAction = rest.action;
+  if (safeAction && typeof safeAction === 'object' && !Array.isArray(safeAction)) {
+    const action = safeAction as Record<string, unknown>;
+    if (action.headers && typeof action.headers === 'object') {
+      safeAction = {
+        ...action,
+        headers: Object.fromEntries(
+          Object.keys(action.headers as Record<string, string>).map((k) => [k, '••••••••'])
+        ),
+      };
+    }
+  }
+
+  return { ...rest, action: safeAction, hasSecret: row.secret !== null };
 }
