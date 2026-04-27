@@ -24,6 +24,10 @@ import { createWorkflowSchema, listWorkflowsQuerySchema } from '@/lib/validation
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(async (request, _session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
 
   const { searchParams } = new URL(request.url);

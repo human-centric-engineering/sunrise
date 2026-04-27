@@ -38,6 +38,10 @@ function parseWorkflowId(raw: string): string {
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = parseWorkflowId(rawId);

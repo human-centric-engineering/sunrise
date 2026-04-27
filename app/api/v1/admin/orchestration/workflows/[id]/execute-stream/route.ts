@@ -21,11 +21,17 @@ import { validateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { z } from 'zod';
 
 const inputDataSchema = z.record(z.string(), z.unknown());
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const parsed = cuidSchema.safeParse(rawId);
