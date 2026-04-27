@@ -108,9 +108,9 @@ describe('components/forms/preferences-form', () => {
     it('should render all email preference switches', () => {
       render(<PreferencesForm preferences={mockPreferences} />);
 
-      expect(screen.getByLabelText(/marketing emails/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/product updates/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/security alerts/i)).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /marketing/i })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /product updates/i })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /security alerts/i })).toBeInTheDocument();
     });
 
     it('should render switches with correct initial states', () => {
@@ -136,7 +136,8 @@ describe('components/forms/preferences-form', () => {
       render(<PreferencesForm preferences={mockPreferences} />);
 
       // ShieldCheck icon is rendered for security alerts
-      const securitySection = screen.getByLabelText(/security alerts/i).closest('div');
+      const securitySwitch = screen.getByRole('switch', { name: /security alerts/i });
+      const securitySection = securitySwitch.closest('div');
       expect(securitySection).toBeInTheDocument();
     });
 
@@ -673,9 +674,9 @@ describe('components/forms/preferences-form', () => {
     it('should have associated labels for all switches', () => {
       render(<PreferencesForm preferences={mockPreferences} />);
 
-      expect(screen.getByLabelText(/marketing emails/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/product updates/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/security alerts/i)).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /marketing/i })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /product updates/i })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /security alerts/i })).toBeInTheDocument();
     });
 
     it('should have aria-label for disabled security alerts switch', () => {
