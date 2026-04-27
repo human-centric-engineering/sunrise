@@ -1159,3 +1159,74 @@ describe('parseInvitationMetadata', () => {
     });
   });
 });
+
+describe('parseInvitationMetadata — branch coverage', () => {
+  it('returns parsed metadata object when all required fields are present', () => {
+    // Arrange — valid metadata matching invitationMetadataSchema exactly
+    const validMetadata = {
+      name: 'Alice Example',
+      role: 'USER',
+      invitedBy: 'inviter@example.com',
+      invitedAt: '2025-01-15T08:30:00.000Z',
+    };
+
+    // Act
+    const result = parseInvitationMetadata(validMetadata);
+
+    // Assert — happy path: returns the parsed data, not null
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('Alice Example');
+    expect(result?.role).toBe('USER');
+    expect(result?.invitedBy).toBe('inviter@example.com');
+    expect(result?.invitedAt).toBe('2025-01-15T08:30:00.000Z');
+  });
+
+  it('returns null when required fields are missing from the metadata', () => {
+    // Arrange — metadata missing both invitedBy and invitedAt
+    const partialMetadata = {
+      name: 'Bob Example',
+      role: 'ADMIN',
+    };
+
+    // Act
+    const result = parseInvitationMetadata(partialMetadata);
+
+    // Assert — error branch: returns null instead of throwing
+    expect(result).toBeNull();
+  });
+});
+
+describe('listInvitationsQuerySchema — sortBy and sortOrder defaults', () => {
+  it('applies default sortBy=invitedAt and sortOrder=desc when omitted', () => {
+    // Arrange — query with no sort params
+    const input = { page: 1 };
+
+    // Act
+    const result = listInvitationsQuerySchema.safeParse(input);
+
+    // Assert — defaults are applied
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sortBy).toBe('invitedAt');
+      expect(result.data.sortOrder).toBe('desc');
+    }
+  });
+
+  it('accepts all valid sortBy values as enumerated', () => {
+    // Arrange — test each valid enum value explicitly
+    const validSortByValues = ['name', 'email', 'invitedAt', 'expiresAt'] as const;
+
+    validSortByValues.forEach((sortBy) => {
+      // Act
+      const result = listInvitationsQuerySchema.safeParse({ sortBy });
+
+      // Assert — every declared enum value is accepted
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.sortBy).toBe(sortBy);
+      }
+    });
+  });
+});

@@ -633,3 +633,40 @@ describe('integration tests', () => {
     });
   });
 });
+
+describe('getTimezonesByRegion() — exact region key set', () => {
+  it('returns an object whose key set exactly matches all 9 expected regions', () => {
+    // Arrange — the full set of regions the data should produce
+    const expectedRegions = new Set([
+      'UTC',
+      'Africa',
+      'America',
+      'Asia',
+      'Atlantic',
+      'Australia',
+      'Europe',
+      'Indian',
+      'Pacific',
+    ]);
+
+    // Act
+    const result = getTimezonesByRegion();
+    const actualRegions = new Set(Object.keys(result));
+
+    // Assert — exact key set (no missing, no extra regions)
+    expect(actualRegions).toEqual(expectedRegions);
+  });
+});
+
+describe('findTimezone() — IANA miss path', () => {
+  it('returns undefined for a valid IANA-format identifier that does not exist in the list', () => {
+    // Arrange — well-formed IANA format string, not a real entry
+    const nonExistentIana = 'America/NonExistentCity';
+
+    // Act
+    const result = findTimezone(nonExistentIana);
+
+    // Assert — miss path returns undefined (not null, not an error)
+    expect(result).toBeUndefined();
+  });
+});
