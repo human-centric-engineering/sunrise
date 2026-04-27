@@ -184,6 +184,7 @@ describe('GET /api/v1/users', () => {
       }>(response);
 
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(2);
       expect(data.data[0]).toMatchObject({

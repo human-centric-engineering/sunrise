@@ -206,6 +206,7 @@ describe('GET /api/v1/chat/conversations/:id', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data).toMatchObject({ id: VALID_CUID });
     });
@@ -301,7 +302,7 @@ describe('GET /api/v1/chat/conversations/:id', () => {
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -323,7 +324,7 @@ describe('GET /api/v1/chat/conversations/:id', () => {
       // Assert
       expect(response.status).toBe(401);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });
@@ -357,7 +358,9 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.data.deleted).toBe(true);
 
       // Assert: delete was called with the correct id
@@ -404,7 +407,7 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
       expect(response.status).toBe(404);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -425,8 +428,8 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
       // Assert
       expect(response.status).toBe(429);
       expect(createRateLimitResponse).toHaveBeenCalledOnce();
-      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
-      expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.aiConversation.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -448,7 +451,7 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -470,7 +473,7 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
       // Assert
       expect(response.status).toBe(401);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });

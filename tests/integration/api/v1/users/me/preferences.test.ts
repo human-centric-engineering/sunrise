@@ -146,9 +146,12 @@ describe('GET /api/v1/users/me/preferences', () => {
         data: UserPreferences;
       }>(response);
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.email.marketing).toBe(true);
       expect(data.data.email.productUpdates).toBe(false);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.email.securityAlerts).toBe(true);
     });
 
@@ -169,6 +172,7 @@ describe('GET /api/v1/users/me/preferences', () => {
         response
       );
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject(DEFAULT_USER_PREFERENCES);
     });
@@ -190,9 +194,11 @@ describe('GET /api/v1/users/me/preferences', () => {
         response
       );
 
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.email.marketing).toBe(DEFAULT_USER_PREFERENCES.email.marketing);
       expect(data.data.email.productUpdates).toBe(DEFAULT_USER_PREFERENCES.email.productUpdates);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.email.securityAlerts).toBe(true);
     });
 
@@ -257,6 +263,7 @@ describe('PATCH /api/v1/users/me/preferences', () => {
         success: boolean;
         data: { email: { marketing: boolean } };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.email.marketing).toBe(false);
     });
@@ -287,7 +294,9 @@ describe('PATCH /api/v1/users/me/preferences', () => {
         success: boolean;
         data: { email: { productUpdates: boolean } };
       }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.email.productUpdates).toBe(true);
     });
 

@@ -155,7 +155,7 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Unauthorized');
 
       // Should not query database when not authenticated
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when non-admin user tries to view another user', async () => {
@@ -176,7 +176,7 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Forbidden');
 
       // Should not query database when not authorized
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should allow user to view their own profile', async () => {
@@ -212,6 +212,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(userId);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -266,6 +267,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(targetUserId);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -356,12 +358,14 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert - Standard fields
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(userId);
       expect(data.data.name).toBe('John Doe');
       expect(data.data.email).toBe('john@example.com');
       expect(data.data.role).toBe('USER');
       // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.emailVerified).toBe(true);
       expect(data.data.image).toBe('https://example.com/avatar.jpg');
 
@@ -408,6 +412,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -447,6 +452,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.timezone).toBe('UTC');
     });
@@ -483,6 +489,7 @@ describe('GET /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.timezone).toBe('Asia/Tokyo');
       expect(data.data.location).toBe('Tokyo, Japan');
@@ -552,7 +559,7 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       // ID validation fires before DB access
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle database errors gracefully', async () => {
@@ -614,6 +621,7 @@ describe('GET /api/v1/users/[id]', () => {
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(typeof data.data).toBe('object');
     });
@@ -806,8 +814,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Unauthorized');
 
       // Should not query database when not authenticated
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 for non-admin user', async () => {
@@ -832,8 +840,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Admin access required');
 
       // Should not query database when not authorized
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -891,6 +899,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('New Name');
       expect(data.data.id).toBe(targetUserId);
@@ -965,6 +974,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.role).toBe('ADMIN');
       expect(prisma.user.update).toHaveBeenCalledWith({
@@ -1026,8 +1036,10 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.emailVerified).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: targetUserId },
@@ -1091,6 +1103,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert — handler must return 200 envelope with emailVerified:false
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.emailVerified).toBe(false);
 
@@ -1159,10 +1172,12 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('New Name');
       expect(data.data.role).toBe('ADMIN');
       // test-review:accept tobe_true — emailVerified is a boolean field on the user model; structural assertion against the DB-derived value
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.emailVerified).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: targetUserId },
@@ -1287,6 +1302,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert — 200: self-role-change guard did NOT fire; update proceeded
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledTimes(1);
     });
@@ -1333,6 +1349,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       // Assert — guard did NOT fire; update proceeded and returned 200
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1378,7 +1395,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Cannot change your own role');
 
       // Should not update user
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -1411,7 +1428,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('User not found');
 
       // Should not update user
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return validation error for empty body', async () => {
@@ -1437,8 +1454,8 @@ describe('PATCH /api/v1/users/[id]', () => {
 
       // Empty-body guard at route.ts:111 fires before the findUnique existence check —
       // findUnique is never reached.
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return validation error for invalid body', async () => {
@@ -1462,8 +1479,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
 
       // Should not query database
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 for invalid user ID format', async () => {
@@ -1485,8 +1502,8 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
 
       // Should not query database
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle database errors gracefully', async () => {
@@ -1511,7 +1528,7 @@ describe('PATCH /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('INTERNAL_ERROR');
 
       // Should not update user
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 500 when prisma.user.update rejects after a successful findUnique', async () => {

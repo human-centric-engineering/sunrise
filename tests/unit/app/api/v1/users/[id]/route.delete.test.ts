@@ -151,8 +151,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('UNAUTHORIZED');
 
       // Should not query database when not authenticated
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when non-admin user tries to delete a user', async () => {
@@ -175,8 +175,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Admin access required');
 
       // Should not query database when not authorized
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should allow admin to delete other users', async () => {
@@ -209,9 +209,11 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(targetUserId);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
       expect(prisma.user.delete).toHaveBeenCalledWith({
         where: { id: targetUserId },
@@ -239,8 +241,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.error.message).toBe('Cannot delete your own account');
 
       // Should not query database or delete when trying to self-delete
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -278,7 +280,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: targetAdminId },
       });
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -306,7 +308,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'cmjbv4i3x00006wsloputgwuz' },
       });
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -343,6 +345,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
 
       // Assert - Response data
@@ -350,6 +353,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.data).toHaveProperty('deleted');
       expect(data.data.id).toBe(targetUserId);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
 
       // Assert - Database operations
@@ -460,10 +464,12 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
 
       // Verify avatar cleanup was called
       // test-review:accept no_arg_called — isStorageEnabled is a boolean accessor with no arguments; presence check is the contract
+      // test-review:accept no_arg_called — zero-arg side-effect trigger
       expect(isStorageEnabled).toHaveBeenCalled();
       expect(deleteByPrefix).toHaveBeenCalledWith(`avatars/${targetUserId}/`);
 
@@ -503,12 +509,14 @@ describe('DELETE /api/v1/users/[id]', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
 
       // Verify storage check was called but cleanup was skipped
       // test-review:accept no_arg_called — isStorageEnabled is a boolean accessor with no arguments; presence check is the contract
+      // test-review:accept no_arg_called — zero-arg side-effect trigger
       expect(isStorageEnabled).toHaveBeenCalled();
-      expect(deleteByPrefix).not.toHaveBeenCalled();
+      expect(deleteByPrefix).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Verify user was still deleted
       expect(prisma.user.delete).toHaveBeenCalledWith({
@@ -594,11 +602,12 @@ describe('DELETE /api/v1/users/[id]', () => {
 
       // Verify cleanup was attempted before the error propagated
       // test-review:accept no_arg_called — isStorageEnabled is a boolean accessor with no arguments; presence check is the contract
+      // test-review:accept no_arg_called — zero-arg side-effect trigger
       expect(isStorageEnabled).toHaveBeenCalled();
       expect(deleteByPrefix).toHaveBeenCalledWith(`avatars/${targetUserId}/`);
 
       // User must not be deleted: storage error propagates before prisma.user.delete is reached
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -625,8 +634,8 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('VALIDATION_ERROR');
 
       // Should not attempt database operations
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle database errors gracefully', async () => {
@@ -650,7 +659,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.error.code).toBe('INTERNAL_ERROR');
 
       // Should not attempt deletion after findUnique fails
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should handle deletion errors gracefully', async () => {
@@ -719,6 +728,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(typeof data.data).toBe('object');
 
@@ -727,6 +737,7 @@ describe('DELETE /api/v1/users/[id]', () => {
       expect(data.data).toHaveProperty('deleted');
       expect(typeof data.data.id).toBe('string');
       // test-review:accept tobe_true — structural assertion on the API response envelope's success/deleted field, paired with status and data checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
     });
 

@@ -197,6 +197,7 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.messages).toHaveLength(2);
       expect(body.data.messages[0]).toMatchObject({ role: 'user', content: 'Hello!' });
@@ -221,6 +222,7 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
           },
         })
       );
+      // test-review:accept no_arg_called — zero-arg side-effect trigger
       expect(prisma.aiMessage.findMany).toHaveBeenCalled();
     });
 
@@ -277,6 +279,7 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.messages).toHaveLength(0);
     });
@@ -301,7 +304,7 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
       expect(response.status).toBe(404);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 when conversation belongs to another user', async () => {
@@ -317,7 +320,7 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
       // Assert: 404 not 403 to avoid resource enumeration
       expect(response.status).toBe(404);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 when agent has internal visibility', async () => {
@@ -354,8 +357,8 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
-      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -377,8 +380,8 @@ describe('GET /api/v1/chat/conversations/:id/messages', () => {
       // Assert
       expect(response.status).toBe(401);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
-      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });

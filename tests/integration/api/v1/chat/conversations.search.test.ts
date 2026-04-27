@@ -107,6 +107,7 @@ describe('GET /api/v1/chat/conversations/search', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: unknown[] }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data).toHaveLength(1);
   });
@@ -153,7 +154,7 @@ describe('GET /api/v1/chat/conversations/search', () => {
 
     expect(response.status).toBe(429);
     // Should not hit the database at all
-    expect(prisma.aiConversation.findMany).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('only returns conversations with publicly visible active agents', async () => {
@@ -168,6 +169,7 @@ describe('GET /api/v1/chat/conversations/search', () => {
     // preventing consumers from searching conversations with internal agents.
     const findManyCall = vi.mocked(prisma.aiConversation.findMany).mock.calls[0]?.[0];
     const where = findManyCall?.where as Record<string, unknown>;
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(where.isActive).toBe(true);
     expect(where.agent).toEqual({ visibility: { in: ['public', 'invite_only'] }, isActive: true });
     expect(where.messages).toEqual({

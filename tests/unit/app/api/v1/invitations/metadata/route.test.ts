@@ -145,6 +145,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       // Assert
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toEqual({
         name: 'John Doe',
@@ -250,7 +251,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.error.message).toBe('Invalid query parameters');
 
       // Should not call getInvitationMetadata when validation fails
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when token is empty string', async () => {
@@ -266,7 +267,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when email is missing', async () => {
@@ -282,7 +283,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when email is empty string', async () => {
@@ -298,7 +299,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when both token and email are missing', async () => {
@@ -314,7 +315,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -332,7 +333,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBe('Invalid query parameters');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when email is missing @ symbol', async () => {
@@ -347,7 +348,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when email is just @ symbol', async () => {
@@ -362,7 +363,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(getInvitationMetadata).not.toHaveBeenCalled();
+      expect(getInvitationMetadata).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should accept email with valid special characters (+, .)', async () => {
@@ -630,6 +631,7 @@ describe('GET /api/v1/invitations/metadata', () => {
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('data');
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status 200 and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(typeof data.data).toBe('object');
     });

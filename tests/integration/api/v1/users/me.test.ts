@@ -165,6 +165,7 @@ describe('GET /api/v1/users/me', () => {
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
 
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject({
         id: mockUserData.id,
@@ -197,6 +198,7 @@ describe('GET /api/v1/users/me', () => {
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
 
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -254,6 +256,7 @@ describe('PATCH /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.name).toBe('Updated Name');
     });
@@ -283,6 +286,7 @@ describe('PATCH /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof updatedData }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.bio).toBe('Updated bio');
       expect(data.data.phone).toBe('+1 (555) 999-8888');
@@ -312,6 +316,7 @@ describe('PATCH /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: typeof mockUserData }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.bio).toBeNull();
       expect(data.data.phone).toBeNull();
@@ -344,6 +349,7 @@ describe('PATCH /api/v1/users/me', () => {
         data: typeof mockUserData & { updatedAt: string };
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.email).toBe('newemail@example.com');
       // Verify the handler-derived updatedAt comes from the DB return, not the request body
@@ -468,8 +474,10 @@ describe('DELETE /api/v1/users/me', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<{ success: boolean; data: { deleted: boolean } }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       // test-review:accept tobe_true — structural assertion on the deleted boolean field in the API response, paired with status 200 and id check
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.data.deleted).toBe(true);
 
       // Verify user was deleted

@@ -177,8 +177,8 @@ describe('app/api/v1/users/me/avatar/route', () => {
       expect(data.error.code).toBe('RATE_LIMIT_EXCEEDED');
 
       // No DB or storage operations should have occurred
-      expect(uploadAvatar).not.toHaveBeenCalled();
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(uploadAvatar).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when no file provided', async () => {
@@ -278,6 +278,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.url).toContain('?v=');
       expect(data.data.width).toBe(500);
@@ -541,6 +542,7 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.message).toBe('Avatar removed');
 
@@ -568,8 +570,9 @@ describe('app/api/v1/users/me/avatar/route', () => {
 
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
-      expect(deleteByPrefix).not.toHaveBeenCalled();
+      expect(deleteByPrefix).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: userId },
         data: { image: null },

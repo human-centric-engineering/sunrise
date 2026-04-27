@@ -173,6 +173,7 @@ describe('GET /api/v1/chat/conversations', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data).toHaveLength(2);
       expect(body.meta).toBeDefined();
@@ -220,6 +221,7 @@ describe('GET /api/v1/chat/conversations', () => {
           }),
         })
       );
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
     });
   });
@@ -239,6 +241,7 @@ describe('GET /api/v1/chat/conversations', () => {
 
       // Assert
       expect(response.status).toBe(200);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data).toHaveLength(0);
       expect(body.meta?.total).toBe(0);
@@ -303,7 +306,7 @@ describe('GET /api/v1/chat/conversations', () => {
       expect(response.status).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.aiConversation.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiConversation.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

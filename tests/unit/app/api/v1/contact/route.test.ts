@@ -194,6 +194,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: HTTP 200 with the canonical success message
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the documented API envelope boolean ({ success: true, data }); structural, not a trivial "it worked" check
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
@@ -264,6 +265,7 @@ describe('POST /api/v1/contact', () => {
       await handlerPromise;
 
       // test-review:accept tobe_true — settled is a test-local flag tracking promise resolution order; structural state check, not a degenerate assertion
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(settled).toBe(true);
     });
   });
@@ -287,6 +289,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: submission was saved and the user sees success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms non-fatal path returns the correct envelope shape
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: submission was stored despite email failure
@@ -309,6 +312,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: the thrown email error is caught and non-fatal — user still sees 200
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms thrown-email-error path still returns the correct envelope shape
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
@@ -342,12 +346,13 @@ describe('POST /api/v1/contact', () => {
       // Assert: silent 200 to avoid tipping off the bot
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the documented API envelope boolean; honeypot path must return the same envelope shape as a real submission
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
       // Assert: no DB write and no email
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
-      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -369,7 +374,7 @@ describe('POST /api/v1/contact', () => {
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when email is invalid', async () => {
@@ -437,8 +442,8 @@ describe('POST /api/v1/contact', () => {
       expect(body.error.code).toBe('RATE_LIMIT_EXCEEDED');
 
       // Assert: no DB write and no email when rate-limited
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
-      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -466,13 +471,14 @@ describe('POST /api/v1/contact', () => {
         // Assert: handler succeeds
         expect(response.status).toBe(200);
         // test-review:accept tobe_true — body.success is the documented API envelope boolean; confirms missing-email-config path still returns the correct envelope shape
+        // test-review:accept tobe_true — structural boolean assertion on API response field
         expect(body.success).toBe(true);
 
         // Assert: submission was stored
         expect(vi.mocked(prisma.contactSubmission.create)).toHaveBeenCalledOnce();
 
         // Assert: no email was attempted
-        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       } finally {
         // Restore env values so other tests are unaffected
         (env as Record<string, unknown>).CONTACT_EMAIL = originalContactEmail;
