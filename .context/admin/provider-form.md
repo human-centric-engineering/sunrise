@@ -4,33 +4,87 @@ Shared create/edit form for `AiProviderConfig`. Raw `react-hook-form` + `zodReso
 
 **File:** `components/admin/orchestration/provider-form.tsx`
 
-The form's interesting feature is the **flavor selector** — the backend knows three `providerType` values (`anthropic`, `openai-compatible`, `voyage`), but the UI presents five choices so admins don't have to think about provider-compatibility plumbing.
+The form's interesting feature is the **flavor selector** — the backend knows three `providerType` values (`anthropic`, `openai-compatible`, `voyage`), but the UI presents sixteen choices across six groups so admins don't have to think about provider-compatibility plumbing.
 
 ## Flavor selector
 
-A `role="radiogroup"` of five bordered cards at the top of the form. The selected flavor drives the rest of the form — which fields are visible, what their defaults are, and how the submit payload is composed.
+A `role="radiogroup"` of sixteen bordered cards organized into six collapsible groups. The selected flavor drives the rest of the form — which fields are visible, what their defaults are, and how the submit payload is composed.
 
-| Flavor              | Shown fields                              | `providerType`      | `baseUrl` default             | `isLocal` | `apiKeyEnvVar` default |
-| ------------------- | ----------------------------------------- | ------------------- | ----------------------------- | --------- | ---------------------- |
-| `anthropic`         | Name, Slug, apiKeyEnvVar, Active          | `anthropic`         | — (not asked)                 | `false`   | `ANTHROPIC_API_KEY`    |
-| `openai`            | Name, Slug, apiKeyEnvVar, Active          | `openai-compatible` | `https://api.openai.com/v1`   | `false`   | `OPENAI_API_KEY`       |
-| `voyage`            | Name, Slug, apiKeyEnvVar, Active          | `voyage`            | `https://api.voyageai.com/v1` | `false`   | `VOYAGE_API_KEY`       |
-| `ollama`            | Name, Slug, baseUrl, Active               | `openai-compatible` | `http://localhost:11434/v1`   | `true`    | — (not asked)          |
-| `openai-compatible` | Name, Slug, baseUrl, apiKeyEnvVar, Active | `openai-compatible` | — (required input)            | `false`   | — (optional input)     |
+### Groups and flavors
+
+**Frontier Providers**
+
+| Flavor      | Shown fields                     | `providerType`      | `baseUrl` default                                         | `isLocal` | `apiKeyEnvVar` default |
+| ----------- | -------------------------------- | ------------------- | --------------------------------------------------------- | --------- | ---------------------- |
+| `anthropic` | Name, Slug, apiKeyEnvVar, Active | `anthropic`         | — (not asked)                                             | `false`   | `ANTHROPIC_API_KEY`    |
+| `google`    | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://generativelanguage.googleapis.com/v1beta/openai` | `false`   | `GOOGLE_AI_API_KEY`    |
+| `mistral`   | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.mistral.ai/v1`                               | `false`   | `MISTRAL_API_KEY`      |
+| `openai`    | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.openai.com/v1`                               | `false`   | `OPENAI_API_KEY`       |
+| `xai`       | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.x.ai/v1`                                     | `false`   | `XAI_API_KEY`          |
+
+**Open-Model Hosts**
+
+| Flavor      | Shown fields                     | `providerType`      | `baseUrl` default                       | `isLocal` | `apiKeyEnvVar` default |
+| ----------- | -------------------------------- | ------------------- | --------------------------------------- | --------- | ---------------------- |
+| `deepseek`  | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.deepseek.com/v1`           | `false`   | `DEEPSEEK_API_KEY`     |
+| `fireworks` | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.fireworks.ai/inference/v1` | `false`   | `FIREWORKS_API_KEY`    |
+| `groq`      | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.groq.com/openai/v1`        | `false`   | `GROQ_API_KEY`         |
+| `together`  | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.together.xyz/v1`           | `false`   | `TOGETHER_API_KEY`     |
+
+**Embedding Specialists**
+
+| Flavor   | Shown fields                     | `providerType`      | `baseUrl` default             | `isLocal` | `apiKeyEnvVar` default |
+| -------- | -------------------------------- | ------------------- | ----------------------------- | --------- | ---------------------- |
+| `cohere` | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.cohere.com/v2`   | `false`   | `COHERE_API_KEY`       |
+| `voyage` | Name, Slug, apiKeyEnvVar, Active | `voyage`            | `https://api.voyageai.com/v1` | `false`   | `VOYAGE_API_KEY`       |
+
+**Aggregators & Enterprise**
+
+| Flavor       | Shown fields                     | `providerType`      | `baseUrl` default                                   | `isLocal` | `apiKeyEnvVar` default |
+| ------------ | -------------------------------- | ------------------- | --------------------------------------------------- | --------- | ---------------------- |
+| `alibaba`    | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `false`   | `ALIBABA_API_KEY`      |
+| `openrouter` | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://openrouter.ai/api/v1`                      | `false`   | `OPENROUTER_API_KEY`   |
+| `perplexity` | Name, Slug, apiKeyEnvVar, Active | `openai-compatible` | `https://api.perplexity.ai`                         | `false`   | `PERPLEXITY_API_KEY`   |
+
+**Local / Self-Hosted**
+
+| Flavor   | Shown fields                | `providerType`      | `baseUrl` default           | `isLocal` | `apiKeyEnvVar` default |
+| -------- | --------------------------- | ------------------- | --------------------------- | --------- | ---------------------- |
+| `ollama` | Name, Slug, baseUrl, Active | `openai-compatible` | `http://localhost:11434/v1` | `true`    | — (not asked)          |
+
+**Custom**
+
+| Flavor              | Shown fields                              | `providerType`      | `baseUrl` default  | `isLocal` | `apiKeyEnvVar` default |
+| ------------------- | ----------------------------------------- | ------------------- | ------------------ | --------- | ---------------------- |
+| `openai-compatible` | Name, Slug, baseUrl, apiKeyEnvVar, Active | `openai-compatible` | — (required input) | `false`   | — (optional input)     |
 
 `providerType` and `isLocal` are never tracked in form state — they're derived from `flavor` on submit and injected into the POST/PATCH payload. The client-side Zod schema only tracks `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?, isActive, timeoutMs?, maxRetries? }`.
 
 ### Reverse mapping on edit
 
-When rendering an existing provider the form reverse-maps the row back to a flavor so the UI round-trips cleanly:
+When rendering an existing provider the form reverse-maps the row back to a flavor so the UI round-trips cleanly. The function first checks `providerType` for the two non-`openai-compatible` types, then `isLocal`, then tries base URL substring and slug matches for all known providers:
 
 ```ts
 function flavorFromProvider(p): Flavor {
   if (p.providerType === 'anthropic') return 'anthropic';
   if (p.providerType === 'voyage') return 'voyage';
   if (p.isLocal) return 'ollama';
-  if (p.baseUrl?.includes('api.openai.com')) return 'openai';
-  return 'openai-compatible';
+
+  // Match by base URL or slug
+  if (url.includes('api.openai.com')) return 'openai';
+  if (url.includes('api.groq.com') || slug === 'groq') return 'groq';
+  if (url.includes('api.together.xyz') || slug === 'together') return 'together';
+  if (url.includes('api.fireworks.ai') || slug === 'fireworks') return 'fireworks';
+  if (url.includes('api.mistral.ai') || slug === 'mistral') return 'mistral';
+  if (url.includes('api.cohere.com') || slug === 'cohere') return 'cohere';
+  if (url.includes('generativelanguage.googleapis.com') || slug === 'google') return 'google';
+  if (url.includes('api.x.ai') || slug === 'xai') return 'xai';
+  if (url.includes('api.deepseek.com') || slug === 'deepseek') return 'deepseek';
+  if (url.includes('api.perplexity.ai') || slug === 'perplexity') return 'perplexity';
+  if (url.includes('openrouter.ai') || slug === 'openrouter') return 'openrouter';
+  if (url.includes('dashscope.aliyuncs.com') || slug === 'alibaba') return 'alibaba';
+
+  return 'openai-compatible'; // fallback
 }
 ```
 
@@ -46,7 +100,7 @@ Same auto-slug behaviour as `agent-form.tsx`: typing `name` auto-fills `slug` vi
 
 ### Base URL
 
-Rendered only when `flavorMeta.showBaseUrl` is true (all flavors except Anthropic). Placeholder shows the flavor default. Validated as a URL client-side (`z.string().url()`); the **SSRF guard** lives on the backend in `refineProviderBaseUrl()` (see `lib/validations/orchestration.ts` and `lib/security/safe-url.ts`).
+Rendered only when `flavorMeta.showBaseUrl` is true (Ollama and Custom flavors). For named providers (Anthropic, OpenAI, etc.) the base URL is set automatically from the flavor defaults and not shown. Placeholder shows the flavor default. Validated as a URL client-side (`z.string().url()`); the **SSRF guard** lives on the backend in `refineProviderBaseUrl()` (see `lib/validations/orchestration.ts` and `lib/security/safe-url.ts`).
 
 If the backend refuses the URL (e.g. loopback address, private network), the sanitized 400 response is rendered inline via the error banner at the top of the form. The client never pre-validates against internal addresses — we trust the backend to be the authority and let its error message through.
 
@@ -54,7 +108,7 @@ If the backend refuses the URL (e.g. loopback address, private network), the san
 
 Rendered only when `flavorMeta.showApiKeyEnvVar` is true (all flavors except Ollama). Validated client-side as `/^[A-Z][A-Z0-9_]*$/` (SCREAMING_SNAKE_CASE) — same regex as `providerConfigSchema`.
 
-A green ✓ "set" or red ✗ "missing" indicator renders next to the input based on `apiKeyPresent` on the provider row (see [`orchestration-providers.md`](./orchestration-providers.md) for the security model). The indicator re-renders on every PATCH response.
+A green check "set" or red X "missing" indicator renders next to the input based on `apiKeyPresent` on the provider row (see [`orchestration-providers.md`](./orchestration-providers.md) for the security model). The indicator re-renders on every PATCH response.
 
 **Help copy (exact):** _"Name of the environment variable that holds your API key (e.g. `ANTHROPIC_API_KEY`). The UI never stores the key itself — just this name. The backend reads `process.env[…]` at request time."_
 
