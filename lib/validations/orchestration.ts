@@ -15,7 +15,7 @@ import {
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { TASK_TYPES, type TaskType } from '@/types/orchestration';
+import { KNOWN_STEP_TYPES, TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 
 // ============================================================================
@@ -709,7 +709,9 @@ const conditionalEdgeSchema = z.object({
 const workflowStepSchema = z.object({
   id: z.string().min(1, 'Step ID is required'),
   name: z.string().min(1, 'Step name is required').max(100),
-  type: z.string().min(1, 'Step type is required').max(50),
+  type: z.enum(KNOWN_STEP_TYPES, {
+    message: `Step type must be one of: ${KNOWN_STEP_TYPES.join(', ')}`,
+  }),
   config: z.record(z.string(), z.unknown()),
   nextSteps: z.array(conditionalEdgeSchema).default([]),
 });
