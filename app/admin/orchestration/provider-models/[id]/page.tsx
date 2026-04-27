@@ -56,7 +56,8 @@ export default async function EditProviderModelPage({ params }: Props) {
           Update this model&apos;s characteristics.{' '}
           {model.isDefault && (
             <span className="text-amber-600 dark:text-amber-400">
-              This is a seed-managed model — editing it will make it admin-managed.
+              This is a seed-managed model — editing it will make it admin-managed and future
+              re-seeds will skip this row.
             </span>
           )}
         </p>

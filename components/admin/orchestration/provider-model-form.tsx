@@ -253,7 +253,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" asChild>
-            <Link href="/admin/orchestration/provider-models">Cancel</Link>
+            <Link href="/admin/orchestration/providers?tab=models">Cancel</Link>
           </Button>
           <Button type="submit" disabled={submitting || saved}>
             {submitting ? 'Saving...' : isEdit ? 'Save changes' : 'Create model'}
@@ -268,7 +268,8 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             Provider Slug{' '}
             <FieldHelp title="Provider slug">
               The slug of the provider this model belongs to (e.g. &quot;openai&quot;,
-              &quot;anthropic&quot;, &quot;voyage&quot;).
+              &quot;anthropic&quot;, &quot;voyage&quot;). Must match an existing provider config for
+              the configured-status dot to appear green in the matrix.
             </FieldHelp>
           </Label>
           <Input id="providerSlug" {...register('providerSlug')} placeholder="e.g. openai" />
