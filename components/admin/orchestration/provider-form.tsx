@@ -7,16 +7,11 @@
  * sticky action bar, every non-trivial field wrapped in `<FieldHelp>`.
  *
  * **Flavor selector.** The backend knows three `providerType` values
- * (`anthropic`, `openai-compatible`, `voyage`) but the UI shows five
- * flavors:
- *
- *   - Anthropic         — `providerType: 'anthropic'`
- *   - OpenAI            — `providerType: 'openai-compatible'`, base URL
- *                         pinned to `https://api.openai.com/v1`
- *   - Voyage AI         — `providerType: 'voyage'`, embedding-focused
- *   - Ollama (Local)    — `providerType: 'openai-compatible'`,
- *                         `isLocal: true`, loopback base URL
- *   - OpenAI-Compatible — free-form base URL + optional env var
+ * (`anthropic`, `openai-compatible`, `voyage`) but the UI presents
+ * sixteen choices across six groups (Frontier, Open-Model Hosts,
+ * Embedding Specialists, Aggregators & Enterprise, Local / Self-Hosted,
+ * Custom). Each flavor maps to a `providerType`, a default `baseUrl`,
+ * and a default `apiKeyEnvVar`.
  *
  * The flavor drives which fields render. On submit, we compose the
  * backend payload from `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?,
@@ -376,8 +371,15 @@ const providerFormSchema = z.object({
     .int()
     .min(1000, 'Minimum 1000 ms')
     .max(300000, 'Maximum 300000 ms')
-    .optional(),
-  maxRetries: z.number().int().min(0, 'Minimum 0').max(10, 'Maximum 10').optional(),
+    .optional()
+    .or(z.nan().transform(() => undefined)),
+  maxRetries: z
+    .number()
+    .int()
+    .min(0, 'Minimum 0')
+    .max(10, 'Maximum 10')
+    .optional()
+    .or(z.nan().transform(() => undefined)),
 });
 
 type ProviderFormData = z.infer<typeof providerFormSchema>;
@@ -520,12 +522,31 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         isLocal: meta.isLocal,
         isActive: data.isActive,
       };
-      if (baseUrl) payload.baseUrl = baseUrl;
-      if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
-      if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
-        payload.timeoutMs = data.timeoutMs;
-      if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
-        payload.maxRetries = data.maxRetries;
+
+      if (isEdit) {
+        // On edit, always send these fields so stale values are cleared when
+        // the admin switches to a flavor that hides them. The update schema
+        // accepts null; the create schema does not.
+        payload.baseUrl = baseUrl ?? null;
+        payload.apiKeyEnvVar = apiKeyEnvVar ?? null;
+        payload.timeoutMs =
+          typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs)
+            ? data.timeoutMs
+            : null;
+        payload.maxRetries =
+          typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries)
+            ? data.maxRetries
+            : null;
+      } else {
+        // On create, only include fields that have values (create schema
+        // uses .optional(), not .nullable()).
+        if (baseUrl) payload.baseUrl = baseUrl;
+        if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
+        if (typeof data.timeoutMs === 'number' && !Number.isNaN(data.timeoutMs))
+          payload.timeoutMs = data.timeoutMs;
+        if (typeof data.maxRetries === 'number' && !Number.isNaN(data.maxRetries))
+          payload.maxRetries = data.maxRetries;
+      }
 
       if (isEdit && provider) {
         const updated = await apiClient.patch<ProviderRowWithStatus>(
@@ -537,6 +558,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           ...data,
           baseUrl: updated.baseUrl ?? '',
           apiKeyEnvVar: updated.apiKeyEnvVar ?? '',
+          timeoutMs: updated.timeoutMs ?? undefined,
+          maxRetries: updated.maxRetries ?? undefined,
         });
         setSaved(true);
         setTimeout(() => setSaved(false), 2500);
@@ -603,10 +626,10 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         <Label className="mb-2 block">
           Provider flavor{' '}
           <FieldHelp title="Pick your backend" contentClassName="w-80">
-            Which LLM backend this config talks to. Anthropic and OpenAI are first-class for chat.
-            Voyage AI is recommended for embeddings (free tier, top retrieval quality). Ollama runs
-            open-source models locally. OpenAI-Compatible covers everything else — Together AI,
-            Fireworks, Groq, LM Studio, vLLM, and so on.
+            Which LLM backend this config talks to. Pick a named provider (Anthropic, OpenAI, Groq,
+            Together AI, etc.) for automatic base URL and env var defaults, or use &ldquo;Other
+            (OpenAI-Compatible)&rdquo; for custom endpoints like LM Studio, vLLM, or private
+            deployments. Ollama runs open-source models locally with no API key needed.
             <p className="mt-2 text-xs">
               <strong>Note:</strong> Anthropic (Claude) does not offer an embeddings API. For
               knowledge base vector search, add a Voyage AI or OpenAI provider alongside Anthropic.
@@ -811,7 +834,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
               <Input
                 id="timeoutMs"
                 type="number"
-                {...register('timeoutMs')}
+                {...register('timeoutMs', { valueAsNumber: true })}
                 placeholder="e.g. 30000"
                 className="font-mono text-xs"
                 min={1000}
@@ -832,7 +855,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
               <Input
                 id="maxRetries"
                 type="number"
-                {...register('maxRetries')}
+                {...register('maxRetries', { valueAsNumber: true })}
                 placeholder="e.g. 3"
                 className="font-mono text-xs"
                 min={0}

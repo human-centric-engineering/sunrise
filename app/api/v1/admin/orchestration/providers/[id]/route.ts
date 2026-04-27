@@ -133,6 +133,20 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   const current = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Provider ${id} not found`);
 
+  if (!current.isActive) {
+    log.info('Provider already inactive, skipping soft-delete', { providerId: id });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'provider.delete',
+      entityType: 'provider',
+      entityId: id,
+      entityName: current.name,
+      clientIp: clientIP,
+      metadata: { alreadyInactive: true },
+    });
+    return successResponse({ id, isActive: false });
+  }
+
   const updated = await prisma.aiProviderConfig.update({
     where: { id },
     data: { isActive: false },

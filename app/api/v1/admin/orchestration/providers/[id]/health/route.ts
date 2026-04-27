@@ -9,20 +9,30 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse, errorResponse } from '@/lib/api/responses';
+import { successResponse } from '@/lib/api/responses';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getBreaker, getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { cuidSchema } from '@/lib/validations/common';
+
+function parseProviderId(raw: string): string {
+  const parsed = cuidSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid provider id', { id: ['Must be a valid CUID'] });
+  }
+  return parsed.data;
+}
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = parseProviderId(rawId);
   const log = await getRouteLogger(request);
 
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
-  if (!provider) {
-    return errorResponse('Provider not found', { code: 'NOT_FOUND', status: 404 });
-  }
+  if (!provider) throw new NotFoundError(`Provider ${id} not found`);
 
   const status = getCircuitBreakerStatus(provider.slug) ?? {
     state: 'closed' as const,
@@ -41,7 +51,8 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 });
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = parseProviderId(rawId);
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -49,18 +60,30 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const log = await getRouteLogger(request);
 
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
-  if (!provider) {
-    return errorResponse('Provider not found', { code: 'NOT_FOUND', status: 404 });
-  }
+  if (!provider) throw new NotFoundError(`Provider ${id} not found`);
 
   getBreaker(provider.slug).reset();
 
-  const status = getCircuitBreakerStatus(provider.slug)!;
+  const status = getCircuitBreakerStatus(provider.slug) ?? {
+    state: 'closed' as const,
+    failureCount: 0,
+    openedAt: null,
+    config: { failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
+  };
 
   log.info('Circuit breaker reset', {
     providerId: id,
     slug: provider.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'provider.health_reset',
+    entityType: 'provider',
+    entityId: id,
+    entityName: provider.name,
+    clientIp: clientIP,
   });
 
   return successResponse({

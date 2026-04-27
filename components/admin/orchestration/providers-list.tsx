@@ -12,12 +12,20 @@
  *   - **Green** — `apiKeyPresent === true` AND a `ProviderTestButton`
  *     click in the current session returned `ok: true`.
  *   - **Red**  — test-connection returned `ok: false` this session OR
- *     `apiKeyPresent === false` (env var missing on the server).
+ *     `apiKeyPresent === false` on a non-local provider.
  *   - **Grey** — not tested yet this session.
  *
  * Test results are held in local state only; we never persist them.
  * The model count is lazy-fetched per card after first paint with a
  * 60-second client-side cache to avoid redundant N+1 fetches.
+ *
+ * Additional card features:
+ *   - **Circuit breaker badge** — orange/yellow warning when the
+ *     breaker is open or half-open, with a Reset button.
+ *   - **Reactivate** — dropdown action for inactive providers;
+ *     PATCHes `{ isActive: true }` without navigating to the form.
+ *   - **Soft-delete** — confirmation dialog sets `isActive = false`;
+ *     the card stays visible with an Inactive badge.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -102,7 +110,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
+  const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
+  const [breakerError, setBreakerError] = useState<string | null>(null);
 
   // Lazy-fetch model counts for every visible provider after mount.
   // Uses module-level cache to avoid N+1 on every page navigation.
@@ -161,7 +171,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     setDeleteError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
-      setProviders((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      setProviders((prev) =>
+        prev.map((p) => (p.id === deleteTarget.id ? { ...p, isActive: false } : p))
+      );
       setDeleteTarget(null);
     } catch (err) {
       setDeleteError(
@@ -175,18 +187,24 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   }, [deleteTarget]);
 
   const handleReactivate = useCallback(async (providerId: string) => {
+    setReactivateError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
         body: { isActive: true },
       });
       setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
-    } catch {
-      // Silently fail — admin can retry or edit the provider directly
+    } catch (err) {
+      setReactivateError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't reactivate this provider. Try again in a moment."
+      );
     }
   }, []);
 
   const handleResetBreaker = useCallback(async (providerId: string) => {
     setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
+    setBreakerError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
       setProviders((prev) =>
@@ -196,8 +214,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
             : p
         )
       );
-    } catch {
-      // Silently fail — breaker may have already recovered
+    } catch (err) {
+      setBreakerError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't reset the circuit breaker. Try again in a moment."
+      );
     } finally {
       setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
     }
@@ -216,6 +238,18 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           </Link>
         </Button>
       </div>
+
+      {reactivateError && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
+          {reactivateError}
+        </div>
+      )}
+
+      {breakerError && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
+          {breakerError}
+        </div>
+      )}
 
       {providers.length === 0 ? (
         <div className="rounded-md border border-dashed py-12 text-center">

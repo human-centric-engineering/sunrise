@@ -41,7 +41,7 @@ Providers are few (typically ≤ 6) and have distinctive state (status dot, `Loc
 
 Test-connection results live in component state only — we never persist them. On the next page refresh every dot resets to grey (unless the env var is missing, in which case it stays red).
 
-The dot is decorative but has an accessible `title`/`aria-label` describing the state ("Tested OK this session", "Missing API key env var", etc.).
+The dot is `aria-hidden` with an adjacent visible text label describing the state ("Connected", "Key missing", "Test failed", "Not tested").
 
 ### Lazy model count (cached)
 
@@ -64,7 +64,7 @@ The badge disappears immediately on successful reset (re-fetches provider health
 - **Edit** — links to `/admin/orchestration/providers/:id`.
 - **Reactivate** — shown only when `isActive === false`. PATCHes `{ isActive: true }` and updates local state. Provides a quick path back without navigating to the edit form.
 - **View models** — opens an inline `<Dialog>` rendering `<ProviderModelsPanel>` (see below). A dialog is lighter than a sub-route and keeps the admin in context.
-- **Delete** — inline `<DeleteProviderDialog>` → `DELETE /providers/:id` (soft delete via `isActive = false`). The dialog warns that agents referencing this slug will error on their next chat turn until reactivated.
+- **Delete** — inline `<DeleteProviderDialog>` → `DELETE /providers/:id` (soft delete via `isActive = false`). The dialog warns that agents referencing this slug will error on their next chat turn until reactivated. The card remains visible with an Inactive badge; the admin can reactivate from the dropdown menu.
 
 ### Test connection
 
@@ -89,7 +89,7 @@ The panel fetches `GET /providers/:id/models` on mount. **Refresh models** re-fe
 
 ### Per-model test button
 
-Each model row includes a small "Test" button that POSTs to `/providers/:id/test-model` with `{ model: modelId }`. On success, displays latency in ms (e.g. "320 ms"). On failure, shows "Failed" in red. This helps admins verify individual model availability without leaving the dialog.
+Each model row includes a small "Test" button that POSTs to `/providers/:id/test-model` with `{ model: modelId }`. On success, displays latency in ms (e.g. "320 ms"). On failure, shows a friendly message ("Didn't respond — check server logs") in red. The API returns a generic error code (`model_test_failed`), never the raw SDK error, consistent with the SSRF defense pattern used by `/test` and `/models`.
 
 ## `<ProviderTestButton>` — shared extract
 
@@ -155,7 +155,7 @@ See [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) f
 
 ## Related
 
-- [Provider form](./provider-form.md) — 5-flavor selector, reverse-mapping, field help
+- [Provider form](./provider-form.md) — 16-flavor selector, reverse-mapping, field help
 - [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — tier classification, decision heuristic, model CRUD
 - [LLM providers (runtime)](../orchestration/llm-providers.md) — provider abstraction, model registry, cost tracking
 - [Admin API reference](../orchestration/admin-api.md)

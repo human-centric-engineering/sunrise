@@ -260,6 +260,61 @@ describe('ProviderModelsPanel', () => {
     });
   });
 
+  // ── Local provider with apiKeyPresent=false ────────────────────────────────
+
+  describe('local provider with apiKeyPresent=false', () => {
+    it('fetches models even without an API key', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(
+        <ProviderModelsPanel
+          providerId="prov-3"
+          providerName="Ollama"
+          isLocal={true}
+          apiKeyPresent={false}
+        />
+      );
+
+      await waitFor(() => {
+        expect(apiClient.get).toHaveBeenCalled();
+        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+      });
+    });
+
+    it('does NOT show "No API key configured" message', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(
+        <ProviderModelsPanel
+          providerId="prov-3"
+          providerName="Ollama"
+          isLocal={true}
+          apiKeyPresent={false}
+        />
+      );
+
+      expect(screen.queryByText(/no api key configured/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the Refresh button', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(
+        <ProviderModelsPanel
+          providerId="prov-3"
+          providerName="Ollama"
+          isLocal={true}
+          apiKeyPresent={false}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /refresh models/i })).toBeInTheDocument();
+    });
+  });
+
   // ── Per-model test button ─────────────────────────────────────────────────
 
   describe('per-model test button', () => {
@@ -306,7 +361,7 @@ describe('ProviderModelsPanel', () => {
       });
     });
 
-    it('shows "Failed" text when test-model request fails', async () => {
+    it('shows friendly error text when test-model request fails', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'));
@@ -322,7 +377,7 @@ describe('ProviderModelsPanel', () => {
       await user.click(testButtons[0]);
 
       await waitFor(() => {
-        expect(screen.getByText('Failed')).toBeInTheDocument();
+        expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
       });
     });
   });

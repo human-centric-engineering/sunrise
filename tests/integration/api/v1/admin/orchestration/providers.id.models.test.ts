@@ -155,6 +155,34 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
     });
   });
 
+  describe('Local provider (no API key)', () => {
+    it('returns models for local provider without API key', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({
+          name: 'Ollama',
+          slug: 'ollama-local',
+          providerType: 'openai-compatible',
+          baseUrl: 'http://localhost:11434/v1',
+          apiKeyEnvVar: null,
+          isLocal: true,
+        }) as never
+      );
+      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+      mockListModels.mockResolvedValue(['llama3', 'mistral']);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(response.status).toBe(200);
+      const body = await parseJson<{
+        success: boolean;
+        data: { models: string[] };
+      }>(response);
+      expect(body.success).toBe(true);
+      expect(body.data.models).toHaveLength(2);
+    });
+  });
+
   describe('Successful model listing', () => {
     it('returns provider models list', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

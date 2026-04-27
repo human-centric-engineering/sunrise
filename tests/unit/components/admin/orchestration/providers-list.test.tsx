@@ -411,6 +411,68 @@ describe('ProvidersList', () => {
     });
   });
 
+  // ── Circuit breaker reset error ────────────────────────────────────────────
+
+  describe('circuit breaker reset error', () => {
+    it('shows error banner when breaker reset fails with APIClientError', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Upstream timeout', 'TIMEOUT', 504)
+      );
+
+      const provider = makeProvider({
+        circuitBreaker: { state: 'open', failureCount: 5, openedAt: '2025-01-01T00:00:00Z' },
+      });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      await user.click(screen.getByRole('button', { name: /reset/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Upstream timeout')).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic error banner when breaker reset fails with unknown error', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('network'));
+
+      const provider = makeProvider({
+        circuitBreaker: { state: 'open', failureCount: 5, openedAt: '2025-01-01T00:00:00Z' },
+      });
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[provider]} />);
+
+      await user.click(screen.getByRole('button', { name: /reset/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reset the circuit breaker/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── View models dialog ──────────────────────────────────────────────────────
+
+  describe('view models dialog', () => {
+    it('opens models dialog from dropdown menu', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      const moreBtn = document.querySelector('button[aria-haspopup="menu"]')!;
+      await user.click(moreBtn as HTMLElement);
+
+      const viewModels = await screen.findByRole('menuitem', { name: /view models/i });
+      await user.click(viewModels);
+
+      await waitFor(() => {
+        expect(screen.getByText('Model catalogue')).toBeInTheDocument();
+      });
+    });
+  });
+
   // ── Reactivate action ─────────────────────────────────────────────────────
 
   describe('reactivate action', () => {
