@@ -70,6 +70,9 @@ function flavorFromProvider(p): Flavor {
   if (p.providerType === 'voyage') return 'voyage';
   if (p.isLocal) return 'ollama';
 
+  const url = p.baseUrl ?? '';
+  const slug = p.slug ?? '';
+
   // Match by base URL or slug
   if (url.includes('api.openai.com')) return 'openai';
   if (url.includes('api.groq.com') || slug === 'groq') return 'groq';
@@ -120,10 +123,10 @@ Shadcn `<Switch>`. Inactive providers stay in the list but are skipped when reso
 
 A collapsible section below the Active toggle exposing two optional fields:
 
-| Field        | Type   | Range         | Default | Help copy                                                                            |
-| ------------ | ------ | ------------- | ------- | ------------------------------------------------------------------------------------ |
-| `timeoutMs`  | number | 1 000–300 000 | —       | "Maximum time in milliseconds to wait for a response from this provider."            |
-| `maxRetries` | number | 0–10          | —       | "Number of automatic retries on transient failures (network errors, 5xx responses)." |
+| Field        | Type   | Range         | Default | Help copy                                                                                                                   |
+| ------------ | ------ | ------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `timeoutMs`  | number | 1 000–300 000 | —       | "Maximum time in milliseconds to wait for a response from this provider. Leave empty to use the system default."            |
+| `maxRetries` | number | 0–10          | —       | "Number of automatic retries on transient failures (network errors, 5xx responses). Leave empty to use the system default." |
 
 Both fields are optional — when empty the backend falls back to its built-in defaults. The collapsible opens automatically if either field has a saved value.
 
