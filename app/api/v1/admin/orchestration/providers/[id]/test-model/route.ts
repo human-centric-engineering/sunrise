@@ -78,6 +78,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       model,
       error: message,
     });
-    return successResponse({ ok: false, latencyMs: null, model, error: message });
+    // The raw SDK error is intentionally NOT forwarded to the client:
+    // in a blind-SSRF scenario the verbatim error leaks information
+    // about the baseUrl target. Log it server-side, return a generic code.
+    return successResponse({ ok: false, latencyMs: null, model, error: 'model_test_failed' });
   }
 });
