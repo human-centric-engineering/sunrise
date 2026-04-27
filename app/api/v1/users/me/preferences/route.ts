@@ -14,10 +14,9 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { UnauthorizedError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
-import { updatePreferencesSchema, userPreferencesSchema } from '@/lib/validations/user';
+import { updatePreferencesSchema, parseUserPreferences } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
 import { getRouteLogger } from '@/lib/api/context';
-import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
 import type { UserPreferences } from '@/types';
 
 /**
@@ -47,7 +46,7 @@ export const GET = withAuth(async (request, session) => {
   }
 
   // Parse preferences or return defaults
-  const preferences = parsePreferences(user.preferences);
+  const preferences = parseUserPreferences(user.preferences);
 
   log.info('User preferences retrieved');
   return successResponse(preferences);
@@ -86,7 +85,7 @@ export const PATCH = withAuth(async (request, session) => {
   }
 
   // Parse current preferences
-  const currentPreferences = parsePreferences(user.preferences);
+  const currentPreferences = parseUserPreferences(user.preferences);
 
   // Merge with updates (ensure securityAlerts stays true)
   const updatedPreferences: UserPreferences = {
@@ -112,21 +111,6 @@ export const PATCH = withAuth(async (request, session) => {
   log.info('User preferences updated');
   return successResponse(updatedPreferences);
 });
-
-/**
- * Parse preferences from database JSON field using Zod validation.
- *
- * Returns validated preferences or defaults if the stored data doesn't
- * match the expected shape (e.g., null, legacy format, or corrupt data).
- */
-function parsePreferences(dbPreferences: unknown): UserPreferences {
-  const result = userPreferencesSchema.safeParse(dbPreferences);
-  if (result.success) {
-    // Ensure securityAlerts is always true regardless of stored value
-    return { ...result.data, email: { ...result.data.email, securityAlerts: true } };
-  }
-  return DEFAULT_USER_PREFERENCES;
-}
 
 /**
  * Convert a Zod-validated value to a JSON-serializable form that satisfies
