@@ -27,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
@@ -77,6 +77,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   const fetchDeliveries = useCallback(
     async (page: number) => {
@@ -112,9 +113,16 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
 
   const handleRetry = async (deliveryId: string) => {
     setRetrying(deliveryId);
+    setRetryError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.retryDelivery(deliveryId));
       void fetchDeliveries(meta.page);
+    } catch (err) {
+      setRetryError(
+        err instanceof APIClientError
+          ? `Retry failed: ${err.message}`
+          : 'Retry failed. Please try again.'
+      );
     } finally {
       setRetrying(null);
     }
@@ -137,6 +145,8 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
           </SelectContent>
         </Select>
       </div>
+
+      {retryError && <p className="text-destructive text-sm">{retryError}</p>}
 
       <div className="rounded-md border">
         <Table>
