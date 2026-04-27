@@ -98,8 +98,8 @@ export const POST = withAdminAuth(async (request, session) => {
 
   logAdminAction({
     userId: session.user.id,
-    action: 'webhook.create',
-    entityType: 'webhook',
+    action: 'hook.create',
+    entityType: 'hook',
     entityId: hook.id,
     entityName: name,
     metadata: { eventType },

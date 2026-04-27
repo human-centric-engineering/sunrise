@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
@@ -59,6 +60,10 @@ function resolveHookId(rawId: string): string {
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = resolveHookId(rawId);
@@ -82,20 +87,14 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const existing = await prisma.aiEventHook.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError(`Hook ${id} not found`);
 
-  const body: unknown = await request.json();
-  const parsed = updateHookSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid hook update', {
-      fields: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
-    });
-  }
+  const validated = await validateRequestBody(request, updateHookSchema);
 
   const data: Record<string, unknown> = {};
-  if (parsed.data.name !== undefined) data.name = parsed.data.name;
-  if (parsed.data.eventType !== undefined) data.eventType = parsed.data.eventType;
-  if (parsed.data.action !== undefined) data.action = parsed.data.action as Record<string, unknown>;
-  if (parsed.data.filter !== undefined) data.filter = parsed.data.filter;
-  if (parsed.data.isEnabled !== undefined) data.isEnabled = parsed.data.isEnabled;
+  if (validated.name !== undefined) data.name = validated.name;
+  if (validated.eventType !== undefined) data.eventType = validated.eventType;
+  if (validated.action !== undefined) data.action = validated.action as Record<string, unknown>;
+  if (validated.filter !== undefined) data.filter = validated.filter;
+  if (validated.isEnabled !== undefined) data.isEnabled = validated.isEnabled;
 
   const updated = await prisma.aiEventHook.update({ where: { id }, data });
 
@@ -104,8 +103,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   logAdminAction({
     userId: session.user.id,
-    action: 'webhook.update',
-    entityType: 'webhook',
+    action: 'hook.update',
+    entityType: 'hook',
     entityId: id,
     entityName: updated.name,
     changes: computeChanges(
@@ -137,8 +136,8 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   logAdminAction({
     userId: session.user.id,
-    action: 'webhook.delete',
-    entityType: 'webhook',
+    action: 'hook.delete',
+    entityType: 'hook',
     entityId: id,
     entityName: existing.name,
     clientIp: getClientIP(request),
