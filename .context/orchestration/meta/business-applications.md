@@ -43,47 +43,65 @@ Forms, surveys, and intake processes were designed for databases, not humans. Th
 
 ### Subcategories
 
-- **Intake and applications** — planning permission, benefits claims, insurance, grant applications
-  A small housing association could deploy an agent that walks tenants through repair request submissions conversationally — "describe what's happening and where" — instead of forcing them through a dropdown menu of categories that never quite fit. The agent captures photos, classifies urgency, and generates a structured work order. Starting with one housing association, this could expand to other form-heavy intake processes across local government and social housing.
+#### Intake and applications
 
-  #### Getting started
+_planning permission, benefits claims, insurance, grant applications_
 
-  Approach a housing association's operations director directly — they're usually drowning in repair admin and would likely trial something low-risk on one estate.
+A small housing association could deploy an agent that walks tenants through repair request submissions conversationally — "describe what's happening and where" — instead of forcing them through a dropdown menu of categories that never quite fit. The agent captures photos, classifies urgency, and generates a structured work order. Starting with one housing association, this could expand to other form-heavy intake processes across local government and social housing.
 
-- **Surveys and feedback** — customer research, employee engagement, community consultation
-  A market research firm could offer conversational surveys as a premium service — instead of "rate 1-5", the agent asks "tell me about your last experience with this product" and follows up on interesting threads. The output is both structured data (for quantitative analysis) and rich qualitative insight. This could start as a bolt-on service for existing research agencies, with the differentiation being depth of insight per respondent rather than volume.
+##### Getting started
 
-  #### Getting started
+Approach a housing association's operations director directly — they're usually drowning in repair admin and would likely trial something low-risk on one estate.
 
-  Build a working demo with a sample survey and cold-approach 3-4 boutique research agencies on LinkedIn — the founders of small agencies tend to be accessible and always looking for differentiation.
+#### Surveys and feedback
 
-- **Onboarding and setup** — software configuration, account setup, new employee orientation
-  A B2B SaaS company with a complex setup process (say, accounting software for small businesses) could embed a Sunrise agent as their onboarding assistant. Instead of a 15-step wizard with help text nobody reads, the agent asks about the business and configures the software accordingly. "Do you handle VAT? Do you have employees or is it just you? Do you invoice internationally?" This could be offered to SaaS companies as a white-label onboarding service.
+_customer research, employee engagement, community consultation_
 
-  #### Getting started
+A market research firm could offer conversational surveys as a premium service — instead of "rate 1-5", the agent asks "tell me about your last experience with this product" and follows up on interesting threads. The output is both structured data (for quantitative analysis) and rich qualitative insight. This could start as a bolt-on service for existing research agencies, with the differentiation being depth of insight per respondent rather than volume.
 
-  Identify a SaaS product we already use that has painful onboarding, build a prototype against their public docs, and approach their head of customer success with a demo.
+##### Getting started
 
-- **Assessments and diagnostics** — health screening, skills assessment, needs analysis
-  A corporate training company could deploy an agent that assesses employee skill levels conversationally before assigning courses — rather than a generic multiple-choice test. "Tell me about a recent project where you had to use data analysis" reveals more about actual competence than "which function calculates the mean in Excel?" Partner with one L&D team, measure whether course assignment accuracy improves.
+Build a working demo with a sample survey and cold-approach 3-4 boutique research agencies on LinkedIn — the founders of small agencies tend to be accessible and always looking for differentiation.
 
-  #### Getting started
+#### Onboarding and setup
 
-  Reach out to L&D managers at mid-size companies via LinkedIn — they frequently post about training challenges and are usually receptive to pilots that make their budget more effective.
+_software configuration, account setup, new employee orientation_
 
-- **Configuration and product selection** — complex product choices (insurance, IT systems, financial products)
-  An independent insurance broker could embed an agent that helps customers navigate product selection: "I'm a freelance graphic designer working from home, I need professional indemnity and probably public liability, but I'm not sure what else." The agent asks about their specific situation and recommends coverage, rather than presenting a comparison table of 30 products with incomprehensible feature matrices. Revenue via referral commission from underwriters.
+A B2B SaaS company with a complex setup process (say, accounting software for small businesses) could embed a Sunrise agent as their onboarding assistant. Instead of a 15-step wizard with help text nobody reads, the agent asks about the business and configures the software accordingly. "Do you handle VAT? Do you have employees or is it just you? Do you invoice internationally?" This could be offered to SaaS companies as a white-label onboarding service.
 
-  #### Getting started
+##### Getting started
 
-  Find a local independent broker through personal network or BNI group — insurance brokers are always looking for lead generation tools and the commission model means low risk for them.
+Identify a SaaS product we already use that has painful onboarding, build a prototype against their public docs, and approach their head of customer success with a demo.
 
-- **Complaints and dispute resolution** — structured complaint capture with empathy and follow-through
-  A mid-size retailer could deploy an agent that handles complaints with genuine understanding rather than the typical chatbot deflection. The agent captures the issue conversationally, cross-references order history via a capability, and proposes a resolution within defined parameters. The interesting part: the conversational capture produces much richer data about what's actually going wrong than a dropdown-driven complaint form, potentially feeding back into product or service improvements.
+#### Assessments and diagnostics
 
-  #### Getting started
+_health screening, skills assessment, needs analysis_
 
-  Build a prototype using a fictional retailer scenario and demo it at a DTC (direct-to-consumer) brand meetup or e-commerce networking event — founders of growing brands feel the complaints problem acutely.
+A corporate training company could deploy an agent that assesses employee skill levels conversationally before assigning courses — rather than a generic multiple-choice test. "Tell me about a recent project where you had to use data analysis" reveals more about actual competence than "which function calculates the mean in Excel?" Partner with one L&D team, measure whether course assignment accuracy improves.
+
+##### Getting started
+
+Reach out to L&D managers at mid-size companies via LinkedIn — they frequently post about training challenges and are usually receptive to pilots that make their budget more effective.
+
+#### Configuration and product selection
+
+_complex product choices (insurance, IT systems, financial products)_
+
+An independent insurance broker could embed an agent that helps customers navigate product selection: "I'm a freelance graphic designer working from home, I need professional indemnity and probably public liability, but I'm not sure what else." The agent asks about their specific situation and recommends coverage, rather than presenting a comparison table of 30 products with incomprehensible feature matrices. Revenue via referral commission from underwriters.
+
+##### Getting started
+
+Find a local independent broker through personal network or BNI group — insurance brokers are always looking for lead generation tools and the commission model means low risk for them.
+
+#### Complaints and dispute resolution
+
+_structured complaint capture with empathy and follow-through_
+
+A mid-size retailer could deploy an agent that handles complaints with genuine understanding rather than the typical chatbot deflection. The agent captures the issue conversationally, cross-references order history via a capability, and proposes a resolution within defined parameters. The interesting part: the conversational capture produces much richer data about what's actually going wrong than a dropdown-driven complaint form, potentially feeding back into product or service improvements.
+
+##### Getting started
+
+Build a prototype using a fictional retailer scenario and demo it at a DTC (direct-to-consumer) brand meetup or e-commerce networking event — founders of growing brands feel the complaints problem acutely.
 
 ### Worked example: Council planning application pre-screening
 
@@ -107,61 +125,85 @@ Expert knowledge has always been locked behind expensive professionals or years 
 
 ### Subcategories
 
-- **Health and wellness guidance** — nutrition, exercise programming, symptom triage, chronic condition management
-  A sports nutritionist could partner with us to build an agent that creates personalised meal plans for amateur athletes — "I'm training for a marathon, I'm vegetarian, and I have a modest weekly food budget." The agent asks about training schedule, dietary preferences, cooking ability, and builds week-by-week nutrition guidance grounded in the nutritionist's methodology. Start with one sport (endurance running has a large, engaged amateur community), validate with a running club, then expand to other disciplines.
+#### Health and wellness guidance
 
-  #### Getting started
+_nutrition, exercise programming, symptom triage, chronic condition management_
 
-  Post in running forums or Strava clubs asking if anyone would beta-test a nutrition advisor — the endurance community is vocal and loves new tools.
+A sports nutritionist could partner with us to build an agent that creates personalised meal plans for amateur athletes — "I'm training for a marathon, I'm vegetarian, and I have a modest weekly food budget." The agent asks about training schedule, dietary preferences, cooking ability, and builds week-by-week nutrition guidance grounded in the nutritionist's methodology. Start with one sport (endurance running has a large, engaged amateur community), validate with a running club, then expand to other disciplines.
 
-- **Legal rights and obligations** — tenancy, employment, consumer rights, small business compliance
-  An employment law specialist could build an agent that helps employees understand their rights in workplace disputes — redundancy, disciplinary proceedings, discrimination concerns. "My employer has put me on a PIP and I think it's retaliatory." The agent identifies the relevant employment law, suggests next steps, and generates template letters (grievance, subject access request). Revenue via referral to employment solicitors for cases that need professional representation, or subscription from trade unions wanting to augment their member advice services.
+##### Getting started
 
-  #### Getting started
+Post in running forums or Strava clubs asking if anyone would beta-test a nutrition advisor — the endurance community is vocal and loves new tools.
 
-  Approach a high-street employment law solicitor who does free initial consultations — they already give away basic guidance and would benefit from a referral channel that pre-qualifies cases.
+#### Legal rights and obligations
 
-- **Financial planning and literacy** — budgeting, debt management, pension decisions, tax guidance
-  An independent financial educator could deploy an agent that helps people understand their pension options — a topic where most people feel bewildered. "I'm 45, I have three old workplace pensions and a SIPP, and I have no idea whether I'm on track." The agent helps consolidate information, explains the implications of different retirement ages, and flags basic issues (fees, fund allocation). It's explicitly not financial advice — but it's the informed conversation most people have never had. Revenue via subscription or partnership with pension providers.
+_tenancy, employment, consumer rights, small business compliance_
 
-  #### Getting started
+An employment law specialist could build an agent that helps employees understand their rights in workplace disputes — redundancy, disciplinary proceedings, discrimination concerns. "My employer has put me on a PIP and I think it's retaliatory." The agent identifies the relevant employment law, suggests next steps, and generates template letters (grievance, subject access request). Revenue via referral to employment solicitors for cases that need professional representation, or subscription from trade unions wanting to augment their member advice services.
 
-  Search for financial educators on YouTube or Instagram who already create pension content — they have the domain knowledge, the audience, and the frustration of not being able to personalise at scale.
+##### Getting started
 
-- **Technical and trade skills** — home DIY, car maintenance, electronics repair, woodworking
-  A retired master carpenter could partner to build a woodworking advisor. "I want to build a bookcase, I have basic tools, and I've never done joinery." The agent assesses skill level, recommends an appropriate project plan, explains techniques with reference to the carpenter's documented methods, suggests materials, and troubleshoots problems ("the joint is gapping on one side — what might I be doing wrong?"). Monetise via subscription plus affiliate relationships with timber merchants and tool suppliers.
+Approach a high-street employment law solicitor who does free initial consultations — they already give away basic guidance and would benefit from a referral channel that pre-qualifies cases.
 
-  #### Getting started
+#### Financial planning and literacy
 
-  Visit a local Men's Shed or woodworking guild — retirees with deep craft knowledge who'd enjoy the project of documenting their expertise and seeing it used.
+_budgeting, debt management, pension decisions, tax guidance_
 
-- **Creative and artistic practice** — photography technique, music theory, writing craft, design principles
-  A photography school could extend their reach beyond in-person workshops with an agent that critiques and coaches. A learner describes or uploads their shot: "I was trying to capture golden hour on the coast but the sky is blown out." The agent provides technique advice grounded in the school's teaching methodology — exposure compensation, graduated filters, bracketing. Start with landscape photography (enthusiastic amateur market), expand to other genres. Revenue as a premium tier on the school's existing membership.
+An independent financial educator could deploy an agent that helps people understand their pension options — a topic where most people feel bewildered. "I'm 45, I have three old workplace pensions and a SIPP, and I have no idea whether I'm on track." The agent helps consolidate information, explains the implications of different retirement ages, and flags basic issues (fees, fund allocation). It's explicitly not financial advice — but it's the informed conversation most people have never had. Revenue via subscription or partnership with pension providers.
 
-  #### Getting started
+##### Getting started
 
-  Approach a photography workshop business that already sells online courses — they have the content and audience, we add the interactive layer they can't build themselves.
+Search for financial educators on YouTube or Instagram who already create pension content — they have the domain knowledge, the audience, and the frustration of not being able to personalise at scale.
 
-- **Agriculture and land management** — crop planning, soil health, pest management, smallholding guidance
-  A smallholding advisor could build an agent for new smallholders — people who've bought a few acres and are figuring out what to do with it. "I've got 5 acres of rough pasture in Devon, I'm thinking about keeping a few pigs and planting an orchard." The agent helps plan realistically based on land type, climate, regulations (livestock registration, movement licences), and budget. The smallholding community is growing, well-networked online, and underserved by generic farming advice that assumes scale.
+#### Technical and trade skills
 
-  #### Getting started
+_home DIY, car maintenance, electronics repair, woodworking_
 
-  The Smallholding & Countryside Festival and online communities like the Accidental Smallholder forum are where these people gather — post there, find a knowledgeable smallholder who'd co-create.
+A retired master carpenter could partner to build a woodworking advisor. "I want to build a bookcase, I have basic tools, and I've never done joinery." The agent assesses skill level, recommends an appropriate project plan, explains techniques with reference to the carpenter's documented methods, suggests materials, and troubleshoots problems ("the joint is gapping on one side — what might I be doing wrong?"). Monetise via subscription plus affiliate relationships with timber merchants and tool suppliers.
 
-- **Parenting and caregiving** — child development, elder care navigation, special educational needs
-  A SEND (Special Educational Needs and Disabilities) advocate could build an agent that helps parents navigate the EHCP (Education, Health and Care Plan) process — which is notoriously complex and adversarial. "My child has been assessed as needing speech therapy but the school says they don't have funding." The agent explains the process, identifies what the parent is entitled to request, helps draft letters, and suggests next steps. This is a space where knowledge asymmetry between parents and local authorities is acute, and professional SEND advocates are expensive.
+##### Getting started
 
-  #### Getting started
+Visit a local Men's Shed or woodworking guild — retirees with deep craft knowledge who'd enjoy the project of documenting their expertise and seeing it used.
 
-  SEND parent Facebook groups are intensely active and full of experienced advocates — find one who's already helping other parents informally and offer to turn their knowledge into something scalable.
+#### Creative and artistic practice
 
-- **Mental health and wellbeing** — self-help techniques, CBT exercises, crisis signposting (not therapy)
-  A clinical psychologist with expertise in evidence-based self-help could build an agent that guides users through structured CBT exercises and wellbeing practices. Explicitly not therapy — more like a well-informed workbook that can adapt to your responses and guide you through exercises interactively. "I'm struggling with sleep anxiety — I keep worrying about not sleeping, which keeps me awake." The agent walks through cognitive restructuring and sleep hygiene, adapted to the specific worry pattern described. Crisis situations always route to Samaritans or 111. Revenue via subscription, with potential B2B sales to employers as a wellbeing benefit.
+_photography technique, music theory, writing craft, design principles_
 
-  #### Getting started
+A photography school could extend their reach beyond in-person workshops with an agent that critiques and coaches. A learner describes or uploads their shot: "I was trying to capture golden hour on the coast but the sky is blown out." The agent provides technique advice grounded in the school's teaching methodology — exposure compensation, graduated filters, bracketing. Start with landscape photography (enthusiastic amateur market), expand to other genres. Revenue as a premium tier on the school's existing membership.
 
-  Approach a clinical psychologist who already publishes self-help books or workbooks — they've already packaged their methodology and understand the boundary between self-help and therapy.
+##### Getting started
+
+Approach a photography workshop business that already sells online courses — they have the content and audience, we add the interactive layer they can't build themselves.
+
+#### Agriculture and land management
+
+_crop planning, soil health, pest management, smallholding guidance_
+
+A smallholding advisor could build an agent for new smallholders — people who've bought a few acres and are figuring out what to do with it. "I've got 5 acres of rough pasture in Devon, I'm thinking about keeping a few pigs and planting an orchard." The agent helps plan realistically based on land type, climate, regulations (livestock registration, movement licences), and budget. The smallholding community is growing, well-networked online, and underserved by generic farming advice that assumes scale.
+
+##### Getting started
+
+The Smallholding & Countryside Festival and online communities like the Accidental Smallholder forum are where these people gather — post there, find a knowledgeable smallholder who'd co-create.
+
+#### Parenting and caregiving
+
+_child development, elder care navigation, special educational needs_
+
+A SEND (Special Educational Needs and Disabilities) advocate could build an agent that helps parents navigate the EHCP (Education, Health and Care Plan) process — which is notoriously complex and adversarial. "My child has been assessed as needing speech therapy but the school says they don't have funding." The agent explains the process, identifies what the parent is entitled to request, helps draft letters, and suggests next steps. This is a space where knowledge asymmetry between parents and local authorities is acute, and professional SEND advocates are expensive.
+
+##### Getting started
+
+SEND parent Facebook groups are intensely active and full of experienced advocates — find one who's already helping other parents informally and offer to turn their knowledge into something scalable.
+
+#### Mental health and wellbeing
+
+_self-help techniques, CBT exercises, crisis signposting (not therapy)_
+
+A clinical psychologist with expertise in evidence-based self-help could build an agent that guides users through structured CBT exercises and wellbeing practices. Explicitly not therapy — more like a well-informed workbook that can adapt to your responses and guide you through exercises interactively. "I'm struggling with sleep anxiety — I keep worrying about not sleeping, which keeps me awake." The agent walks through cognitive restructuring and sleep hygiene, adapted to the specific worry pattern described. Crisis situations always route to Samaritans or 111. Revenue via subscription, with potential B2B sales to employers as a wellbeing benefit.
+
+##### Getting started
+
+Approach a clinical psychologist who already publishes self-help books or workbooks — they've already packaged their methodology and understand the boundary between self-help and therapy.
 
 ### Worked example: Garden planning advisor for hobby gardeners
 
@@ -185,47 +227,65 @@ Enterprise software serves big markets. Niche industries — independent tattoo 
 
 ### Subcategories
 
-- **Creative trades** — tattoo studios, florists, bespoke furniture makers, jewellers, wedding photographers
-  A high-end florist could use an agent to handle wedding flower consultations — "we're getting married in October, our venue is a converted barn, budget is around 2k, and I love peonies but not sure what's seasonal." The agent captures the brief conversationally, references the florist's portfolio and seasonal availability data, and produces a proposal draft with mood board suggestions. The florist reviews and refines rather than spending 90 minutes on a first consultation. Scale across independent florists who each get their own instance.
+#### Creative trades
 
-  #### Getting started
+_tattoo studios, florists, bespoke furniture makers, jewellers, wedding photographers_
 
-  Attend a wedding industry networking event or approach florists through the British Florist Association — wedding season pressure makes them receptive to anything that saves consultation time.
+A high-end florist could use an agent to handle wedding flower consultations — "we're getting married in October, our venue is a converted barn, budget is around 2k, and I love peonies but not sure what's seasonal." The agent captures the brief conversationally, references the florist's portfolio and seasonal availability data, and produces a proposal draft with mood board suggestions. The florist reviews and refines rather than spending 90 minutes on a first consultation. Scale across independent florists who each get their own instance.
 
-- **Professional services** — small solicitors, independent accountants, surveyors, architects
-  A small accountancy practice could deploy an agent that handles initial client enquiries and tax questionnaires. Instead of emailing a spreadsheet to gather self-assessment information, the agent asks: "Did you have any income from property this year? Any capital gains? Did you make any pension contributions?" It builds a structured pre-engagement pack the accountant uses to prepare the return. Saves time per client and creates a more professional first impression. Revenue via monthly SaaS fee per practice.
+##### Getting started
 
-  #### Getting started
+Attend a wedding industry networking event or approach florists through the British Florist Association — wedding season pressure makes them receptive to anything that saves consultation time.
 
-  Our own accountant is the obvious first conversation — they know the pain firsthand and can introduce us to their peer network.
+#### Professional services
 
-- **Hospitality and food** — independent restaurants, B&Bs, food trucks, catering companies
-  An independent B&B could use an agent as a concierge — embedded on their website and available to guests during their stay. "We're here for three nights with two kids under 10 — what should we do tomorrow if it rains?" The agent knows the local area (loaded into the knowledge base by the owner), the B&B's own facilities, and can suggest restaurants with availability. It also handles pre-booking questions and dietary requirement capture. Start with a cluster of B&Bs in one tourist area, making the local knowledge base a shared asset.
+_small solicitors, independent accountants, surveyors, architects_
 
-  #### Getting started
+A small accountancy practice could deploy an agent that handles initial client enquiries and tax questionnaires. Instead of emailing a spreadsheet to gather self-assessment information, the agent asks: "Did you have any income from property this year? Any capital gains? Did you make any pension contributions?" It builds a structured pre-engagement pack the accountant uses to prepare the return. Saves time per client and creates a more professional first impression. Revenue via monthly SaaS fee per practice.
 
-  Pick a tourist area we know well, build a prototype with local knowledge pre-loaded, and offer it free to 3-4 B&Bs for a season — the shared local knowledge base is the hook.
+##### Getting started
 
-- **Trades and fieldwork** — plumbers, electricians, landscapers, pest control, window cleaners
-  A landscaping company could deploy an agent that handles initial site enquiries: "I've got a neglected garden, about 15m x 8m, mostly overgrown lawn and some old shrubs, and I want something low-maintenance." The agent captures photos, asks about access, budget, and preferences, and generates a scoping document the landscaper uses to prepare a quote — rather than spending an hour on a site visit before knowing if the job is viable. Could save a significant number of wasted site visits per month.
+Our own accountant is the obvious first conversation — they know the pain firsthand and can introduce us to their peer network.
 
-  #### Getting started
+#### Hospitality and food
 
-  Find a landscaper through Checkatrade or Bark who's getting more enquiries than they can handle — the pain of wasted site visits is immediate and quantifiable.
+_independent restaurants, B&Bs, food trucks, catering companies_
 
-- **Health practitioners** — physiotherapists, osteopaths, counsellors, nutritionists, speech therapists
-  A private counselling practice could use an agent to handle intake assessments. Rather than a clinical questionnaire form, the agent has a warm, conversational interaction that captures presenting issues, history, preferences (modality, session format), and practical details. The output is a structured intake summary for the therapist. This improves the client's first experience of the practice and gives the therapist better context before the first session. Revenue as part of a practice management SaaS.
+An independent B&B could use an agent as a concierge — embedded on their website and available to guests during their stay. "We're here for three nights with two kids under 10 — what should we do tomorrow if it rains?" The agent knows the local area (loaded into the knowledge base by the owner), the B&B's own facilities, and can suggest restaurants with availability. It also handles pre-booking questions and dietary requirement capture. Start with a cluster of B&Bs in one tourist area, making the local knowledge base a shared asset.
 
-  #### Getting started
+##### Getting started
 
-  Approach the BACP (British Association for Counselling and Psychotherapy) local network or a group practice — group practices feel the intake admin burden more acutely than solo practitioners.
+Pick a tourist area we know well, build a prototype with local knowledge pre-loaded, and offer it free to 3-4 B&Bs for a season — the shared local knowledge base is the hook.
 
-- **Education providers** — private tutors, small training companies, music teachers, driving schools
-  A driving school could deploy an agent that handles learner intake and theory test preparation. "I've had 5 lessons before with another instructor, I'm OK with roundabouts but junctions terrify me." The agent captures experience level, builds a learning plan recommendation for the instructor, and between lessons acts as a theory test tutor — asking questions conversationally rather than through a multiple-choice app. Revenue per driving school, scaling through instructor networks.
+#### Trades and fieldwork
 
-  #### Getting started
+_plumbers, electricians, landscapers, pest control, window cleaners_
 
-  Driving instructors are prolific on TikTok and YouTube — find one with a following who'd see the theory test tutor angle as content marketing for their school.
+A landscaping company could deploy an agent that handles initial site enquiries: "I've got a neglected garden, about 15m x 8m, mostly overgrown lawn and some old shrubs, and I want something low-maintenance." The agent captures photos, asks about access, budget, and preferences, and generates a scoping document the landscaper uses to prepare a quote — rather than spending an hour on a site visit before knowing if the job is viable. Could save a significant number of wasted site visits per month.
+
+##### Getting started
+
+Find a landscaper through Checkatrade or Bark who's getting more enquiries than they can handle — the pain of wasted site visits is immediate and quantifiable.
+
+#### Health practitioners
+
+_physiotherapists, osteopaths, counsellors, nutritionists, speech therapists_
+
+A private counselling practice could use an agent to handle intake assessments. Rather than a clinical questionnaire form, the agent has a warm, conversational interaction that captures presenting issues, history, preferences (modality, session format), and practical details. The output is a structured intake summary for the therapist. This improves the client's first experience of the practice and gives the therapist better context before the first session. Revenue as part of a practice management SaaS.
+
+##### Getting started
+
+Approach the BACP (British Association for Counselling and Psychotherapy) local network or a group practice — group practices feel the intake admin burden more acutely than solo practitioners.
+
+#### Education providers
+
+_private tutors, small training companies, music teachers, driving schools_
+
+A driving school could deploy an agent that handles learner intake and theory test preparation. "I've had 5 lessons before with another instructor, I'm OK with roundabouts but junctions terrify me." The agent captures experience level, builds a learning plan recommendation for the instructor, and between lessons acts as a theory test tutor — asking questions conversationally rather than through a multiple-choice app. Revenue per driving school, scaling through instructor networks.
+
+##### Getting started
+
+Driving instructors are prolific on TikTok and YouTube — find one with a following who'd see the theory test tutor angle as content marketing for their school.
 
 ### Worked example: Independent tattoo studio management
 
@@ -249,40 +309,55 @@ Previously, a domain expert who wanted to productise their knowledge had three o
 
 ### Subcategories
 
-- **Practitioner-turned-founder** — experienced professional building a product from their expertise
-  A senior HR consultant who's spent 20 years advising SMEs on employment law compliance could build a product that does what she does in her first client meeting — assesses what policies are missing, flags risks, and drafts compliant documents. She provides the frameworks and templates, the agent delivers them conversationally and contextually. She becomes the product's clinical advisor and public face, we build and run the platform. Revenue split.
+#### Practitioner-turned-founder
 
-  #### Getting started
+_experienced professional building a product from their expertise_
 
-  Attend a CIPD event or HR leadership meetup and find consultants who are already frustrated that they can't scale beyond their personal capacity — they self-identify when you ask the right question.
+A senior HR consultant who's spent 20 years advising SMEs on employment law compliance could build a product that does what she does in her first client meeting — assesses what policies are missing, flags risks, and drafts compliant documents. She provides the frameworks and templates, the agent delivers them conversationally and contextually. She becomes the product's clinical advisor and public face, we build and run the platform. Revenue split.
 
-- **Academic and researcher commercialisation** — turning research findings into practical tools
-  A university sleep research group has published extensively on insomnia interventions but their findings sit in journals nobody reads. An agent built on their research could deliver a structured 6-week insomnia programme — personalised based on the user's sleep patterns, work schedule, and specific difficulties. The researchers get commercialisation income and real-world validation data. Start with one programme, expand to other sleep disorders. Potential NHS commissioning path if efficacy data is strong.
+##### Getting started
 
-  #### Getting started
+Attend a CIPD event or HR leadership meetup and find consultants who are already frustrated that they can't scale beyond their personal capacity — they self-identify when you ask the right question.
 
-  Approach a university's Knowledge Exchange or Technology Transfer office — they're specifically incentivised to find commercial partners for research and can introduce you to relevant research groups.
+#### Academic and researcher commercialisation
 
-- **Retired professional knowledge capture** — preserving decades of expertise before it's lost
-  A retiring master brewer with 35 years of craft brewing experience could capture their knowledge of recipe formulation, ingredient sourcing, fermentation troubleshooting, and quality control into an agent that apprentice brewers and small brewery owners can consult. "My porter is coming out too thin — I'm using Maris Otter, roasted barley, and chocolate malt at these ratios." The agent draws on the brewer's documented experience to diagnose and advise. One-off capture fee plus ongoing subscription from brewery subscribers.
+_turning research findings into practical tools_
 
-  #### Getting started
+A university sleep research group has published extensively on insomnia interventions but their findings sit in journals nobody reads. An agent built on their research could deliver a structured 6-week insomnia programme — personalised based on the user's sleep patterns, work schedule, and specific difficulties. The researchers get commercialisation income and real-world validation data. Start with one programme, expand to other sleep disorders. Potential NHS commissioning path if efficacy data is strong.
 
-  SIBA (Society of Independent Brewers) events and local brewery tap rooms — the craft brewing community is tight-knit and retiring head brewers are often looking for ways to pass on their knowledge.
+##### Getting started
 
-- **Hobbyist-expert productisation** — deep enthusiast knowledge turned into a niche product
-  A competitive birdwatcher with decades of field experience and extensive knowledge of UK bird identification, habitats, and seasonal patterns could build a birding advisor. "I'm visiting the Norfolk coast next week — what should I look for and where?" The agent provides location-specific, seasonally-aware guidance that goes far beyond a field guide. Monetise via subscription from the large and passionate UK birding community, with potential partnerships with nature reserves and optics retailers.
+Approach a university's Knowledge Exchange or Technology Transfer office — they're specifically incentivised to find commercial partners for research and can introduce you to relevant research groups.
 
-  #### Getting started
+#### Retired professional knowledge capture
 
-  Build a prototype loaded with BTO (British Trust for Ornithology) public data and test it on the BirdForum community — if it generates excitement there, finding an expert partner becomes easy.
+_preserving decades of expertise before it's lost_
 
-- **Coach and consultant scaling** — extending reach beyond 1-to-1 sessions
-  A leadership coach who charges premium rates for 1-to-1 sessions could extend their reach with an agent that delivers their coaching methodology at scale — daily reflection prompts, situational advice ("I'm about to have a difficult conversation with an underperformer"), and accountability check-ins. The agent isn't a replacement for the live sessions but a between-sessions companion that makes the coaching more effective. The coach's existing client base is the beta group. Revenue via B2B licensing to organisations that want to offer coaching at scale without the per-head cost of live sessions.
+A retiring master brewer with 35 years of craft brewing experience could capture their knowledge of recipe formulation, ingredient sourcing, fermentation troubleshooting, and quality control into an agent that apprentice brewers and small brewery owners can consult. "My porter is coming out too thin — I'm using Maris Otter, roasted barley, and chocolate malt at these ratios." The agent draws on the brewer's documented experience to diagnose and advise. One-off capture fee plus ongoing subscription from brewery subscribers.
 
-  #### Getting started
+##### Getting started
 
-  LinkedIn is full of leadership coaches posting daily content — find one with a strong methodology (not just platitudes), who already talks about scaling their impact, and propose a co-creation partnership.
+SIBA (Society of Independent Brewers) events and local brewery tap rooms — the craft brewing community is tight-knit and retiring head brewers are often looking for ways to pass on their knowledge.
+
+#### Hobbyist-expert productisation
+
+_deep enthusiast knowledge turned into a niche product_
+
+A competitive birdwatcher with decades of field experience and extensive knowledge of UK bird identification, habitats, and seasonal patterns could build a birding advisor. "I'm visiting the Norfolk coast next week — what should I look for and where?" The agent provides location-specific, seasonally-aware guidance that goes far beyond a field guide. Monetise via subscription from the large and passionate UK birding community, with potential partnerships with nature reserves and optics retailers.
+
+##### Getting started
+
+Build a prototype loaded with BTO (British Trust for Ornithology) public data and test it on the BirdForum community — if it generates excitement there, finding an expert partner becomes easy.
+
+#### Coach and consultant scaling
+
+_extending reach beyond 1-to-1 sessions_
+
+A leadership coach who charges premium rates for 1-to-1 sessions could extend their reach with an agent that delivers their coaching methodology at scale — daily reflection prompts, situational advice ("I'm about to have a difficult conversation with an underperformer"), and accountability check-ins. The agent isn't a replacement for the live sessions but a between-sessions companion that makes the coaching more effective. The coach's existing client base is the beta group. Revenue via B2B licensing to organisations that want to offer coaching at scale without the per-head cost of live sessions.
+
+##### Getting started
+
+LinkedIn is full of leadership coaches posting daily content — find one with a strong methodology (not just platitudes), who already talks about scaling their impact, and propose a co-creation partnership.
 
 ### Worked example: Retired physiotherapist building a rehabilitation guidance app
 
@@ -306,40 +381,55 @@ Most "customer support AI" is designed to deflect — reduce ticket volume, cont
 
 ### Subcategories
 
-- **Billing and account resolution** — understanding charges, correcting errors, applying credits
-  A broadband provider could deploy an agent that explains bills line by line and fixes errors. "I was charged for a premium call I didn't make" — the agent checks the CDR data, identifies the charge, and either explains it or credits it immediately (within defined thresholds). The interesting angle: most billing queries probably have a straightforward resolution that doesn't need a human, but current chatbots can't actually look at the account data or take action. An agent with read access to billing and write access to credits (within limits) could resolve in minutes what currently takes days.
+#### Billing and account resolution
 
-  #### Getting started
+_understanding charges, correcting errors, applying credits_
 
-  Approach a challenger broadband provider's CTO via warm intro or tech meetup — smaller ISPs are more agile and more willing to expose APIs for a pilot than the big players.
+A broadband provider could deploy an agent that explains bills line by line and fixes errors. "I was charged for a premium call I didn't make" — the agent checks the CDR data, identifies the charge, and either explains it or credits it immediately (within defined thresholds). The interesting angle: most billing queries probably have a straightforward resolution that doesn't need a human, but current chatbots can't actually look at the account data or take action. An agent with read access to billing and write access to credits (within limits) could resolve in minutes what currently takes days.
 
-- **Technical troubleshooting** — diagnostic workflows that actually solve the problem
-  A smart home device manufacturer could deploy an agent that actually diagnoses and resolves connectivity issues rather than saying "have you tried turning it off and on again." The agent knows the product's firmware versions, common failure modes, and can walk through diagnostic steps conversationally — "is the LED blinking fast or slow? What colour?" — arriving at either a resolution or a genuinely informed escalation to engineering. The knowledge base contains the engineering team's internal troubleshooting guides, not the customer-facing FAQ.
+##### Getting started
 
-  #### Getting started
+Approach a challenger broadband provider's CTO via warm intro or tech meetup — smaller ISPs are more agile and more willing to expose APIs for a pilot than the big players.
 
-  Build a prototype using a popular IoT device's public documentation (e.g., Hive, Tado) and approach their support team with a demo showing resolution of the top 10 support queries.
+#### Technical troubleshooting
 
-- **Complaints with authority to act** — agents that can offer resolution, not just log a ticket
-  An e-commerce company could deploy an agent that handles complaints with actual authority — within defined parameters, it can offer a replacement, refund, discount on next order, or free express shipping. A workflow approval gate escalates to a human only when the proposed resolution exceeds a cost threshold. The shift: instead of "I've logged your complaint, someone will get back to you in 5 working days", it's "I can see the issue, here's what I can offer right now." The speed and agency of the response could meaningfully change customer perception.
+_diagnostic workflows that actually solve the problem_
 
-  #### Getting started
+A smart home device manufacturer could deploy an agent that actually diagnoses and resolves connectivity issues rather than saying "have you tried turning it off and on again." The agent knows the product's firmware versions, common failure modes, and can walk through diagnostic steps conversationally — "is the LED blinking fast or slow? What colour?" — arriving at either a resolution or a genuinely informed escalation to engineering. The knowledge base contains the engineering team's internal troubleshooting guides, not the customer-facing FAQ.
 
-  Partner with a Shopify-based DTC brand we admire — founders of growing e-commerce businesses are often reachable on Twitter/X and acutely feel the support scaling problem.
+##### Getting started
 
-- **Proactive outreach** — reaching out before a problem becomes a complaint
-  A subscription box company could deploy an agent that reaches out to customers showing signs of churn — delivery issues, skipped boxes, support tickets. Instead of a generic "we miss you" email, the agent initiates a conversation: "I noticed your last box had a delivery delay and you skipped this month — is everything OK? Can I adjust your preferences?" The scheduled workflow identifies at-risk subscribers, the agent personalises the outreach, and a capability adjusts the subscription if requested.
+Build a prototype using a popular IoT device's public documentation (e.g., Hive, Tado) and approach their support team with a demo showing resolution of the top 10 support queries.
 
-  #### Getting started
+#### Complaints with authority to act
 
-  The subscription box market has active founder communities on Facebook and Substack — post a case study about conversational churn reduction and see who responds.
+_agents that can offer resolution, not just log a ticket_
 
-- **Post-purchase guidance and ongoing support** — helping customers get value from what they bought
-  A commercial espresso machine supplier could deploy an agent that helps customers get the best out of their purchase. "My shots are pulling too fast and the crema is thin." The agent knows the specific machine model, its settings, and common calibration issues. This transforms the post-purchase relationship from "call us if it breaks" to an ongoing advisory partnership — and the data on common issues feeds back to product development and training. Revenue model: included in the machine price or maintenance contract, justified by reduced warranty claims.
+An e-commerce company could deploy an agent that handles complaints with actual authority — within defined parameters, it can offer a replacement, refund, discount on next order, or free express shipping. A workflow approval gate escalates to a human only when the proposed resolution exceeds a cost threshold. The shift: instead of "I've logged your complaint, someone will get back to you in 5 working days", it's "I can see the issue, here's what I can offer right now." The speed and agency of the response could meaningfully change customer perception.
 
-  #### Getting started
+##### Getting started
 
-  Approach a UK-based equipment supplier (e.g., a commercial coffee machine distributor) — their after-sales team already fields these calls and would welcome something that handles the routine calibration questions.
+Partner with a Shopify-based DTC brand we admire — founders of growing e-commerce businesses are often reachable on Twitter/X and acutely feel the support scaling problem.
+
+#### Proactive outreach
+
+_reaching out before a problem becomes a complaint_
+
+A subscription box company could deploy an agent that reaches out to customers showing signs of churn — delivery issues, skipped boxes, support tickets. Instead of a generic "we miss you" email, the agent initiates a conversation: "I noticed your last box had a delivery delay and you skipped this month — is everything OK? Can I adjust your preferences?" The scheduled workflow identifies at-risk subscribers, the agent personalises the outreach, and a capability adjusts the subscription if requested.
+
+##### Getting started
+
+The subscription box market has active founder communities on Facebook and Substack — post a case study about conversational churn reduction and see who responds.
+
+#### Post-purchase guidance and ongoing support
+
+_helping customers get value from what they bought_
+
+A commercial espresso machine supplier could deploy an agent that helps customers get the best out of their purchase. "My shots are pulling too fast and the crema is thin." The agent knows the specific machine model, its settings, and common calibration issues. This transforms the post-purchase relationship from "call us if it breaks" to an ongoing advisory partnership — and the data on common issues feeds back to product development and training. Revenue model: included in the machine price or maintenance contract, justified by reduced warranty claims.
+
+##### Getting started
+
+Approach a UK-based equipment supplier (e.g., a commercial coffee machine distributor) — their after-sales team already fields these calls and would welcome something that handles the routine calibration questions.
 
 ### Worked example: Utility company billing dispute resolution
 
@@ -363,47 +453,65 @@ A solo consultant, freelancer, or micro-business owner currently operates with t
 
 ### Subcategories
 
-- **Client communication and follow-up** — responding to enquiries, scheduling, post-meeting summaries
-  A freelance management consultant could deploy an agent on their website that handles initial enquiries while they're in client meetings. "We're a 30-person fintech looking for help with our go-to-market strategy." The agent captures the brief, asks qualifying questions, and schedules a discovery call — sending the consultant a structured summary before the call. Between meetings, it drafts follow-up emails from the consultant's notes. The consultant appears responsive and organised without being chained to their inbox.
+#### Client communication and follow-up
 
-  #### Getting started
+_responding to enquiries, scheduling, post-meeting summaries_
 
-  We probably know freelance consultants personally — offer to build one a free prototype in exchange for detailed feedback, then use their testimonial to reach others.
+A freelance management consultant could deploy an agent on their website that handles initial enquiries while they're in client meetings. "We're a 30-person fintech looking for help with our go-to-market strategy." The agent captures the brief, asks qualifying questions, and schedules a discovery call — sending the consultant a structured summary before the call. Between meetings, it drafts follow-up emails from the consultant's notes. The consultant appears responsive and organised without being chained to their inbox.
 
-- **Proposal and document generation** — tailored proposals, reports, case studies from templates plus context
-  An independent architect could use an agent to draft project proposals from their library of past work and standard terms. "New enquiry: Victorian terrace rear extension, conservation area, budget around 80k." The agent pulls relevant case studies, adapts the scope template, includes conservation-specific considerations from the knowledge base, and generates a first-draft proposal the architect reviews and personalises. What currently takes an evening could take 20 minutes of review.
+##### Getting started
 
-  #### Getting started
+We probably know freelance consultants personally — offer to build one a free prototype in exchange for detailed feedback, then use their testimonial to reach others.
 
-  Approach a local RIBA-registered practice with 2-5 architects — small enough to be agile, big enough to feel the proposal bottleneck.
+#### Proposal and document generation
 
-- **Scheduling and coordination** — multi-party availability, project timeline management
-  A wedding planner operating solo could use an agent to coordinate between venue, caterer, photographer, florist, and clients. "The venue is only available on the 14th or 21st of September — check with the photographer and caterer." The agent tracks availability across suppliers (via email capabilities or structured updates), identifies conflicts, and proposes solutions. The coordination overhead of multi-vendor events is exactly the kind of tedious, high-stakes work an agent can handle well.
+_tailored proposals, reports, case studies from templates plus context_
 
-  #### Getting started
+An independent architect could use an agent to draft project proposals from their library of past work and standard terms. "New enquiry: Victorian terrace rear extension, conservation area, budget around 80k." The agent pulls relevant case studies, adapts the scope template, includes conservation-specific considerations from the knowledge base, and generates a first-draft proposal the architect reviews and personalises. What currently takes an evening could take 20 minutes of review.
 
-  Wedding planner Facebook groups and the UK Alliance of Wedding Planners — planners are active in sharing tools and recommendations with each other.
+##### Getting started
 
-- **Research and competitive intelligence** — market analysis, tender preparation, due diligence
-  A small PR agency could use an agent to prepare client briefings and competitive analyses. "I need a media landscape briefing for a new fintech client launching a pension product — who are the key journalists, what have competitors been saying, what angles might work?" The agent searches the knowledge base (loaded with media contact databases, recent coverage, and sector analysis) and produces a structured briefing. Currently this is junior account executive work — an agent could produce a first draft faster and more consistently.
+Approach a local RIBA-registered practice with 2-5 architects — small enough to be agile, big enough to feel the proposal bottleneck.
 
-  #### Getting started
+#### Scheduling and coordination
 
-  Build a prototype using publicly available media data for one sector, and demo it to the founder of a boutique PR agency at a PRCA networking event.
+_multi-party availability, project timeline management_
 
-- **Bookkeeping and admin triage** — receipt categorisation, invoice chasing, expense management
-  A freelance photographer could use an agent to handle the admin they hate — categorising receipts ("was this a business meal or personal?"), chasing overdue invoices ("your invoice to Client X is 14 days overdue — shall I send a reminder?"), and flagging upcoming deadlines ("your self-assessment is due in 6 weeks — here's what you need to gather"). The agent doesn't replace an accountant but handles the daily admin that freelancers typically neglect until tax season.
+A wedding planner operating solo could use an agent to coordinate between venue, caterer, photographer, florist, and clients. "The venue is only available on the 14th or 21st of September — check with the photographer and caterer." The agent tracks availability across suppliers (via email capabilities or structured updates), identifies conflicts, and proposes solutions. The coordination overhead of multi-vendor events is exactly the kind of tedious, high-stakes work an agent can handle well.
 
-  #### Getting started
+##### Getting started
 
-  This one we could dogfood ourselves — build it for our own freelance admin first, then offer it to other freelancers in our coworking space or network.
+Wedding planner Facebook groups and the UK Alliance of Wedding Planners — planners are active in sharing tools and recommendations with each other.
 
-- **Sales and lead qualification** — initial screening, needs assessment, pipeline management
-  An independent IT consultancy could deploy an agent that qualifies inbound leads: "Tell me about your IT setup — how many staff, what systems, any current pain points?" The agent captures the information, scores the lead against the consultancy's ideal client profile, and either schedules a call (qualified) or politely suggests a more appropriate provider (not a fit). The consultant spends their time on genuine prospects rather than discovery calls that go nowhere.
+#### Research and competitive intelligence
 
-  #### Getting started
+_market analysis, tender preparation, due diligence_
 
-  IT consultancies often attend local business networking groups (BNI, Chamber of Commerce) — pitch it as a tool that makes their networking follow-up actually work.
+A small PR agency could use an agent to prepare client briefings and competitive analyses. "I need a media landscape briefing for a new fintech client launching a pension product — who are the key journalists, what have competitors been saying, what angles might work?" The agent searches the knowledge base (loaded with media contact databases, recent coverage, and sector analysis) and produces a structured briefing. Currently this is junior account executive work — an agent could produce a first draft faster and more consistently.
+
+##### Getting started
+
+Build a prototype using publicly available media data for one sector, and demo it to the founder of a boutique PR agency at a PRCA networking event.
+
+#### Bookkeeping and admin triage
+
+_receipt categorisation, invoice chasing, expense management_
+
+A freelance photographer could use an agent to handle the admin they hate — categorising receipts ("was this a business meal or personal?"), chasing overdue invoices ("your invoice to Client X is 14 days overdue — shall I send a reminder?"), and flagging upcoming deadlines ("your self-assessment is due in 6 weeks — here's what you need to gather"). The agent doesn't replace an accountant but handles the daily admin that freelancers typically neglect until tax season.
+
+##### Getting started
+
+This one we could dogfood ourselves — build it for our own freelance admin first, then offer it to other freelancers in our coworking space or network.
+
+#### Sales and lead qualification
+
+_initial screening, needs assessment, pipeline management_
+
+An independent IT consultancy could deploy an agent that qualifies inbound leads: "Tell me about your IT setup — how many staff, what systems, any current pain points?" The agent captures the information, scores the lead against the consultancy's ideal client profile, and either schedules a call (qualified) or politely suggests a more appropriate provider (not a fit). The consultant spends their time on genuine prospects rather than discovery calls that go nowhere.
+
+##### Getting started
+
+IT consultancies often attend local business networking groups (BNI, Chamber of Commerce) — pitch it as a tool that makes their networking follow-up actually work.
 
 ### Worked example: Independent mortgage broker with AI-assisted case preparation
 
@@ -427,47 +535,65 @@ Community infrastructure — the coordination that makes local life work — has
 
 ### Subcategories
 
-- **Mutual aid and resource sharing** — matching needs to offers, tracking commitments, following up
-  A community fridge network (surplus food redistribution) could use an agent to coordinate donations and collections. Shops and restaurants notify the agent when they have surplus ("we've got 20 sandwiches end of day"), the agent matches to nearby fridges with capacity, coordinates volunteer collection, and tracks food safety compliance (use-by times, temperature). The coordination burden is currently what limits these networks from scaling — each fridge typically depends on one heroic volunteer.
+#### Mutual aid and resource sharing
 
-  #### Getting started
+_matching needs to offers, tracking commitments, following up_
 
-  Contact Hubbub or the Community Fridge Network directly — they coordinate the UK-wide network and would be a natural pilot partner if the coordination tool works.
+A community fridge network (surplus food redistribution) could use an agent to coordinate donations and collections. Shops and restaurants notify the agent when they have surplus ("we've got 20 sandwiches end of day"), the agent matches to nearby fridges with capacity, coordinates volunteer collection, and tracks food safety compliance (use-by times, temperature). The coordination burden is currently what limits these networks from scaling — each fridge typically depends on one heroic volunteer.
 
-- **Local democracy and consultation** — making council consultations accessible, summarising planning applications
-  A neighbourhood forum could deploy an agent that makes council planning consultations accessible. "There are 12 new planning applications in our area this month — which ones might affect me?" The agent summarises each application in plain language, identifies the ones relevant to the user's location, explains what the implications might be, and helps draft a consultation response if they want to comment. Currently, most residents don't engage because the documents are impenetrable.
+##### Getting started
 
-  #### Getting started
+Contact Hubbub or the Community Fridge Network directly — they coordinate the UK-wide network and would be a natural pilot partner if the coordination tool works.
 
-  Scrape one council's planning portal, build a prototype that summarises applications for a specific ward, and offer it to the local neighbourhood forum or civic society — they'll likely promote it themselves.
+#### Local democracy and consultation
 
-- **Neighbourhood coordination** — event planning, shared resource management, community noticeboard
-  A residents' association could use an agent as a community coordinator — "I'd like to borrow a pressure washer this weekend, does anyone on the street have one?" or "we're thinking about organising a street party for the bank holiday — who's interested?" The agent maintains an inventory of shared resources, coordinates events, and acts as the community's institutional memory ("we did a litter pick in March, here's what we found and which issues we reported to the council").
+_making council consultations accessible, summarising planning applications_
 
-  #### Getting started
+A neighbourhood forum could deploy an agent that makes council planning consultations accessible. "There are 12 new planning applications in our area this month — which ones might affect me?" The agent summarises each application in plain language, identifies the ones relevant to the user's location, explains what the implications might be, and helps draft a consultation response if they want to comment. Currently, most residents don't engage because the documents are impenetrable.
 
-  Deploy on our own street or building first — the best community tools are built by people who live in the community and use them personally.
+##### Getting started
 
-- **Volunteer management** — matching volunteers to tasks, scheduling, recognition
-  A local Parkrun organising team could use an agent to manage volunteer rosters. "I can marshal this Saturday but not next week." The agent tracks availability across the volunteer pool, identifies gaps, sends reminders, and ensures no single volunteer is over-relied on. The same pattern works for any regular volunteer-dependent activity — food banks, charity shops, community gardens. Start with one organisation, template the solution.
+Scrape one council's planning portal, build a prototype that summarises applications for a specific ward, and offer it to the local neighbourhood forum or civic society — they'll likely promote it themselves.
 
-  #### Getting started
+#### Neighbourhood coordination
 
-  Volunteer at a local Parkrun and talk to the event director about their roster headaches — if it works for one Parkrun, the 900+ UK events are reachable through the national network.
+_event planning, shared resource management, community noticeboard_
 
-- **Community knowledge bases** — local history, neighbourhood guides, "who to contact for what"
-  A parish council could build a community knowledge base agent — "who do I contact about the broken streetlight on Mill Lane?" or "when was the old mill converted into flats?" The agent draws on local knowledge contributed by residents, council information, and historical records. This preserves institutional knowledge that currently lives in the heads of long-standing residents and parish councillors. Interesting as a digital heritage project with potential grant funding.
+A residents' association could use an agent as a community coordinator — "I'd like to borrow a pressure washer this weekend, does anyone on the street have one?" or "we're thinking about organising a street party for the bank holiday — who's interested?" The agent maintains an inventory of shared resources, coordinates events, and acts as the community's institutional memory ("we did a litter pick in March, here's what we found and which issues we reported to the council").
 
-  #### Getting started
+##### Getting started
 
-  Apply for a Heritage Lottery Fund grant — digital heritage preservation is within their remit, and a parish council partnership gives the application local credibility.
+Deploy on our own street or building first — the best community tools are built by people who live in the community and use them personally.
 
-- **Civic monitoring and accountability** — tracking council commitments, FOI request assistance, spending analysis
-  A local campaign group could deploy an agent that tracks council commitments and holds them to account. "The council promised to repair the playground by September — have they started?" The agent maintains a register of public commitments (from council minutes, press releases, consultation responses), tracks progress, and helps draft FOI requests when information isn't forthcoming. This shifts the burden of accountability from volunteer campaigners to a system that doesn't forget or get tired.
+#### Volunteer management
 
-  #### Getting started
+_matching volunteers to tasks, scheduling, recognition_
 
-  Partner with a local civic tech group or mySociety (who run WhatDoTheyKnow and TheyWorkForYou) — they have the community, we have the tech.
+A local Parkrun organising team could use an agent to manage volunteer rosters. "I can marshal this Saturday but not next week." The agent tracks availability across the volunteer pool, identifies gaps, sends reminders, and ensures no single volunteer is over-relied on. The same pattern works for any regular volunteer-dependent activity — food banks, charity shops, community gardens. Start with one organisation, template the solution.
+
+##### Getting started
+
+Volunteer at a local Parkrun and talk to the event director about their roster headaches — if it works for one Parkrun, the 900+ UK events are reachable through the national network.
+
+#### Community knowledge bases
+
+_local history, neighbourhood guides, "who to contact for what"_
+
+A parish council could build a community knowledge base agent — "who do I contact about the broken streetlight on Mill Lane?" or "when was the old mill converted into flats?" The agent draws on local knowledge contributed by residents, council information, and historical records. This preserves institutional knowledge that currently lives in the heads of long-standing residents and parish councillors. Interesting as a digital heritage project with potential grant funding.
+
+##### Getting started
+
+Apply for a Heritage Lottery Fund grant — digital heritage preservation is within their remit, and a parish council partnership gives the application local credibility.
+
+#### Civic monitoring and accountability
+
+_tracking council commitments, FOI request assistance, spending analysis_
+
+A local campaign group could deploy an agent that tracks council commitments and holds them to account. "The council promised to repair the playground by September — have they started?" The agent maintains a register of public commitments (from council minutes, press releases, consultation responses), tracks progress, and helps draft FOI requests when information isn't forthcoming. This shifts the burden of accountability from volunteer campaigners to a system that doesn't forget or get tired.
+
+##### Getting started
+
+Partner with a local civic tech group or mySociety (who run WhatDoTheyKnow and TheyWorkForYou) — they have the community, we have the tech.
 
 ### Worked example: Neighbourhood mutual aid coordination
 
@@ -491,54 +617,75 @@ Professional services — legal advice, financial guidance, healthcare navigatio
 
 ### Subcategories
 
-- **Legal aid and rights navigation** — employment rights, consumer disputes, small claims guidance
-  An agent that helps people navigate the small claims process — "my builder did a terrible job and won't come back to fix it, I paid 3,000 pounds." The agent walks through whether small claims is appropriate, helps gather evidence, drafts the claim form, and explains what to expect at a hearing. Partner with a consumer rights charity for credibility. Revenue via a nominal per-claim fee or grant funding, with a commercial path through partnerships with legal expense insurers.
+#### Legal aid and rights navigation
 
-  #### Getting started
+_employment rights, consumer disputes, small claims guidance_
 
-  Build a prototype using the publicly available MoneyClaims online guidance and test it with people from consumer rights forums who are actively going through the process — they'll give brutally honest feedback.
+An agent that helps people navigate the small claims process — "my builder did a terrible job and won't come back to fix it, I paid 3,000 pounds." The agent walks through whether small claims is appropriate, helps gather evidence, drafts the claim form, and explains what to expect at a hearing. Partner with a consumer rights charity for credibility. Revenue via a nominal per-claim fee or grant funding, with a commercial path through partnerships with legal expense insurers.
 
-- **Benefits and entitlements** — eligibility checking, application assistance, appeal support
-  An agent that helps people identify benefits they're entitled to and assists with applications. "I've just been diagnosed with MS and I'm struggling to work full-time." The agent understands the relationship between PIP, ESA, Universal Credit, and Access to Work — a landscape that confuses even advisors. It walks through eligibility conversationally, helps prepare application narratives that focus on the right descriptors, and assists with mandatory reconsideration if claims are rejected. Partner with a disability charity for content validation and referrals.
+##### Getting started
 
-  #### Getting started
+Build a prototype using the publicly available MoneyClaims online guidance and test it with people from consumer rights forums who are actively going through the process — they'll give brutally honest feedback.
 
-  Approach the MS Society, Scope, or a local disability rights organisation — they're overwhelmed with advice requests and may welcome a tool that handles the initial guidance.
+#### Benefits and entitlements
 
-- **Housing and tenancy** — tenant rights, disrepair claims, eviction defence, deposit disputes
-  Beyond the worked example above (tenant rights), there's an opportunity around disrepair claims specifically. "My landlord won't fix the damp — I've been asking for months." The agent documents the timeline, identifies the landlord's obligations under the Homes (Fitness for Human Habitation) Act, helps the tenant draft a formal complaint using the pre-action protocol, and escalates to environmental health or a housing disrepair solicitor when appropriate. Partner with a law firm that does no-win-no-fee disrepair claims.
+_eligibility checking, application assistance, appeal support_
 
-  #### Getting started
+An agent that helps people identify benefits they're entitled to and assists with applications. "I've just been diagnosed with MS and I'm struggling to work full-time." The agent understands the relationship between PIP, ESA, Universal Credit, and Access to Work — a landscape that confuses even advisors. It walks through eligibility conversationally, helps prepare application narratives that focus on the right descriptors, and assists with mandatory reconsideration if claims are rejected. Partner with a disability charity for content validation and referrals.
 
-  Housing disrepair solicitors already spend heavily on Google Ads — approach one with a proposal where the agent pre-qualifies leads, saving them ad spend on cases that don't meet their criteria.
+##### Getting started
 
-- **Healthcare navigation** — understanding diagnoses, preparing for consultations, navigating referrals
-  An agent that helps patients prepare for consultant appointments — "I've been referred to a rheumatologist and I don't know what to expect or what to ask." The agent explains the likely process, helps the patient prepare a symptom timeline, suggests questions to ask, and afterwards helps make sense of the outcome ("they mentioned methotrexate — here's what that is, how it works, and what side effects to watch for"). Grounded in patient information from NHS sources, not clinical data. Partner with a patient advocacy organisation.
+Approach the MS Society, Scope, or a local disability rights organisation — they're overwhelmed with advice requests and may welcome a tool that handles the initial guidance.
 
-  #### Getting started
+#### Housing and tenancy
 
-  Approach Healthwatch (the independent consumer champion for health and care) — they exist in every local authority area and are specifically tasked with improving patient experience.
+_tenant rights, disrepair claims, eviction defence, deposit disputes_
 
-- **Education access** — SEND provision, school admissions, university applications for first-generation students
-  An agent that helps first-generation university applicants navigate the process — "I want to study engineering but no one in my family has been to uni and I don't know where to start." The agent covers UCAS timelines, personal statement guidance, student finance, bursary identification, and the cultural aspects of university that applicants from non-university backgrounds often find bewildering. Partner with a widening participation charity or a university's outreach department. Grant-funded initially, potentially adopted by schools or multi-academy trusts.
+Beyond the worked example above (tenant rights), there's an opportunity around disrepair claims specifically. "My landlord won't fix the damp — I've been asking for months." The agent documents the timeline, identifies the landlord's obligations under the Homes (Fitness for Human Habitation) Act, helps the tenant draft a formal complaint using the pre-action protocol, and escalates to environmental health or a housing disrepair solicitor when appropriate. Partner with a law firm that does no-win-no-fee disrepair claims.
 
-  #### Getting started
+##### Getting started
 
-  Contact a university's widening participation team — they have budgets for outreach tools and would value something that extends their reach beyond the schools they can physically visit.
+Housing disrepair solicitors already spend heavily on Google Ads — approach one with a proposal where the agent pre-qualifies leads, saving them ad spend on cases that don't meet their criteria.
 
-- **Immigration and asylum support** — form completion, document gathering, status tracking
-  An agent that helps people navigate immigration applications — one of the most complex, high-stakes bureaucratic processes most people ever encounter. "I'm on a Skilled Worker visa and I want to apply for ILR — what do I need?" The agent walks through eligibility, document requirements, the Life in the UK test, and application timing. It doesn't replace an immigration solicitor for complex cases but handles the straightforward information-gathering and preparation that currently costs hundreds of pounds in legal fees. Partner with an immigration advice charity (OISC-regulated) for content review.
+#### Healthcare navigation
 
-  #### Getting started
+_understanding diagnoses, preparing for consultations, navigating referrals_
 
-  Reach out to a local Citizens Advice branch that offers immigration advice — they see the demand firsthand and can validate whether an agent would genuinely help or create risks.
+An agent that helps patients prepare for consultant appointments — "I've been referred to a rheumatologist and I don't know what to expect or what to ask." The agent explains the likely process, helps the patient prepare a symptom timeline, suggests questions to ask, and afterwards helps make sense of the outcome ("they mentioned methotrexate — here's what that is, how it works, and what side effects to watch for"). Grounded in patient information from NHS sources, not clinical data. Partner with a patient advocacy organisation.
 
-- **Debt and financial distress** — debt prioritisation, creditor communication, breathing space applications
-  An agent that helps people in debt understand their options and take the first steps. "I've got three credit cards, a catalogue debt, and I'm behind on council tax — I don't know what to pay first." The agent explains priority vs. non-priority debts (council tax and rent before credit cards), helps draft creditor letters, and guides through the Breathing Space application process. Partner with a debt advice charity (StepChange, National Debtline) for content and referral pathways. This is a space where people often avoid seeking help due to shame — a non-judgmental agent may lower that barrier.
+##### Getting started
 
-  #### Getting started
+Approach Healthwatch (the independent consumer champion for health and care) — they exist in every local authority area and are specifically tasked with improving patient experience.
 
-  StepChange has a well-documented public API and methodology — build a prototype using their published guidance and approach their innovation team with a working demo rather than a pitch deck.
+#### Education access
+
+_SEND provision, school admissions, university applications for first-generation students_
+
+An agent that helps first-generation university applicants navigate the process — "I want to study engineering but no one in my family has been to uni and I don't know where to start." The agent covers UCAS timelines, personal statement guidance, student finance, bursary identification, and the cultural aspects of university that applicants from non-university backgrounds often find bewildering. Partner with a widening participation charity or a university's outreach department. Grant-funded initially, potentially adopted by schools or multi-academy trusts.
+
+##### Getting started
+
+Contact a university's widening participation team — they have budgets for outreach tools and would value something that extends their reach beyond the schools they can physically visit.
+
+#### Immigration and asylum support
+
+_form completion, document gathering, status tracking_
+
+An agent that helps people navigate immigration applications — one of the most complex, high-stakes bureaucratic processes most people ever encounter. "I'm on a Skilled Worker visa and I want to apply for ILR — what do I need?" The agent walks through eligibility, document requirements, the Life in the UK test, and application timing. It doesn't replace an immigration solicitor for complex cases but handles the straightforward information-gathering and preparation that currently costs hundreds of pounds in legal fees. Partner with an immigration advice charity (OISC-regulated) for content review.
+
+##### Getting started
+
+Reach out to a local Citizens Advice branch that offers immigration advice — they see the demand firsthand and can validate whether an agent would genuinely help or create risks.
+
+#### Debt and financial distress
+
+_debt prioritisation, creditor communication, breathing space applications_
+
+An agent that helps people in debt understand their options and take the first steps. "I've got three credit cards, a catalogue debt, and I'm behind on council tax — I don't know what to pay first." The agent explains priority vs. non-priority debts (council tax and rent before credit cards), helps draft creditor letters, and guides through the Breathing Space application process. Partner with a debt advice charity (StepChange, National Debtline) for content and referral pathways. This is a space where people often avoid seeking help due to shame — a non-judgmental agent may lower that barrier.
+
+##### Getting started
+
+StepChange has a well-documented public API and methodology — build a prototype using their published guidance and approach their innovation team with a working demo rather than a pitch deck.
 
 ### Worked example: Tenant rights advisor for private renters
 
@@ -562,47 +709,65 @@ Research and investigation have always required two things: access to informatio
 
 ### Subcategories
 
-- **Journalism and accountability** — public spending analysis, FOI request analysis, pattern detection
-  See worked example below. Beyond council spending, the same pattern applies to NHS trust board papers, police force spending, academy trust accounts, and any public body that publishes data that nobody has time to analyse. Each dataset is a potential partnership with a journalist or campaign group.
+#### Journalism and accountability
 
-  #### Getting started
+_public spending analysis, FOI request analysis, pattern detection_
 
-  Download one council's transparency data (it's published quarterly), load it into a prototype, and tweet a few interesting findings — journalists will come to you.
+See worked example below. Beyond council spending, the same pattern applies to NHS trust board papers, police force spending, academy trust accounts, and any public body that publishes data that nobody has time to analyse. Each dataset is a potential partnership with a journalist or campaign group.
 
-- **Policy analysis** — impact assessment, consultation response drafting, legislative tracking
-  A small policy think tank could deploy an agent that tracks legislation through Parliament — "what's the current status of the Renters Reform Bill and what amendments have been proposed?" The agent monitors Hansard and parliamentary publications, summarises relevant debates, and helps draft consultation responses. Interesting for organisations that need to track policy across multiple areas but don't have the staff to read every Hansard transcript. Revenue via subscription to think tanks, charities, and trade bodies.
+##### Getting started
 
-  #### Getting started
+Download one council's transparency data (it's published quarterly), load it into a prototype, and tweet a few interesting findings — journalists will come to you.
 
-  Approach a mid-size charity that does policy work (housing, health, education) — their policy officer is probably one person trying to track too many things at once.
+#### Policy analysis
 
-- **Market and competitor research** — landscape mapping, trend analysis, opportunity identification
-  A boutique strategy consultancy could use an agent to accelerate market research for client engagements. "Map the UK insurtech landscape — who are the key players, what's their positioning, who's funded, what gaps exist?" The agent synthesises information from the knowledge base (loaded with industry reports, Companies House data, Crunchbase profiles) and produces a structured landscape analysis. Currently this is junior analyst work that takes days — an agent could produce a solid first draft in hours. Revenue by licensing the tool to other small consultancies.
+_impact assessment, consultation response drafting, legislative tracking_
 
-  #### Getting started
+A small policy think tank could deploy an agent that tracks legislation through Parliament — "what's the current status of the Renters Reform Bill and what amendments have been proposed?" The agent monitors Hansard and parliamentary publications, summarises relevant debates, and helps draft consultation responses. Interesting for organisations that need to track policy across multiple areas but don't have the staff to read every Hansard transcript. Revenue via subscription to think tanks, charities, and trade bodies.
 
-  Build a prototype for our own market research needs (e.g., mapping the agentic AI landscape itself), then use it as a live demo when approaching strategy firms.
+##### Getting started
 
-- **Academic literature review** — systematic reviews, cross-paper synthesis, methodology comparison
-  A research consultancy that does systematic reviews for healthcare organisations could use an agent to accelerate the screening and synthesis phases. Load a corpus of papers into the knowledge base, then ask: "which of these papers report randomised controlled trials of CBT for adolescent anxiety?" or "what are the common methodological limitations across this set?" This doesn't replace the researcher's judgment but dramatically speeds up the initial sifting and cross-referencing. Revenue via the consultancy's existing client base.
+Approach a mid-size charity that does policy work (housing, health, education) — their policy officer is probably one person trying to track too many things at once.
 
-  #### Getting started
+#### Market and competitor research
 
-  Approach a health research consultancy via LinkedIn — the ones that do NICE evidence reviews are time-constrained and would trial anything that speeds up screening.
+_landscape mapping, trend analysis, opportunity identification_
 
-- **Due diligence** — company research, background checks, risk assessment
-  A small venture capital firm could deploy an agent that assists with investment due diligence. "Pull together everything available on this company — Companies House filings, key personnel, funding history, any adverse media." The agent aggregates public data, flags inconsistencies, and produces a structured due diligence pack. Currently this is outsourced to expensive due diligence firms or done manually by associates. An agent could handle the data aggregation, letting the human focus on judgment calls.
+A boutique strategy consultancy could use an agent to accelerate market research for client engagements. "Map the UK insurtech landscape — who are the key players, what's their positioning, who's funded, what gaps exist?" The agent synthesises information from the knowledge base (loaded with industry reports, Companies House data, Crunchbase profiles) and produces a structured landscape analysis. Currently this is junior analyst work that takes days — an agent could produce a solid first draft in hours. Revenue by licensing the tool to other small consultancies.
 
-  #### Getting started
+##### Getting started
 
-  Build a prototype using Companies House API and public data sources, run it on a few real companies, and demo it at an angel investor network meeting.
+Build a prototype for our own market research needs (e.g., mapping the agentic AI landscape itself), then use it as a live demo when approaching strategy firms.
 
-- **Community and grassroots research** — neighbourhood surveys, impact measurement, evidence gathering for campaigns
-  A community group fighting a proposed development could deploy an agent to gather and organise evidence — conducting structured interviews with affected residents ("how would the proposed road affect your daily routine?"), synthesising responses into thematic findings, and drafting formal objections that reference planning policy. This levels the playing field between communities (who rely on volunteers) and developers (who have professional planning consultants). Grant-funded initially, potentially offered as a service to community advocacy organisations.
+#### Academic literature review
 
-  #### Getting started
+_systematic reviews, cross-paper synthesis, methodology comparison_
 
-  Find a live planning dispute in the local area and offer the tool to the campaign group for free — the results become a case study.
+A research consultancy that does systematic reviews for healthcare organisations could use an agent to accelerate the screening and synthesis phases. Load a corpus of papers into the knowledge base, then ask: "which of these papers report randomised controlled trials of CBT for adolescent anxiety?" or "what are the common methodological limitations across this set?" This doesn't replace the researcher's judgment but dramatically speeds up the initial sifting and cross-referencing. Revenue via the consultancy's existing client base.
+
+##### Getting started
+
+Approach a health research consultancy via LinkedIn — the ones that do NICE evidence reviews are time-constrained and would trial anything that speeds up screening.
+
+#### Due diligence
+
+_company research, background checks, risk assessment_
+
+A small venture capital firm could deploy an agent that assists with investment due diligence. "Pull together everything available on this company — Companies House filings, key personnel, funding history, any adverse media." The agent aggregates public data, flags inconsistencies, and produces a structured due diligence pack. Currently this is outsourced to expensive due diligence firms or done manually by associates. An agent could handle the data aggregation, letting the human focus on judgment calls.
+
+##### Getting started
+
+Build a prototype using Companies House API and public data sources, run it on a few real companies, and demo it at an angel investor network meeting.
+
+#### Community and grassroots research
+
+_neighbourhood surveys, impact measurement, evidence gathering for campaigns_
+
+A community group fighting a proposed development could deploy an agent to gather and organise evidence — conducting structured interviews with affected residents ("how would the proposed road affect your daily routine?"), synthesising responses into thematic findings, and drafting formal objections that reference planning policy. This levels the playing field between communities (who rely on volunteers) and developers (who have professional planning consultants). Grant-funded initially, potentially offered as a service to community advocacy organisations.
+
+##### Getting started
+
+Find a live planning dispute in the local area and offer the tool to the campaign group for free — the results become a case study.
 
 ### Worked example: Local journalist investigating council spending data
 
@@ -626,47 +791,65 @@ Enterprise operations tools (Salesforce, SAP, ServiceNow) are designed for organ
 
 ### Subcategories
 
-- **HR and recruitment** — candidate screening, interview scheduling, onboarding checklists
-  A 20-person professional services firm could deploy an agent that handles new employee onboarding — "welcome to the team, let's get you set up." The agent walks through IT setup, policy acknowledgements, introductions to key people, and first-week tasks conversationally rather than via a 30-page onboarding pack. It answers questions the new joiner is too embarrassed to ask a colleague ("what's the dress code for client meetings?" "how do I book a meeting room?"). The knowledge base holds the company handbook, IT guides, and org chart.
+#### HR and recruitment
 
-  #### Getting started
+_candidate screening, interview scheduling, onboarding checklists_
 
-  Build it for our own team first — we'll learn what works and what doesn't, and have a genuine case study for approaching other small firms.
+A 20-person professional services firm could deploy an agent that handles new employee onboarding — "welcome to the team, let's get you set up." The agent walks through IT setup, policy acknowledgements, introductions to key people, and first-week tasks conversationally rather than via a 30-page onboarding pack. It answers questions the new joiner is too embarrassed to ask a colleague ("what's the dress code for client meetings?" "how do I book a meeting room?"). The knowledge base holds the company handbook, IT guides, and org chart.
 
-- **Compliance and reporting** — regulatory submissions, audit preparation, policy tracking
-  A small care home (20-30 beds) could use an agent to help prepare for CQC inspections. The agent knows the inspection framework, tracks which policies are due for review, and helps staff document incidents and actions in the format CQC expects. "We had a medication error yesterday — walk me through what I need to record." The agent ensures the right forms are completed and the right people notified. Revenue via subscription to care home operators, scaling through care home groups and sector associations.
+##### Getting started
 
-  #### Getting started
+Build it for our own team first — we'll learn what works and what doesn't, and have a genuine case study for approaching other small firms.
 
-  Approach a small independent care home owner (not a chain) — they're often managing compliance single-handedly and are reachable through local care sector forums or the National Care Association.
+#### Compliance and reporting
 
-- **Inventory and procurement** — stock monitoring, reorder workflows, supplier management
-  A small brewery taproom could use an agent to manage stock and reordering. "We're running low on Citra hops and we've got a pale ale brew scheduled for Thursday." The agent knows current stock levels (updated via simple check-ins), lead times from suppliers, and the brew schedule, and triggers reorder suggestions. It also tracks supplier performance ("last order from Supplier X was two days late — flag next time?"). The pattern works for any small business with perishable or time-sensitive inventory.
+_regulatory submissions, audit preparation, policy tracking_
 
-  #### Getting started
+A small care home (20-30 beds) could use an agent to help prepare for CQC inspections. The agent knows the inspection framework, tracks which policies are due for review, and helps staff document incidents and actions in the format CQC expects. "We had a medication error yesterday — walk me through what I need to record." The agent ensures the right forms are completed and the right people notified. Revenue via subscription to care home operators, scaling through care home groups and sector associations.
 
-  Visit a local craft brewery taproom and buy the head brewer a pint — brewery owners tend to be approachable and curious about tech, especially if it saves them from spreadsheet hell.
+##### Getting started
 
-- **Internal knowledge management** — process documentation, FAQ, tribal knowledge capture
-  A small law firm could deploy an agent as their institutional memory. "How do we handle a conflict of interest check?" or "what's our process for onboarding a new client in the corporate team?" Instead of process documents that nobody reads or updates, the agent holds the current knowledge and learns from corrections. When a team member leaves, their process knowledge has already been captured through the agent's interactions. Revenue via subscription to professional services firms.
+Approach a small independent care home owner (not a chain) — they're often managing compliance single-handedly and are reachable through local care sector forums or the National Care Association.
 
-  #### Getting started
+#### Inventory and procurement
 
-  Approach a small law firm's office manager or practice manager — they're the ones who actually maintain the process documents and know how painful it is when someone leaves.
+_stock monitoring, reorder workflows, supplier management_
 
-- **Client and case management** — tracking engagements, progress notes, handover summaries
-  A small charity providing mentoring services could use an agent to help mentors track their cases. "I had a session with James today — he's making progress on his CV but is anxious about interviews." The agent captures the update, flags if it's been too long since the last session, and generates handover summaries if a mentor is away. This replaces the spreadsheet-and-email approach that most small charities use for case management, without requiring them to learn a complex CRM system.
+A small brewery taproom could use an agent to manage stock and reordering. "We're running low on Citra hops and we've got a pale ale brew scheduled for Thursday." The agent knows current stock levels (updated via simple check-ins), lead times from suppliers, and the brew schedule, and triggers reorder suggestions. It also tracks supplier performance ("last order from Supplier X was two days late — flag next time?"). The pattern works for any small business with perishable or time-sensitive inventory.
 
-  #### Getting started
+##### Getting started
 
-  Volunteer with a local mentoring charity (Prince's Trust, a youth mentoring programme) — you'll see the case management problem firsthand and build relationships with the people who'd use the tool.
+Visit a local craft brewery taproom and buy the head brewer a pint — brewery owners tend to be approachable and curious about tech, especially if it saves them from spreadsheet hell.
 
-- **Quality assurance and auditing** — inspection checklists, non-conformance tracking, corrective actions
-  A small food manufacturer could use an agent to manage their HACCP compliance. "Daily check: cold store temperature was 5.2 degrees at 8am — is that within spec?" The agent knows the control points, acceptable ranges, and corrective actions. When something is out of spec, it walks the operator through the response and generates the documentation. Currently this is done with paper checklists and periodic audits — an always-available agent could make compliance continuous rather than periodic.
+#### Internal knowledge management
 
-  #### Getting started
+_process documentation, FAQ, tribal knowledge capture_
 
-  Approach a local food manufacturing consultant who advises small producers on HACCP — they have dozens of clients who all share the same compliance headache.
+A small law firm could deploy an agent as their institutional memory. "How do we handle a conflict of interest check?" or "what's our process for onboarding a new client in the corporate team?" Instead of process documents that nobody reads or updates, the agent holds the current knowledge and learns from corrections. When a team member leaves, their process knowledge has already been captured through the agent's interactions. Revenue via subscription to professional services firms.
+
+##### Getting started
+
+Approach a small law firm's office manager or practice manager — they're the ones who actually maintain the process documents and know how painful it is when someone leaves.
+
+#### Client and case management
+
+_tracking engagements, progress notes, handover summaries_
+
+A small charity providing mentoring services could use an agent to help mentors track their cases. "I had a session with James today — he's making progress on his CV but is anxious about interviews." The agent captures the update, flags if it's been too long since the last session, and generates handover summaries if a mentor is away. This replaces the spreadsheet-and-email approach that most small charities use for case management, without requiring them to learn a complex CRM system.
+
+##### Getting started
+
+Volunteer with a local mentoring charity (Prince's Trust, a youth mentoring programme) — you'll see the case management problem firsthand and build relationships with the people who'd use the tool.
+
+#### Quality assurance and auditing
+
+_inspection checklists, non-conformance tracking, corrective actions_
+
+A small food manufacturer could use an agent to manage their HACCP compliance. "Daily check: cold store temperature was 5.2 degrees at 8am — is that within spec?" The agent knows the control points, acceptable ranges, and corrective actions. When something is out of spec, it walks the operator through the response and generates the documentation. Currently this is done with paper checklists and periodic audits — an always-available agent could make compliance continuous rather than periodic.
+
+##### Getting started
+
+Approach a local food manufacturing consultant who advises small producers on HACCP — they have dozens of clients who all share the same compliance headache.
 
 ### Worked example: Small recruitment agency candidate-role matching
 
@@ -690,54 +873,75 @@ Traditional marketplaces connect supply and demand through search and listings. 
 
 ### Subcategories
 
-- **Expert marketplaces** — matching knowledge seekers to providers with AI-assisted triage
-  A platform connecting homeowners to vetted tradespeople — but instead of browsing listings, you describe your problem conversationally: "I've got a crack running down my internal wall, about a metre long, appeared in the last few months." The agent triages (is this structural or cosmetic?), determines the right trade (structural engineer first, then builder), and matches to a qualified local provider. The AI triage adds value that a simple directory can't — and could reduce wasted callouts for both homeowners and trades.
+#### Expert marketplaces
 
-  #### Getting started
+_matching knowledge seekers to providers with AI-assisted triage_
 
-  Partner with a local trades directory or a Checkatrade-style platform that already has the supply side — we add the intelligent triage layer they lack.
+A platform connecting homeowners to vetted tradespeople — but instead of browsing listings, you describe your problem conversationally: "I've got a crack running down my internal wall, about a metre long, appeared in the last few months." The agent triages (is this structural or cosmetic?), determines the right trade (structural engineer first, then builder), and matches to a qualified local provider. The AI triage adds value that a simple directory can't — and could reduce wasted callouts for both homeowners and trades.
 
-- **Service coordination** — multi-party workflows where the agent orchestrates between providers
-  A property management company could deploy an agent that coordinates maintenance between tenants, landlords, and contractors. Tenant reports an issue → agent triages → schedules a contractor → confirms access with tenant → follows up on completion → updates landlord. Currently this is someone on the phone all day. The agent handles the coordination across multiple parties, each with their own availability and communication preferences. Start with one property manager, scale through letting agency networks.
+##### Getting started
 
-  #### Getting started
+Partner with a local trades directory or a Checkatrade-style platform that already has the supply side — we add the intelligent triage layer they lack.
 
-  Approach a local letting agency that manages 100+ properties — they'll have a property manager who spends most of their time on exactly this coordination.
+#### Service coordination
 
-- **Aggregation and comparison** — agent-driven comparison that understands context, not just price
-  A business energy comparison service where the agent actually understands your usage patterns: "We're a bakery, we use a lot of power overnight for proving ovens, we have solar panels on the roof." Instead of a comparison table sorted by unit rate, the agent models actual cost based on your specific usage profile and tariff structures. This is the kind of contextual comparison that existing comparison sites can't do because they reduce everything to simple inputs. Revenue via referral from energy suppliers.
+_multi-party workflows where the agent orchestrates between providers_
 
-  #### Getting started
+A property management company could deploy an agent that coordinates maintenance between tenants, landlords, and contractors. Tenant reports an issue → agent triages → schedules a contractor → confirms access with tenant → follows up on completion → updates landlord. Currently this is someone on the phone all day. The agent handles the coordination across multiple parties, each with their own availability and communication preferences. Start with one property manager, scale through letting agency networks.
 
-  Build a prototype for one sector (hospitality — high energy costs, complex usage patterns) and approach a business energy broker who'd use it as a differentiation tool.
+##### Getting started
 
-- **Peer-to-peer knowledge exchange** — community expertise sharing with AI-assisted quality control
-  A professional community of practice (say, UK data protection officers) could deploy an agent that curates and quality-checks member contributions. Members share their approaches to common challenges ("how are you handling the new GDPR adequacy framework post-Brexit?"), the agent synthesises responses, identifies consensus and disagreement, and makes the collective knowledge searchable. It also flags outdated or potentially incorrect advice. This is a more structured version of what happens in Slack channels and forums, with the agent adding editorial intelligence.
+Approach a local letting agency that manages 100+ properties — they'll have a property manager who spends most of their time on exactly this coordination.
 
-  #### Getting started
+#### Aggregation and comparison
 
-  Find an active professional Slack or Discord community and offer to build a knowledge synthesis layer on top of their existing discussions — they already have the content, we add the intelligence.
+_agent-driven comparison that understands context, not just price_
 
-- **Agent-as-a-service (white-label)** — providing pre-built agentic capabilities to other businesses
-  See worked example below. Beyond trade associations, the white-label model works for franchise networks (each franchisee gets an agent with brand-level knowledge plus local customisation), professional networks (each member firm gets a client-facing agent), and software vendors (embed an agent in their product for customer support and onboarding).
+A business energy comparison service where the agent actually understands your usage patterns: "We're a bakery, we use a lot of power overnight for proving ovens, we have solar panels on the roof." Instead of a comparison table sorted by unit rate, the agent models actual cost based on your specific usage profile and tariff structures. This is the kind of contextual comparison that existing comparison sites can't do because they reduce everything to simple inputs. Revenue via referral from energy suppliers.
 
-  #### Getting started
+##### Getting started
 
-  Identify a franchise network we have a personal connection to and propose a pilot — one franchisee first, then roll out across the network.
+Build a prototype for one sector (hospitality — high energy costs, complex usage patterns) and approach a business energy broker who'd use it as a differentiation tool.
 
-- **Token-gated agent access** — pay-per-query via Lightning or crypto micropayments
-  A specialist research agent — say, one with deep knowledge of UK planning law precedents — could be accessed on a pay-per-query basis via Lightning Network micropayments. No subscription, no account creation — pay a few hundred sats per query. This enables a long tail of specialist knowledge agents that aren't viable as subscriptions (too niche) but could sustain themselves through micropayments. The Lightning integration via a capability makes this technically straightforward. Interesting as an experiment in new economic models for knowledge access.
+#### Peer-to-peer knowledge exchange
 
-  #### Getting started
+_community expertise sharing with AI-assisted quality control_
 
-  Build one ourselves as a proof of concept — pick a niche knowledge domain, load it up, integrate LNbits for payments, and publish it to the Bitcoin/Nostr community as an experiment.
+A professional community of practice (say, UK data protection officers) could deploy an agent that curates and quality-checks member contributions. Members share their approaches to common challenges ("how are you handling the new GDPR adequacy framework post-Brexit?"), the agent synthesises responses, identifies consensus and disagreement, and makes the collective knowledge searchable. It also flags outdated or potentially incorrect advice. This is a more structured version of what happens in Slack channels and forums, with the agent adding editorial intelligence.
 
-- **Decentralised agent marketplaces** — agents published and consumed without a platform middleman
-  Longer term, there's an intriguing possibility of a marketplace where domain experts publish agents (with their knowledge bases) and consumers access them directly — without a centralised platform taking a percentage. Agents could be self-hosted, discovered via a registry, and paid for via Lightning. This is more speculative, but Sunrise's multi-provider architecture and embeddable widget make it technically feasible. Worth exploring as the agent ecosystem matures and the desire for platform independence grows.
+##### Getting started
 
-  #### Getting started
+Find an active professional Slack or Discord community and offer to build a knowledge synthesis layer on top of their existing discussions — they already have the content, we add the intelligence.
 
-  This one is a longer-term vision — start by publishing a few of our own agents with Lightning payment, learn what works, and write up the architecture as a public spec to attract interest.
+#### Agent-as-a-service (white-label)
+
+_providing pre-built agentic capabilities to other businesses_
+
+See worked example below. Beyond trade associations, the white-label model works for franchise networks (each franchisee gets an agent with brand-level knowledge plus local customisation), professional networks (each member firm gets a client-facing agent), and software vendors (embed an agent in their product for customer support and onboarding).
+
+##### Getting started
+
+Identify a franchise network we have a personal connection to and propose a pilot — one franchisee first, then roll out across the network.
+
+#### Token-gated agent access
+
+_pay-per-query via Lightning or crypto micropayments_
+
+A specialist research agent — say, one with deep knowledge of UK planning law precedents — could be accessed on a pay-per-query basis via Lightning Network micropayments. No subscription, no account creation — pay a few hundred sats per query. This enables a long tail of specialist knowledge agents that aren't viable as subscriptions (too niche) but could sustain themselves through micropayments. The Lightning integration via a capability makes this technically straightforward. Interesting as an experiment in new economic models for knowledge access.
+
+##### Getting started
+
+Build one ourselves as a proof of concept — pick a niche knowledge domain, load it up, integrate LNbits for payments, and publish it to the Bitcoin/Nostr community as an experiment.
+
+#### Decentralised agent marketplaces
+
+_agents published and consumed without a platform middleman_
+
+Longer term, there's an intriguing possibility of a marketplace where domain experts publish agents (with their knowledge bases) and consumers access them directly — without a centralised platform taking a percentage. Agents could be self-hosted, discovered via a registry, and paid for via Lightning. This is more speculative, but Sunrise's multi-provider architecture and embeddable widget make it technically feasible. Worth exploring as the agent ecosystem matures and the desire for platform independence grows.
+
+##### Getting started
+
+This one is a longer-term vision — start by publishing a few of our own agents with Lightning payment, learn what works, and write up the architecture as a public spec to attract interest.
 
 ### Worked example: Agent-as-a-service for trade associations
 
@@ -761,54 +965,75 @@ Public systems — healthcare, education, justice, social care — were designed
 
 ### Subcategories
 
-- **Healthcare delivery and triage** — symptom assessment, appointment preparation, care pathway navigation
-  See worked example below. Beyond GP triage, the same conversational pre-consultation model could work for dentistry (capturing symptoms and dental history before the appointment), physiotherapy (movement assessment and pain history), and mental health services (initial assessment that helps clinicians prepare). Each healthcare vertical has its own protocols but the pattern is identical.
+#### Healthcare delivery and triage
 
-  #### Getting started
+_symptom assessment, appointment preparation, care pathway navigation_
 
-  Approach a local PCN clinical director — PCNs have innovation budgets and a mandate to improve access, and clinical directors tend to be more tech-forward than individual GP partners.
+See worked example below. Beyond GP triage, the same conversational pre-consultation model could work for dentistry (capturing symptoms and dental history before the appointment), physiotherapy (movement assessment and pain history), and mental health services (initial assessment that helps clinicians prepare). Each healthcare vertical has its own protocols but the pattern is identical.
 
-- **Education systems** — personalised learning, teacher workload reduction, SEND support coordination
-  A multi-academy trust could deploy an agent that helps SENCOs (Special Educational Needs Coordinators) manage their caseload. "I need to update the provision map for Year 3 — what interventions are we running and who's in each group?" The agent tracks SEND provision across the school, helps prepare for annual reviews, and drafts the paperwork that SENCOs spend evenings on. Start with one school, scale through the trust. Revenue via per-school subscription, justified by SENCO time savings and compliance confidence.
+##### Getting started
 
-  #### Getting started
+Approach a local PCN clinical director — PCNs have innovation budgets and a mandate to improve access, and clinical directors tend to be more tech-forward than individual GP partners.
 
-  SENCOs are very active on Twitter/X and in Facebook groups — find one who's vocal about workload and offer to build a prototype around their specific frustrations.
+#### Education systems
 
-- **Government services and case management** — benefits processing, social housing allocation, licensing
-  A local authority's housing allocations team could deploy an agent that helps applicants understand the social housing process. "I've been on the waiting list for two years — how does the points system work and can I increase my priority?" The agent explains the allocations policy in plain language, helps applicants check their banding is correct, and identifies whether changed circumstances (new medical evidence, overcrowding) warrant a review. This doesn't change the allocation process but makes it transparent and navigable.
+_personalised learning, teacher workload reduction, SEND support coordination_
 
-  #### Getting started
+A multi-academy trust could deploy an agent that helps SENCOs (Special Educational Needs Coordinators) manage their caseload. "I need to update the provision map for Year 3 — what interventions are we running and who's in each group?" The agent tracks SEND provision across the school, helps prepare for annual reviews, and drafts the paperwork that SENCOs spend evenings on. Start with one school, scale through the trust. Revenue via per-school subscription, justified by SENCO time savings and compliance confidence.
 
-  Approach a council's digital transformation team — many councils have innovation officers actively looking for projects like this, and their allocations policies are public documents.
+##### Getting started
 
-- **Justice and legal systems** — court preparation, legal aid triage, victim support coordination
-  A victim support organisation could deploy an agent that helps crime victims understand the court process. "I've been told I need to give evidence at a Crown Court trial — what happens?" The agent explains the process step by step, addresses common anxieties (cross-examination, seeing the defendant), explains special measures they can request, and helps them prepare. Currently this is done by volunteer witness supporters with variable training. An agent could provide consistent, thorough preparation.
+SENCOs are very active on Twitter/X and in Facebook groups — find one who's vocal about workload and offer to build a prototype around their specific frustrations.
 
-  #### Getting started
+#### Government services and case management
 
-  Contact Victim Support's national office — they're a large charity with a technology team and regularly look for ways to support their volunteer workforce.
+_benefits processing, social housing allocation, licensing_
 
-- **Transport and urban planning** — public consultation, route optimisation, demand modelling
-  A city council running a public consultation on a proposed cycling lane could deploy an agent that makes the consultation genuinely accessible. Instead of a 40-page PDF and a feedback form, residents describe their concerns conversationally: "I live on that road and I'm worried about losing parking" or "I cycle that route and the current road layout is dangerous." The agent captures structured feedback, identifies themes, and produces a consultation report. More inclusive, richer data, and probably better engagement than the traditional approach.
+A local authority's housing allocations team could deploy an agent that helps applicants understand the social housing process. "I've been on the waiting list for two years — how does the points system work and can I increase my priority?" The agent explains the allocations policy in plain language, helps applicants check their banding is correct, and identifies whether changed circumstances (new medical evidence, overcrowding) warrant a review. This doesn't change the allocation process but makes it transparent and navigable.
 
-  #### Getting started
+##### Getting started
 
-  Find a live local consultation (they're listed on every council website), build a prototype that makes it conversational, and show it to the council's consultation team as a proof of concept.
+Approach a council's digital transformation team — many councils have innovation officers actively looking for projects like this, and their allocations policies are public documents.
 
-- **Social care and safeguarding** — needs assessment, care package coordination, carer support
-  A carers' support charity could deploy an agent that helps unpaid carers navigate available support. "I've been looking after my mum who has dementia — I'm exhausted and I don't know what help I can get." The agent walks through carer's assessments, respite options, financial support (Carer's Allowance, Attendance Allowance), and local services. Carers are often too busy caring to research their options — an agent that can be consulted at 11pm when the person they care for is finally asleep could be genuinely valuable.
+#### Justice and legal systems
 
-  #### Getting started
+_court preparation, legal aid triage, victim support coordination_
 
-  Approach Carers UK or a local carers' centre — they publish excellent guidance that could seed the knowledge base, and they understand the 24/7 nature of their audience's needs.
+A victim support organisation could deploy an agent that helps crime victims understand the court process. "I've been told I need to give evidence at a Crown Court trial — what happens?" The agent explains the process step by step, addresses common anxieties (cross-examination, seeing the defendant), explains special measures they can request, and helps them prepare. Currently this is done by volunteer witness supporters with variable training. An agent could provide consistent, thorough preparation.
 
-- **Post-institutional alternatives** — community-organised versions of failing public services
-  A homeschooling co-operative could use an agent to coordinate curriculum, share resources, and track progress across families. "We're covering the Tudors this term — what resources do other families recommend? What does the national curriculum expect at Key Stage 2?" The agent holds the collective knowledge of the co-op, helps with curriculum planning, and connects families with complementary expertise ("three families in the group have a parent with a science background who could do a group session"). More speculative, but relevant as alternative education grows.
+##### Getting started
 
-  #### Getting started
+Contact Victim Support's national office — they're a large charity with a technology team and regularly look for ways to support their volunteer workforce.
 
-  Home education Facebook groups are large and active — post asking whether coordination tools would be useful and see what response you get before building anything.
+#### Transport and urban planning
+
+_public consultation, route optimisation, demand modelling_
+
+A city council running a public consultation on a proposed cycling lane could deploy an agent that makes the consultation genuinely accessible. Instead of a 40-page PDF and a feedback form, residents describe their concerns conversationally: "I live on that road and I'm worried about losing parking" or "I cycle that route and the current road layout is dangerous." The agent captures structured feedback, identifies themes, and produces a consultation report. More inclusive, richer data, and probably better engagement than the traditional approach.
+
+##### Getting started
+
+Find a live local consultation (they're listed on every council website), build a prototype that makes it conversational, and show it to the council's consultation team as a proof of concept.
+
+#### Social care and safeguarding
+
+_needs assessment, care package coordination, carer support_
+
+A carers' support charity could deploy an agent that helps unpaid carers navigate available support. "I've been looking after my mum who has dementia — I'm exhausted and I don't know what help I can get." The agent walks through carer's assessments, respite options, financial support (Carer's Allowance, Attendance Allowance), and local services. Carers are often too busy caring to research their options — an agent that can be consulted at 11pm when the person they care for is finally asleep could be genuinely valuable.
+
+##### Getting started
+
+Approach Carers UK or a local carers' centre — they publish excellent guidance that could seed the knowledge base, and they understand the 24/7 nature of their audience's needs.
+
+#### Post-institutional alternatives
+
+_community-organised versions of failing public services_
+
+A homeschooling co-operative could use an agent to coordinate curriculum, share resources, and track progress across families. "We're covering the Tudors this term — what resources do other families recommend? What does the national curriculum expect at Key Stage 2?" The agent holds the collective knowledge of the co-op, helps with curriculum planning, and connects families with complementary expertise ("three families in the group have a parent with a science background who could do a group session"). More speculative, but relevant as alternative education grows.
+
+##### Getting started
+
+Home education Facebook groups are large and active — post asking whether coordination tools would be useful and see what response you get before building anything.
 
 ### Worked example: GP surgery triage and appointment preparation
 
@@ -832,61 +1057,85 @@ Most AI applications are framed as automation — the AI does what a human used 
 
 ### Subcategories
 
-- **Co-creation** — art, writing, design, music, game design, architecture where AI is a creative partner
-  A music education charity could deploy an agent that helps young people compose music. "I've got a melody in my head but I can't write it down — I can hum it." The agent helps translate hummed melodies into notation or MIDI, suggests harmonic structures, and teaches music theory through the act of creating rather than through abstract lessons. The knowledge base contains the charity's pedagogy and repertoire. This isn't AI generating music — it's AI helping someone who has musical ideas but lacks the technical vocabulary to express them.
+#### Co-creation
 
-  #### Getting started
+_art, writing, design, music, game design, architecture where AI is a creative partner_
 
-  Approach a music education charity like Youth Music or a local music hub — they're often keen on technology projects and may have grant funding earmarked for innovation.
+A music education charity could deploy an agent that helps young people compose music. "I've got a melody in my head but I can't write it down — I can hum it." The agent helps translate hummed melodies into notation or MIDI, suggests harmonic structures, and teaches music theory through the act of creating rather than through abstract lessons. The knowledge base contains the charity's pedagogy and repertoire. This isn't AI generating music — it's AI helping someone who has musical ideas but lacks the technical vocabulary to express them.
 
-- **Augmented decision-making** — AI that structures complex decisions without making them for you
-  A small business owner facing a significant decision ("should I take on a commercial lease, hire my first employee, or keep working from home?") could use an agent that helps structure the thinking. The agent doesn't decide — it asks the right questions, surfaces considerations the owner might not have thought of, models scenarios, and helps them articulate their own priorities. This could be offered as part of a business mentoring programme, or as a standalone tool for the large population of small business owners who don't have a board or trusted advisors.
+##### Getting started
 
-  #### Getting started
+Approach a music education charity like Youth Music or a local music hub — they're often keen on technology projects and may have grant funding earmarked for innovation.
 
-  Build a prototype with a generic small business decision framework, then test it with 5-10 business owners through a local enterprise hub or FSB (Federation of Small Businesses) chapter — their feedback will shape what the agent actually needs to know.
+#### Augmented decision-making
 
-- **Personal AI** — life admin, reflection, memory augmentation, habit formation
-  A personal agent that handles life admin — "I need to renew my car insurance, switch energy provider, and sort out a dentist appointment." The agent tracks tasks, researches options, and handles the tedious comparison and form-filling. More interestingly, it could serve as a structured reflection tool — daily check-ins that help people track their own thinking and goals over time, creating a personal knowledge base they can query ("what was I worried about this time last year?"). Early-stage and speculative, but the demand for personal AI assistants seems real.
+_AI that structures complex decisions without making them for you_
 
-  #### Getting started
+A small business owner facing a significant decision ("should I take on a commercial lease, hire my first employee, or keep working from home?") could use an agent that helps structure the thinking. The agent doesn't decide — it asks the right questions, surfaces considerations the owner might not have thought of, models scenarios, and helps them articulate their own priorities. This could be offered as part of a business mentoring programme, or as a standalone tool for the large population of small business owners who don't have a board or trusted advisors.
 
-  Dogfood this one — build a personal admin agent for yourself, use it daily for a month, and document what works and what doesn't. The authentic experience of using your own tool is the best pitch material.
+##### Getting started
 
-- **Intergenerational knowledge transfer** — capturing and making accessible the knowledge of older generations
-  See worked example below. Beyond business succession, this pattern applies to family history (grandparents' stories captured conversationally and made queryable by future generations), community elders (local knowledge that would otherwise be lost), and retiring specialists in any field (the master craftsperson, the experienced clinician, the long-serving teacher). Each is a discrete project with a clear deliverable.
+Build a prototype with a generic small business decision framework, then test it with 5-10 business owners through a local enterprise hub or FSB (Federation of Small Businesses) chapter — their feedback will shape what the agent actually needs to know.
 
-  #### Getting started
+#### Personal AI
 
-  Find one retiring professional in your own network — a family friend closing their business, a relative with decades of specialist knowledge — and do the first capture for free as a case study.
+_life admin, reflection, memory augmentation, habit formation_
 
-- **Simulation and scenario planning** — "what if" exploration for personal, business, or policy decisions
-  A local council considering the impact of a new housing development could deploy an agent that helps model scenarios: "what happens to school capacity if 500 new homes are built? What about GP registration? Traffic on the B-road?" The agent draws on census data, school capacity data, and transport models loaded into the knowledge base. This is currently done by expensive consultants producing static reports — a conversational scenario tool could make the exploration iterative and accessible to councillors who aren't data analysts.
+A personal agent that handles life admin — "I need to renew my car insurance, switch energy provider, and sort out a dentist appointment." The agent tracks tasks, researches options, and handles the tedious comparison and form-filling. More interestingly, it could serve as a structured reflection tool — daily check-ins that help people track their own thinking and goals over time, creating a personal knowledge base they can query ("what was I worried about this time last year?"). Early-stage and speculative, but the demand for personal AI assistants seems real.
 
-  #### Getting started
+##### Getting started
 
-  Approach a planning consultancy that already does this work with spreadsheets and reports — they'd be a natural partner to test whether a conversational interface changes how councillors engage with the data.
+Dogfood this one — build a personal admin agent for yourself, use it daily for a month, and document what works and what doesn't. The authentic experience of using your own tool is the best pitch material.
 
-- **Companion and accountability partnerships** — AI as consistent support for behaviour change
-  A smoking cessation service could deploy an agent as a between-appointment companion. The agent checks in daily, helps manage cravings in the moment ("I'm about to buy cigarettes — talk me through this"), tracks progress, and celebrates milestones. Unlike a human supporter, it's available at 2am when the craving hits. The knowledge base contains evidence-based cessation strategies from the service's clinical team. Revenue via the NHS Stop Smoking service (which funds cessation support) or via private health insurers who benefit from reduced claims.
+#### Intergenerational knowledge transfer
 
-  #### Getting started
+_capturing and making accessible the knowledge of older generations_
 
-  Approach a local authority Stop Smoking service — they have budgets, measurable outcomes, and a captive user group who've already opted in to support. Offer a 3-month pilot alongside their existing programme.
+See worked example below. Beyond business succession, this pattern applies to family history (grandparents' stories captured conversationally and made queryable by future generations), community elders (local knowledge that would otherwise be lost), and retiring specialists in any field (the master craftsperson, the experienced clinician, the long-serving teacher). Each is a discrete project with a clear deliverable.
 
-- **Augmented survival and adaptation** — AI helping people navigate rapidly changing conditions
-  In a rapidly changing regulatory environment (post-Brexit trade rules, for example), a small import/export business could deploy an agent that helps them stay compliant. "I'm importing olive oil from Italy — what's changed since January?" The agent tracks regulatory changes, customs requirements, and certification needs, providing guidance specific to the business's products and trade routes. The knowledge base is updated as regulations change. This is a pattern that becomes more valuable as the world becomes more complex and unpredictable.
+##### Getting started
 
-  #### Getting started
+Find one retiring professional in your own network — a family friend closing their business, a relative with decades of specialist knowledge — and do the first capture for free as a case study.
 
-  Pick one specific regulatory area you can become expert in quickly (e.g., food import rules post-Brexit), build a prototype agent with HMRC and Border Force guidance in the knowledge base, and cold-approach 20 small importers in that sector with a free trial.
+#### Simulation and scenario planning
 
-- **Collective intelligence** — AI-facilitated group sensemaking, deliberation, and consensus-building
-  A citizens' assembly (increasingly popular in UK local and national governance) could use an agent to facilitate deliberation. Participants submit their views on a topic ("what should our town prioritise: more housing, better transport, or green spaces?"), the agent synthesises the arguments, identifies areas of agreement and disagreement, surfaces trade-offs, and helps the group converge on shared priorities. This is more structured than a town hall meeting and more inclusive than a committee. Interesting as a tool for democratic innovation organisations like Involve or DemSoc.
+_"what if" exploration for personal, business, or policy decisions_
 
-  #### Getting started
+A local council considering the impact of a new housing development could deploy an agent that helps model scenarios: "what happens to school capacity if 500 new homes are built? What about GP registration? Traffic on the B-road?" The agent draws on census data, school capacity data, and transport models loaded into the knowledge base. This is currently done by expensive consultants producing static reports — a conversational scenario tool could make the exploration iterative and accessible to councillors who aren't data analysts.
 
-  Contact Involve or DemSoc directly with a working demo — these organisations are actively looking for digital tools to support deliberative democracy and are likely receptive to a well-framed approach.
+##### Getting started
+
+Approach a planning consultancy that already does this work with spreadsheets and reports — they'd be a natural partner to test whether a conversational interface changes how councillors engage with the data.
+
+#### Companion and accountability partnerships
+
+_AI as consistent support for behaviour change_
+
+A smoking cessation service could deploy an agent as a between-appointment companion. The agent checks in daily, helps manage cravings in the moment ("I'm about to buy cigarettes — talk me through this"), tracks progress, and celebrates milestones. Unlike a human supporter, it's available at 2am when the craving hits. The knowledge base contains evidence-based cessation strategies from the service's clinical team. Revenue via the NHS Stop Smoking service (which funds cessation support) or via private health insurers who benefit from reduced claims.
+
+##### Getting started
+
+Approach a local authority Stop Smoking service — they have budgets, measurable outcomes, and a captive user group who've already opted in to support. Offer a 3-month pilot alongside their existing programme.
+
+#### Augmented survival and adaptation
+
+_AI helping people navigate rapidly changing conditions_
+
+In a rapidly changing regulatory environment (post-Brexit trade rules, for example), a small import/export business could deploy an agent that helps them stay compliant. "I'm importing olive oil from Italy — what's changed since January?" The agent tracks regulatory changes, customs requirements, and certification needs, providing guidance specific to the business's products and trade routes. The knowledge base is updated as regulations change. This is a pattern that becomes more valuable as the world becomes more complex and unpredictable.
+
+##### Getting started
+
+Pick one specific regulatory area you can become expert in quickly (e.g., food import rules post-Brexit), build a prototype agent with HMRC and Border Force guidance in the knowledge base, and cold-approach 20 small importers in that sector with a free trial.
+
+#### Collective intelligence
+
+_AI-facilitated group sensemaking, deliberation, and consensus-building_
+
+A citizens' assembly (increasingly popular in UK local and national governance) could use an agent to facilitate deliberation. Participants submit their views on a topic ("what should our town prioritise: more housing, better transport, or green spaces?"), the agent synthesises the arguments, identifies areas of agreement and disagreement, surfaces trade-offs, and helps the group converge on shared priorities. This is more structured than a town hall meeting and more inclusive than a committee. Interesting as a tool for democratic innovation organisations like Involve or DemSoc.
+
+##### Getting started
+
+Contact Involve or DemSoc directly with a working demo — these organisations are actively looking for digital tools to support deliberative democracy and are likely receptive to a well-framed approach.
 
 ### Worked example: Intergenerational knowledge transfer for family businesses
 
@@ -910,61 +1159,85 @@ Complex domains generate enormous amounts of data — climate sensors, health re
 
 ### Subcategories
 
-- **Climate and environmental monitoring** — sensor data interpretation, compliance tracking, impact assessment
-  A river trust could deploy an agent that helps volunteer water quality monitors interpret their data. Volunteers collect samples and enter readings — the agent interprets the results in context ("phosphate levels at this site have been trending upward over the last 6 months — this could indicate agricultural run-off from the land upstream"), identifies patterns across monitoring sites, and helps draft reports to the Environment Agency. The knowledge base contains water quality standards, local catchment data, and reporting protocols.
+#### Climate and environmental monitoring
 
-  #### Getting started
+_sensor data interpretation, compliance tracking, impact assessment_
 
-  Volunteer with a river trust for a few months to understand the workflow firsthand — Waterkeeper Alliance and local Rivers Trusts are always short of technical help, and you'll learn exactly where the data interpretation bottleneck is.
+A river trust could deploy an agent that helps volunteer water quality monitors interpret their data. Volunteers collect samples and enter readings — the agent interprets the results in context ("phosphate levels at this site have been trending upward over the last 6 months — this could indicate agricultural run-off from the land upstream"), identifies patterns across monitoring sites, and helps draft reports to the Environment Agency. The knowledge base contains water quality standards, local catchment data, and reporting protocols.
 
-- **Epidemiology and public health** — outbreak detection, health trend analysis, intervention planning
-  A local public health team could deploy an agent that helps analysts spot patterns in health data. "Show me respiratory illness presentations across GP practices this month compared to the same period last year — any clusters?" The agent ingests anonymised health data, identifies anomalies, and helps the team prioritise investigation. Currently this analysis requires specialist epidemiologists — an agent could make it accessible to public health officers with less statistical training.
+##### Getting started
 
-  #### Getting started
+Volunteer with a river trust for a few months to understand the workflow firsthand — Waterkeeper Alliance and local Rivers Trusts are always short of technical help, and you'll learn exactly where the data interpretation bottleneck is.
 
-  Approach one local authority's public health team through their Director of Public Health — these teams are chronically under-resourced and often receptive to innovation partnerships, especially if you can frame it as a no-cost pilot.
+#### Epidemiology and public health
 
-- **Supply chain optimisation** — disruption detection, alternative sourcing, demand forecasting
-  A small UK manufacturer that imports components from multiple countries could deploy an agent that monitors supply chain risk. "What's the current situation with shipping from the Suez Canal? Do we have alternative suppliers for the capacitors we usually source from Shenzhen?" The agent tracks news, shipping data, and supplier status, and alerts when disruptions may affect the business. Knowledge base includes supplier databases, lead times, and alternative sourcing options. Revenue via subscription to small manufacturers.
+_outbreak detection, health trend analysis, intervention planning_
 
-  #### Getting started
+A local public health team could deploy an agent that helps analysts spot patterns in health data. "Show me respiratory illness presentations across GP practices this month compared to the same period last year — any clusters?" The agent ingests anonymised health data, identifies anomalies, and helps the team prioritise investigation. Currently this analysis requires specialist epidemiologists — an agent could make it accessible to public health officers with less statistical training.
 
-  Attend a Make UK or Manufacturing NI event and talk to small manufacturers about their recent supply disruptions — the stories will tell you exactly what data sources the agent needs to monitor.
+##### Getting started
 
-- **Energy grid management** — demand prediction, renewable integration, load balancing
-  A community energy cooperative running a local solar farm could deploy an agent that helps manage generation and demand. "We're generating more than we can use today — which members should we alert to run their washing machines now?" The agent matches generation forecasts (weather data) to demand patterns (member usage profiles) and coordinates load shifting. More speculative, but community energy is growing and the coordination challenge is real. Could also help with battery storage decisions and export optimisation.
+Approach one local authority's public health team through their Director of Public Health — these teams are chronically under-resourced and often receptive to innovation partnerships, especially if you can frame it as a no-cost pilot.
 
-  #### Getting started
+#### Supply chain optimisation
 
-  Community Energy England maintains a directory of community energy groups — find one with a solar installation and offer to build a demand-matching prototype as an innovation project.
+_disruption detection, alternative sourcing, demand forecasting_
 
-- **Financial risk modelling** — portfolio analysis, scenario testing, regulatory compliance
-  A small IFA (Independent Financial Adviser) practice could deploy an agent that helps with portfolio scenario testing. "If interest rates rise by 1% and sterling falls 10%, what happens to this client's portfolio?" The agent models scenarios using fund composition data and historical correlations. Currently this requires expensive portfolio analysis tools — an agent with financial data in the knowledge base could make it accessible to smaller practices. Revenue via subscription positioned against the cost of commercial portfolio tools.
+A small UK manufacturer that imports components from multiple countries could deploy an agent that monitors supply chain risk. "What's the current situation with shipping from the Suez Canal? Do we have alternative suppliers for the capacitors we usually source from Shenzhen?" The agent tracks news, shipping data, and supplier status, and alerts when disruptions may affect the business. Knowledge base includes supplier databases, lead times, and alternative sourcing options. Revenue via subscription to small manufacturers.
 
-  #### Getting started
+##### Getting started
 
-  If you know an IFA personally, offer to build a prototype for free. If not, attend a local CISI (Chartered Institute for Securities and Investment) networking event — advisers there will tell you exactly what tools they wish existed.
+Attend a Make UK or Manufacturing NI event and talk to small manufacturers about their recent supply disruptions — the stories will tell you exactly what data sources the agent needs to monitor.
 
-- **Urban development and planning** — impact modelling, community feedback analysis, infrastructure planning
-  A planning consultancy could deploy an agent that helps analyse community consultation responses. After a public consultation generates hundreds of free-text responses, the agent categorises concerns, identifies themes, quantifies sentiment, and produces a structured consultation report. Currently this is done manually by junior consultants over days or weeks. The agent could produce a first-pass analysis in hours, with the human focusing on interpretation and recommendations.
+#### Energy grid management
 
-  #### Getting started
+_demand prediction, renewable integration, load balancing_
 
-  Many planning consultation responses are published as public documents — download one, build a prototype that analyses it, and show the results to a planning consultancy as a cold demo of what's possible.
+A community energy cooperative running a local solar farm could deploy an agent that helps manage generation and demand. "We're generating more than we can use today — which members should we alert to run their washing machines now?" The agent matches generation forecasts (weather data) to demand patterns (member usage profiles) and coordinates load shifting. More speculative, but community energy is growing and the coordination challenge is real. Could also help with battery storage decisions and export optimisation.
 
-- **Real-time geopolitical risk assessment** — sanctions monitoring, trade disruption, regulatory change tracking
-  A mid-size law firm with international clients could deploy an agent that monitors sanctions and regulatory changes. "Has anything changed in the last week that affects our clients trading with Turkey?" The agent tracks OFSI (Office of Financial Sanctions Implementation), EU, and UN sanctions lists, regulatory updates, and trade policy changes, and alerts the relevant partner. Currently this monitoring is either manual (and patchy) or requires expensive compliance platforms. An agent with regulatory feeds in the knowledge base could serve smaller firms.
+##### Getting started
 
-  #### Getting started
+Community Energy England maintains a directory of community energy groups — find one with a solar installation and offer to build a demand-matching prototype as an innovation project.
 
-  OFSI publishes its sanctions list freely — build a prototype that monitors it and generates plain-English alerts, then approach mid-tier law firms through their compliance partners with a working demo.
+#### Financial risk modelling
 
-- **Alternative economic indicators** — on-chain analytics, community economic health, informal economy measurement
-  An economic research organisation could deploy an agent that tracks alternative indicators of economic health — Bitcoin adoption rates, local currency transaction volumes, mutual aid activity, community energy generation, food bank usage. "What does the on-chain data tell us about Bitcoin adoption in the UK this quarter?" These indicators may tell a different story from official statistics and could be valuable for investors, policymakers, and community organisations. Speculative, but the data is increasingly available and the demand for alternative perspectives on economic health is growing.
+_portfolio analysis, scenario testing, regulatory compliance_
 
-  #### Getting started
+A small IFA (Independent Financial Adviser) practice could deploy an agent that helps with portfolio scenario testing. "If interest rates rise by 1% and sterling falls 10%, what happens to this client's portfolio?" The agent models scenarios using fund composition data and historical correlations. Currently this requires expensive portfolio analysis tools — an agent with financial data in the knowledge base could make it accessible to smaller practices. Revenue via subscription positioned against the cost of commercial portfolio tools.
 
-  Build a prototype using freely available on-chain data (Mempool.space API, Clark Moody dashboard) and publish a monthly "alternative indicators" report — the content itself becomes marketing for the tool.
+##### Getting started
+
+If you know an IFA personally, offer to build a prototype for free. If not, attend a local CISI (Chartered Institute for Securities and Investment) networking event — advisers there will tell you exactly what tools they wish existed.
+
+#### Urban development and planning
+
+_impact modelling, community feedback analysis, infrastructure planning_
+
+A planning consultancy could deploy an agent that helps analyse community consultation responses. After a public consultation generates hundreds of free-text responses, the agent categorises concerns, identifies themes, quantifies sentiment, and produces a structured consultation report. Currently this is done manually by junior consultants over days or weeks. The agent could produce a first-pass analysis in hours, with the human focusing on interpretation and recommendations.
+
+##### Getting started
+
+Many planning consultation responses are published as public documents — download one, build a prototype that analyses it, and show the results to a planning consultancy as a cold demo of what's possible.
+
+#### Real-time geopolitical risk assessment
+
+_sanctions monitoring, trade disruption, regulatory change tracking_
+
+A mid-size law firm with international clients could deploy an agent that monitors sanctions and regulatory changes. "Has anything changed in the last week that affects our clients trading with Turkey?" The agent tracks OFSI (Office of Financial Sanctions Implementation), EU, and UN sanctions lists, regulatory updates, and trade policy changes, and alerts the relevant partner. Currently this monitoring is either manual (and patchy) or requires expensive compliance platforms. An agent with regulatory feeds in the knowledge base could serve smaller firms.
+
+##### Getting started
+
+OFSI publishes its sanctions list freely — build a prototype that monitors it and generates plain-English alerts, then approach mid-tier law firms through their compliance partners with a working demo.
+
+#### Alternative economic indicators
+
+_on-chain analytics, community economic health, informal economy measurement_
+
+An economic research organisation could deploy an agent that tracks alternative indicators of economic health — Bitcoin adoption rates, local currency transaction volumes, mutual aid activity, community energy generation, food bank usage. "What does the on-chain data tell us about Bitcoin adoption in the UK this quarter?" These indicators may tell a different story from official statistics and could be valuable for investors, policymakers, and community organisations. Speculative, but the data is increasingly available and the demand for alternative perspectives on economic health is growing.
+
+##### Getting started
+
+Build a prototype using freely available on-chain data (Mempool.space API, Clark Moody dashboard) and publish a monthly "alternative indicators" report — the content itself becomes marketing for the tool.
 
 ### Worked example: Small farm regenerative agriculture advisor
 
@@ -988,61 +1261,85 @@ Most emerging technologies are powerful but unusable by normal people. Blockchai
 
 ### Subcategories
 
-- **Blockchain and DeFi navigation** — wallet management, yield strategies, governance participation, smart contract interaction without Solidity
-  See worked example below. Beyond business adoption, there's an opportunity for personal Bitcoin/crypto guidance — "I want to set up a multi-sig wallet for my family's savings, how does that work?" or "I'm interested in participating in Nostr governance but I don't understand how zaps work." The agent makes the crypto ecosystem accessible without requiring users to learn the jargon first. Partner with Bitcoin education organisations for content and credibility.
+#### Blockchain and DeFi navigation
 
-  #### Getting started
+_wallet management, yield strategies, governance participation, smart contract interaction without Solidity_
 
-  Attend a Bitcoin meetup (every major UK city has one) and offer to build a prototype for a common pain point discussed there — wallet setup confusion, tax questions, or inheritance planning are consistently popular topics.
+See worked example below. Beyond business adoption, there's an opportunity for personal Bitcoin/crypto guidance — "I want to set up a multi-sig wallet for my family's savings, how does that work?" or "I'm interested in participating in Nostr governance but I don't understand how zaps work." The agent makes the crypto ecosystem accessible without requiring users to learn the jargon first. Partner with Bitcoin education organisations for content and credibility.
 
-- **IoT and sensor orchestration** — interpreting sensor data, automating responses, monitoring dashboards for non-technical users
-  A small commercial greenhouse could deploy an agent that interprets data from temperature, humidity, and soil moisture sensors. "The temperature in tunnel 3 spiked to 35 degrees at 2pm yesterday — is that a problem for my tomatoes?" The agent understands the crop requirements, interprets the data in context, and either takes automated action (triggering ventilation via an IoT capability) or alerts the grower with a recommendation. This turns dumb sensors into an intelligent growing assistant. Partner with an agricultural IoT hardware supplier.
+##### Getting started
 
-  #### Getting started
+Attend a Bitcoin meetup (every major UK city has one) and offer to build a prototype for a common pain point discussed there — wallet setup confusion, tax questions, or inheritance planning are consistently popular topics.
 
-  Find an IoT hardware company already selling sensors to growers (several UK-based ones attend the GLEE and LAMMA trade shows) and propose a joint offering — they sell hardware, you provide the intelligence layer.
+#### IoT and sensor orchestration
 
-- **XR and spatial computing companions** — AI agents that exist in immersive environments as guides and collaborators
-  A heritage site could deploy an AI guide that visitors interact with through AR (augmented reality) on their phones. Point the camera at a feature and ask: "What am I looking at? When was this built?" The agent knows the site's history and archaeology (knowledge base), and responds to what the visitor is seeing. More engaging than an audio guide, more available than a human guide. Start with one heritage site, expand through heritage organisations like English Heritage or the National Trust. This requires AR integration beyond current Sunrise capabilities but the knowledge and conversation layer is a natural fit.
+_interpreting sensor data, automating responses, monitoring dashboards for non-technical users_
 
-  #### Getting started
+A small commercial greenhouse could deploy an agent that interprets data from temperature, humidity, and soil moisture sensors. "The temperature in tunnel 3 spiked to 35 degrees at 2pm yesterday — is that a problem for my tomatoes?" The agent understands the crop requirements, interprets the data in context, and either takes automated action (triggering ventilation via an IoT capability) or alerts the grower with a recommendation. This turns dumb sensors into an intelligent growing assistant. Partner with an agricultural IoT hardware supplier.
 
-  Approach a single heritage site with a working text-based knowledge agent first — prove the knowledge layer adds value before investing in the AR integration. English Heritage has an innovation team that takes pitches.
+##### Getting started
 
-- **Robotics coordination** — decision-making layer for physical systems in warehouses, farms, care settings
-  A small fulfilment warehouse could deploy an agent as the decision-making layer for their picking robots. "We've got 200 orders to ship by 5pm, three robots available, and aisle 7 is blocked for restocking." The agent optimises routing and task allocation, handles exceptions conversationally when the warehouse manager needs to intervene, and adapts when conditions change. This is more speculative and depends on robotics integration capabilities, but the decision and coordination layer is where Sunrise's workflow engine would add value.
+Find an IoT hardware company already selling sensors to growers (several UK-based ones attend the GLEE and LAMMA trade shows) and propose a joint offering — they sell hardware, you provide the intelligence layer.
 
-  #### Getting started
+#### XR and spatial computing companions
 
-  This is too speculative for a cold approach — start by building a simulated warehouse coordination demo and share it in robotics communities (UK RAS Network, robotics meetups) to find a partner with actual hardware to test against.
+_AI agents that exist in immersive environments as guides and collaborators_
 
-- **Digital fabrication and 3D printing** — design agents that turn intent into printable outputs
-  A maker space or FabLab could deploy an agent that helps members design printable objects. "I need a bracket to mount a Raspberry Pi to the underside of my desk — the desk is 25mm thick." The agent captures the requirements conversationally, generates a parametric design (via a capability calling an OpenSCAD API or similar), and prepares it for the specific printer in the space. This democratises 3D printing for people who have practical needs but can't use CAD software. Revenue via the maker space membership, or as a standalone tool for the growing 3D printing hobbyist community.
+A heritage site could deploy an AI guide that visitors interact with through AR (augmented reality) on their phones. Point the camera at a feature and ask: "What am I looking at? When was this built?" The agent knows the site's history and archaeology (knowledge base), and responds to what the visitor is seeing. More engaging than an audio guide, more available than a human guide. Start with one heritage site, expand through heritage organisations like English Heritage or the National Trust. This requires AR integration beyond current Sunrise capabilities but the knowledge and conversation layer is a natural fit.
 
-  #### Getting started
+##### Getting started
 
-  Join a local maker space or FabLab and observe what people struggle with — then build a prototype that solves the most common "I want to print X but can't design it" problem. The maker community is enthusiastic about testing new tools.
+Approach a single heritage site with a working text-based knowledge agent first — prove the knowledge layer adds value before investing in the AR integration. English Heritage has an innovation team that takes pitches.
 
-- **Biotech and genomics interpretation** — lab results, genetic data, and protocol guidance for citizen scientists and patients
-  A citizen science project studying local biodiversity could deploy an agent that helps volunteers interpret eDNA (environmental DNA) sampling results. "We took a water sample from the river and the lab found traces of great crested newt — what does that mean for the development proposal?" The agent explains the significance, suggests follow-up sampling protocols, and helps write up findings for submission to the local planning authority. The knowledge base contains species identification guides, legal protections, and sampling protocols.
+#### Robotics coordination
 
-  #### Getting started
+_decision-making layer for physical systems in warehouses, farms, care settings_
 
-  Citizen science projects are coordinated through organisations like the Freshwater Habitats Trust and local Wildlife Trusts — volunteer for an eDNA project and you'll quickly see where data interpretation support is needed.
+A small fulfilment warehouse could deploy an agent as the decision-making layer for their picking robots. "We've got 200 orders to ship by 5pm, three robots available, and aisle 7 is blocked for restocking." The agent optimises routing and task allocation, handles exceptions conversationally when the warehouse manager needs to intervene, and adapts when conditions change. This is more speculative and depends on robotics integration capabilities, but the decision and coordination layer is where Sunrise's workflow engine would add value.
 
-- **Agent-to-agent economies** — autonomous agents transacting with each other, settled via crypto micropayments
-  This is the most speculative subcategory but potentially the most transformative. Imagine a network where your personal purchasing agent queries multiple supplier agents: "I need 500 business cards, 400gsm, matte laminate, delivered by Friday." The supplier agents compete on price and terms, and the transaction settles via Lightning. No human negotiation, no comparison websites — agents transacting on your behalf within parameters you set. This requires significant infrastructure development but the Sunrise capability and workflow systems provide the decision-making and approval-gate foundation.
+##### Getting started
 
-  #### Getting started
+This is too speculative for a cold approach — start by building a simulated warehouse coordination demo and share it in robotics communities (UK RAS Network, robotics meetups) to find a partner with actual hardware to test against.
 
-  Build a simplified proof-of-concept where two Sunrise agents negotiate a simulated transaction over Lightning — publish the demo and write-up to attract collaborators from the Bitcoin and AI agent communities.
+#### Digital fabrication and 3D printing
 
-- **Decentralised identity and self-sovereign data** — personal AI agents managing your data, credentials, and consent
-  A personal AI agent that manages your data sharing across services. Instead of clicking "accept all cookies" or manually configuring privacy settings on every site, your agent manages consent according to your preferences: "share my email with this service but not my location, and revoke access if they haven't contacted me in 6 months." This intersects with emerging standards around decentralised identity (DIDs, Verifiable Credentials) and could become more relevant as data sovereignty becomes a mainstream concern. Early-stage, but the personal agent concept is a natural fit.
+_design agents that turn intent into printable outputs_
 
-  #### Getting started
+A maker space or FabLab could deploy an agent that helps members design printable objects. "I need a bracket to mount a Raspberry Pi to the underside of my desk — the desk is 25mm thick." The agent captures the requirements conversationally, generates a parametric design (via a capability calling an OpenSCAD API or similar), and prepares it for the specific printer in the space. This democratises 3D printing for people who have practical needs but can't use CAD software. Revenue via the maker space membership, or as a standalone tool for the growing 3D printing hobbyist community.
 
-  Follow the W3C Decentralised Identifiers working group and Verifiable Credentials community — build a prototype consent manager and share it in privacy-focused communities (e.g., Open Rights Group) to find early adopters who care deeply about data sovereignty.
+##### Getting started
+
+Join a local maker space or FabLab and observe what people struggle with — then build a prototype that solves the most common "I want to print X but can't design it" problem. The maker community is enthusiastic about testing new tools.
+
+#### Biotech and genomics interpretation
+
+_lab results, genetic data, and protocol guidance for citizen scientists and patients_
+
+A citizen science project studying local biodiversity could deploy an agent that helps volunteers interpret eDNA (environmental DNA) sampling results. "We took a water sample from the river and the lab found traces of great crested newt — what does that mean for the development proposal?" The agent explains the significance, suggests follow-up sampling protocols, and helps write up findings for submission to the local planning authority. The knowledge base contains species identification guides, legal protections, and sampling protocols.
+
+##### Getting started
+
+Citizen science projects are coordinated through organisations like the Freshwater Habitats Trust and local Wildlife Trusts — volunteer for an eDNA project and you'll quickly see where data interpretation support is needed.
+
+#### Agent-to-agent economies
+
+_autonomous agents transacting with each other, settled via crypto micropayments_
+
+This is the most speculative subcategory but potentially the most transformative. Imagine a network where your personal purchasing agent queries multiple supplier agents: "I need 500 business cards, 400gsm, matte laminate, delivered by Friday." The supplier agents compete on price and terms, and the transaction settles via Lightning. No human negotiation, no comparison websites — agents transacting on your behalf within parameters you set. This requires significant infrastructure development but the Sunrise capability and workflow systems provide the decision-making and approval-gate foundation.
+
+##### Getting started
+
+Build a simplified proof-of-concept where two Sunrise agents negotiate a simulated transaction over Lightning — publish the demo and write-up to attract collaborators from the Bitcoin and AI agent communities.
+
+#### Decentralised identity and self-sovereign data
+
+_personal AI agents managing your data, credentials, and consent_
+
+A personal AI agent that manages your data sharing across services. Instead of clicking "accept all cookies" or manually configuring privacy settings on every site, your agent manages consent according to your preferences: "share my email with this service but not my location, and revoke access if they haven't contacted me in 6 months." This intersects with emerging standards around decentralised identity (DIDs, Verifiable Credentials) and could become more relevant as data sovereignty becomes a mainstream concern. Early-stage, but the personal agent concept is a natural fit.
+
+##### Getting started
+
+Follow the W3C Decentralised Identifiers working group and Verifiable Credentials community — build a prototype consent manager and share it in privacy-focused communities (e.g., Open Rights Group) to find early adopters who care deeply about data sovereignty.
 
 ### Worked example: Bitcoin and Lightning network onboarding for small businesses
 
@@ -1066,61 +1363,85 @@ The 2020s have revealed that institutional stability cannot be assumed. Banking 
 
 ### Subcategories
 
-- **Financial resilience and alternative currencies** — Bitcoin savings strategies, local currency systems, barter coordination, multi-currency management
-  See worked example below. Beyond the community hub, there's a more focused opportunity in Bitcoin savings guidance for individuals concerned about currency debasement. "I want to start saving in Bitcoin but I don't know how much, how often, or how to custody it safely." The agent provides practical, non-ideological guidance on dollar-cost averaging, self-custody best practices, tax implications, and inheritance planning. Partner with a Bitcoin-only financial services provider for credibility and referrals.
+#### Financial resilience and alternative currencies
 
-  #### Getting started
+_Bitcoin savings strategies, local currency systems, barter coordination, multi-currency management_
 
-  Create a straightforward Bitcoin savings guidance agent and share it at a Bitcoin meetup — the community will stress-test it immediately and tell you what's wrong, which is exactly the feedback you need.
+See worked example below. Beyond the community hub, there's a more focused opportunity in Bitcoin savings guidance for individuals concerned about currency debasement. "I want to start saving in Bitcoin but I don't know how much, how often, or how to custody it safely." The agent provides practical, non-ideological guidance on dollar-cost averaging, self-custody best practices, tax implications, and inheritance planning. Partner with a Bitcoin-only financial services provider for credibility and referrals.
 
-- **Supply chain localisation** — local supplier discovery, group purchasing coordination, inventory sharing between small businesses
-  A network of independent restaurants in a city could deploy an agent that coordinates group purchasing from local suppliers. "Who else in the network needs free-range eggs this week? Can we do a joint order from the farm in Kent?" The agent aggregates demand across the network, negotiates bulk pricing, and coordinates delivery. This reduces costs for individual restaurants and supports local suppliers. Start with one restaurant network, expand through hospitality associations. The same pattern works for any small business cluster — independent bookshops, craft breweries, bakeries.
+##### Getting started
 
-  #### Getting started
+Create a straightforward Bitcoin savings guidance agent and share it at a Bitcoin meetup — the community will stress-test it immediately and tell you what's wrong, which is exactly the feedback you need.
 
-  Find a restaurant buying group or independent retailer network that already coordinates informally (WhatsApp groups, spreadsheets) and offer to build a coordination tool that formalises what they're already doing.
+#### Supply chain localisation
 
-- **Parallel institution building** — community-organised alternatives to degraded public services (homeschool co-ops, community health, dispute resolution)
-  A community mediation service could deploy an agent that handles initial conflict assessment and preparation. Neighbours in dispute describe their perspectives separately to the agent, which identifies the core issues, common ground, and likely sticking points, and prepares a structured brief for the human mediator. This makes volunteer mediators more effective and reduces the preparation time per case. Partner with a community mediation charity. Revenue via local authority contracts (mediation reduces the cost of anti-social behaviour cases and housing disputes).
+_local supplier discovery, group purchasing coordination, inventory sharing between small businesses_
 
-  #### Getting started
+A network of independent restaurants in a city could deploy an agent that coordinates group purchasing from local suppliers. "Who else in the network needs free-range eggs this week? Can we do a joint order from the farm in Kent?" The agent aggregates demand across the network, negotiates bulk pricing, and coordinates delivery. This reduces costs for individual restaurants and supports local suppliers. Start with one restaurant network, expand through hospitality associations. The same pattern works for any small business cluster — independent bookshops, craft breweries, bakeries.
 
-  Community mediation charities are listed on the Civil Mediation Council's directory — contact one and offer to build a conflict assessment prototype that their volunteer mediators can test with real (anonymised) case scenarios.
+##### Getting started
 
-- **Crisis response and emergency coordination** — disaster response, refugee coordination, resource allocation under scarcity
-  A community flood response group could deploy an agent (running locally on Ollama — crucial when the internet may be down) that coordinates during flooding events. "Water is rising on Mill Lane — who has sandbags? Can someone check on the elderly residents at numbers 12 and 14?" The agent matches resources to needs, tracks which areas have been checked, and maintains a situation log. Deployed on a local network, it works even when mobile data is unreliable. Partner with a flood resilience charity or the Environment Agency's community engagement programme.
+Find a restaurant buying group or independent retailer network that already coordinates informally (WhatsApp groups, spreadsheets) and offer to build a coordination tool that formalises what they're already doing.
 
-  #### Getting started
+#### Parallel institution building
 
-  The National Flood Forum works with community flood groups across the UK — approach them with a working prototype running on Ollama and demonstrate the offline-first capability, which is the key differentiator for a crisis tool.
+_community-organised alternatives to degraded public services (homeschool co-ops, community health, dispute resolution)_
 
-- **Information sovereignty and counter-narrative** — fact-checking tools, source verification, community-owned information channels
-  A local news cooperative could deploy an agent that helps citizen journalists verify claims. "The council says they've planted 10,000 trees this year — can we verify that?" The agent checks against FOI data, council minutes, and satellite imagery in the knowledge base, and helps draft a fact-check article with sources. This strengthens community-owned media in an era of declining local journalism and increasing misinformation. Grant-funded initially, potentially via journalism foundations or public interest media funds.
+A community mediation service could deploy an agent that handles initial conflict assessment and preparation. Neighbours in dispute describe their perspectives separately to the agent, which identifies the core issues, common ground, and likely sticking points, and prepares a structured brief for the human mediator. This makes volunteer mediators more effective and reduces the preparation time per case. Partner with a community mediation charity. Revenue via local authority contracts (mediation reduces the cost of anti-social behaviour cases and housing disputes).
 
-  #### Getting started
+##### Getting started
 
-  The Centre for Investigative Journalism and the Bureau of Investigative Journalism both support local journalism — approach with a prototype that demonstrates source verification on a published council claim using FOI data.
+Community mediation charities are listed on the Civil Mediation Council's directory — contact one and offer to build a conflict assessment prototype that their volunteer mediators can test with real (anonymised) case scenarios.
 
-- **Cross-border and multi-jurisdictional navigation** — regulatory complexity, sanctions compliance, multi-polar trade navigation
-  A small UK exporter selling to both the EU and non-EU markets could deploy an agent that navigates the increasingly complex landscape of trade regulations. "I want to start selling to Saudi Arabia — what certifications do I need? Are there any sanctions implications for my product category?" The agent draws on trade guidance from the Department for Business, customs requirements, and product-specific regulations. This is the kind of multi-layered compliance question that currently requires an expensive trade consultant. Revenue via subscription to SME exporters.
+#### Crisis response and emergency coordination
 
-  #### Getting started
+_disaster response, refugee coordination, resource allocation under scarcity_
 
-  The Institute of Export & International Trade runs events and has member forums — post about your prototype there or attend an export documentation workshop to find small exporters struggling with exactly these problems.
+A community flood response group could deploy an agent (running locally on Ollama — crucial when the internet may be down) that coordinates during flooding events. "Water is rising on Mill Lane — who has sandbags? Can someone check on the elderly residents at numbers 12 and 14?" The agent matches resources to needs, tracks which areas have been checked, and maintains a situation log. Deployed on a local network, it works even when mobile data is unreliable. Partner with a flood resilience charity or the Environment Agency's community engagement programme.
 
-- **Community self-governance** — decision-making tools, resource allocation, conflict resolution without traditional authority structures
-  A housing cooperative could deploy an agent that facilitates collective decision-making. "We need to decide whether to spend our maintenance reserve on roof repairs or new windows — what are the arguments and how should we structure the vote?" The agent helps frame proposals, ensures all members have the information they need, manages the voting process, and documents decisions. This is particularly relevant for organisations using sociocracy or other non-hierarchical governance models where the process itself is complex.
+##### Getting started
 
-  #### Getting started
+The National Flood Forum works with community flood groups across the UK — approach them with a working prototype running on Ollama and demonstrate the offline-first capability, which is the key differentiator for a crisis tool.
 
-  Housing cooperatives are federated through the Confederation of Co-operative Housing — attend their annual conference or contact a local co-op and offer to build a decision-facilitation prototype for their next AGM or policy decision.
+#### Information sovereignty and counter-narrative
 
-- **Economic transition support** — helping people adapt to paradigm shifts (de-dollarisation, automation displacement, post-employment economy)
-  An agent that helps individuals think through economic transitions — "my industry is being automated and I need to figure out what to do next." The agent helps assess transferable skills, explores adjacent career paths, identifies retraining options (and funding for them), and connects to relevant support services. Less about job searching (plenty of tools for that) and more about structured thinking for people facing fundamental economic shifts. Could be offered through trade unions, job centres, or adult education providers. Increasingly relevant as automation displaces roles across multiple sectors simultaneously.
+_fact-checking tools, source verification, community-owned information channels_
 
-  #### Getting started
+A local news cooperative could deploy an agent that helps citizen journalists verify claims. "The council says they've planted 10,000 trees this year — can we verify that?" The agent checks against FOI data, council minutes, and satellite imagery in the knowledge base, and helps draft a fact-check article with sources. This strengthens community-owned media in an era of declining local journalism and increasing misinformation. Grant-funded initially, potentially via journalism foundations or public interest media funds.
 
-  Approach a trade union learning representative or a local adult education college — they're already having these conversations with workers facing displacement and would value a structured thinking tool to complement their human guidance.
+##### Getting started
+
+The Centre for Investigative Journalism and the Bureau of Investigative Journalism both support local journalism — approach with a prototype that demonstrates source verification on a published council claim using FOI data.
+
+#### Cross-border and multi-jurisdictional navigation
+
+_regulatory complexity, sanctions compliance, multi-polar trade navigation_
+
+A small UK exporter selling to both the EU and non-EU markets could deploy an agent that navigates the increasingly complex landscape of trade regulations. "I want to start selling to Saudi Arabia — what certifications do I need? Are there any sanctions implications for my product category?" The agent draws on trade guidance from the Department for Business, customs requirements, and product-specific regulations. This is the kind of multi-layered compliance question that currently requires an expensive trade consultant. Revenue via subscription to SME exporters.
+
+##### Getting started
+
+The Institute of Export & International Trade runs events and has member forums — post about your prototype there or attend an export documentation workshop to find small exporters struggling with exactly these problems.
+
+#### Community self-governance
+
+_decision-making tools, resource allocation, conflict resolution without traditional authority structures_
+
+A housing cooperative could deploy an agent that facilitates collective decision-making. "We need to decide whether to spend our maintenance reserve on roof repairs or new windows — what are the arguments and how should we structure the vote?" The agent helps frame proposals, ensures all members have the information they need, manages the voting process, and documents decisions. This is particularly relevant for organisations using sociocracy or other non-hierarchical governance models where the process itself is complex.
+
+##### Getting started
+
+Housing cooperatives are federated through the Confederation of Co-operative Housing — attend their annual conference or contact a local co-op and offer to build a decision-facilitation prototype for their next AGM or policy decision.
+
+#### Economic transition support
+
+_helping people adapt to paradigm shifts (de-dollarisation, automation displacement, post-employment economy)_
+
+An agent that helps individuals think through economic transitions — "my industry is being automated and I need to figure out what to do next." The agent helps assess transferable skills, explores adjacent career paths, identifies retraining options (and funding for them), and connects to relevant support services. Less about job searching (plenty of tools for that) and more about structured thinking for people facing fundamental economic shifts. Could be offered through trade unions, job centres, or adult education providers. Increasingly relevant as automation displaces roles across multiple sectors simultaneously.
+
+##### Getting started
+
+Approach a trade union learning representative or a local adult education college — they're already having these conversations with workers facing displacement and would value a structured thinking tool to complement their human guidance.
 
 ### Worked example: Community financial resilience hub
 
