@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3d complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3h, 4a–4d complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -267,8 +267,8 @@
 
 - **Covers:** `evaluations/` (2), `scheduling/` (2), `webhooks/` (1), `hooks/` (2), `analytics/` (3), `utils/` (2), `audit/` (1), `backup/` (3) — note: `audit` was previously uncounted
 - **Triage:** Scan each small folder individually
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (2026-04-26)
+- **Notes:** 16 files scanned (corrected from 14 — analytics has 3 files: analytics-service, date-range, index). 15 auto-Clean, 1 Bad (backup/exporter tbt=2 date comparison). Fixed exporter → localeCompare assertions. 12 FPs annotated across 7 files (boolean returns, vi.waitFor polling guards, fire-and-forget contracts, Zod parse-success). PR #109.
 
 ---
 
@@ -282,28 +282,28 @@
 - **Path:** `tests/unit/app/api/v1/admin/orchestration/` + `tests/integration/api/v1/admin/`
 - **Triage:** `/test-triage scan` on the unit tests first, then integration
 - **After triage:** `/test-coverage app/api/v1/admin` to find routes with zero coverage
-- **Status:** NOT STARTED (2 files already in ledger from dogfood: `stats/route.test.ts` unit=Minor, integration=Clean)
-- **Notes:**
+- **Status:** DONE (2026-04-26)
+- **Notes:** 126 files scanned (45 unit + 81 integration), 1656 tests. All 256 signature hits are FP: tbt=219 (data.success/body.success envelope, Array.isArray, boolean response fields), nac=37 (zero-arg side-effects in MCP unit tests), ctn=165 (all beforeEach). Accept annotations added to all 102 files with hits. No code fixes needed. PR #110.
 
 ### Step 4b — Chat/consumer API routes (~15 test files)
 
 - **Path:** `tests/unit/app/api/v1/chat/` + `tests/integration/api/v1/chat/`
 - **Triage:** `/test-triage scan` on both
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #111 — combined with 4c+4d)
+- **Notes:** 8 files (6 unit + 2 integration), 73 tests. All Clean after annotation. Hits: tbt=13 (API envelope/boolean fields), nac=28 (error-path guards + 1 zero-arg side-effect). All FP — annotated.
 
 ### Step 4c — Embed API routes (~5 test files)
 
 - **Path:** `tests/unit/app/api/v1/embed/`
 - **Triage:** `/test-triage scan`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #111 — combined with 4b+4d)
+- **Notes:** 2 files (unit only), 19 tests. All Clean after annotation. Hits: nac=4 (2 error-path guards + 2 call-reached guards). All FP — annotated.
 
 ### Step 4d — Remaining API routes (contact, users, webhooks, invitations, mcp)
 
 - **Triage:** `/test-triage scan` on each
-- **Status:** NOT STARTED (contact `unit=Clean`, `integration=Clean` from dogfood)
-- **Notes:**
+- **Status:** DONE (PR #111 — combined with 4b+4c)
+- **Notes:** 13 files (7 unit + 6 integration), 286 tests. All Clean after annotation. Hits: tbt=80 (API envelope/boolean fields), nac=82 (error-path guards + zero-arg side-effects). All FP — annotated.
 
 ---
 

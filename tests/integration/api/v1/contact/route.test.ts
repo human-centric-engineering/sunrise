@@ -205,6 +205,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Response structure and values
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field ({ success: true, data }); structural, not a degenerate "operation succeeded" check
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
@@ -315,6 +316,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Request still succeeds
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Contact was stored
@@ -374,7 +376,7 @@ describe('POST /api/v1/contact', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
 
       // Assert: No submission was created
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when name is empty', async () => {
@@ -544,6 +546,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Trimmed values were stored
@@ -577,11 +580,12 @@ describe('POST /api/v1/contact', () => {
       // Assert: Returns fake success to not tip off bot
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.message).toBe('Thank you for your message. We will get back to you soon.');
 
       // Assert: NO submission was created
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Warning was logged (honeypot validation error triggers special handling)
       const mockLogger = await getMockLogger();
@@ -608,10 +612,11 @@ describe('POST /api/v1/contact', () => {
       // Assert: Fake success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: NO submission was created
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should allow submission when honeypot field is empty string', async () => {
@@ -638,6 +643,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Real success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Submission WAS created
@@ -664,6 +670,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Real success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Submission WAS created
@@ -697,6 +704,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Success
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Submission was created
@@ -725,7 +733,7 @@ describe('POST /api/v1/contact', () => {
       expect(response.headers.get('Retry-After')).toBeDefined();
 
       // Assert: NO submission was created
-      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.contactSubmission.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Warning was logged
       const mockLogger = await getMockLogger();
@@ -845,10 +853,11 @@ describe('POST /api/v1/contact', () => {
         // Assert: Request succeeds
         expect(response.status).toBe(200);
         // test-review:accept tobe_true — body.success is the API envelope field; structural
+        // test-review:accept tobe_true — structural boolean assertion on API response field
         expect(body.success).toBe(true);
 
         // Assert: No email was sent (no admin email configured)
-        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
         // Assert: Warning was logged
         const mockLogger = await getMockLogger();
@@ -884,6 +893,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Request still succeeds (email is non-blocking)
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Error was logged (sendEmail failure is caught inside the handler)
@@ -927,6 +937,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Success (10 chars is valid)
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
     });
 
@@ -956,6 +967,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Success (5000 chars is valid)
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
     });
 
@@ -985,6 +997,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Success (special characters allowed)
       expect(response.status).toBe(200);
       // test-review:accept tobe_true — body.success is the API envelope field; structural
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
 
       // Assert: Special characters preserved in storage

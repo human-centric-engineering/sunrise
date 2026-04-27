@@ -291,7 +291,7 @@ describe('POST /api/v1/chat/stream', () => {
       expect(response.status).toBe(404);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 when agent has visibility="internal"', async () => {
@@ -322,7 +322,7 @@ describe('POST /api/v1/chat/stream', () => {
       expect(response.status).toBe(404);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -342,7 +342,7 @@ describe('POST /api/v1/chat/stream', () => {
       // Assert
       expect(response.status).toBe(429);
       expect(createRateLimitResponse).toHaveBeenCalledOnce();
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 429 when the per-user chat rate limit is exceeded', async () => {
@@ -357,7 +357,7 @@ describe('POST /api/v1/chat/stream', () => {
       // Assert
       expect(response.status).toBe(429);
       expect(createRateLimitResponse).toHaveBeenCalledOnce();
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should check the IP limiter before the user limiter', async () => {
@@ -371,7 +371,7 @@ describe('POST /api/v1/chat/stream', () => {
 
       // Assert: IP limiter called; user limiter never reached
       expect(apiLimiter.check).toHaveBeenCalledOnce();
-      expect(consumerChatLimiter.check).not.toHaveBeenCalled();
+      expect(consumerChatLimiter.check).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -393,7 +393,7 @@ describe('POST /api/v1/chat/stream', () => {
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when agentSlug is missing', async () => {
@@ -444,7 +444,7 @@ describe('POST /api/v1/chat/stream', () => {
       expect(response.status).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -464,7 +464,7 @@ describe('POST /api/v1/chat/stream', () => {
       // Assert
       expect(response.status).toBe(429);
       expect(createRateLimitResponse).toHaveBeenCalledOnce();
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should pass agent rateLimitRpm to the per-agent limiter', async () => {
@@ -513,7 +513,7 @@ describe('POST /api/v1/chat/stream', () => {
       // Assert
       expect(response.status).toBe(403);
       expect(body.error.code).toBe('FORBIDDEN');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when invite token is invalid or revoked', async () => {
@@ -532,7 +532,7 @@ describe('POST /api/v1/chat/stream', () => {
       // Assert
       expect(response.status).toBe(403);
       expect(body.error.code).toBe('FORBIDDEN');
-      expect(streamChat).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when invite token has expired', async () => {

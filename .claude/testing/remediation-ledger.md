@@ -624,3 +624,31 @@ All tbt hits are structural boolean assertions (data.success API envelope, Array
 | tests/integration/api/v1/admin/orchestration/workflows.id.validate.test.ts | integration | Bad | 2 | hpo=0,mp=0,me=0,tcm=0 | 9 | N/A | 2026-04-26T17:12:03Z | tbt=2 FP (data.success/boolean). ctn=1 (beforeEach). |
 | tests/integration/api/v1/admin/orchestration/workflows.id.versioning.test.ts | integration | Clean | 1 | hpo=0,mp=0,me=0,tcm=0 | 22 | N/A | 2026-04-26T17:12:03Z | tbt=1 FP (data.success/boolean). ctn=3 (beforeEach). |
 | tests/integration/api/v1/admin/orchestration/workflows.test.ts | integration | Minor | 2 | hpo=0,mp=0,me=0,tcm=0 | 16 | N/A | 2026-04-26T17:12:03Z | tbt=2 FP (data.success/boolean). ctn=2 (beforeEach). |
+
+## app/api/v1 — chat, embed, and remaining routes
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/app/api/v1/chat/agents/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/chat/conversations/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/chat/conversations/[id]/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/chat/conversations/[id]/messages/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/chat/conversations/[id]/messages/[messageId]/rate/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/chat/stream/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/chat/validate-token.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/chat/conversations.search.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/embed/chat.stream.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/embed/widget.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/contact/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/webhooks/trigger/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/invitations/metadata/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 30 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/users/[id]/route.delete.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/users/[id]/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 35 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/users/me/avatar/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/unit/app/api/v1/mcp/route.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 42 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/contact/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 32 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/invitations/metadata/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/users/[id]/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/users/me/preferences.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 15 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/users/me.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |
+| tests/integration/api/v1/users/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | 27e2e55 | 2026-04-27T09:45:00Z | All sig hits FP (API envelope, boolean fields, error-path guards). Annotated. |

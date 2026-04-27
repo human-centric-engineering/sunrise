@@ -181,7 +181,7 @@ describe('GET /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
       // Proves the guard short-circuited before reaching any DB call
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 with FORBIDDEN envelope when non-admin requests another user profile, and not call DB', async () => {
@@ -212,7 +212,7 @@ describe('GET /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
       // Proves the ownership check short-circuited before reaching the DB
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -267,6 +267,7 @@ describe('GET /api/v1/users/:id', () => {
         };
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       // Handler-derived fields — these come from the DB fixture, not the request, proving
       // the handler fetched the row and wrapped it, rather than echoing session data.
@@ -300,6 +301,7 @@ describe('GET /api/v1/users/:id', () => {
         data: Record<string, unknown>;
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data.id).toBe(TARGET_USER_ID);
       expect(body.data.email).toBe('target@example.com');
@@ -352,7 +354,7 @@ describe('PATCH /api/v1/users/:id', () => {
       const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 with FORBIDDEN envelope when non-admin sends PATCH, and not call DB', async () => {
@@ -382,7 +384,7 @@ describe('PATCH /api/v1/users/:id', () => {
       const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -422,6 +424,7 @@ describe('PATCH /api/v1/users/:id', () => {
           data: { updatedAt: string; name: string };
         }>(response);
         // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+        // test-review:accept tobe_true — structural boolean assertion on API response field
         expect(body.success).toBe(true);
         // DB-state readback: updatedAt in the response comes from the update return value,
         // not from the request body — proving the handler actually persisted the change.
@@ -476,7 +479,7 @@ describe('PATCH /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('SELF_ROLE_CHANGE');
       // Proves the guard prevented the DB write
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -498,7 +501,7 @@ describe('PATCH /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
       // Proves handler short-circuited before any DB access
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 with VALIDATION_ERROR envelope for invalid ID format, and not call DB', async () => {
@@ -518,7 +521,7 @@ describe('PATCH /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
       // ID validation fires before any DB access
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 500 with INTERNAL_ERROR envelope when prisma.user.update rejects after a successful findUnique', async () => {
@@ -560,7 +563,7 @@ describe('PATCH /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
       // User doesn't exist — update must not have been called
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });
@@ -588,7 +591,7 @@ describe('DELETE /api/v1/users/:id', () => {
       const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 with FORBIDDEN envelope when non-admin sends DELETE, and not call DB', async () => {
@@ -618,7 +621,7 @@ describe('DELETE /api/v1/users/:id', () => {
       const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('FORBIDDEN');
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -643,6 +646,7 @@ describe('DELETE /api/v1/users/:id', () => {
         data: { id: string; deleted: boolean };
       }>(response);
       // test-review:accept tobe_true — structural assertion on the API response envelope's success field, paired with status and data shape checks
+      // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(body.success).toBe(true);
       expect(body.data).toEqual({ id: TARGET_USER_ID, deleted: true });
 
@@ -680,8 +684,8 @@ describe('DELETE /api/v1/users/:id', () => {
 
       // The self-guard short-circuits BEFORE the existence check, so neither
       // findUnique nor delete should have been called.
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 when admin attempts to delete another ADMIN user, and not call delete', async () => {
@@ -708,7 +712,7 @@ describe('DELETE /api/v1/users/:id', () => {
       // so a future regression adding code: 'FORBIDDEN' is caught.
       expect(body.error.code).toBeUndefined();
       // Proves the guard prevented the actual DB delete
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 404 with NOT_FOUND envelope when DELETE targets a non-existent user', async () => {
@@ -728,7 +732,7 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('NOT_FOUND');
       // Existence check fired but delete must not have been called
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 400 with VALIDATION_ERROR envelope for invalid DELETE ID format, and not call DB', async () => {
@@ -748,8 +752,8 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
       // ID validation fires before any DB access
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(prisma.user.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 });

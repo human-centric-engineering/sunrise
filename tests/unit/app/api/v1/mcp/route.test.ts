@@ -338,7 +338,7 @@ describe('POST /mcp', () => {
 
     await POST(makePostRequest(makeRpcRequest('initialize')));
 
-    expect(mockSessionManager.markInitialized).not.toHaveBeenCalled();
+    expect(mockSessionManager.markInitialized).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns 204 for notification (handler returns null)', async () => {
@@ -368,6 +368,7 @@ describe('POST /mcp', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<unknown[]>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(2);
   });
@@ -459,6 +460,7 @@ describe('POST /mcp', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ jsonrpc: string }[]>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(2);
     expect(body[0].jsonrpc).toBe('2.0');
@@ -588,6 +590,7 @@ describe('GET /mcp', () => {
     const finalP = iterator.next();
     controller.abort();
     const final = await finalP;
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(final.done).toBe(true);
 
     // Verify cleanup
@@ -619,6 +622,7 @@ describe('GET /mcp', () => {
     // Abort while generator is waiting for notifications
     controller.abort();
     const result = await nextP;
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(result.done).toBe(true);
   });
 
@@ -644,7 +648,7 @@ describe('GET /mcp', () => {
     const nextP = iterator.next();
 
     // No session header → registerSseListener should NOT be called
-    expect(mockSessionManager.registerSseListener).not.toHaveBeenCalled();
+    expect(mockSessionManager.registerSseListener).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
     // Abort to clean up
     controller.abort();
@@ -763,7 +767,7 @@ describe('DELETE /mcp', () => {
 
     await DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
 
-    expect(mockSessionManager.destroySession).not.toHaveBeenCalled();
+    expect(mockSessionManager.destroySession).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns error response when getMcpSessionManager throws', async () => {

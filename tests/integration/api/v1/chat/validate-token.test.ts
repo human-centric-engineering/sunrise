@@ -113,6 +113,7 @@ describe('POST /api/v1/chat/agents/:slug/validate-token', () => {
 
     expect(response.status).toBe(200);
     const body = await parseJson<{ success: boolean; data: { valid: boolean } }>(response);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.valid).toBe(true);
   });
 

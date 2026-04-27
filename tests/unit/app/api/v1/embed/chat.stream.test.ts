@@ -145,7 +145,7 @@ describe('POST /api/v1/embed/chat/stream', () => {
 
       await POST(makePostRequest({ message: 'hello' }, { 'x-embed-token': VALID_TOKEN }));
 
-      expect(vi.mocked(resolveEmbedToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(resolveEmbedToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -177,6 +177,7 @@ describe('POST /api/v1/embed/chat/stream', () => {
       );
 
       // Should not be 403 — streamChat is called
+      // test-review:accept no_arg_called — call-reached guard: verifies happy-path invocation
       expect(vi.mocked(streamChat)).toHaveBeenCalled();
       expect(response.status).not.toBe(403);
     });
@@ -241,7 +242,7 @@ describe('OPTIONS /api/v1/embed/chat/stream', () => {
 
     // When token is absent, corsHeaders is called with empty allowedOrigins → wildcard '*'
     expect(response.status).toBe(204);
-    expect(vi.mocked(resolveEmbedToken)).not.toHaveBeenCalled();
+    expect(vi.mocked(resolveEmbedToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns 204 with CORS headers when valid token is provided', async () => {
@@ -254,6 +255,7 @@ describe('OPTIONS /api/v1/embed/chat/stream', () => {
 
     expect(response.status).toBe(204);
     // With a valid token and non-empty allowedOrigins, CORS headers should be set
+    // test-review:accept no_arg_called — call-reached guard: verifies token resolution triggered
     expect(vi.mocked(resolveEmbedToken)).toHaveBeenCalled();
   });
 });

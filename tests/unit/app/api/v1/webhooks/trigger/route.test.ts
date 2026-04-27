@@ -136,7 +136,7 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
     });
 
     expect(res.status).toBe(404);
-    expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+    expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns 400 for empty slug', async () => {
@@ -196,7 +196,7 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
     });
 
     expect(res.status).toBe(429);
-    expect(prisma.aiWorkflow.findFirst).not.toHaveBeenCalled();
+    expect(prisma.aiWorkflow.findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns 500 when execution creation fails', async () => {

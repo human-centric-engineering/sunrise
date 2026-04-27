@@ -134,7 +134,7 @@ describe('POST /chat/conversations/:id/messages/:messageId/rate', () => {
     const res = await POST(makeRequest({ rating: 1 }), makeParams());
 
     expect(res.status).toBe(404);
-    expect(prisma.aiMessage.update).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('returns 404 when message is not an assistant message', async () => {
