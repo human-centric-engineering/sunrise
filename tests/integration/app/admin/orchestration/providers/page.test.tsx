@@ -165,6 +165,22 @@ describe('ProvidersListPage (server component)', () => {
     expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
   });
 
+  it('returns empty arrays when parseApiResponse returns success: false', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: false,
+      error: { code: 'INTERNAL', message: 'DB error' },
+    } as never);
+
+    const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
+
+    render(await ProvidersListPage());
+
+    expect(screen.getByRole('heading', { name: /^providers$/i })).toBeInTheDocument();
+    expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
+  });
+
   it('does not throw when fetch rejects', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
