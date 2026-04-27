@@ -126,10 +126,10 @@ describe('components/forms/profile-form', () => {
       // Assert
       expect(screen.getByLabelText('Name')).toHaveValue(mockUser.name);
       expect(screen.getByLabelText('Email')).toHaveValue(mockUser.email);
-      expect(screen.getByLabelText('Bio')).toHaveValue(mockUser.bio);
-      expect(screen.getByLabelText('Phone')).toHaveValue(mockUser.phone);
-      expect(screen.getByLabelText('Timezone')).toBeInTheDocument();
-      expect(screen.getByLabelText('Location')).toHaveValue(mockUser.location);
+      expect(screen.getByRole('textbox', { name: /bio/i })).toHaveValue(mockUser.bio);
+      expect(screen.getByRole('textbox', { name: /phone/i })).toHaveValue(mockUser.phone);
+      expect(screen.getByRole('combobox', { name: /timezone/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /location/i })).toHaveValue(mockUser.location);
     });
 
     it('should render email field as disabled with helper text', () => {
@@ -167,9 +167,9 @@ describe('components/forms/profile-form', () => {
       render(<ProfileForm user={userWithNulls} />);
 
       // Assert - should render empty strings
-      expect(screen.getByLabelText('Bio')).toHaveValue('');
-      expect(screen.getByLabelText('Phone')).toHaveValue('');
-      expect(screen.getByLabelText('Location')).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /bio/i })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /phone/i })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /location/i })).toHaveValue('');
     });
 
     it('should not show error or success messages initially', () => {
@@ -224,7 +224,7 @@ describe('components/forms/profile-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<ProfileForm user={mockUser} />);
 
-      const bioInput = screen.getByLabelText('Bio');
+      const bioInput = screen.getByRole('textbox', { name: /bio/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Enter bio with 501 characters (use fireEvent for long strings)
@@ -242,7 +242,7 @@ describe('components/forms/profile-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<ProfileForm user={mockUser} />);
 
-      const phoneInput = screen.getByLabelText('Phone');
+      const phoneInput = screen.getByRole('textbox', { name: /phone/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Enter phone with 21 characters (use fireEvent for efficiency)
@@ -262,7 +262,7 @@ describe('components/forms/profile-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<ProfileForm user={mockUser} />);
 
-      const phoneInput = screen.getByLabelText('Phone');
+      const phoneInput = screen.getByRole('textbox', { name: /phone/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Enter invalid phone (contains letters)
@@ -281,7 +281,7 @@ describe('components/forms/profile-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<ProfileForm user={mockUser} />);
 
-      const locationInput = screen.getByLabelText('Location');
+      const locationInput = screen.getByRole('textbox', { name: /location/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Enter location with 101 characters (use fireEvent for long strings)
@@ -319,7 +319,6 @@ describe('components/forms/profile-form', () => {
         expect(apiClient.patch).toHaveBeenCalledWith('/api/v1/users/me', {
           body: {
             name: 'Jane Doe',
-            email: mockUser.email,
             bio: mockUser.bio,
             phone: mockUser.phone,
             timezone: mockUser.timezone,
@@ -339,9 +338,9 @@ describe('components/forms/profile-form', () => {
 
       render(<ProfileForm user={mockUser} />);
 
-      const bioInput = screen.getByLabelText('Bio');
-      const phoneInput = screen.getByLabelText('Phone');
-      const locationInput = screen.getByLabelText('Location');
+      const bioInput = screen.getByRole('textbox', { name: /bio/i });
+      const phoneInput = screen.getByRole('textbox', { name: /phone/i });
+      const locationInput = screen.getByRole('textbox', { name: /location/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Clear optional fields and submit
@@ -393,9 +392,9 @@ describe('components/forms/profile-form', () => {
       render(<ProfileForm user={mockUser} />);
 
       const nameInput = screen.getByLabelText('Name');
-      const bioInput = screen.getByLabelText('Bio');
-      const phoneInput = screen.getByLabelText('Phone');
-      const locationInput = screen.getByLabelText('Location');
+      const bioInput = screen.getByRole('textbox', { name: /bio/i });
+      const phoneInput = screen.getByRole('textbox', { name: /phone/i });
+      const locationInput = screen.getByRole('textbox', { name: /location/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act
@@ -447,7 +446,7 @@ describe('components/forms/profile-form', () => {
       render(<ProfileForm user={mockUser} />);
 
       const nameInput = screen.getByLabelText('Name');
-      const bioInput = screen.getByLabelText('Bio');
+      const bioInput = screen.getByRole('textbox', { name: /bio/i });
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
       // Act - Update name and bio
@@ -465,26 +464,15 @@ describe('components/forms/profile-form', () => {
       });
     });
 
-    it('should NOT track analytics when no fields changed', async () => {
+    it('should NOT track analytics when no fields changed', () => {
       // Arrange
-      const user = userEvent.setup({ delay: null });
-      vi.mocked(apiClient.patch).mockResolvedValue({
-        success: true,
-        data: mockUser,
-      });
-
       render(<ProfileForm user={mockUser} />);
 
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
-      // Act - Submit without changing anything
-      await user.click(submitButton);
-
-      // Assert - Analytics should NOT be called when no fields changed
-      await waitFor(() => {
-        expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
-      });
-      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      // Assert - Button is disabled when no fields changed, preventing submission
+      expect(submitButton).toBeDisabled();
+      expect(mockTrack).not.toHaveBeenCalled();
     });
 
     it('should NOT track analytics on profile update failure', async () => {
@@ -693,7 +681,7 @@ describe('components/forms/profile-form', () => {
       render(<ProfileForm user={mockUser} />);
 
       // Assert - The timezone select trigger should render
-      const timezoneSelect = screen.getByLabelText('Timezone');
+      const timezoneSelect = screen.getByRole('combobox', { name: /timezone/i });
       expect(timezoneSelect).toBeInTheDocument();
       // The combobox role is the visible trigger for Radix Select
       expect(screen.getByRole('combobox')).toBeInTheDocument();
@@ -709,9 +697,12 @@ describe('components/forms/profile-form', () => {
 
       render(<ProfileForm user={mockUser} />);
 
+      const nameInput = screen.getByLabelText('Name');
       const submitButton = screen.getByRole('button', { name: /save changes/i });
 
-      // Act - Submit without changing timezone
+      // Act - Change name to make form dirty, then submit (timezone unchanged)
+      await user.clear(nameInput);
+      await user.type(nameInput, 'New Name');
       await user.click(submitButton);
 
       // Assert - Should submit with original timezone
@@ -732,7 +723,7 @@ describe('components/forms/profile-form', () => {
 
       // Assert
       const emailInput = screen.getByLabelText('Email');
-      const phoneInput = screen.getByLabelText('Phone');
+      const phoneInput = screen.getByRole('textbox', { name: /phone/i });
 
       expect(emailInput).toHaveAttribute('type', 'email');
       expect(phoneInput).toHaveAttribute('type', 'tel');
@@ -745,20 +736,19 @@ describe('components/forms/profile-form', () => {
       // Assert - All fields should have labels
       expect(screen.getByLabelText('Name')).toBeInTheDocument();
       expect(screen.getByLabelText('Email')).toBeInTheDocument();
-      expect(screen.getByLabelText('Bio')).toBeInTheDocument();
-      expect(screen.getByLabelText('Phone')).toBeInTheDocument();
-      expect(screen.getByLabelText('Timezone')).toBeInTheDocument();
-      expect(screen.getByLabelText('Location')).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /bio/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /phone/i })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /timezone/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /location/i })).toBeInTheDocument();
     });
 
     it('should have helper text for bio field', () => {
       // Arrange & Act
       render(<ProfileForm user={mockUser} />);
 
-      // Assert
-      expect(
-        screen.getByText(/brief description for your profile. max 500 characters/i)
-      ).toBeInTheDocument();
+      // Assert — FieldHelp info button is present (popover content renders on click)
+      const infoButtons = screen.getAllByRole('button', { name: /more information/i });
+      expect(infoButtons.length).toBeGreaterThan(0);
     });
   });
 });

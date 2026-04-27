@@ -210,7 +210,7 @@ export class StreamingChatHandler {
         if (!agent.inputGuardMode) {
           try {
             const settings = await getOrchestrationSettings();
-            guardMode = settings.inputGuardMode;
+            guardMode = settings.inputGuardMode ?? 'none';
           } catch {
             logger.warn(
               'Failed to load orchestration settings for input guard mode, falling back to log_only'
@@ -250,9 +250,7 @@ export class StreamingChatHandler {
           conversationSummary = conversation.summary;
         } else {
           yield { type: 'status', message: 'Summarizing conversation history...' };
-          const fallbackSlugs = Array.isArray((agent as Record<string, unknown>).fallbackProviders)
-            ? ((agent as Record<string, unknown>).fallbackProviders as string[])
-            : [];
+          const fallbackSlugs = agent.fallbackProviders ?? [];
           conversationSummary = await summarizeMessages(
             droppedMessages,
             agent.provider,
@@ -311,7 +309,10 @@ export class StreamingChatHandler {
       resolvedProviderSlug = usedSlug;
 
       // Extract responseFormat from agent metadata if configured
-      const agentMetadata = agent.metadata as Record<string, unknown> | null;
+      const agentMetadata =
+        agent.metadata && typeof agent.metadata === 'object' && !Array.isArray(agent.metadata)
+          ? (agent.metadata as Record<string, unknown>)
+          : null;
       const responseFormat = agentMetadata?.responseFormat as
         | import('@/lib/orchestration/llm/types').LlmResponseFormat
         | undefined;
@@ -483,7 +484,7 @@ export class StreamingChatHandler {
               if (!agent.outputGuardMode) {
                 try {
                   const settings = await getOrchestrationSettings();
-                  outputMode = settings.outputGuardMode;
+                  outputMode = settings.outputGuardMode ?? 'none';
                 } catch {
                   logger.warn(
                     'Failed to load orchestration settings for output guard mode, falling back to log_only'

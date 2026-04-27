@@ -4,7 +4,7 @@
  * OrchestrationSettingsForm
  *
  * Comprehensive form for global orchestration settings, organized into
- * four sections: Safety, Limits, Retention, and Approvals.
+ * six sections: Safety, Limits, Retention, Approvals, Escalation, and Search.
  *
  * Uses react-hook-form + Zod for client-side validation, matching the
  * pattern used in agent-form.tsx and capability-form.tsx.
@@ -119,10 +119,34 @@ function guardModeToApi(v: string): string | null {
 export function SettingsForm({ initialSettings }: SettingsFormProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
+  const [savedEmails, setSavedEmails] = React.useState<string[]>(
+    initialSettings.escalationConfig?.emailAddresses ?? []
+  );
   const [escalationEmails, setEscalationEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
   );
   const [emailInput, setEmailInput] = React.useState('');
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+
+  const addEscalationEmail = () => {
+    const val = emailInput.trim();
+    if (!val) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+      setEmailError('Enter a valid email address');
+      return;
+    }
+    if (escalationEmails.includes(val)) {
+      setEmailError('Email already added');
+      return;
+    }
+    if (escalationEmails.length >= 20) {
+      setEmailError('Maximum 20 email addresses');
+      return;
+    }
+    setEmailError(null);
+    setEscalationEmails((prev) => [...prev, val]);
+    setEmailInput('');
+  };
 
   const defaults: SettingsFormData = React.useMemo(
     () => ({
@@ -150,15 +174,26 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(settingsFormSchema),
     defaultValues: defaults,
   });
 
+  const watchedKeyword = watch('keywordBoostWeight');
+  const watchedVector = watch('vectorWeight');
+  const searchPartialFill =
+    (watchedKeyword !== '' && watchedVector === '') ||
+    (watchedKeyword === '' && watchedVector !== '');
+
   React.useEffect(() => {
     reset(defaults);
   }, [defaults, reset]);
+
+  // Track escalation email changes outside react-hook-form
+  const emailsChanged = JSON.stringify(escalationEmails) !== JSON.stringify(savedEmails);
+  const hasChanges = isDirty || emailsChanged;
 
   // zodResolver already validates and transforms the data via settingsFormSchema,
   // so `values` here is the parsed output type (numbers/null, not strings).
@@ -195,7 +230,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           escalationConfig,
         },
       });
-      reset();
+      reset(undefined, { keepValues: true });
+      setSavedEmails([...escalationEmails]);
       setSavedAt(new Date());
     } catch (err) {
       setError(
@@ -533,34 +569,23 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                   type="email"
                   placeholder="Add email address…"
                   value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
+                  onChange={(e) => {
+                    setEmailInput(e.target.value);
+                    if (emailError) setEmailError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      const val = emailInput.trim();
-                      if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
-                        setEscalationEmails((prev) => [...prev, val]);
-                        setEmailInput('');
-                      }
+                      addEscalationEmail();
                     }
                   }}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const val = emailInput.trim();
-                    if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
-                      setEscalationEmails((prev) => [...prev, val]);
-                      setEmailInput('');
-                    }
-                  }}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={addEscalationEmail}>
                   <Plus className="mr-1 h-3 w-3" />
                   Add
                 </Button>
               </div>
+              {emailError && <p className="text-xs text-red-600">{emailError}</p>}
               {escalationEmails.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {escalationEmails.map((email) => (
@@ -689,12 +714,18 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
               <p className="text-xs text-red-600">{errors.vectorWeight.message}</p>
             )}
           </div>
+          {searchPartialFill && (
+            <p className="text-xs text-amber-600 sm:col-span-2">
+              Both weights must be set together. If only one is provided, search config will reset
+              to built-in defaults on save.
+            </p>
+          )}
         </CardContent>
       </Card>
 
       {/* ── Submit ─────────────────────────────────────────────────────── */}
       <div className="sticky bottom-4 flex items-center gap-3">
-        <Button type="submit" disabled={isSubmitting || !isDirty}>
+        <Button type="submit" disabled={isSubmitting || !hasChanges}>
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -707,7 +738,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             </>
           )}
         </Button>
-        {savedAt && !isDirty && (
+        {savedAt && !hasChanges && (
           <span className="text-muted-foreground flex items-center gap-1 text-sm">
             <Check className="h-4 w-4 text-emerald-500" />
             Saved

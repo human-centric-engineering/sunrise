@@ -80,6 +80,23 @@ export const DEFAULT_USER_PREFERENCES: z.infer<typeof userPreferencesSchema> = {
 };
 
 /**
+ * Parse preferences from a database JSON field using Zod validation.
+ *
+ * Returns validated preferences or defaults if the stored data doesn't
+ * match the expected shape (e.g., null, legacy format, or corrupt data).
+ * Security alerts are always forced to `true` regardless of stored value.
+ */
+export function parseUserPreferences(
+  dbPreferences: unknown
+): z.infer<typeof userPreferencesSchema> {
+  const result = userPreferencesSchema.safeParse(dbPreferences);
+  if (result.success) {
+    return { ...result.data, email: { ...result.data.email, securityAlerts: true } };
+  }
+  return DEFAULT_USER_PREFERENCES;
+}
+
+/**
  * Partial preferences update schema
  *
  * For PATCH operations where only some preferences are updated.

@@ -13,6 +13,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getMcpServerConfig, invalidateMcpConfigCache } from '@/lib/orchestration/mcp';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { updateMcpSettingsSchema } from '@/lib/validations/mcp';
 
 export const GET = withAdminAuth(async (request) => {
@@ -35,6 +36,8 @@ export const PATCH = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, updateMcpSettingsSchema);
 
+  const existing = await prisma.mcpServerConfig.findUnique({ where: { slug: 'global' } });
+
   const row = await prisma.mcpServerConfig.upsert({
     where: { slug: 'global' },
     create: {
@@ -51,6 +54,19 @@ export const PATCH = withAdminAuth(async (request, session) => {
   });
 
   invalidateMcpConfigCache();
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'mcp_settings.update',
+    entityType: 'mcp_settings',
+    entityId: 'global',
+    changes: computeChanges(
+      (existing ?? {}) as Record<string, unknown>,
+      row as unknown as Record<string, unknown>
+    ),
+    metadata: { changedKeys: Object.keys(body) },
+    clientIp: clientIP,
+  });
 
   log.info('MCP settings updated', {
     adminId: session.user.id,
