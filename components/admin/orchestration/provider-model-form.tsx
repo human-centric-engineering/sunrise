@@ -70,9 +70,15 @@ const modelFormSchema = z.object({
   toolUse: z.enum(['strong', 'moderate', 'none']),
   bestRole: z.string().min(1, 'Best role is required').max(200),
   // Embedding-specific
-  dimensions: z.string().max(10),
+  dimensions: z
+    .string()
+    .max(10)
+    .refine((v) => v === '' || /^\d+$/.test(v), 'Must be a whole number'),
   schemaCompatible: z.boolean(),
-  costPerMillionTokens: z.string().max(20),
+  costPerMillionTokens: z
+    .string()
+    .max(20)
+    .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Must be a number'),
   hasFreeTier: z.boolean(),
   local: z.boolean(),
   quality: z.enum(['high', 'medium', 'budget', '']),
@@ -498,6 +504,9 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                 </FieldHelp>
               </Label>
               <Input id="dimensions" {...register('dimensions')} placeholder="e.g. 1536" />
+              {errors.dimensions && (
+                <p className="text-destructive text-xs">{errors.dimensions.message}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="costPerMillionTokens">Cost / 1M Tokens (USD)</Label>
@@ -506,6 +515,9 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                 {...register('costPerMillionTokens')}
                 placeholder="e.g. 0.02"
               />
+              {errors.costPerMillionTokens && (
+                <p className="text-destructive text-xs">{errors.costPerMillionTokens.message}</p>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap gap-6">

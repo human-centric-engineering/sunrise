@@ -51,6 +51,7 @@ interface ProviderModelsResponse {
 interface TestModelResult {
   ok: boolean;
   latencyMs: number | null;
+  error?: string;
 }
 
 export interface ProviderModelsPanelProps {
@@ -221,7 +222,11 @@ export function ProviderModelsPanel({
                         <span
                           className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}
                         >
-                          {result.ok ? `${result.latencyMs} ms` : 'Failed'}
+                          {result.ok
+                            ? `${result.latencyMs} ms`
+                            : result.error
+                              ? `Failed: ${result.error}`
+                              : 'Failed'}
                         </span>
                       ) : (
                         <Button

@@ -28,7 +28,9 @@ async function getProviders(): Promise<ProviderRow[]> {
 
 async function getModels(): Promise<ModelRow[]> {
   try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?page=1&limit=100`);
+    const res = await serverFetch(
+      `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?page=1&limit=100&isActive=true`
+    );
     if (!res.ok) return [];
     const body = await parseApiResponse<ModelRow[]>(res);
     return body.success ? body.data : [];
