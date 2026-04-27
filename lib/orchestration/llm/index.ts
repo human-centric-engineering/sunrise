@@ -19,10 +19,7 @@ export * as providerManager from '@/lib/orchestration/llm/provider-manager';
 export * as costTracker from '@/lib/orchestration/llm/cost-tracker';
 export {
   recommendModels,
-  recommendProviders,
   invalidateModelCache,
-  invalidateProfileCache,
   type ModelRecommendation,
-  type ProviderRecommendation,
   type RecommendOptions,
 } from '@/lib/orchestration/llm/provider-selector';

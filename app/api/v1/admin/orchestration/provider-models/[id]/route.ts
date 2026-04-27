@@ -96,6 +96,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.isDefault = false;
   }
 
+  // Skip no-op update when only isDefault flip and no user-supplied fields
+  const userFields = Object.keys(data).filter((k) => k !== 'isDefault');
+  if (userFields.length === 0 && !current.isDefault) {
+    log.info('Provider model PATCH skipped (no fields changed)', { modelId: id });
+    return successResponse(current);
+  }
+
   try {
     const updated = await prisma.aiProviderModel.update({ where: { id }, data });
 
@@ -129,6 +136,11 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   const current = await prisma.aiProviderModel.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Provider model ${id} not found`);
+
+  if (!current.isActive) {
+    log.info('Provider model already inactive, skipping soft-delete', { modelId: id });
+    return successResponse({ id, deleted: true });
+  }
 
   await prisma.aiProviderModel.update({
     where: { id },

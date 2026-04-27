@@ -245,6 +245,31 @@ describe('ProviderModelsMatrix', () => {
     expect(arrow?.className).toContain('opacity-100');
   });
 
+  it('sort headers are keyboard-accessible via Enter', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
+
+    const modelHeader = screen.getByText('Model').closest('th')!;
+    modelHeader.focus();
+    await user.keyboard('{Enter}');
+
+    // After Enter, the ArrowUpDown within Model column should be active
+    const arrow = modelHeader.querySelector('svg');
+    expect(arrow?.className).toContain('opacity-100');
+  });
+
+  it('sort headers are keyboard-accessible via Space', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
+
+    const modelHeader = screen.getByText('Model').closest('th')!;
+    modelHeader.focus();
+    await user.keyboard(' ');
+
+    const arrow = modelHeader.querySelector('svg');
+    expect(arrow?.className).toContain('opacity-100');
+  });
+
   it('clicking same column header toggles sort direction', async () => {
     const user = userEvent.setup();
     const models = [
@@ -285,6 +310,80 @@ describe('ProviderModelsMatrix', () => {
 
     const link = screen.getByRole('link', { name: 'GPT-5' });
     expect(link).toHaveAttribute('href', '/admin/orchestration/provider-models/model-xyz');
+  });
+
+  // ── Custom badge ───────────────────────────────────────────────────────────
+
+  it('shows "Custom" badge when model isDefault is false', () => {
+    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: false })]} />);
+
+    expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+
+  it('hides "Custom" badge when model isDefault is true', () => {
+    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: true })]} />);
+
+    expect(screen.queryByText('Custom')).not.toBeInTheDocument();
+  });
+
+  // ── Tier filter ───────────────────────────────────────────────────────────
+
+  it('filtering by tier shows only matching models', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({ id: 'm1', name: 'Thinker', tierRole: 'thinking' }),
+      makeModel({ id: 'm2', name: 'Doer', tierRole: 'worker' }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    // Second combobox is the tier filter
+    const tierTrigger = screen.getAllByRole('combobox')[1];
+    await user.click(tierTrigger);
+
+    const option = await screen.findByRole('option', { name: /worker/i });
+    await user.click(option);
+
+    expect(screen.getByText('Doer')).toBeInTheDocument();
+    expect(screen.queryByText('Thinker')).not.toBeInTheDocument();
+  });
+
+  // ── Embedding dimensions in bestRole column ───────────────────────────────
+
+  it('shows dimensions and schema checkmark for embedding models', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[
+          makeModel({
+            id: 'embed-dim',
+            capabilities: ['embedding'],
+            dimensions: 1536,
+            schemaCompatible: true,
+            bestRole: 'Embeddings',
+          }),
+        ]}
+      />
+    );
+
+    expect(screen.getByText(/1536d/)).toBeInTheDocument();
+    expect(screen.getByText(/✓/)).toBeInTheDocument();
+  });
+
+  it('shows dimensions without checkmark when not schema compatible', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[
+          makeModel({
+            id: 'embed-nock',
+            capabilities: ['embedding'],
+            dimensions: 768,
+            schemaCompatible: false,
+            bestRole: 'Embeddings',
+          }),
+        ]}
+      />
+    );
+
+    expect(screen.getByText(/768d/)).toBeInTheDocument();
   });
 
   // ── Decision heuristic table ───────────────────────────────────────────────

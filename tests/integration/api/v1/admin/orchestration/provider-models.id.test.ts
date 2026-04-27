@@ -80,8 +80,8 @@ function makeModel(overrides: Record<string, unknown> = {}) {
     tierRole: 'thinking',
     reasoningDepth: 'very_high',
     latency: 'medium',
-    costEfficiency: 'low',
-    contextLength: 'very_large',
+    costEfficiency: 'medium',
+    contextLength: 'very_high',
     toolUse: 'strong',
     bestRole: 'Long-context reasoning',
     dimensions: null,
@@ -553,7 +553,7 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     );
   });
 
-  it('returns 409 VALIDATION_ERROR when slug is already taken (P2002)', async () => {
+  it('returns 400 VALIDATION_ERROR when slug is already taken (P2002)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const existing = makeModel({ isDefault: false });
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);

@@ -17,6 +17,7 @@ export const metadata: Metadata = {
 
 interface Props {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 async function getModel(id: string): Promise<ProviderModelData | null> {
@@ -31,14 +32,21 @@ async function getModel(id: string): Promise<ProviderModelData | null> {
   }
 }
 
-export default async function EditProviderModelPage({ params }: Props) {
+export default async function EditProviderModelPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
+  const justCreated = query.created === '1';
   const model = await getModel(id);
 
   if (!model) notFound();
 
   return (
     <div className="space-y-6">
+      {justCreated && (
+        <div className="rounded-md border border-emerald-500/50 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+          Model created successfully. You can now edit its details below.
+        </div>
+      )}
       <header>
         <nav className="text-muted-foreground mb-1 text-xs">
           <Link href="/admin/orchestration" className="hover:underline">
@@ -56,7 +64,8 @@ export default async function EditProviderModelPage({ params }: Props) {
           Update this model&apos;s characteristics.{' '}
           {model.isDefault && (
             <span className="text-amber-600 dark:text-amber-400">
-              This is a seed-managed model — editing it will make it admin-managed.
+              This is a seed-managed model — editing it will make it admin-managed and future
+              re-seeds will skip this row.
             </span>
           )}
         </p>

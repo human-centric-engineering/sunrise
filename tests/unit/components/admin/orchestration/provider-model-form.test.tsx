@@ -118,7 +118,7 @@ describe('ProviderModelForm', () => {
 
   it('slug input is enabled in create mode', () => {
     render(<ProviderModelForm />);
-    expect(screen.getByLabelText(/^slug$/i)).not.toBeDisabled();
+    expect(screen.getByPlaceholderText('e.g. openai-gpt-5')).not.toBeDisabled();
   });
 
   it('auto-fills slug from providerSlug + name', async () => {
@@ -142,7 +142,7 @@ describe('ProviderModelForm', () => {
 
   it('slug input is disabled in edit mode', () => {
     render(<ProviderModelForm model={makeModel()} />);
-    expect(screen.getByLabelText(/^slug$/i)).toBeDisabled();
+    expect(screen.getByPlaceholderText('e.g. openai-gpt-5')).toBeDisabled();
   });
 
   it('populates fields with model data in edit mode', () => {
@@ -216,7 +216,9 @@ describe('ProviderModelForm', () => {
         })
       );
     });
-    expect(mockPush).toHaveBeenCalledWith('/admin/orchestration/provider-models/model-new');
+    expect(mockPush).toHaveBeenCalledWith(
+      '/admin/orchestration/provider-models/model-new?created=1'
+    );
   });
 
   // ── Edit submit ───────────────────────────────────────────────────────────
@@ -514,7 +516,7 @@ describe('ProviderModelForm', () => {
     render(<ProviderModelForm />);
 
     // Manually edit the slug — this sets slugEdited=true
-    const slugInput = screen.getByLabelText(/^slug$/i);
+    const slugInput = screen.getByPlaceholderText('e.g. openai-gpt-5');
     await user.type(slugInput, 'my-custom-slug');
 
     // Now type into name — slug should NOT change

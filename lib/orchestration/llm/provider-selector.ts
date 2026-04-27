@@ -69,16 +69,10 @@ export function invalidateModelCache(): void {
   modelCache = null;
 }
 
-/** @deprecated Use invalidateModelCache instead. */
-export const invalidateProfileCache = invalidateModelCache;
-
 /** Reset cache — for tests only. */
 export function __resetModelCacheForTests(): void {
   modelCache = null;
 }
-
-/** @deprecated Use __resetModelCacheForTests instead. */
-export const __resetProfileCacheForTests = __resetModelCacheForTests;
 
 // ---------------------------------------------------------------------------
 // Core heuristic
@@ -95,9 +89,6 @@ export interface ModelRecommendation {
   score: number;
   reason: string;
 }
-
-/** @deprecated Use ModelRecommendation instead. */
-export type ProviderRecommendation = ModelRecommendation;
 
 /** Options for `recommendModels`. */
 export interface RecommendOptions {
@@ -130,14 +121,16 @@ const RATING_SCORE: Record<string, number> = {
   n_a: 0,
 };
 
-/** Which secondary dimension matters most for each intent. */
-const INTENT_SECONDARY: Record<TaskIntent, keyof CachedModel> = {
+/**
+ * Which secondary dimension matters most for each non-embedding intent.
+ * Embedding intent uses a separate scoring path (see `recommendModels`).
+ */
+const INTENT_SECONDARY: Record<Exclude<TaskIntent, 'embedding'>, keyof CachedModel> = {
   thinking: 'reasoningDepth',
   doing: 'costEfficiency',
   fast_looping: 'latency',
   high_reliability: 'toolUse',
   private: 'costEfficiency',
-  embedding: 'costEfficiency',
 };
 
 /**
@@ -155,7 +148,6 @@ export async function recommendModels(
   const models = await loadModels();
 
   const preferredTier = INTENT_TO_TIER[intent];
-  const secondaryKey = INTENT_SECONDARY[intent];
   const isEmbeddingIntent = intent === 'embedding';
 
   const scored: ModelRecommendation[] = [];
@@ -192,6 +184,7 @@ export async function recommendModels(
       if (model.hasFreeTier) parts.push('free tier');
       reason = parts.join(', ') || 'Embedding model';
     } else {
+      const secondaryKey = INTENT_SECONDARY[intent];
       const tierMatch = model.tierRole === preferredTier;
       const primaryScore = tierMatch ? 60 : 0;
       const secondaryValue = String(model[secondaryKey]);
@@ -215,12 +208,9 @@ export async function recommendModels(
     });
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score || a.slug.localeCompare(b.slug));
   return scored.slice(0, limit);
 }
-
-/** @deprecated Use recommendModels instead. */
-export const recommendProviders = recommendModels;
 
 // ---------------------------------------------------------------------------
 // Internal helpers

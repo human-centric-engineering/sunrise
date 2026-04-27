@@ -78,6 +78,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       model,
       error: message,
     });
-    return successResponse({ ok: false, latencyMs: null, model });
+    return successResponse({ ok: false, latencyMs: null, model, error: message });
   }
 });

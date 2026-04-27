@@ -50,7 +50,7 @@ Rendered inline beneath the matrix. Six rows mapping task intent → recommended
 | `fast_looping`     | Infrastructure    |
 | `high_reliability` | Control Plane     |
 | `private`          | Local / Sovereign |
-| `vector`           | Embedding         |
+| `embedding`        | Embedding         |
 
 Powered by `GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>`, which returns `{ intent, recommendations, heuristic }` — `recommendations` is a scored list of live models in the matching tier.
 
@@ -78,7 +78,7 @@ Any PATCH flips `isDefault` to `false` server-side so re-seeds leave the row alo
 | Model ID        | Required; the API identifier sent to the provider (e.g. `gpt-5`)                                                                                    |
 | Display Name    | Required, ≤ 100 chars                                                                                                                               |
 | Slug            | Required, lowercased with hyphens; disabled in edit mode. Auto-derived from `providerSlug + name` in create mode unless the admin types it manually |
-| Description     | Optional, ≤ 500 chars                                                                                                                               |
+| Description     | Required, ≤ 2000 chars                                                                                                                              |
 | Capabilities    | Two checkboxes: Chat · Embedding. At least one required (enforced client-side before POST)                                                          |
 | Tier Role       | Radix `<Select>` populated from `TIER_ROLE_META`; label shows `{label} — {description}`                                                             |
 | Reasoning Depth | `very_high` · `high` · `medium` · `none`                                                                                                            |
@@ -109,9 +109,9 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 ### Submit behaviour
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
-- The submit handler assembles `capabilities[]` from the two checkboxes, strips embedding fields when `capEmbedding` is off, and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST.
-- Create: `POST /provider-models` → router pushes to the new model's edit page.
-- Edit: `PATCH /provider-models/:id` → inline "Saved" flash for 2s.
+- The submit handler assembles `capabilities[]` from the two checkboxes and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `capEmbedding` is off. In edit mode, unchecking `capEmbedding` explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
+- Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
+- Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
 - Every non-trivial field has a `<FieldHelp>` popover per the contextual-help rule.
 
 ## Recommend endpoint
@@ -121,7 +121,7 @@ GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>
 Authorization: Admin
 ```
 
-`intent` ∈ `thinking` · `doing` · `fast_looping` · `high_reliability` · `private` · `vector`.
+`intent` ∈ `thinking` · `doing` · `fast_looping` · `high_reliability` · `private` · `embedding`.
 
 Response:
 
@@ -130,9 +130,16 @@ Response:
   "intent": "thinking",
   "recommendations": [
     { "slug": "...", "providerSlug": "...", "score": 90, "reason": "..." },
-    ...
+    // ...
   ],
-  "heuristic": "Use frontier models (Tier 1)"
+  "heuristic": {
+    "thinking": "If it thinks → use frontier models (Tier 1)",
+    "doing": "If it does → use cheap/open models (Tier 2)",
+    "fast_looping": "If it loops fast → use infra providers (Tier 3)",
+    "high_reliability": "If it must not fail → route via aggregators (Tier 4)",
+    "private": "If it must stay private → run local (Tier 5)",
+    "embedding": "If it needs vector embeddings → use embedding models",
+  },
 }
 ```
 
