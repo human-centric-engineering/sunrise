@@ -99,7 +99,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       // Assert
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       expect(newPasswordInput).toBeInTheDocument();
       expect(newPasswordInput).toHaveAttribute('placeholder', 'Enter a new password');
     });
@@ -149,7 +149,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<PasswordForm />);
 
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -192,7 +192,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -214,7 +214,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -238,7 +238,7 @@ describe('components/forms/password-form', () => {
       const user = userEvent.setup({ delay: null });
       render(<PasswordForm />);
 
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
 
       // Act
       await user.type(newPasswordInput, 'StrongPassword123!');
@@ -270,7 +270,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -303,7 +303,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -329,7 +329,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -357,7 +357,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -386,7 +386,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -412,7 +412,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -443,7 +443,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -488,7 +488,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -517,7 +517,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -543,7 +543,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -570,7 +570,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
@@ -597,7 +597,7 @@ describe('components/forms/password-form', () => {
       render(<PasswordForm />);
 
       const currentPasswordInput = screen.getByLabelText('Current Password');
-      const newPasswordInput = screen.getByLabelText('New Password');
+      const newPasswordInput = screen.getByLabelText(/^new password/i, { selector: 'input' });
       const confirmPasswordInput = screen.getByLabelText('Confirm New Password');
       const submitButton = screen.getByRole('button', { name: /change password/i });
 
