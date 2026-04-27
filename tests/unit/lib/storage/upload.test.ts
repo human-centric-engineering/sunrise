@@ -190,7 +190,7 @@ describe('lib/storage/upload', () => {
 
       const result = await deleteFile('https://bucket.s3.amazonaws.com/avatars/user-123/abc.jpg');
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(mockProvider.delete).toHaveBeenCalledWith('avatars/user-123/abc.jpg');
     });
 
@@ -209,7 +209,7 @@ describe('lib/storage/upload', () => {
 
       const result = await deleteFile('https://vercel.blob/avatars/user-123/abc.jpg');
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(mockProvider.delete).toHaveBeenCalledWith(
         'https://vercel.blob/avatars/user-123/abc.jpg'
       );
@@ -250,7 +250,7 @@ describe('lib/storage/upload', () => {
       const result = await deleteByPrefix('avatars/user-123/');
 
       expect(mockProvider.deletePrefix).toHaveBeenCalledWith('avatars/user-123/');
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should log success with prefix and provider name', async () => {
@@ -333,7 +333,7 @@ describe('lib/storage/upload', () => {
       const avatarUrl = 'https://storage.example.com/avatars/user-123/avatar.jpg';
       const result = await deleteAvatar(avatarUrl);
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(mockProvider.delete).toHaveBeenCalledWith('avatars/user-123/avatar.jpg');
     });
   });
@@ -345,7 +345,7 @@ describe('lib/storage/upload', () => {
 
       const { isStorageEnabled } = await import('@/lib/storage/upload');
 
-      expect(isStorageEnabled()).toBe(true);
+      expect(isStorageEnabled()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 });

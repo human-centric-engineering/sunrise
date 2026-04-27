@@ -318,7 +318,7 @@ describe('components/forms/contact-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/failed to send/i)).toBeInTheDocument();
       });
-      expect(mockTrackFormSubmitted).not.toHaveBeenCalled();
+      expect(mockTrackFormSubmitted).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should show loading state during submission', async () => {

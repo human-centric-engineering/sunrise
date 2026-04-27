@@ -184,7 +184,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert
       await waitFor(() => {
-        expect(authClient.signOut).toHaveBeenCalled();
+        expect(authClient.signOut).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -207,7 +207,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert - Reset should be called to clear analytics identity
       await waitFor(() => {
-        expect(mockAnalytics.reset).toHaveBeenCalled();
+        expect(mockAnalytics.reset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -231,7 +231,7 @@ describe('components/auth/logout-button', () => {
       // Assert
       await waitFor(() => {
         expect(mockRouter.push).toHaveBeenCalledWith('/');
-        expect(mockRouter.refresh).toHaveBeenCalled();
+        expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -382,7 +382,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert
       await waitFor(() => {
-        expect(logger.error).toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -413,7 +413,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert - Reset should NOT be called if signOut failed
       await waitFor(() => {
-        expect(mockAnalytics.reset).not.toHaveBeenCalled();
+        expect(mockAnalytics.reset).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -444,8 +444,8 @@ describe('components/auth/logout-button', () => {
 
       // Assert - Router should NOT be called if signOut failed
       await waitFor(() => {
-        expect(mockRouter.push).not.toHaveBeenCalled();
-        expect(mockRouter.refresh).not.toHaveBeenCalled();
+        expect(mockRouter.push).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        expect(mockRouter.refresh).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
   });

@@ -134,7 +134,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
 
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.document.id).toBe(DOC_ID);
       expect(body.data.document.chunkCount).toBe(12);
     });

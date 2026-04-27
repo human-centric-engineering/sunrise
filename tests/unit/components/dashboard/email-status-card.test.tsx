@@ -582,7 +582,7 @@ describe('components/dashboard/email-status-card', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
+        expect(mockFetch).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });

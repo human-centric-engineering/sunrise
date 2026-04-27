@@ -476,7 +476,7 @@ describe('components/forms/accept-invite-form', () => {
       // Assert
       await waitFor(() => {
         const errors = screen.getAllByTestId('form-error');
-        expect(errors.some((el) => el.textContent?.toLowerCase().includes('8'))).toBe(true);
+        expect(errors.some((el) => el.textContent?.toLowerCase().includes('8'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -501,7 +501,7 @@ describe('components/forms/accept-invite-form', () => {
       // Assert
       await waitFor(() => {
         const errors = screen.getAllByTestId('form-error');
-        expect(errors.some((el) => el.textContent?.toLowerCase().includes('match'))).toBe(true);
+        expect(errors.some((el) => el.textContent?.toLowerCase().includes('match'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });

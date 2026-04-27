@@ -32,7 +32,7 @@ describe('CONSENT_VERSION', () => {
   });
 
   it('should be an integer', () => {
-    expect(Number.isInteger(CONSENT_VERSION)).toBe(true);
+    expect(Number.isInteger(CONSENT_VERSION)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('should have the expected value', () => {
@@ -63,7 +63,7 @@ describe('DEFAULT_CONSENT_STATE', () => {
   });
 
   it('should have essential set to true', () => {
-    expect(DEFAULT_CONSENT_STATE.essential).toBe(true);
+    expect(DEFAULT_CONSENT_STATE.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('should have optional set to false', () => {
@@ -87,7 +87,7 @@ describe('DEFAULT_CONSENT_STATE', () => {
 
 describe('COOKIE_CATEGORIES', () => {
   it('should be an array', () => {
-    expect(Array.isArray(COOKIE_CATEGORIES)).toBe(true);
+    expect(Array.isArray(COOKIE_CATEGORIES)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('should have exactly 2 categories', () => {
@@ -118,7 +118,7 @@ describe('COOKIE_CATEGORIES', () => {
 
     it('should be required', () => {
       const essential = COOKIE_CATEGORIES.find((cat) => cat.id === 'essential');
-      expect(essential?.required).toBe(true);
+      expect(essential?.required).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should have all expected properties', () => {
@@ -188,7 +188,7 @@ describe('BANNER_DELAY_MS', () => {
   });
 
   it('should be an integer', () => {
-    expect(Number.isInteger(BANNER_DELAY_MS)).toBe(true);
+    expect(Number.isInteger(BANNER_DELAY_MS)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('should have the expected value', () => {
@@ -212,7 +212,7 @@ describe('isConsentEnabled', () => {
       vi.stubGlobal('window', {});
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return true when env var is not "false"', () => {
@@ -221,7 +221,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', 'true');
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return true when env var is undefined', () => {
@@ -230,7 +230,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', undefined);
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return true when env var is empty string', () => {
@@ -239,7 +239,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', '');
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when env var is "false"', () => {
@@ -257,7 +257,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', 'FALSE');
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return true when env var is "0"', () => {
@@ -266,7 +266,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', '0');
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -276,7 +276,7 @@ describe('isConsentEnabled', () => {
       vi.stubGlobal('window', undefined);
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return true when not in browser, regardless of env var', () => {
@@ -285,7 +285,7 @@ describe('isConsentEnabled', () => {
       vi.stubEnv('NEXT_PUBLIC_COOKIE_CONSENT_ENABLED', 'false');
 
       const result = isConsentEnabled();
-      expect(result).toBe(true);
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 });

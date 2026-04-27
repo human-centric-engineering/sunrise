@@ -142,8 +142,8 @@ describe('lib/email/client', () => {
 
       const result = isEmailEnabled();
 
-      expect(result).toBe(true);
-      expect(logger.debug).not.toHaveBeenCalled();
+      expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(logger.debug).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -176,7 +176,7 @@ describe('lib/email/client', () => {
       const result = getDefaultSender();
 
       expect(result).toBe('noreply@sunrise.com');
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return RFC 5322 format when EMAIL_FROM_NAME is set with EMAIL_FROM', async () => {
@@ -189,7 +189,7 @@ describe('lib/email/client', () => {
       const result = getDefaultSender();
 
       expect(result).toBe('Sunrise Team <noreply@sunrise.com>');
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return RFC 5322 format with fallback email when EMAIL_FROM_NAME is set but EMAIL_FROM is not', async () => {
@@ -283,7 +283,7 @@ describe('lib/email/client', () => {
 
       validateEmailConfig();
 
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should not log warning when email is fully configured (even if verification required)', async () => {
@@ -299,7 +299,7 @@ describe('lib/email/client', () => {
 
       validateEmailConfig();
 
-      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should be idempotent and only log once on subsequent calls', async () => {

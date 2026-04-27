@@ -129,7 +129,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks', () =>
 
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.chunks).toHaveLength(2);
       expect(body.data.chunks[0].chunkType).toBe('pattern_overview');
     });

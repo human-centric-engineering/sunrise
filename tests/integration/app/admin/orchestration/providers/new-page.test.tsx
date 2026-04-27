@@ -71,8 +71,8 @@ describe('NewProviderPage (server component)', () => {
       const flatLabels = labels.flat().map((l) => l.toLowerCase());
       expect(flatLabels).toContain('anthropic');
       expect(flatLabels).toContain('openai');
-      expect(flatLabels.some((l) => l.includes('ollama'))).toBe(true);
-      expect(flatLabels.some((l) => l.includes('openai-compatible'))).toBe(true);
+      expect(flatLabels.some((l) => l.includes('ollama'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(flatLabels.some((l) => l.includes('openai-compatible'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 

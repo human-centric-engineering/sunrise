@@ -91,7 +91,7 @@ describe('lib/analytics/providers/plausible', () => {
       it('should enable hash mode when configured', () => {
         const provider = new PlausibleProvider({ domain: 'example.com', hashMode: true });
 
-        expect(provider.isHashMode()).toBe(true);
+        expect(provider.isHashMode()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -101,7 +101,7 @@ describe('lib/analytics/providers/plausible', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should be idempotent - calling init twice should not reinitialize', async () => {
@@ -111,8 +111,8 @@ describe('lib/analytics/providers/plausible', () => {
         const firstReady = provider.isReady();
         await provider.init();
 
-        expect(firstReady).toBe(true);
-        expect(provider.isReady()).toBe(true);
+        expect(firstReady).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
       it('should set ready flag to true', async () => {
@@ -120,7 +120,7 @@ describe('lib/analytics/providers/plausible', () => {
 
         expect(provider.isReady()).toBe(false);
         await provider.init();
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -135,7 +135,7 @@ describe('lib/analytics/providers/plausible', () => {
           success: true,
           data: { note: 'Plausible does not support user identification' },
         });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should return success even with traits (no-op)', async () => {
@@ -154,7 +154,7 @@ describe('lib/analytics/providers/plausible', () => {
           success: true,
           data: { note: 'Plausible does not support user identification' },
         });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -165,7 +165,7 @@ describe('lib/analytics/providers/plausible', () => {
         const result = await provider.track('button_clicked');
 
         expect(result).toEqual({ success: false, error: 'Plausible not initialized' });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track event without properties', async () => {
@@ -295,7 +295,7 @@ describe('lib/analytics/providers/plausible', () => {
         const result = await provider.page();
 
         expect(result).toEqual({ success: false, error: 'Plausible not initialized' });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track pageview with default values', async () => {
@@ -456,7 +456,7 @@ describe('lib/analytics/providers/plausible', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should return success even when no user identified', async () => {
@@ -466,7 +466,7 @@ describe('lib/analytics/providers/plausible', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockPlausible).not.toHaveBeenCalled();
+        expect(mockPlausible).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
     });
 
@@ -482,7 +482,7 @@ describe('lib/analytics/providers/plausible', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -531,7 +531,7 @@ describe('lib/analytics/providers/plausible', () => {
       it('should return true when hash mode is enabled', () => {
         const provider = new PlausibleProvider({ domain: 'example.com', hashMode: true });
 
-        expect(provider.isHashMode()).toBe(true);
+        expect(provider.isHashMode()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -546,7 +546,7 @@ describe('lib/analytics/providers/plausible', () => {
 
         expect(provider.getDomain()).toBe('example.com');
         expect(provider.getHost()).toBe('https://analytics.mycompany.com');
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -571,7 +571,7 @@ describe('lib/analytics/providers/plausible', () => {
       expect(provider).toBeInstanceOf(PlausibleProvider);
       expect(provider.getDomain()).toBe('example.com');
       expect(provider.getHost()).toBe('https://analytics.example.com');
-      expect(provider.isHashMode()).toBe(true);
+      expect(provider.isHashMode()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 });

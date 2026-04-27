@@ -129,7 +129,7 @@ describe('lib/consent/use-consent', () => {
         wrapper: createWrapper(),
       });
 
-      expect(result.current.consent.essential).toBe(true);
+      expect(result.current.consent.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.current.consent.optional).toBe(false);
       expect(result.current.consent.timestamp).toBeNull();
       expect(result.current.consent.version).toBe(CONSENT_VERSION);
@@ -148,9 +148,9 @@ describe('lib/consent/use-consent', () => {
         wrapper: createWrapper(),
       });
 
-      expect(result.current.consent.essential).toBe(true);
-      expect(result.current.consent.optional).toBe(true);
-      expect(result.current.hasConsented).toBe(true);
+      expect(result.current.consent.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.consent.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.hasConsented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -175,7 +175,7 @@ describe('lib/consent/use-consent', () => {
         wrapper: createWrapper(),
       });
 
-      expect(result.current).toBe(true);
+      expect(result.current).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when user consented but optional is false', () => {
@@ -200,7 +200,7 @@ describe('lib/consent/use-consent', () => {
         wrapper: createWrapper(),
       });
 
-      expect(result.current).toBe(true);
+      expect(result.current).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should return false when user has not made a choice', () => {
@@ -229,7 +229,7 @@ describe('lib/consent/use-consent', () => {
       });
 
       // Now true
-      expect(result.current.hasOptional).toBe(true);
+      expect(result.current.hasOptional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -297,7 +297,7 @@ describe('lib/consent/use-consent', () => {
         { wrapper: createWrapper() }
       );
 
-      expect(result.current.context.hasConsented).toBe(true);
+      expect(result.current.context.hasConsented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.current.shouldShow).toBe(false);
     });
 
@@ -364,9 +364,9 @@ describe('lib/consent/use-consent', () => {
         { wrapper: createWrapper() }
       );
 
-      expect(result.current.consent.hasConsented).toBe(true);
-      expect(result.current.consent.consent.optional).toBe(true);
-      expect(result.current.hasOptional).toBe(true);
+      expect(result.current.consent.hasConsented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.consent.consent.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.hasOptional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.current.shouldShowBanner).toBe(false);
     });
 
@@ -389,9 +389,9 @@ describe('lib/consent/use-consent', () => {
       });
 
       // After
-      expect(result.current.consent.hasConsented).toBe(true);
-      expect(result.current.consent.consent.optional).toBe(true);
-      expect(result.current.hasOptional).toBe(true);
+      expect(result.current.consent.hasConsented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.consent.consent.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.hasOptional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.current.shouldShowBanner).toBe(false);
     });
   });
@@ -429,7 +429,7 @@ describe('lib/consent/use-consent', () => {
         wrapper: createWrapper(),
       });
 
-      expect(result.current).toBe(true);
+      expect(result.current).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('useShouldShowConsentBanner should return false when consent is disabled', () => {
@@ -454,9 +454,9 @@ describe('lib/consent/use-consent', () => {
         { wrapper: createWrapper() }
       );
 
-      expect(result.current.consent.hasConsented).toBe(true);
-      expect(result.current.consent.consent.optional).toBe(true);
-      expect(result.current.hasOptional).toBe(true);
+      expect(result.current.consent.hasConsented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.consent.consent.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(result.current.hasOptional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(result.current.shouldShowBanner).toBe(false);
     });
   });

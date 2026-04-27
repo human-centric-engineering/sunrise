@@ -253,7 +253,7 @@ describe('lib/analytics/server - serverTrack', () => {
         success: false,
         error: 'GA4 server-side tracking requires GA4_API_SECRET to be configured',
       });
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return error when GA4_API_SECRET env var is missing', async () => {
@@ -272,7 +272,7 @@ describe('lib/analytics/server - serverTrack', () => {
         success: false,
         error: 'GA4 server-side tracking requires GA4_API_SECRET to be configured',
       });
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -399,7 +399,7 @@ describe('lib/analytics/server - serverTrack', () => {
         success: false,
         error: 'PostHog server-side tracking requires NEXT_PUBLIC_POSTHOG_KEY to be configured',
       });
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -460,7 +460,7 @@ describe('lib/analytics/server - serverTrack', () => {
       // Props should be JSON-stringified and only include string/number/boolean
       const props = JSON.parse(body.props);
       expect(props.plan).toBe('pro');
-      expect(props.active).toBe(true);
+      expect(props.active).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should fall back to domain URL when no page URL is in context', async () => {
@@ -538,7 +538,7 @@ describe('lib/analytics/server - serverTrack', () => {
       });
 
       expect(result).toEqual({ success: false, error: 'Plausible not configured' });
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -717,7 +717,7 @@ describe('lib/analytics/server - serverTrack', () => {
       });
 
       // headers() should not have been called since context was provided
-      expect(mockHeadersFn).not.toHaveBeenCalled();
+      expect(mockHeadersFn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.properties.$ip).toBe('1.1.1.1');

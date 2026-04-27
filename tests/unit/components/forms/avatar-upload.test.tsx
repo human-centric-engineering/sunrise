@@ -408,7 +408,7 @@ describe('components/forms/avatar-upload', () => {
       expect(authClient.updateUser).toHaveBeenCalledWith({
         image: 'https://example.com/new-avatar.jpg',
       });
-      expect(mockRouter.refresh).toHaveBeenCalled();
+      expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
 
       // Assert - Crop dialog is closed
       expect(screen.queryByTestId('avatar-crop-dialog')).not.toBeInTheDocument();
@@ -475,7 +475,7 @@ describe('components/forms/avatar-upload', () => {
       await waitFor(() => {
         expect(screen.getByText(/Upload failed/i)).toBeInTheDocument();
       });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should cleanup blob URL when crop is confirmed', async () => {
@@ -533,7 +533,7 @@ describe('components/forms/avatar-upload', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('avatar-crop-dialog')).not.toBeInTheDocument();
       });
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should cleanup blob URL when crop is cancelled', async () => {
@@ -746,7 +746,7 @@ describe('components/forms/avatar-upload', () => {
       // Assert
       await waitFor(() => {
         expect(authClient.updateUser).toHaveBeenCalledWith({ image: '' });
-        expect(mockRouter.refresh).toHaveBeenCalled();
+        expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -1165,7 +1165,7 @@ describe('components/forms/avatar-upload', () => {
       await user.keyboard('{Enter}');
 
       // Assert
-      expect(clickSpy).toHaveBeenCalled();
+      expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should support space key on upload area', async () => {
@@ -1185,7 +1185,7 @@ describe('components/forms/avatar-upload', () => {
       await user.keyboard(' ');
 
       // Assert
-      expect(clickSpy).toHaveBeenCalled();
+      expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should have proper alt text for avatar image', () => {
@@ -1230,7 +1230,7 @@ describe('components/forms/avatar-upload', () => {
       }
 
       // Assert
-      expect(clickSpy).toHaveBeenCalled();
+      expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should open file picker when avatar is clicked', async () => {
@@ -1249,7 +1249,7 @@ describe('components/forms/avatar-upload', () => {
       await user.click(uploadArea);
 
       // Assert
-      expect(clickSpy).toHaveBeenCalled();
+      expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
   });
 });

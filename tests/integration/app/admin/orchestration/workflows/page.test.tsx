@@ -152,7 +152,7 @@ describe('WorkflowsListPage (server component)', () => {
     }
 
     expect(thrown).toBe(false);
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     expect(screen.getByRole('heading', { name: /^workflows$/i })).toBeInTheDocument();
   });
 });

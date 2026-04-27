@@ -401,7 +401,7 @@ describe('components/forms/preferences-form', () => {
       await waitFor(() => {
         expect(screen.getByText(/failed to update preferences/i)).toBeInTheDocument();
       });
-      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockTrack).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should refresh router on successful update', async () => {
@@ -420,7 +420,7 @@ describe('components/forms/preferences-form', () => {
       await user.click(saveButton);
 
       await waitFor(() => {
-        expect(mockRouter.refresh).toHaveBeenCalled();
+        expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 

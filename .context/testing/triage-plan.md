@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3h, 4a–4d, 5a–5f complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3h, 4a–4d, 5a–5f, 6a–6d, 7a–7e complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -364,28 +364,28 @@
 ### Step 6a — `components/forms/` (15 test files)
 
 - **Triage:** `/test-triage scan components/forms`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116 — combined with 6b+6c+6d+7a–7e)
+- **Notes:** 15 files, 270 tests. nac=17 (callback/error guards). All FP — annotated.
 
 ### Step 6b — `components/ui/` (9 test files)
 
 - **Triage:** `/test-triage scan components/ui`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 9 files, 83 tests. nac=3. All FP — annotated.
 
 ### Step 6c — Remaining components (9 test files)
 
 - **Covers:** `analytics/` (3, all Clean from dogfood), `auth/` (2), `dashboard/` (1), `settings/` (1), `cookie-consent/` (2)
 - **Triage:** Scan each
-- **Status:** PARTIAL — `analytics/` already Clean (3 files)
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 9 files, 166 tests. nac=31, ent=4 (user-identifier). All FP — annotated.
 
-### Step 6d — App page tests (13 test files)
+### Step 6d — App page tests (18 test files)
 
-- **Covers:** `app/(auth)/` (6 tests), `app/admin/` (7 tests)
+- **Covers:** `app/(auth)/` (6 tests), `app/admin/` (12 tests)
 - **Triage:** `/test-triage scan` on each
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 18 files, 272 tests. nac=4. All FP — annotated.
 
 ---
 
@@ -396,33 +396,33 @@
 ### Step 7a — `lib/email/` + email templates (6 test files)
 
 - **Triage:** `/test-triage scan lib/email` + `/test-triage scan emails`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 6 files, 63 tests. tbt=5, nac=6. All FP — annotated.
 
 ### Step 7b — `lib/analytics/` (10 test files)
 
 - **Triage:** `/test-triage scan lib/analytics`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 10 files, 359 tests. tbt=35, nac=60, ent=3. Highest density in codebase — analytics providers have many boolean config checks and console-log guards. All FP — annotated.
 
 ### Step 7c — `lib/consent/` (4 test files)
 
 - **Triage:** `/test-triage scan lib/consent`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 4 files, 146 tests. tbt=48, nac=5, ent=10. Highest tbt density — consent state is fundamentally boolean (essential/optional). All FP — annotated.
 
 ### Step 7d — `lib/storage/` + `lib/monitoring/` + `lib/embed/` (10 test files)
 
 - **Triage:** Scan each (note: `lib/embed/` now has 1 test file — `auth.test.ts`)
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #116)
+- **Notes:** 9 files, 247 tests. tbt=23, nac=13, ent=69. validate-key.test.ts has ent=68 (every test validates "doesn't throw" on valid keys — correct pattern for security validation). All FP — annotated.
 
-### Step 7e — Integration tests (120 test files)
+### Step 7e — Integration tests (34 new files, 89 already in ledger)
 
-- **Covers:** `tests/integration/api/` (98) + `tests/integration/app/` (22)
-- **Triage:** `/test-triage scan` on integration directories, working through admin (85), chat (2), users (4), then app (22)
-- **Status:** NOT STARTED (2 integration files already in ledger from dogfood)
-- **Notes:** Integration tests need different attention — mock realism and boundary coverage matter more than assertion quality
+- **Covers:** `tests/integration/api/` + `tests/integration/app/`
+- **Triage:** `/test-triage scan` on integration directories
+- **Status:** DONE (PR #116). 98 files already in ledger from Phases 3–4. 34 new files added.
+- **Notes:** New files: tbt=32, nac=42. Same patterns as Phase 4 (API envelope, error-path guards). All FP — annotated.
 
 ---
 

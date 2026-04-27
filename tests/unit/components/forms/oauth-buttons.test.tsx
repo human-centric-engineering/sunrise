@@ -237,7 +237,7 @@ describe('components/forms/oauth-buttons', () => {
 
       // Wait for OAuth to complete
       await waitFor(() => {
-        expect(authClient.signIn.social).toHaveBeenCalled();
+        expect(authClient.signIn.social).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -264,7 +264,7 @@ describe('components/forms/oauth-buttons', () => {
 
       // Wait for OAuth to complete
       await waitFor(() => {
-        expect(authClient.signIn.social).toHaveBeenCalled();
+        expect(authClient.signIn.social).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -378,7 +378,7 @@ describe('components/forms/oauth-buttons', () => {
 
       // Assert: Verify OAuth was initiated
       await waitFor(() => {
-        expect(authClient.signIn.social).toHaveBeenCalled();
+        expect(authClient.signIn.social).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });

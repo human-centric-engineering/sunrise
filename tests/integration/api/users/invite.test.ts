@@ -212,7 +212,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Response structure and values
       expect(response.status).toBe(201);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.message).toBe('Invitation sent successfully');
       expect(body.data.emailStatus).toBe('sent');
       expect(body.data.invitation).toMatchObject({
@@ -317,7 +317,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Request still succeeds (201) despite email failure
       expect(response.status).toBe(201);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.message).toBe('Invitation created but email failed to send');
       expect(body.data.emailStatus).toBe('failed');
       expect(body.data.invitation.email).toBe('bob@example.com');
@@ -357,7 +357,7 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.error.code).toBe('UNAUTHORIZED');
 
       // Assert: No invitation was created
-      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 403 when user is not admin', async () => {
@@ -381,7 +381,7 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.error.message).toBe('Admin access required');
 
       // Assert: No invitation was created
-      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -427,7 +427,7 @@ describe('POST /api/v1/users/invite', () => {
       expect(body.error.message).toBe('User already exists with this email');
 
       // Assert: No invitation was created
-      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.verification.create)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should return 200 with pending status and NO link when invitation already exists (without resend)', async () => {
@@ -463,7 +463,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Returns 200 with 'pending' status
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.message).toBe(
         'Invitation already pending. Use ?resend=true to send a new invitation email.'
       );
@@ -488,8 +488,8 @@ describe('POST /api/v1/users/invite', () => {
       );
 
       // Assert: No new invitation was created
-      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
-      expect(vi.mocked(updateInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(updateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should resend invitation with new token when ?resend=true', async () => {
@@ -534,7 +534,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Returns 201 with new token
       expect(response.status).toBe(201);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(body.data.message).toBe('Invitation resent successfully');
       expect(body.data.emailStatus).toBe('sent');
       expect(body.data.invitation.link).toContain('new-resend-token-123');
@@ -548,10 +548,10 @@ describe('POST /api/v1/users/invite', () => {
           invitedBy: adminSession.user.id,
         })
       );
-      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: Email was sent
-      expect(vi.mocked(sendEmail)).toHaveBeenCalled();
+      expect(vi.mocked(sendEmail)).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
 
       // Assert: Logged as resent
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -658,7 +658,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Request succeeds
       expect(response.status).toBe(201);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Assert: Email was sent (inviterName should default to "Administrator")
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
@@ -696,7 +696,7 @@ describe('POST /api/v1/users/invite', () => {
 
       // Assert: Request succeeds
       expect(response.status).toBe(201);
-      expect(body.success).toBe(true);
+      expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Assert: Email success was logged with email ID and status
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
@@ -750,7 +750,7 @@ describe('POST /api/v1/users/invite', () => {
 
         // Assert: Response includes invitation link with BETTER_AUTH_URL
         expect(response.status).toBe(201);
-        expect(body.success).toBe(true);
+        expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(body.data.invitation.link).toContain('http://auth.example.com');
         expect(body.data.invitation.link).toContain('accept-invite');
       } finally {
@@ -800,7 +800,7 @@ describe('POST /api/v1/users/invite', () => {
 
         // Assert: Response includes invitation link with localhost
         expect(response.status).toBe(201);
-        expect(body.success).toBe(true);
+        expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(body.data.invitation.link).toContain('http://localhost:3000');
         expect(body.data.invitation.link).toContain('accept-invite');
       } finally {
@@ -951,7 +951,7 @@ describe('POST /api/v1/users/invite', () => {
 
         // Assert: Response uses BETTER_AUTH_URL
         expect(response.status).toBe(201);
-        expect(body.success).toBe(true);
+        expect(body.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(body.data.invitation.link).toContain('http://auth.example.com');
         expect(body.data.invitation.link).toContain('accept-invite');
       } finally {
@@ -1085,12 +1085,12 @@ describe('POST /api/v1/users/invite', () => {
       await POST(request);
 
       // Assert: No database queries were made
-      expect(vi.mocked(prisma.user.findUnique)).not.toHaveBeenCalled();
-      expect(vi.mocked(getValidInvitation)).not.toHaveBeenCalled();
-      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.user.findUnique)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(getValidInvitation)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(vi.mocked(generateInvitationToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
       // Assert: No email was sent
-      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should use client IP from getClientIP for rate limiting', async () => {

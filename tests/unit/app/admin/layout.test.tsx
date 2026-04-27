@@ -81,7 +81,7 @@ describe('AdminLayout', () => {
     render(tree);
 
     // Assert — no redirect occurred; admin chrome and children are rendered
-    expect(redirect).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     expect(screen.getByTestId('admin-sidebar')).toBeInTheDocument();
     expect(screen.getByTestId('admin-header')).toBeInTheDocument();
     expect(screen.getByTestId('admin-content')).toBeInTheDocument();

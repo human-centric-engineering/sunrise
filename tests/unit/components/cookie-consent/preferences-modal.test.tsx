@@ -400,7 +400,7 @@ describe('components/cookie-consent/preferences-modal', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockUpdateConsent).not.toHaveBeenCalled();
+        expect(mockUpdateConsent).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         expect(mockOnOpenChange).toHaveBeenCalledWith(false);
       });
     });
@@ -430,7 +430,7 @@ describe('components/cookie-consent/preferences-modal', () => {
       await user.click(cancelButton);
 
       // Assert - Changes should not be saved
-      expect(mockUpdateConsent).not.toHaveBeenCalled();
+      expect(mockUpdateConsent).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(mockOnOpenChange).toHaveBeenCalledWith(false);
     });
   });

@@ -199,7 +199,7 @@ describe('GET /api/v1/admin/logs', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<LogsResponse>(response);
 
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data).toHaveLength(5);
       expect(data.meta).toMatchObject({
         page: 1,
@@ -289,7 +289,7 @@ describe('GET /api/v1/admin/logs', () => {
       expect(response.status).toBe(200);
       const data = await parseResponse<LogsResponse>(response);
 
-      expect(data.success).toBe(true);
+      expect(data.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(data.data).toHaveLength(0);
       expect(data.meta.total).toBe(0);
     });

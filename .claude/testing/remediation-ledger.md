@@ -820,3 +820,147 @@ All tbt hits are structural boolean assertions (data.success API envelope, Array
 | tests/unit/components/admin/orchestration/workflows-table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 33 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
 | tests/unit/components/admin/orchestration/workflows/version-diff-viewer.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
 | tests/unit/components/admin/orchestration/workflows/version-history-panel.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | 3de9a26 | 2026-04-27T10:32:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/forms
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/forms/accept-invite-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 35 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/avatar-crop-dialog.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/avatar-upload.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 41 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/contact-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/delete-account-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/form-error.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/login-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/oauth-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/oauth-buttons.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/password-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/password-strength.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/preferences-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 33 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/profile-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 30 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/reset-password-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 49 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/forms/signup-form.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## components/ui
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/ui/client-date.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 39 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/dropdown-menu.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 49 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/error-card.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 36 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/field-help.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/password-input.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 49 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/select.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 18 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/separator.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/slider.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/ui/table.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 71 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## components — remaining (analytics, auth, dashboard, settings, cookie-consent)
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/components/analytics/analytics-scripts.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 37 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/analytics/page-tracker.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 21 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/analytics/user-identifier.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 46 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/auth/logout-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/auth/user-button.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/cookie-consent/cookie-banner.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 25 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/cookie-consent/preferences-modal.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/dashboard/email-status-card.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 44 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/components/settings/settings-tabs.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## app page tests (non-API)
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/app/(auth)/accept-invite/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/(auth)/login/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/(auth)/reset-password/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 17 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/(auth)/signup/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 31 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/(auth)/verify-email/callback/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 29 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/(auth)/verify-email/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 32 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/layout.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 3 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/agents/compare/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/analytics/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/audit/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/keys/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/resources/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/settings/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/mcp/tools/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 13 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/orchestration/settings/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 10 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/admin/users/[id]/page.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 31 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/app/global-error.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 34 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## lib/email + email templates
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+
+## lib/analytics
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/lib/analytics/analytics-provider.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/client.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 24 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/config.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 38 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/console-provider.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/events.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/hooks.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 28 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/providers/ga4.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 37 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/providers/plausible.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 38 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/providers/posthog.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 48 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/analytics/server.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 37 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## lib/consent
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/unit/lib/consent/conditional-script.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 26 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/consent/config.test.ts | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 43 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/consent/consent-provider.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 50 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/unit/lib/consent/use-consent.test.tsx | unit | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 27 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+
+## lib/storage + lib/monitoring + lib/embed
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+
+## integration tests — remaining (non-admin-orchestration)
+
+| file | type | grade | sig_hits | block_patterns | test_count | last_head | last_scanned | notes |
+|------|------|-------|----------|----------------|------------|-----------|-------------|-------|
+| tests/integration/api/admin/invitations.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 23 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/auth/accept-invite.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/auth/clear-session.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 19 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/health.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/users/invite.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 22 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/admin/feature-flags/[id]/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 16 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/admin/feature-flags/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 12 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/admin/logs/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 11 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/admin/orchestration/knowledge.documents.id.chunks.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/admin/orchestration/knowledge.documents.id.confirm.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/api/v1/users/[id]/route.test.ts | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 20 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/agents/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/agents/new-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/agents/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/capabilities/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 7 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/capabilities/new-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/capabilities/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/conversations/detail-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/costs/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/evaluations/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 3 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/evaluations/new-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/evaluations/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/executions/detail-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/knowledge/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/learn/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/learn/pattern-detail.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/provider-models/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 8 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/providers/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/providers/new-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/providers/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 6 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/workflows/edit-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 5 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/workflows/new-page-prepopulate.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/workflows/new-page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 9 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |
+| tests/integration/app/admin/orchestration/workflows/page.test.tsx | integration | Clean | 0 | hpo=0,mp=0,me=0,tcm=0 | 4 | b70b900 | 2026-04-27T12:05:00Z | All sig hits FP. Annotated where applicable. |

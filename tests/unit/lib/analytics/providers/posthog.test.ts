@@ -91,7 +91,7 @@ describe('lib/analytics/providers/posthog', () => {
         });
 
         const features = provider.getFeatures();
-        expect(features.supportsSessionReplay).toBe(true);
+        expect(features.supportsSessionReplay).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -104,7 +104,7 @@ describe('lib/analytics/providers/posthog', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         expect(mockPostHog.init).toHaveBeenCalledWith('phc_test123', {
           api_host: 'https://app.posthog.com',
           capture_pageview: false,
@@ -179,7 +179,7 @@ describe('lib/analytics/providers/posthog', () => {
         mockPostHog.init.mockClear();
         await provider.init();
 
-        expect(mockPostHog.init).not.toHaveBeenCalled();
+        expect(mockPostHog.init).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should set ready flag to true', async () => {
@@ -187,7 +187,7 @@ describe('lib/analytics/providers/posthog', () => {
 
         expect(provider.isReady()).toBe(false);
         await provider.init();
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -198,7 +198,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.identify('user-123');
 
         expect(result).toEqual({ success: false, error: 'PostHog not initialized' });
-        expect(mockPostHog.identify).not.toHaveBeenCalled();
+        expect(mockPostHog.identify).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should identify user with userId only', async () => {
@@ -307,7 +307,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.track('button_clicked');
 
         expect(result).toEqual({ success: false, error: 'PostHog not initialized' });
-        expect(mockPostHog.capture).not.toHaveBeenCalled();
+        expect(mockPostHog.capture).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track event without properties', async () => {
@@ -386,7 +386,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.page();
 
         expect(result).toEqual({ success: false, error: 'PostHog not initialized' });
-        expect(mockPostHog.capture).not.toHaveBeenCalled();
+        expect(mockPostHog.capture).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should track pageview with default values', async () => {
@@ -460,7 +460,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: false, error: 'PostHog not initialized' });
-        expect(mockPostHog.reset).not.toHaveBeenCalled();
+        expect(mockPostHog.reset).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should reset PostHog identity', async () => {
@@ -471,7 +471,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockPostHog.reset).toHaveBeenCalled();
+        expect(mockPostHog.reset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       it('should handle reset when no user is identified', async () => {
@@ -481,7 +481,7 @@ describe('lib/analytics/providers/posthog', () => {
         const result = await provider.reset();
 
         expect(result).toEqual({ success: true });
-        expect(mockPostHog.reset).toHaveBeenCalled();
+        expect(mockPostHog.reset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -497,7 +497,7 @@ describe('lib/analytics/providers/posthog', () => {
 
         await provider.init();
 
-        expect(provider.isReady()).toBe(true);
+        expect(provider.isReady()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -542,7 +542,7 @@ describe('lib/analytics/providers/posthog', () => {
           const result = provider.isFeatureEnabled('new-feature');
 
           expect(result).toBe(false);
-          expect(mockPostHog.isFeatureEnabled).not.toHaveBeenCalled();
+          expect(mockPostHog.isFeatureEnabled).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         });
 
         it('should check feature flag when initialized', async () => {
@@ -552,7 +552,7 @@ describe('lib/analytics/providers/posthog', () => {
 
           const result = provider.isFeatureEnabled('new-feature');
 
-          expect(result).toBe(true);
+          expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
           expect(mockPostHog.isFeatureEnabled).toHaveBeenCalledWith('new-feature');
         });
 
@@ -574,7 +574,7 @@ describe('lib/analytics/providers/posthog', () => {
           const result = provider.getFeatureFlag('variant-test');
 
           expect(result).toBeUndefined();
-          expect(mockPostHog.getFeatureFlag).not.toHaveBeenCalled();
+          expect(mockPostHog.getFeatureFlag).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         });
 
         it('should get feature flag value when initialized', async () => {
@@ -595,7 +595,7 @@ describe('lib/analytics/providers/posthog', () => {
 
           const result = provider.getFeatureFlag('boolean-flag');
 
-          expect(result).toBe(true);
+          expect(result).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
         });
 
         it('should return undefined when flag does not exist', async () => {
@@ -616,7 +616,7 @@ describe('lib/analytics/providers/posthog', () => {
 
           provider.onFeatureFlags(callback);
 
-          expect(mockPostHog.onFeatureFlags).not.toHaveBeenCalled();
+          expect(mockPostHog.onFeatureFlags).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
         });
 
         it('should subscribe to feature flag updates', async () => {

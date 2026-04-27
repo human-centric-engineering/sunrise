@@ -102,7 +102,7 @@ describe('McpKeysPage', () => {
 
     const list = screen.getByTestId('mcp-keys-list');
     expect(list).toHaveAttribute('data-count', '0');
-    expect(parseApiResponse).not.toHaveBeenCalled();
+    expect(parseApiResponse).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // 5. body.success === false — passes empty array

@@ -141,7 +141,7 @@ describe('AcceptInvitePage', () => {
       const form = screen.getByTestId('accept-invite-form');
       const cardContent = container.querySelector('[class*="card"]');
       expect(cardContent).toBeInTheDocument();
-      expect(cardContent?.contains(form)).toBe(true);
+      expect(cardContent?.contains(form)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 

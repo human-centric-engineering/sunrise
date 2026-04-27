@@ -61,7 +61,7 @@ describe('components/ui/slider', () => {
       // Simulate keyboard interaction
       fireEvent.keyDown(slider, { key: 'ArrowRight' });
 
-      expect(onValueChange).toHaveBeenCalled();
+      expect(onValueChange).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
     it('should respect disabled state', () => {

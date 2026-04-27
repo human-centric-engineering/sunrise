@@ -152,15 +152,15 @@ describe('resolveEmbedToken', () => {
 
 describe('isOriginAllowed', () => {
   it('empty allowedOrigins → always returns true (wildcard)', () => {
-    expect(isOriginAllowed('https://anything.com', [])).toBe(true);
-    expect(isOriginAllowed('https://other.com', [])).toBe(true);
+    expect(isOriginAllowed('https://anything.com', [])).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+    expect(isOriginAllowed('https://other.com', [])).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('origin in allowedOrigins → returns true', () => {
     const allowed = ['https://example.com', 'https://app.example.com'];
 
-    expect(isOriginAllowed('https://example.com', allowed)).toBe(true);
-    expect(isOriginAllowed('https://app.example.com', allowed)).toBe(true);
+    expect(isOriginAllowed('https://example.com', allowed)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+    expect(isOriginAllowed('https://app.example.com', allowed)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('origin NOT in allowedOrigins → returns false', () => {

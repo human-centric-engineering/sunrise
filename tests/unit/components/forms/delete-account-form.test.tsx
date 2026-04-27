@@ -413,7 +413,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Assert: API should be called
       await waitFor(() => {
-        expect(apiClient.delete).toHaveBeenCalled();
+        expect(apiClient.delete).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
 
@@ -469,7 +469,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Note: Button is disabled, so click won't work, but we can verify it doesn't call API
       expect(actionButton).toBeDisabled();
-      expect(apiClient.delete).not.toHaveBeenCalled();
+      expect(apiClient.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should track account deletion and reset analytics identity after successful deletion', async () => {
@@ -498,7 +498,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Assert: Analytics reset should be called (event tracked server-side)
       await waitFor(() => {
-        expect(mockReset).toHaveBeenCalled();
+        expect(mockReset).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
     });
   });
@@ -533,7 +533,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Assert: API was called (error handling happens internally)
       await waitFor(() => {
-        expect(apiClient.delete).toHaveBeenCalled();
+        expect(apiClient.delete).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       // Dialog closes even on error due to AlertDialog behavior
@@ -567,7 +567,7 @@ describe('components/forms/delete-account-form', () => {
 
       // Wait for API call
       await waitFor(() => {
-        expect(apiClient.delete).toHaveBeenCalled();
+        expect(apiClient.delete).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
       });
 
       // Assert: window.location.href should NOT be changed on error

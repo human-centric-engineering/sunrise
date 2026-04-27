@@ -152,7 +152,7 @@ describe('components/forms/reset-password-form', () => {
         });
 
         // Assert: API should not be called
-        expect(global.fetch).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should show error for empty email', async () => {
@@ -171,7 +171,7 @@ describe('components/forms/reset-password-form', () => {
         });
 
         // Assert: API should not be called
-        expect(global.fetch).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       });
 
       it('should clear validation error when user corrects email', async () => {
@@ -1038,7 +1038,7 @@ describe('components/forms/reset-password-form', () => {
         await waitFor(
           () => {
             expect(mockRouter.push).toHaveBeenCalledWith('/login');
-            expect(mockRouter.refresh).toHaveBeenCalled();
+            expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
           },
           { timeout: 2000 }
         );

@@ -155,7 +155,7 @@ describe('lib/consent/consent-provider', () => {
     it('should have essential=true by default', () => {
       // Arrange & Act & Assert
       renderWithContext((value) => {
-        expect(value.consent.essential).toBe(true);
+        expect(value.consent.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -190,7 +190,7 @@ describe('lib/consent/consent-provider', () => {
 
       // Assert - wait for hydration
       await waitFor(() => {
-        expect(isInitialized).toBe(true);
+        expect(isInitialized).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -218,8 +218,8 @@ describe('lib/consent/consent-provider', () => {
       expect(mockLocalStorage[CONSENT_STORAGE_KEY]).toBeDefined();
 
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
-      expect(stored.essential).toBe(true);
-      expect(stored.optional).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(stored.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(stored.version).toBe(CONSENT_VERSION);
       expect(stored.timestamp).toBeGreaterThan(0);
     });
@@ -236,7 +236,7 @@ describe('lib/consent/consent-provider', () => {
 
       // Act & Assert
       renderWithContext((value) => {
-        expect(value.consent.essential).toBe(true);
+        expect(value.consent.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 
@@ -370,8 +370,8 @@ describe('lib/consent/consent-provider', () => {
 
       // Assert - check what was written to localStorage
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
-      expect(stored.essential).toBe(true);
-      expect(stored.optional).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(stored.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should set timestamp when accepting all', () => {
@@ -417,8 +417,8 @@ describe('lib/consent/consent-provider', () => {
 
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
       expect(stored.version).toBe(CONSENT_VERSION);
-      expect(stored.essential).toBe(true);
-      expect(stored.optional).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(stored.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should dispatch consent-change event', () => {
@@ -459,7 +459,7 @@ describe('lib/consent/consent-provider', () => {
 
       // Assert
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
-      expect(stored.essential).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(stored.optional).toBe(false);
     });
 
@@ -543,8 +543,8 @@ describe('lib/consent/consent-provider', () => {
 
       // Assert
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
-      expect(stored.essential).toBe(true);
-      expect(stored.optional).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(stored.optional).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should update optional consent to false', () => {
@@ -562,7 +562,7 @@ describe('lib/consent/consent-provider', () => {
 
       // Assert
       const stored = JSON.parse(mockLocalStorage[CONSENT_STORAGE_KEY]);
-      expect(stored.essential).toBe(true);
+      expect(stored.essential).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect(stored.optional).toBe(false);
     });
 
@@ -716,7 +716,7 @@ describe('lib/consent/consent-provider', () => {
       );
 
       // Assert
-      expect(contextValue!.isPreferencesOpen).toBe(true);
+      expect(contextValue!.isPreferencesOpen).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('should close preferences modal when closePreferences is called', () => {
@@ -748,7 +748,7 @@ describe('lib/consent/consent-provider', () => {
         </ConsentProvider>
       );
 
-      expect(contextValue!.isPreferencesOpen).toBe(true);
+      expect(contextValue!.isPreferencesOpen).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Act - close the modal
       act(() => {
@@ -921,8 +921,8 @@ describe('lib/consent/consent-provider', () => {
       }).not.toThrow();
 
       // Assert - localStorage should not be called in disabled mode
-      expect(localStorage.setItem).not.toHaveBeenCalled();
-      expect(localStorage.removeItem).not.toHaveBeenCalled();
+      expect(localStorage.setItem).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      expect(localStorage.removeItem).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should have isPreferencesOpen=false in disabled mode', () => {
@@ -1095,8 +1095,8 @@ describe('lib/consent/consent-provider', () => {
       );
 
       // Verify registration
-      expect(registeredHandlers.has('consent-change')).toBe(true);
-      expect(registeredHandlers.has('storage')).toBe(true);
+      expect(registeredHandlers.has('consent-change')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(registeredHandlers.has('storage')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
 
       // Act - unmount to trigger cleanup
       unmount();
