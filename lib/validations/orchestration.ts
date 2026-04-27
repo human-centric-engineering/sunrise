@@ -14,7 +14,7 @@ import {
   queryBooleanSchema,
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
-import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 
@@ -604,7 +604,7 @@ export const createWebhookSchema = z.object({
     .string()
     .url('Must be a valid URL')
     .max(2000)
-    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
+    .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)'),
   secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
   events: z
     .array(z.enum(WEBHOOK_EVENT_TYPES))
@@ -619,11 +619,11 @@ export const updateWebhookSchema = z.object({
     .string()
     .url('Must be a valid URL')
     .max(2000)
-    .refine((url) => checkSafeProviderUrl(url), 'URL is not allowed (private or internal address)')
+    .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)')
     .optional(),
   secret: z.string().min(16).max(256).optional(),
   events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).min(1).max(WEBHOOK_EVENT_TYPES.length).optional(),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).nullable().optional(),
   isActive: z.boolean().optional(),
 });
 

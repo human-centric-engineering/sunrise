@@ -20,6 +20,14 @@ import { logger } from '@/lib/logging';
 
 const DISPATCH_TIMEOUT_MS = 5000;
 
+/** Safely extract a JSON object from a Prisma Json field, falling back to empty object. */
+function toJsonRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
 /** Maximum delivery attempts (initial + retries). */
 const MAX_ATTEMPTS = 3;
 
@@ -102,10 +110,10 @@ export async function retryDelivery(deliveryId: string): Promise<boolean> {
     },
   });
 
+  const storedPayload = toJsonRecord(delivery.payload);
   const body = JSON.stringify({
-    event: delivery.eventType,
+    ...storedPayload,
     timestamp: new Date().toISOString(),
-    data: delivery.payload,
   });
 
   // Fire-and-forget — the attempt will update the delivery record
@@ -133,10 +141,18 @@ export async function processPendingRetries(): Promise<number> {
 
   await Promise.allSettled(
     pending.map(async (delivery) => {
+      if (!delivery.subscription.isActive) {
+        await prisma.aiWebhookDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'exhausted', nextRetryAt: null, lastError: 'Subscription deactivated' },
+        });
+        return;
+      }
+
+      const storedPayload = toJsonRecord(delivery.payload);
       const body = JSON.stringify({
-        event: delivery.eventType,
+        ...storedPayload,
         timestamp: new Date().toISOString(),
-        data: delivery.payload,
       });
 
       await attemptDelivery(
@@ -198,7 +214,7 @@ async function attemptDelivery(
           'Content-Type': 'application/json',
           'X-Webhook-Signature': signature,
           'X-Webhook-Event': (() => {
-            const parsed = JSON.parse(body) as Record<string, unknown>;
+            const parsed = toJsonRecord(JSON.parse(body));
             const event = parsed.event;
             return typeof event === 'string' ? event : '';
           })(),
@@ -260,7 +276,7 @@ async function attemptDelivery(
   if (!exhausted && nextRetryAt) {
     // Schedule in-process retry via setTimeout
     const delay = retryDelay ?? RETRY_DELAYS_MS[0];
-    scheduleRetry(deliveryId, url, delivery.subscriptionId, body, delay);
+    scheduleRetry(deliveryId, delivery.subscriptionId, delay);
   }
 
   logger.warn('Webhook delivery failed', {
@@ -277,32 +293,37 @@ async function attemptDelivery(
 /**
  * Schedule an in-process retry via setTimeout.
  *
+ * Re-reads the delivery and subscription from the DB so the retry uses
+ * a fresh timestamp (for HMAC freshness) and the current subscription
+ * URL/secret (in case they were updated between attempts).
+ *
  * The timeout is unref'd so it doesn't prevent Node from exiting.
  * If the process restarts before the retry fires, `processPendingRetries()`
  * will pick it up on the next tick.
  */
-function scheduleRetry(
-  deliveryId: string,
-  _url: string,
-  subscriptionId: string,
-  body: string,
-  delayMs: number
-): void {
+function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: number): void {
   const timer = setTimeout(
     () =>
       void (async () => {
         try {
-          const sub = await prisma.aiWebhookSubscription.findUnique({
-            where: { id: subscriptionId },
-          });
-          if (!sub || !sub.isActive) {
-            // Subscription deactivated — mark delivery as exhausted
-            await prisma.aiWebhookDelivery.update({
-              where: { id: deliveryId },
-              data: { status: 'exhausted', nextRetryAt: null },
-            });
+          const [delivery, sub] = await Promise.all([
+            prisma.aiWebhookDelivery.findUnique({ where: { id: deliveryId } }),
+            prisma.aiWebhookSubscription.findUnique({ where: { id: subscriptionId } }),
+          ]);
+          if (!delivery || !sub || !sub.isActive) {
+            if (delivery) {
+              await prisma.aiWebhookDelivery.update({
+                where: { id: deliveryId },
+                data: { status: 'exhausted', nextRetryAt: null },
+              });
+            }
             return;
           }
+          const storedPayload = toJsonRecord(delivery.payload);
+          const body = JSON.stringify({
+            ...storedPayload,
+            timestamp: new Date().toISOString(),
+          });
           await attemptDelivery(deliveryId, sub.url, sub.secret, body);
         } catch (err) {
           logger.error('Webhook scheduled retry error', {

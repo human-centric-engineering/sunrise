@@ -70,9 +70,12 @@ export const HookEventPayloadSchema = z.object({
 export type HookEventPayload = z.infer<typeof HookEventPayloadSchema>;
 
 /** Filter criteria for selective hook firing */
-export interface HookFilter {
-  agentSlug?: string;
-  agentId?: string;
-  userId?: string;
-  [key: string]: unknown;
-}
+export const HookFilterSchema = z
+  .object({
+    agentSlug: z.string().optional(),
+    agentId: z.string().optional(),
+    userId: z.string().optional(),
+  })
+  .passthrough();
+
+export type HookFilter = z.infer<typeof HookFilterSchema>;
