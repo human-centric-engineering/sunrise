@@ -279,8 +279,8 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
                 your team knows an agent hit its spending limit
               </li>
               <li>
-                <span className="font-medium">Conversation Escalated</span> → create a support
-                ticket in Zendesk or JIRA when an agent can&apos;t resolve a query
+                <span className="font-medium">Approval Required</span> → create a support ticket in
+                Zendesk or JIRA when an agent needs human approval
               </li>
               <li>
                 <span className="font-medium">Workflow Failed</span> → trigger a PagerDuty alert so
