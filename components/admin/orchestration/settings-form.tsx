@@ -119,6 +119,9 @@ function guardModeToApi(v: string): string | null {
 export function SettingsForm({ initialSettings }: SettingsFormProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
+  const [savedEmails, setSavedEmails] = React.useState<string[]>(
+    initialSettings.escalationConfig?.emailAddresses ?? []
+  );
   const [escalationEmails, setEscalationEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
   );
@@ -160,6 +163,10 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     reset(defaults);
   }, [defaults, reset]);
 
+  // Track escalation email changes outside react-hook-form
+  const emailsChanged = JSON.stringify(escalationEmails) !== JSON.stringify(savedEmails);
+  const hasChanges = isDirty || emailsChanged;
+
   // zodResolver already validates and transforms the data via settingsFormSchema,
   // so `values` here is the parsed output type (numbers/null, not strings).
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
@@ -195,7 +202,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           escalationConfig,
         },
       });
-      reset();
+      reset(undefined, { keepValues: true });
+      setSavedEmails([...escalationEmails]);
       setSavedAt(new Date());
     } catch (err) {
       setError(
@@ -694,7 +702,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
 
       {/* ── Submit ─────────────────────────────────────────────────────── */}
       <div className="sticky bottom-4 flex items-center gap-3">
-        <Button type="submit" disabled={isSubmitting || !isDirty}>
+        <Button type="submit" disabled={isSubmitting || !hasChanges}>
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -707,7 +715,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             </>
           )}
         </Button>
-        {savedAt && !isDirty && (
+        {savedAt && !hasChanges && (
           <span className="text-muted-foreground flex items-center gap-1 text-sm">
             <Check className="h-4 w-4 text-emerald-500" />
             Saved
