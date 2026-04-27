@@ -453,6 +453,13 @@ function WorkflowBuilderInner({
 
   const handleSaveAsTemplate = useCallback(async () => {
     if (!workflow) return;
+
+    if (
+      !confirm(
+        'Save this workflow as a reusable template? Other users will be able to create new workflows from it.'
+      )
+    )
+      return;
     setSavingAsTemplate(true);
     setSavedAsTemplate(false);
     try {

@@ -72,11 +72,17 @@ import type { PaginationMeta } from '@/types/api';
 export interface WorkflowsTableProps {
   initialWorkflows: AiWorkflowListItem[];
   initialMeta: PaginationMeta;
+  /** Set when the server page's initial fetch failed. */
+  initialError?: string | null;
 }
 
 type SortField = 'createdAt' | 'name';
 
-export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTableProps) {
+export function WorkflowsTable({
+  initialWorkflows,
+  initialMeta,
+  initialError,
+}: WorkflowsTableProps) {
   const router = useRouter();
   const [workflows, setWorkflows] = useState(initialWorkflows);
   const [meta, setMeta] = useState(initialMeta);
@@ -84,7 +90,7 @@ export function WorkflowsTable({ initialWorkflows, initialMeta }: WorkflowsTable
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isLoading, setIsLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(initialError ?? null);
   const [deleteTarget, setDeleteTarget] = useState<AiWorkflowListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
