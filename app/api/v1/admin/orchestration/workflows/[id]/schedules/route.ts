@@ -53,6 +53,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const workflow = await prisma.aiWorkflow.findUnique({ where: { id: parsed.data } });
   if (!workflow) throw new NotFoundError(`Workflow ${parsed.data} not found`);
+  if (!workflow.isActive) {
+    throw new ValidationError('Cannot create schedule on an inactive workflow', {
+      workflowId: ['Workflow must be active to add schedules'],
+    });
+  }
 
   const body = await validateRequestBody(request, createScheduleSchema);
 

@@ -11,7 +11,6 @@
  * Authentication: Admin role required.
  */
 
-import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -26,6 +25,7 @@ import { logger } from '@/lib/logging';
 import {
   workflowDefinitionHistorySchema,
   workflowDefinitionRevertSchema,
+  workflowDefinitionSchema,
   type WorkflowDefinitionHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -83,7 +83,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const nextHistory: WorkflowDefinitionHistoryEntry[] = [
     ...history,
     {
-      definition: z.record(z.string(), z.unknown()).catch({}).parse(current.workflowDefinition),
+      definition: workflowDefinitionSchema.parse(current.workflowDefinition),
       changedAt: new Date().toISOString(),
       changedBy: session.user.id,
     },

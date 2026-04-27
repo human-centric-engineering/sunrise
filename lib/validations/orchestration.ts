@@ -728,7 +728,7 @@ export const workflowDefinitionSchema = z.object({
  * PATCH that actually changes `workflowDefinition`, and on every successful revert.
  */
 export const workflowDefinitionHistoryEntrySchema = z.object({
-  definition: z.record(z.string(), z.unknown()),
+  definition: workflowDefinitionSchema,
   changedAt: z.string().datetime(),
   changedBy: z.string().min(1),
 });
@@ -1917,6 +1917,38 @@ export const orchestratorPlannerResponseSchema = z.object({
   /** Optional reasoning the planner provides about its decisions. */
   reasoning: z.string().optional(),
 });
+
+// ---------- Chain / Parallel / Notification ──────────────────────────────
+
+export const chainConfigSchema = stepErrorConfigSchema.extend({
+  /** Human-readable description of what the chain does. */
+  description: z.string().optional(),
+  /** Sub-steps are structural metadata; the engine walks DAG edges. */
+  steps: z.array(z.unknown()).optional(),
+});
+
+export const parallelConfigSchema = stepErrorConfigSchema.extend({
+  /** Branches are structural metadata; the engine fans out via DAG edges. */
+  branches: z.array(z.unknown()).optional(),
+  /** Timeout for waiting on all branches (ms). */
+  timeoutMs: z.number().int().positive().optional(),
+  /** Strategy for slow branches: 'wait-all' or 'first-settled'. */
+  stragglerStrategy: z.enum(['wait-all', 'first-settled']).optional(),
+});
+
+export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
+  stepErrorConfigSchema.extend({
+    channel: z.literal('email'),
+    to: z.string().optional(),
+    subject: z.string().optional(),
+    bodyTemplate: z.string().optional(),
+  }),
+  stepErrorConfigSchema.extend({
+    channel: z.literal('webhook'),
+    webhookUrl: z.string().url().optional(),
+    bodyTemplate: z.string().optional(),
+  }),
+]);
 
 // ---------- Workflow Schedule ─────────────────────────────────────────────
 
