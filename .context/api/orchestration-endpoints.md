@@ -51,6 +51,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/validate`                 | POST               | DAG validation                                          | 3.2     |
 | `/workflows/:id/dry-run`                  | POST               | Validate + check inputData against template vars        | 5.1     |
 | `/workflows/:id/execute`                  | POST               | Run workflow (SSE `text/event-stream`)                  | 3.2     |
+| `/workflows/:id/execute-stream`           | GET                | Run workflow via EventSource (SSE GET)                  | 5.1     |
 | `/workflows/:id/definition-history`       | GET                | Workflow definition version history                     | 5.1     |
 | `/workflows/:id/definition-revert`        | POST               | Revert to previous definition version                   | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace                           | 3.2     |
@@ -319,6 +320,10 @@ Response: `{ ok, errors, warnings, extractedVariables }`. Warnings (uncovered te
 ### `POST /workflows/:id/execute`
 
 Runs a workflow as a live SSE `text/event-stream`. Body: `{ inputData, budgetLimitUsd? }`. See [`.context/orchestration/engine.md`](../orchestration/engine.md) for event types and lifecycle. Optional query param `?resumeFromExecutionId=<cuid>` resumes a paused execution.
+
+### `GET /workflows/:id/execute-stream`
+
+Alternative to `POST /execute` for clients that prefer GET-based SSE (the browser `EventSource` API requires GET). Input is passed as query params: `?inputData=<json>&budgetLimitUsd=<number>`. Events are identical to the POST variant. On client disconnect, execution continues server-side but stops streaming.
 
 ### `GET /workflows/:id/definition-history`
 
