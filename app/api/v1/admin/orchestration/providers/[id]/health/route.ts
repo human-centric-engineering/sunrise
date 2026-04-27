@@ -15,6 +15,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getBreaker, getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 
 function parseProviderId(raw: string): string {
@@ -74,6 +75,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     providerId: id,
     slug: provider.slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'provider.health_reset',
+    entityType: 'provider',
+    entityId: id,
+    entityName: provider.name,
+    clientIp: clientIP,
   });
 
   return successResponse({

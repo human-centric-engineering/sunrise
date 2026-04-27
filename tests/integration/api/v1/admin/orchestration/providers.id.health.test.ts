@@ -44,6 +44,10 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/llm/circuit-breaker', () => {
   let mockState: { state: string; failureCount: number; openedAt: number | null } = {
     state: 'closed',
