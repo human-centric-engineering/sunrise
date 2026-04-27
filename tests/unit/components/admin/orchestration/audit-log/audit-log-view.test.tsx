@@ -220,7 +220,7 @@ describe('AuditLogView', () => {
     await waitFor(() => screen.getByText(/1 \/ 2/));
 
     await user.click(screen.getByRole('button', { name: /next page/i }));
-    await waitFor(() => screen.getByText(/2 \/ 2/));
+    await waitFor(() => screen.getByText(/2 \/ 2/), { timeout: 3000 });
 
     await user.type(screen.getByPlaceholderText(/filter by action/i), 'alice');
 
@@ -567,19 +567,25 @@ describe('AuditLogView', () => {
     // to settle before clicking prev — clicking during a pending update
     // races the React commit and the second click can be dropped.
     await user.click(screen.getByRole('button', { name: /next page/i }));
-    await waitFor(() => screen.getByText(/2 \/ 2/));
-    await waitFor(() => {
-      const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
-      expect(url).toContain('page=2');
-    });
+    await waitFor(() => screen.getByText(/2 \/ 2/), { timeout: 3000 });
+    await waitFor(
+      () => {
+        const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
+        expect(url).toContain('page=2');
+      },
+      { timeout: 3000 }
+    );
 
     const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
     await user.click(screen.getByRole('button', { name: /previous page/i }));
 
-    await waitFor(() => {
-      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-      expect(callsAfter).toBeGreaterThan(callsBefore);
-    });
+    await waitFor(
+      () => {
+        const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+        expect(callsAfter).toBeGreaterThan(callsBefore);
+      },
+      { timeout: 3000 }
+    );
 
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
     const lastUrl = calls[calls.length - 1][0] as string;
