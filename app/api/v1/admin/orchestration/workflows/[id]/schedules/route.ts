@@ -13,6 +13,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { createScheduleSchema } from '@/lib/validations/orchestration';
 import { isValidCron, getNextRunAt } from '@/lib/orchestration/scheduling';
@@ -73,6 +74,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       nextRunAt,
       createdBy: session.user.id,
     },
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow_schedule.create',
+    entityType: 'workflow_schedule',
+    entityId: schedule.id,
+    entityName: schedule.name,
+    metadata: { workflowId: parsed.data, cronExpression: body.cronExpression },
+    clientIp: clientIP,
   });
 
   return successResponse({ schedule }, undefined, { status: 201 });

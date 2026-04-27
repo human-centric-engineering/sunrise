@@ -18,6 +18,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
@@ -84,6 +85,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     templateId: template.id,
     templateSlug: slug,
     adminId: session.user.id,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow.save_as_template',
+    entityType: 'workflow',
+    entityId: template.id,
+    entityName: template.name,
+    metadata: { sourceWorkflowId: id, templateSlug: slug },
+    clientIp: clientIP,
   });
 
   return successResponse(template);

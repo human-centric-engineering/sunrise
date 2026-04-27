@@ -21,6 +21,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import {
   workflowDefinitionHistorySchema,
@@ -101,6 +102,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     versionIndex: body.versionIndex,
     adminId: session.user.id,
     historyLength: nextHistory.length,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow.definition_revert',
+    entityType: 'workflow',
+    entityId: id,
+    entityName: workflow.name,
+    metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
+    clientIp: clientIP,
   });
 
   return successResponse(workflow);
