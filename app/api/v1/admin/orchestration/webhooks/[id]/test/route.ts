@@ -35,6 +35,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   });
   if (!webhook) throw new NotFoundError('Webhook not found');
 
+  if (!webhook.secret) {
+    return successResponse({
+      success: false,
+      statusCode: null,
+      durationMs: 0,
+      error: 'Webhook has no signing secret. Set a secret before testing.',
+    });
+  }
+
   const payload = JSON.stringify({
     event: 'ping',
     timestamp: new Date().toISOString(),

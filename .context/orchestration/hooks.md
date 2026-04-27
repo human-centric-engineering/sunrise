@@ -20,7 +20,7 @@ Both subsystems can sign outbound payloads. Pick the subsystem based on delivery
 ```
 lib/orchestration/hooks/
 ├── registry.ts    # emitHookEvent, invalidateHookCache
-├── serialize.ts   # toSafeHook (strips secret, adds hasSecret)
+├── serialize.ts   # toSafeHook (strips secret, redacts header values, adds hasSecret)
 ├── signing.ts     # generateHookSecret, signHookPayload, verifyHookSignature
 └── types.ts       # HOOK_EVENT_TYPES, HookAction, HookFilter, HookEventPayload
 ```
@@ -157,7 +157,7 @@ Behaviour:
 
 Secrets are stored in plaintext on the `AiEventHook.secret` column (it _is_ the signing key — there is nothing meaningful to hash into). They are never returned from the read endpoints:
 
-- `GET /hooks` and `GET /hooks/:id` strip `secret` and expose `hasSecret: boolean` instead.
+- `GET /hooks` and `GET /hooks/:id` strip `secret` and expose `hasSecret: boolean` instead. Custom header values in `action.headers` are also replaced with `'••••••••'` — only header names are visible in API responses.
 - `POST /hooks` and `PATCH /hooks/:id` silently ignore any `secret` field in the request body — secrets only arrive via the rotate endpoint.
 - The rotate endpoint returns the new plaintext **once**. Admins must capture it immediately and configure their receiver; there is no re-read path.
 

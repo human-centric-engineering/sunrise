@@ -53,6 +53,7 @@ import { Switch } from '@/components/ui/switch';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 
@@ -88,6 +89,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
   const fetchPage = useCallback(
     async (page: number) => {
       setLoading(true);
+      setListError(null);
       try {
         const params = new URLSearchParams({ page: String(page), limit: String(meta.limit) });
         if (activeFilter !== 'all') params.set('isActive', activeFilter);
@@ -97,6 +99,8 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
           setWebhooks(body.data);
           setMeta(parsePaginationMeta(body.meta) ?? meta);
         }
+      } catch (err) {
+        setListError(err instanceof APIClientError ? err.message : 'Failed to load webhooks');
       } finally {
         setLoading(false);
       }
@@ -111,9 +115,16 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    setListError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.webhookById(deleteTarget.id));
       void fetchPage(meta.page);
+    } catch (err) {
+      setListError(
+        err instanceof APIClientError
+          ? `Delete failed: ${err.message}`
+          : 'Could not delete webhook. Try again.'
+      );
     } finally {
       setDeleteTarget(null);
     }
@@ -207,7 +218,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                     <div className="flex flex-wrap gap-1">
                       {wh.events.slice(0, 3).map((e) => (
                         <Badge key={e} variant="secondary" className="text-[10px]">
-                          {e}
+                          {formatEventLabel(e)}
                         </Badge>
                       ))}
                       {wh.events.length > 3 && (

@@ -38,12 +38,12 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 
 ### Filters
 
-| Control        | Behaviour                                                                                                                                                                                                                                                                                            |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1.                                                                                                      |
-| Entity type    | Server-side filter. Options include `agent`, `workflow`, `capability`, `provider`, `mcp_api_key`, `knowledge_document`, `settings`, `experiment`, `embed_token`, `backup`, `webhook` (event hooks), `webhook_subscription` (outbound subscriptions), `conversation`. Selecting one resets to page 1. |
-| Date range     | Server-side — `dateFrom` / `dateTo` sent as query params, coerced to `Date` by Zod. Inclusive on both ends (`gte` / `lte`). Changing either value resets the page to 1.                                                                                                                              |
-| Refresh button | Re-fetches the current page.                                                                                                                                                                                                                                                                         |
+| Control        | Behaviour                                                                                                                                                                                                                                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1.                                                                                                                                                |
+| Entity type    | Server-side filter. Options include `agent`, `workflow`, `capability`, `provider`, `mcp_api_key`, `knowledge_document`, `settings`, `experiment`, `embed_token`, `backup`, `hook` (event hooks), `webhook_subscription` (outbound subscriptions), `delivery` (manual retries), `mcp_settings`, `conversation`. Selecting one resets to page 1. |
+| Date range     | Server-side — `dateFrom` / `dateTo` sent as query params, coerced to `Date` by Zod. Inclusive on both ends (`gte` / `lte`). Changing either value resets the page to 1.                                                                                                                                                                        |
+| Refresh button | Re-fetches the current page.                                                                                                                                                                                                                                                                                                                   |
 
 All entity types with audit data have corresponding entries in the filter dropdown.
 
@@ -174,11 +174,14 @@ Every `logAdminAction()` call site (as of grep at write time):
 | `experiments/[id]/run/route.ts`                     | `experiment.run`                                                    | `experiment`           |
 | `backup/export/route.ts`                            | `backup.export`                                                     | `backup`               |
 | `backup/import/route.ts`                            | `backup.import`                                                     | `backup`               |
-| `hooks/route.ts`                                    | `webhook.create`                                                    | `webhook`              |
-| `hooks/[id]/route.ts`                               | `webhook.update`, `webhook.delete`                                  | `webhook`              |
-| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `webhook`              |
+| `hooks/route.ts`                                    | `hook.create`                                                       | `hook`                 |
+| `hooks/[id]/route.ts`                               | `hook.update`, `hook.delete`                                        | `hook`                 |
+| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `hook`                 |
 | `webhooks/route.ts`                                 | `webhook_subscription.create`                                       | `webhook_subscription` |
 | `webhooks/[id]/route.ts`                            | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook_subscription` |
+| `webhooks/deliveries/[id]/retry/route.ts`           | `webhook_delivery.retry`                                            | `delivery`             |
+| `hooks/deliveries/[id]/retry/route.ts`              | `hook_delivery.retry`                                               | `delivery`             |
+| `mcp/settings/route.ts`                             | `mcp_settings.update`                                               | `mcp_settings`         |
 | `conversations/clear/route.ts`                      | `conversation.bulk_clear`                                           | `conversation`         |
 
 Note: bulk agent actions write a **single** audit entry per operation (not per-agent). The `metadata` field records affected agent IDs.

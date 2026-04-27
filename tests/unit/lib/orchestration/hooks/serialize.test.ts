@@ -129,8 +129,13 @@ describe('toSafeHook', () => {
       // Act
       const result = toSafeHook(row);
 
-      // Assert — deep equality, not reference equality (spread creates a shallow copy)
-      expect(result.action).toEqual(complexAction);
+      // Assert — headers are redacted, other fields pass through
+      expect(result.action).toEqual({
+        url: 'https://api.example.com/hooks',
+        method: 'POST',
+        headers: { Authorization: '••••••••', 'Content-Type': '••••••••' },
+        retries: { max: 3, backoff: [1, 2, 4] },
+      });
     });
 
     it('should pass through an array JsonValue in the filter field unchanged', () => {

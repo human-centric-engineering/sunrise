@@ -65,7 +65,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   logAdminAction({
     userId: session.user.id,
     action: 'hook.secret.rotated',
-    entityType: 'webhook',
+    entityType: 'hook',
     entityId: id,
     entityName: existing.name,
     metadata: { hadPrevious },
@@ -116,7 +116,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   logAdminAction({
     userId: session.user.id,
     action: 'hook.secret.cleared',
-    entityType: 'webhook',
+    entityType: 'hook',
     entityId: id,
     entityName: existing.name,
     clientIp: clientIP,

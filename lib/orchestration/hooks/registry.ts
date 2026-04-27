@@ -26,6 +26,7 @@ import {
   type HookEventPayload,
   type HookEventType,
   type HookFilter,
+  HookFilterSchema,
   type WebhookAction,
 } from '@/lib/orchestration/hooks/types';
 import {
@@ -84,11 +85,24 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
       continue;
     }
 
+    let filter: HookFilter | null = null;
+    if (hook.filter) {
+      const parsedFilter = HookFilterSchema.safeParse(hook.filter);
+      if (!parsedFilter.success) {
+        logger.warn('Hook skipped: invalid filter shape', {
+          hookId: hook.id,
+          issues: parsedFilter.error.issues,
+        });
+        continue;
+      }
+      filter = parsedFilter.data;
+    }
+
     const cached: CachedHook = {
       id: hook.id,
       eventType: hook.eventType,
       action: parsedAction.data,
-      filter: hook.filter as HookFilter | null,
+      filter,
       secret: hook.secret,
     };
 
@@ -114,6 +128,7 @@ export function invalidateHookCache(): void {
  */
 function matchesFilter(filter: HookFilter | null, payload: HookEventPayload): boolean {
   if (!filter) return true;
+  if (!payload.data) return false;
 
   for (const [key, value] of Object.entries(filter)) {
     if (value === undefined || value === null) continue;
@@ -436,7 +451,14 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
 
   await prisma.aiEventHookDelivery.update({
     where: { id: deliveryId },
-    data: { status: 'pending', attempts: 0, lastError: null, nextRetryAt: null },
+    data: {
+      status: 'pending',
+      attempts: 0,
+      lastError: null,
+      nextRetryAt: null,
+      lastAttemptAt: null,
+      lastResponseCode: null,
+    },
   });
 
   void attemptDelivery(

@@ -123,7 +123,7 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
         workflowId: 'wf_1',
         status: 'pending',
         inputData: { topic: 'hello' },
-        userId: 'webhook-trigger',
+        userId: 'u1',
       }),
     });
   });

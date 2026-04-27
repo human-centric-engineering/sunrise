@@ -157,9 +157,9 @@ describe('WebhooksTable', () => {
       />
     );
 
-    expect(screen.getByText('budget_exceeded')).toBeInTheDocument();
-    expect(screen.getByText('workflow_failed')).toBeInTheDocument();
-    expect(screen.getByText('message_created')).toBeInTheDocument();
+    expect(screen.getByText('Budget Exceeded')).toBeInTheDocument();
+    expect(screen.getByText('Workflow Failed')).toBeInTheDocument();
+    expect(screen.getByText('Message Created')).toBeInTheDocument();
   });
 
   it('row actions dropdown contains Edit and Delete', async () => {
@@ -231,10 +231,10 @@ describe('WebhooksTable', () => {
       />
     );
 
-    // Assert — first 3 events rendered as individual badges
-    expect(screen.getByText('budget_exceeded')).toBeInTheDocument();
-    expect(screen.getByText('workflow_failed')).toBeInTheDocument();
-    expect(screen.getByText('approval_required')).toBeInTheDocument();
+    // Assert — first 3 events rendered as individual badges with human-readable labels
+    expect(screen.getByText('Budget Exceeded')).toBeInTheDocument();
+    expect(screen.getByText('Workflow Failed')).toBeInTheDocument();
+    expect(screen.getByText('Approval Required')).toBeInTheDocument();
     // Assert — overflow badge showing "+2"
     expect(screen.getByText('+2')).toBeInTheDocument();
     // Assert — the 4th and 5th events are NOT shown as individual badges

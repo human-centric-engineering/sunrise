@@ -21,17 +21,37 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   retryDelivery: vi.fn(),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiWebhookDelivery: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(),
 }));
 
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { POST as RetryDelivery } from '@/app/api/v1/admin/orchestration/webhooks/deliveries/[id]/retry/route';
+
+const ADMIN_USER_ID = 'cmjbv4i3x00003wsloputgwul';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -98,7 +118,18 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
 
   it('returns 404 when delivery is not found', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(retryDelivery).mockResolvedValue(false);
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(null);
+
+    const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+    expect(response.status).toBe(404);
+  });
+
+  it('returns 404 when delivery belongs to another admin', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+      subscription: { createdBy: 'other-admin-id' },
+    } as never);
 
     const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
@@ -107,6 +138,9 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
 
   it('retries a delivery and returns success', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+      subscription: { createdBy: ADMIN_USER_ID },
+    } as never);
     vi.mocked(retryDelivery).mockResolvedValue(true);
 
     const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
@@ -121,10 +155,51 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
 
   it('calls retryDelivery with the correct delivery id', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+      subscription: { createdBy: ADMIN_USER_ID },
+    } as never);
     vi.mocked(retryDelivery).mockResolvedValue(true);
 
     await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
     expect(retryDelivery).toHaveBeenCalledWith(DELIVERY_ID);
+  });
+
+  it('returns 400 for invalid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await RetryDelivery(makeRequest('not-a-cuid'), makeParams('not-a-cuid'));
+
+    expect(response.status).toBe(400);
+  });
+
+  it('logs admin audit action on successful retry', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+      subscription: { createdBy: ADMIN_USER_ID },
+    } as never);
+    vi.mocked(retryDelivery).mockResolvedValue(true);
+
+    await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'webhook_delivery.retry',
+        entityType: 'delivery',
+        entityId: DELIVERY_ID,
+      })
+    );
+  });
+
+  it('returns 404 when retryDelivery returns false', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+      subscription: { createdBy: ADMIN_USER_ID },
+    } as never);
+    vi.mocked(retryDelivery).mockResolvedValue(false);
+
+    const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+    expect(response.status).toBe(404);
   });
 });

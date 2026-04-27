@@ -28,7 +28,7 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 
 `components/admin/orchestration/webhook-form.tsx`
 
-- URL input (required) with HTTPS-only hint below the field
+- URL input (required) with safety hint (private IPs, localhost, metadata endpoints blocked)
 - Signing secret input with auto-generate button (`whsec_` prefix + 32 random hex chars)
 - 11 event checkboxes from `WEBHOOK_EVENT_TYPES`
 - Description textarea
@@ -41,6 +41,7 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 
 - "Send test event" button shown on the edit page between the form and delivery history
 - Sends a `ping` event to the configured URL via `POST /webhooks/:id/test`
+- If the subscription has no signing secret, returns an error without dispatching ("Webhook has no signing secret. Set a secret before testing.")
 - Displays result inline: green "Ping delivered (status) in Xms" or red error message
 - 5-second timeout, uses the same HMAC signature flow as real deliveries
 
@@ -64,16 +65,30 @@ Uses admin orchestration webhook endpoints:
 - `PATCH /webhooks/:id` — update
 - `DELETE /webhooks/:id` — delete
 - `POST /webhooks/:id/test` — send test ping event
-- `GET /webhooks/:id/deliveries` — delivery history
-- `POST /webhooks/deliveries/:id/retry` — retry failed delivery
+- `GET /webhooks/:id/deliveries` — delivery history (scoped to `session.user.id`)
+- `POST /webhooks/deliveries/:id/retry` — retry failed delivery (verifies parent subscription ownership)
 
 Consumer-facing:
 
 - `POST /api/v1/webhooks/trigger/:slug` — trigger a workflow via webhook (API-key auth, `webhook` scope)
 
+## Signing Schemes
+
+The two outbound webhook subsystems use **different** HMAC-SHA256 signing schemes:
+
+| Aspect            | Webhook Subscriptions                      | Event Hooks                                                            |
+| ----------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| Header            | `X-Webhook-Signature`                      | `X-Sunrise-Signature` + `X-Sunrise-Timestamp`                          |
+| Format            | Raw hex digest                             | `sha256=<hex>` prefixed                                                |
+| Signed content    | JSON body only                             | `<timestamp>.<body>` (timestamp-prefixed)                              |
+| Replay protection | None built-in                              | Timestamp in signed string; `verifyHookSignature` rejects >5 min drift |
+| Implementation    | `lib/orchestration/webhooks/dispatcher.ts` | `lib/orchestration/hooks/signing.ts`                                   |
+
+Receivers integrating with both must check for the appropriate header to determine which scheme to verify against.
+
 ## Sidebar
 
-Linked from the admin sidebar under AI Orchestration, between Workflows and Knowledge Base. Icon: `Webhook` from lucide-react.
+Linked from the admin sidebar under AI Orchestration, between Workflows and MCP Server in the Build subgroup. Icon: `Webhook` from lucide-react.
 
 ## Related
 

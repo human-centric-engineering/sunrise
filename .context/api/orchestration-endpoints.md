@@ -87,10 +87,11 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks`                               | GET, POST          | List / create webhook subscriptions                     | 5.1     |
 | `/webhooks/:id`                           | GET, PATCH, DELETE | Get / update / delete webhook subscription              | 5.1     |
 | `/observability/dashboard-stats`          | GET                | Aggregated observability metrics                        | 5.1     |
-| `/webhooks/:id/test`                      | POST               | Send a test delivery to verify webhook endpoint         | 5.1     |
-| `/webhooks/:id/deliveries`                | GET                | List delivery history for a subscription                | 5.1     |
-| `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery                                 | 5.1     |
+| `/webhooks/:id/test`                      | POST               | Send test ping (requires signing secret)                | 5.1     |
+| `/webhooks/:id/deliveries`                | GET                | List delivery history (owner-scoped)                    | 5.1     |
+| `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery (owner-scoped)                  | 5.1     |
 | `/hooks/:id/deliveries`                   | GET                | Paginated delivery history for an event hook            | 5.1     |
+| `/hooks/:id/rotate-secret`                | POST, DELETE       | Rotate or clear event hook HMAC signing secret          | 5.1     |
 | `/hooks/deliveries/:id/retry`             | POST               | Retry a failed / exhausted event-hook delivery          | 5.1     |
 | `/analytics/engagement`                   | GET                | Conversation volume, avg length, retention              | 6       |
 | `/analytics/topics`                       | GET                | Popular topics grouped by frequency                     | 6       |
@@ -813,11 +814,11 @@ Paginated list of the caller's webhook subscriptions. Query: `page`, `limit`, `i
 
 ### `POST /webhooks`
 
-Create a webhook subscription. Body: `{ url: string, secret?: string, events: string[], description?: string, isActive?: boolean }`. Returns `201` with the created subscription (secret is never returned in responses).
+Create a webhook subscription. Body: `{ url: string, secret: string, events: string[], description?: string, isActive?: boolean }`. Secret is required (min 16 chars). Returns `201` with the created subscription (secret is never returned in responses).
 
 ### `GET / PATCH / DELETE /webhooks/:id`
 
-Standard CRUD for a single webhook subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ url?, events?, description?, isActive? }`. `DELETE` is a hard delete.
+Standard CRUD for a single webhook subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ url?, secret?, events?, description?, isActive? }`. `DELETE` is a hard delete.
 
 ---
 

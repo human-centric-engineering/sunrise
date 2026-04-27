@@ -23,6 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
 import { WEBHOOK_EVENT_TYPES } from '@/lib/validations/orchestration';
 
 // ─── Schema ────────────────────────────────────────────────────────────────
@@ -39,8 +40,8 @@ const createWebhookSchema = z.object({
   secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
 });
 
-// In edit mode an empty secret means "keep the existing one" — onSubmit strips
-// the key before PATCH so the server leaves the stored secret untouched.
+// In edit mode an empty secret means "keep the existing one" — onSubmit omits
+// the secret field from the PATCH body so it's never sent to the server.
 const editWebhookSchema = z.object({
   ...baseFields,
   secret: z
@@ -72,20 +73,6 @@ function generateSecret(): string {
   const hex = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
   return `whsec_${hex}`;
 }
-
-const EVENT_LABELS: Record<string, string> = {
-  budget_exceeded: 'Budget Exceeded',
-  workflow_failed: 'Workflow Failed',
-  approval_required: 'Approval Required',
-  circuit_breaker_opened: 'Circuit Breaker Opened',
-  conversation_started: 'Conversation Started',
-  conversation_completed: 'Conversation Completed',
-  message_created: 'Message Created',
-  agent_updated: 'Agent Updated',
-  budget_threshold_reached: 'Budget Threshold Reached',
-  execution_completed: 'Execution Completed',
-  execution_failed: 'Execution Failed',
-};
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
@@ -200,8 +187,8 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
             The URL of your external system that should receive event notifications (e.g. a Slack
             integration, your backend API, or a service like Zapier). Sunrise will send a POST
             request to this address each time a selected event fires. Must be publicly reachable
-            over HTTPS — private IPs, localhost, and cloud metadata endpoints are blocked for
-            security.
+            over HTTP or HTTPS — private IPs, localhost, and cloud metadata endpoints are blocked
+            for security.
           </FieldHelp>
         </Label>
         <Input
@@ -213,7 +200,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         />
         {errors.url && <p className="text-destructive text-xs">{errors.url.message}</p>}
         <p className="text-muted-foreground text-xs">
-          Only HTTPS URLs are accepted. Private IPs and internal addresses are blocked.
+          Private IPs, localhost, and cloud metadata endpoints are blocked.
         </p>
       </div>
 
@@ -279,8 +266,8 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
                 your team knows an agent hit its spending limit
               </li>
               <li>
-                <span className="font-medium">Conversation Escalated</span> → create a support
-                ticket in Zendesk or JIRA when an agent can&apos;t resolve a query
+                <span className="font-medium">Approval Required</span> → create a support ticket in
+                Zendesk or JIRA when an agent needs human approval
               </li>
               <li>
                 <span className="font-medium">Workflow Failed</span> → trigger a PagerDuty alert so

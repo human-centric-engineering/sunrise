@@ -193,4 +193,43 @@ describe('POST /webhooks/:id/test', () => {
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
   });
+
+  it('returns success=false with error message when webhook has no signing secret', async () => {
+    // Arrange: webhook exists but secret is null
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+      makeWebhook({ secret: null }) as never
+    );
+
+    // Act
+    const response = await POST(makeRequest(), makeParams());
+
+    // Assert: route returns 200 with success:false envelope (not 4xx) and the expected error string
+    expect(response.status).toBe(200);
+    const body = await parseJson<{
+      data: { success: boolean; statusCode: null; durationMs: number; error: string };
+    }>(response);
+    expect(body.data.success).toBe(false);
+    expect(body.data.statusCode).toBeNull();
+    expect(body.data.error).toMatch(/no signing secret/i);
+    // fetch must NOT have been called — there is nothing to send to
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns success=false with timeout error when fetch is aborted', async () => {
+    // Arrange: simulate the AbortController firing by rejecting with an AbortError
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    globalThis.fetch = vi.fn().mockRejectedValue(abortError);
+
+    // Act
+    const response = await POST(makeRequest(), makeParams());
+
+    // Assert: route returns 200 with the timeout-specific message
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { success: boolean; error: string } }>(response);
+    expect(body.data.success).toBe(false);
+    expect(body.data.error).toMatch(/timed out/i);
+  });
 });

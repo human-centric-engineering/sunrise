@@ -65,7 +65,7 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
 function makeMeta(overrides: Record<string, unknown> = {}) {
   return {
     page: 1,
-    pageSize: 20,
+    limit: 20,
     total: 1,
     totalPages: 1,
     ...overrides,
@@ -108,7 +108,7 @@ describe('WebhookDeliveries', () => {
     mockFetch([makeDelivery()]);
     render(<WebhookDeliveries webhookId="wh-1" />);
     await waitFor(() => {
-      expect(screen.getByText('agent.created')).toBeInTheDocument();
+      expect(screen.getByText('Agent Created')).toBeInTheDocument();
       expect(screen.getByText('delivered')).toBeInTheDocument();
       expect(screen.getByText('200')).toBeInTheDocument();
       expect(screen.getByText('1')).toBeInTheDocument();
@@ -199,7 +199,7 @@ describe('WebhookDeliveries', () => {
   });
 
   it('shows pagination controls when totalPages > 1', async () => {
-    mockFetch([makeDelivery()], makeMeta({ page: 1, pageSize: 20, total: 50, totalPages: 3 }));
+    mockFetch([makeDelivery()], makeMeta({ page: 1, limit: 20, total: 50, totalPages: 3 }));
     render(<WebhookDeliveries webhookId="wh-1" />);
     await waitFor(() => {
       expect(screen.getByText(/page 1 of 3/i)).toBeInTheDocument();
@@ -242,7 +242,7 @@ describe('WebhookDeliveries', () => {
 
   it('clicking Next navigates to page 2 and refetches', async () => {
     const user = userEvent.setup();
-    mockFetch([makeDelivery()], makeMeta({ page: 1, pageSize: 20, total: 50, totalPages: 3 }));
+    mockFetch([makeDelivery()], makeMeta({ page: 1, limit: 20, total: 50, totalPages: 3 }));
 
     render(<WebhookDeliveries webhookId="wh-1" />);
     await waitFor(() => screen.getByText(/page 1 of 3/i));
@@ -263,7 +263,7 @@ describe('WebhookDeliveries', () => {
 
   it('clicking Prev navigates to previous page and refetches', async () => {
     const user = userEvent.setup();
-    mockFetch([makeDelivery()], makeMeta({ page: 2, pageSize: 20, total: 50, totalPages: 3 }));
+    mockFetch([makeDelivery()], makeMeta({ page: 2, limit: 20, total: 50, totalPages: 3 }));
 
     render(<WebhookDeliveries webhookId="wh-1" />);
     await waitFor(() => screen.getByText(/page 2 of 3/i));

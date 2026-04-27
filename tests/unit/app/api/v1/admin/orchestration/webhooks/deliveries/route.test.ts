@@ -21,6 +21,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWebhookSubscription: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
     aiWebhookDelivery: {
       findMany: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────
@@ -136,7 +141,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('returns 404 when subscription does not exist', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
 
     const response = await ListDeliveries(
       makeRequest(SUBSCRIPTION_ID),
@@ -148,7 +153,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('returns paginated deliveries for a valid subscription', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([makeDelivery()] as never);
@@ -168,7 +173,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('passes subscriptionId filter to the query', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
@@ -185,7 +190,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('filters by status when provided', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
@@ -205,7 +210,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('rejects invalid status value', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
 
@@ -219,7 +224,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('paginates with custom page and pageSize', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
@@ -245,7 +250,7 @@ describe('GET /webhooks/:id/deliveries', () => {
 
   it('returns empty list when no deliveries exist', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
       makeSubscription() as never
     );
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);

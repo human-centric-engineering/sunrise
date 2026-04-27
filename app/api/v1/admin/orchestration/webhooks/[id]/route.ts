@@ -64,6 +64,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   const existing = await prisma.aiWebhookSubscription.findFirst({
     where: { id: parsed.data, createdBy: session.user.id },
+    select: SAFE_SELECT,
   });
   if (!existing) throw new NotFoundError('Webhook not found');
 
