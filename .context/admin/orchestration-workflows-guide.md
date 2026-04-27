@@ -220,19 +220,20 @@ if (!result.ok) {
 
 ### Error codes
 
-| Code                      | Has `stepId`? | Has `path`? | Meaning                                     |
-| ------------------------- | ------------- | ----------- | ------------------------------------------- |
-| `MISSING_ENTRY`           | No            | No          | `entryStepId` doesn't resolve               |
-| `DUPLICATE_STEP_ID`       | Yes           | No          | Two steps share the same `id`               |
-| `UNKNOWN_TARGET`          | Yes           | No          | Edge points to non-existent step            |
-| `MISSING_APPROVAL_PROMPT` | Yes           | No          | `human_approval` missing `config.prompt`    |
-| `MISSING_CAPABILITY_SLUG` | Yes           | No          | `tool_call` missing `config.capabilitySlug` |
-| `MISSING_GUARD_RULES`     | Yes           | No          | `guard` missing `config.rules`              |
-| `MISSING_EVALUATE_RUBRIC` | Yes           | No          | `evaluate` missing `config.rubric`          |
-| `MISSING_EXTERNAL_URL`    | Yes           | No          | `external_call` missing `config.url`        |
-| `MISSING_AGENT_SLUG`      | Yes           | No          | `agent_call` missing `config.agentSlug`     |
-| `UNREACHABLE_STEP`        | Yes           | No          | Step not reachable from entry               |
-| `CYCLE_DETECTED`          | No            | Yes         | DAG contains a cycle                        |
+| Code                          | Has `stepId`? | Has `path`? | Meaning                                     |
+| ----------------------------- | ------------- | ----------- | ------------------------------------------- |
+| `MISSING_ENTRY`               | No            | No          | `entryStepId` doesn't resolve               |
+| `DUPLICATE_STEP_ID`           | Yes           | No          | Two steps share the same `id`               |
+| `UNKNOWN_TARGET`              | Yes           | No          | Edge points to non-existent step            |
+| `MISSING_APPROVAL_PROMPT`     | Yes           | No          | `human_approval` missing `config.prompt`    |
+| `MISSING_CAPABILITY_SLUG`     | Yes           | No          | `tool_call` missing `config.capabilitySlug` |
+| `MISSING_GUARD_RULES`         | Yes           | No          | `guard` missing `config.rules`              |
+| `MISSING_EVALUATE_RUBRIC`     | Yes           | No          | `evaluate` missing `config.rubric`          |
+| `MISSING_EXTERNAL_URL`        | Yes           | No          | `external_call` missing `config.url`        |
+| `MISSING_AGENT_SLUG`          | Yes           | No          | `agent_call` missing `config.agentSlug`     |
+| `INSUFFICIENT_ROUTE_BRANCHES` | Yes           | No          | `route` step needs at least two branches    |
+| `UNREACHABLE_STEP`            | Yes           | No          | Step not reachable from entry               |
+| `CYCLE_DETECTED`              | No            | Yes         | DAG contains a cycle                        |
 
 The builder UI also runs `runExtraChecks()` which adds `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, and `MISSING_REQUIRED_CONFIG` codes for instant canvas feedback.
 

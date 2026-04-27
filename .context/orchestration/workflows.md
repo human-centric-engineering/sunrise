@@ -54,7 +54,7 @@ Pure function. Returns `{ ok: boolean, errors: WorkflowValidationError[] }`. Nev
 1. **Duplicate ids** — scan `steps`, flag any repeated `id` (first pass, before anything else, so later passes can safely assume ids are unique).
 2. **Missing entry** — check `entryStepId` resolves to a real step. If it doesn't, reachability and cycle checks are **skipped** (they'd cascade into meaningless errors).
 3. **Unknown targets** — every `nextSteps.targetStepId` on every step must resolve.
-4. **Per-type config** — `human_approval` steps require `config.prompt`; `tool_call` steps require `config.capabilitySlug`. Other types have no extra requirements.
+4. **Per-type config** — `human_approval` requires `config.prompt`, `tool_call` requires `config.capabilitySlug`, `guard` requires `config.rules`, `evaluate` requires `config.rubric`, `external_call` requires `config.url`, `agent_call` requires `config.agentSlug`, `route` requires at least 2 entries in `config.routes`.
 5. **Reachability** — BFS from `entryStepId`; any step not visited is an orphan.
 6. **Cycle detection** — DFS with gray/black colouring. When a back-edge into a gray node is found, the current DFS stack is sliced to produce the cycle `path`.
 
@@ -62,19 +62,20 @@ Pure function. Returns `{ ok: boolean, errors: WorkflowValidationError[] }`. Nev
 
 All errors are typed — the `code` field is the contract, **never** assert on `message` (tests depend on this). UI should render by code.
 
-| `code`                    | `stepId?` | `path?` | Meaning                                                                                                   |
-| ------------------------- | --------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| `MISSING_ENTRY`           | —         | —       | `entryStepId` does not resolve to any step. Cycle & reachability checks are skipped when this fires.      |
-| `DUPLICATE_STEP_ID`       | ✓         | —       | Two or more steps share the same `id`.                                                                    |
-| `UNKNOWN_TARGET`          | ✓         | —       | A step's `nextSteps[].targetStepId` doesn't match any step in the workflow.                               |
-| `UNREACHABLE_STEP`        | ✓         | —       | Step is not reachable from `entryStepId` via BFS — i.e. an orphan.                                        |
-| `CYCLE_DETECTED`          | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.              |
-| `MISSING_APPROVAL_PROMPT` | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.   |
-| `MISSING_CAPABILITY_SLUG` | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler. |
-| `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
-| `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
-| `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
-| `MISSING_AGENT_SLUG`      | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                 |
+| `code`                        | `stepId?` | `path?` | Meaning                                                                                                      |
+| ----------------------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `MISSING_ENTRY`               | —         | —       | `entryStepId` does not resolve to any step. Cycle & reachability checks are skipped when this fires.         |
+| `DUPLICATE_STEP_ID`           | ✓         | —       | Two or more steps share the same `id`.                                                                       |
+| `UNKNOWN_TARGET`              | ✓         | —       | A step's `nextSteps[].targetStepId` doesn't match any step in the workflow.                                  |
+| `UNREACHABLE_STEP`            | ✓         | —       | Step is not reachable from `entryStepId` via BFS — i.e. an orphan.                                           |
+| `CYCLE_DETECTED`              | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.                 |
+| `MISSING_APPROVAL_PROMPT`     | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.      |
+| `MISSING_CAPABILITY_SLUG`     | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler.    |
+| `MISSING_GUARD_RULES`         | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                   |
+| `MISSING_EVALUATE_RUBRIC`     | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.                  |
+| `MISSING_EXTERNAL_URL`        | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.             |
+| `MISSING_AGENT_SLUG`          | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                    |
+| `INSUFFICIENT_ROUTE_BRANCHES` | ✓         | —       | A `route` step has fewer than two branches in `config.routes`. Routes need at least two options to classify. |
 
 ### Example error payload
 

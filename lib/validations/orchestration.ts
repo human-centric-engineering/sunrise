@@ -1939,14 +1939,14 @@ export const parallelConfigSchema = stepErrorConfigSchema.extend({
 export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
   stepErrorConfigSchema.extend({
     channel: z.literal('email'),
-    to: z.string().optional(),
-    subject: z.string().optional(),
-    bodyTemplate: z.string().optional(),
+    to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
+    subject: z.string().min(1).max(200),
+    bodyTemplate: z.string().min(1).max(10_000),
   }),
   stepErrorConfigSchema.extend({
     channel: z.literal('webhook'),
-    webhookUrl: z.string().url().optional(),
-    bodyTemplate: z.string().optional(),
+    webhookUrl: z.string().url(),
+    bodyTemplate: z.string().min(1).max(10_000),
   }),
 ]);
 
