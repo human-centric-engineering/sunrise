@@ -7,16 +7,11 @@
  * sticky action bar, every non-trivial field wrapped in `<FieldHelp>`.
  *
  * **Flavor selector.** The backend knows three `providerType` values
- * (`anthropic`, `openai-compatible`, `voyage`) but the UI shows five
- * flavors:
- *
- *   - Anthropic         — `providerType: 'anthropic'`
- *   - OpenAI            — `providerType: 'openai-compatible'`, base URL
- *                         pinned to `https://api.openai.com/v1`
- *   - Voyage AI         — `providerType: 'voyage'`, embedding-focused
- *   - Ollama (Local)    — `providerType: 'openai-compatible'`,
- *                         `isLocal: true`, loopback base URL
- *   - OpenAI-Compatible — free-form base URL + optional env var
+ * (`anthropic`, `openai-compatible`, `voyage`) but the UI presents
+ * sixteen choices across six groups (Frontier, Open-Model Hosts,
+ * Embedding Specialists, Aggregators & Enterprise, Local / Self-Hosted,
+ * Custom). Each flavor maps to a `providerType`, a default `baseUrl`,
+ * and a default `apiKeyEnvVar`.
  *
  * The flavor drives which fields render. On submit, we compose the
  * backend payload from `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?,
@@ -631,10 +626,10 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         <Label className="mb-2 block">
           Provider flavor{' '}
           <FieldHelp title="Pick your backend" contentClassName="w-80">
-            Which LLM backend this config talks to. Anthropic and OpenAI are first-class for chat.
-            Voyage AI is recommended for embeddings (free tier, top retrieval quality). Ollama runs
-            open-source models locally. OpenAI-Compatible covers everything else — Together AI,
-            Fireworks, Groq, LM Studio, vLLM, and so on.
+            Which LLM backend this config talks to. Pick a named provider (Anthropic, OpenAI, Groq,
+            Together AI, etc.) for automatic base URL and env var defaults, or use &ldquo;Other
+            (OpenAI-Compatible)&rdquo; for custom endpoints like LM Studio, vLLM, or private
+            deployments. Ollama runs open-source models locally with no API key needed.
             <p className="mt-2 text-xs">
               <strong>Note:</strong> Anthropic (Claude) does not offer an embeddings API. For
               knowledge base vector search, add a Voyage AI or OpenAI provider alongside Anthropic.

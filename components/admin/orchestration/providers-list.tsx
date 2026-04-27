@@ -12,12 +12,20 @@
  *   - **Green** — `apiKeyPresent === true` AND a `ProviderTestButton`
  *     click in the current session returned `ok: true`.
  *   - **Red**  — test-connection returned `ok: false` this session OR
- *     `apiKeyPresent === false` (env var missing on the server).
+ *     `apiKeyPresent === false` on a non-local provider.
  *   - **Grey** — not tested yet this session.
  *
  * Test results are held in local state only; we never persist them.
  * The model count is lazy-fetched per card after first paint with a
  * 60-second client-side cache to avoid redundant N+1 fetches.
+ *
+ * Additional card features:
+ *   - **Circuit breaker badge** — orange/yellow warning when the
+ *     breaker is open or half-open, with a Reset button.
+ *   - **Reactivate** — dropdown action for inactive providers;
+ *     PATCHes `{ isActive: true }` without navigating to the form.
+ *   - **Soft-delete** — confirmation dialog sets `isActive = false`;
+ *     the card stays visible with an Inactive badge.
  */
 
 import { useCallback, useEffect, useState } from 'react';
