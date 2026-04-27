@@ -174,9 +174,9 @@ Every `logAdminAction()` call site (as of grep at write time):
 | `experiments/[id]/run/route.ts`                     | `experiment.run`                                                    | `experiment`           |
 | `backup/export/route.ts`                            | `backup.export`                                                     | `backup`               |
 | `backup/import/route.ts`                            | `backup.import`                                                     | `backup`               |
-| `hooks/route.ts`                                    | `webhook.create`                                                    | `webhook`              |
-| `hooks/[id]/route.ts`                               | `webhook.update`, `webhook.delete`                                  | `webhook`              |
-| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `webhook`              |
+| `hooks/route.ts`                                    | `hook.create`                                                       | `hook`                 |
+| `hooks/[id]/route.ts`                               | `hook.update`, `hook.delete`                                        | `hook`                 |
+| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `hook`                 |
 | `webhooks/route.ts`                                 | `webhook_subscription.create`                                       | `webhook_subscription` |
 | `webhooks/[id]/route.ts`                            | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook_subscription` |
 | `conversations/clear/route.ts`                      | `conversation.bulk_clear`                                           | `conversation`         |

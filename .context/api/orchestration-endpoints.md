@@ -91,6 +91,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks/:id/deliveries`                | GET                | List delivery history for a subscription                | 5.1     |
 | `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery                                 | 5.1     |
 | `/hooks/:id/deliveries`                   | GET                | Paginated delivery history for an event hook            | 5.1     |
+| `/hooks/:id/rotate-secret`                | POST, DELETE       | Rotate or clear event hook HMAC signing secret          | 5.1     |
 | `/hooks/deliveries/:id/retry`             | POST               | Retry a failed / exhausted event-hook delivery          | 5.1     |
 | `/analytics/engagement`                   | GET                | Conversation volume, avg length, retention              | 6       |
 | `/analytics/topics`                       | GET                | Popular topics grouped by frequency                     | 6       |
