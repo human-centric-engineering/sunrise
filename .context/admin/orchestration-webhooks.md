@@ -71,6 +71,20 @@ Consumer-facing:
 
 - `POST /api/v1/webhooks/trigger/:slug` — trigger a workflow via webhook (API-key auth, `webhook` scope)
 
+## Signing Schemes
+
+The two outbound webhook subsystems use **different** HMAC-SHA256 signing schemes:
+
+| Aspect            | Webhook Subscriptions                      | Event Hooks                                                            |
+| ----------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| Header            | `X-Webhook-Signature`                      | `X-Sunrise-Signature` + `X-Sunrise-Timestamp`                          |
+| Format            | Raw hex digest                             | `sha256=<hex>` prefixed                                                |
+| Signed content    | JSON body only                             | `<timestamp>.<body>` (timestamp-prefixed)                              |
+| Replay protection | None built-in                              | Timestamp in signed string; `verifyHookSignature` rejects >5 min drift |
+| Implementation    | `lib/orchestration/webhooks/dispatcher.ts` | `lib/orchestration/hooks/signing.ts`                                   |
+
+Receivers integrating with both must check for the appropriate header to determine which scheme to verify against.
+
 ## Sidebar
 
 Linked from the admin sidebar under AI Orchestration, between Workflows and Knowledge Base. Icon: `Webhook` from lucide-react.
