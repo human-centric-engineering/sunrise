@@ -73,7 +73,7 @@ const modelFormSchema = z.object({
   dimensions: z
     .string()
     .max(10)
-    .refine((v) => v === '' || /^\d+$/.test(v), 'Must be a whole number'),
+    .refine((v) => v === '' || /^[1-9]\d*$/.test(v), 'Must be a positive whole number'),
   schemaCompatible: z.boolean(),
   costPerMillionTokens: z
     .string()
@@ -226,6 +226,15 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       if (data.quality) payload.quality = data.quality;
       if (data.strengths) payload.strengths = data.strengths;
       if (data.setup) payload.setup = data.setup;
+    } else if (isEdit) {
+      // Clear stale embedding fields when capability is removed
+      payload.dimensions = null;
+      payload.schemaCompatible = null;
+      payload.costPerMillionTokens = null;
+      payload.hasFreeTier = null;
+      payload.quality = null;
+      payload.strengths = null;
+      payload.setup = null;
     }
 
     try {
