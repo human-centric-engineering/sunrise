@@ -82,11 +82,12 @@ Called automatically by the unified maintenance tick.
 `POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call:
 
 1. `processDueSchedules()` — workflow cron schedules
-2. `processPendingRetries()` — webhook delivery retry queue
-3. `reapZombieExecutions()` — mark stale `running` executions as `failed` (30 min threshold)
-4. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding
-5. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows
-6. `processPendingExecutions()` — recover orphaned `pending` workflow executions
+2. `processPendingRetries()` — webhook subscription delivery retry queue
+3. `processPendingHookRetries()` — event-hook delivery retry queue
+4. `reapZombieExecutions()` — mark stale `running` executions as `failed` (30 min threshold)
+5. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding
+6. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows
+7. `processPendingExecutions()` — recover orphaned `pending` workflow executions
 
 Each function runs via `Promise.allSettled` — individual failures don't block others. Results are returned per-function.
 
@@ -101,6 +102,8 @@ Each function runs via `Promise.allSettled` — individual failures don't block 
 ### Webhook Trigger (API key auth required)
 
 `POST /api/v1/webhooks/trigger/:slug` — starts a workflow execution using the request body as input. Requires a bearer token with the `webhook` scope (or `admin`). Only active workflows can be triggered.
+
+The `:slug` parameter is validated against `slugSchema` (lowercase alphanumeric + hyphens, max 100 chars). Malformed slugs return `400 VALIDATION_ERROR` before reaching the database.
 
 Authentication: `Authorization: Bearer sk_...` header. Create keys with `scopes: ["webhook"]` via `POST /api/v1/user/api-keys`. Per-key rate limiting is supported via the `rateLimitRpm` field on `AiApiKey` — when set, it overrides the global rate limit for that key.
 
