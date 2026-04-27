@@ -15,9 +15,10 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { retryHookDelivery } from '@/lib/orchestration/hooks/registry';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -29,6 +30,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
 
   const ok = await retryHookDelivery(id);
   if (!ok) throw new NotFoundError('Hook delivery not found or no longer retriable');
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'hook_delivery.retry',
+    entityType: 'delivery',
+    entityId: id,
+    clientIp: clientIP,
+  });
 
   return successResponse({ retried: true, deliveryId: id });
 });
