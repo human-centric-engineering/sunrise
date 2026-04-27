@@ -126,6 +126,27 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     initialSettings.escalationConfig?.emailAddresses ?? []
   );
   const [emailInput, setEmailInput] = React.useState('');
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+
+  const addEscalationEmail = () => {
+    const val = emailInput.trim();
+    if (!val) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+      setEmailError('Enter a valid email address');
+      return;
+    }
+    if (escalationEmails.includes(val)) {
+      setEmailError('Email already added');
+      return;
+    }
+    if (escalationEmails.length >= 20) {
+      setEmailError('Maximum 20 email addresses');
+      return;
+    }
+    setEmailError(null);
+    setEscalationEmails((prev) => [...prev, val]);
+    setEmailInput('');
+  };
 
   const defaults: SettingsFormData = React.useMemo(
     () => ({
@@ -541,34 +562,23 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                   type="email"
                   placeholder="Add email address…"
                   value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
+                  onChange={(e) => {
+                    setEmailInput(e.target.value);
+                    if (emailError) setEmailError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      const val = emailInput.trim();
-                      if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
-                        setEscalationEmails((prev) => [...prev, val]);
-                        setEmailInput('');
-                      }
+                      addEscalationEmail();
                     }
                   }}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const val = emailInput.trim();
-                    if (val && !escalationEmails.includes(val) && escalationEmails.length < 20) {
-                      setEscalationEmails((prev) => [...prev, val]);
-                      setEmailInput('');
-                    }
-                  }}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={addEscalationEmail}>
                   <Plus className="mr-1 h-3 w-3" />
                   Add
                 </Button>
               </div>
+              {emailError && <p className="text-xs text-red-600">{emailError}</p>}
               {escalationEmails.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {escalationEmails.map((email) => (
