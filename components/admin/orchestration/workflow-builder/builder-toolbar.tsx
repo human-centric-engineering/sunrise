@@ -30,7 +30,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
 import type { TemplateItem } from '@/components/admin/orchestration/workflow-builder/template-types';
 
 const EXECUTE_CREATE_TOOLTIP = 'Save the workflow before executing';
@@ -199,13 +198,13 @@ export function BuilderToolbar({
         <Button
           size="sm"
           onClick={onSave}
-          disabled={saving || saved}
+          disabled={saving || saved || hasErrors}
           aria-label={
             hasErrors
-              ? 'Save (validation errors present — click Validate to see details)'
+              ? 'Save disabled — fix validation errors first (click Validate to see details)'
               : undefined
           }
-          className={cn(hasErrors && !saved && 'ring-2 ring-red-500/60 focus-visible:ring-red-500')}
+          title={hasErrors ? 'Fix validation errors before saving' : undefined}
         >
           {saving ? (
             <>
