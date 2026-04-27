@@ -91,4 +91,32 @@ describe('context helpers', () => {
     expect(snap.totalTokensUsed).toBe(0);
     expect(snap.totalCostUsd).toBe(0);
   });
+
+  it('createContext with budgetLimitUsd: sets budgetLimitUsd on context', () => {
+    // Arrange & Act
+    const ctx = createContext({
+      executionId: 'exec-budget',
+      workflowId: 'wf-budget',
+      userId: 'user-budget',
+      inputData: {},
+      budgetLimitUsd: 2.5,
+      logger,
+    });
+
+    // Assert
+    expect(ctx.budgetLimitUsd).toBe(2.5);
+  });
+
+  it('snapshotContext: mutations to snapshot variables throw (Object.freeze)', () => {
+    // Arrange
+    const ctx = makeCtx();
+    ctx.variables['key1'] = 'value1';
+    const snap = snapshotContext(ctx);
+
+    // Assert — frozen variables map rejects mutation
+    expect(Object.isFrozen(snap.variables)).toBe(true);
+    expect(() => {
+      snap.variables['newKey'] = 'bleed';
+    }).toThrow();
+  });
 });

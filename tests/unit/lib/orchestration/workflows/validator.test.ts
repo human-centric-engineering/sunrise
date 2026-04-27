@@ -373,4 +373,65 @@ describe('validateWorkflow', () => {
     // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
     expect(result.ok).toBe(true);
   });
+
+  it('reports each unique cycle signature once when multiple independent cycles exist', () => {
+    // Arrange — two separate cycles:
+    //   Cycle 1: a → b → a
+    //   Cycle 2: c → d → c
+    // Both are reachable from the entry (entry → a and entry → c via 'start').
+    // The validator must emit one CYCLE_DETECTED error per unique signature, not
+    // collapse both into a single report.
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'start',
+        steps: [
+          {
+            id: 'start',
+            name: 'Start',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'c' }],
+          },
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }],
+          },
+          {
+            id: 'c',
+            name: 'C',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'd' }],
+          },
+          {
+            id: 'd',
+            name: 'D',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'c' }],
+          },
+        ],
+      })
+    );
+
+    // Act + Assert — both cycles are reported
+    expect(result.ok).toBe(false);
+    const cycleErrors = result.errors.filter((e) => e.code === 'CYCLE_DETECTED');
+    expect(cycleErrors.length).toBeGreaterThanOrEqual(2);
+
+    // Each cycle path must be distinct (dedup via reportedCycles Set)
+    const signatures = cycleErrors.map((e) => (e.path ?? []).join('→'));
+    const uniqueSignatures = new Set(signatures);
+    expect(uniqueSignatures.size).toBe(cycleErrors.length);
+  });
 });

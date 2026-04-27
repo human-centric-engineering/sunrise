@@ -396,6 +396,33 @@ describe('validateQueryParams()', () => {
     });
   });
 
+  describe('non-Zod error during parsing', () => {
+    it('should throw ValidationError with "Failed to parse query parameters" when schema.parse throws a non-Zod error', () => {
+      // Arrange: a schema whose .parse() method throws a plain Error (not a ZodError)
+      // simulating an unexpected runtime failure inside a custom Zod refinement
+      const brokenSchema = {
+        parse: () => {
+          throw new Error('Unexpected internal schema failure');
+        },
+      } as unknown as import('zod').ZodSchema<unknown>;
+
+      const searchParams = new URLSearchParams('key=value');
+
+      // Act & Assert: the non-Zod error catch branch returns the fallback message
+      try {
+        validateQueryParams(searchParams, brokenSchema);
+        expect.fail('Should have thrown ValidationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError);
+        if (error instanceof ValidationError) {
+          expect(error.message).toBe('Failed to parse query parameters');
+          expect(error.code).toBe('VALIDATION_ERROR');
+          expect(error.status).toBe(400);
+        }
+      }
+    });
+  });
+
   describe('missing params', () => {
     it('should use defaults from schema when params missing', () => {
       // Arrange: Empty URLSearchParams with schema defaults

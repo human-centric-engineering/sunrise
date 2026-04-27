@@ -509,4 +509,35 @@ describe('executeOrchestrator', () => {
       totalDelegations: 0,
     });
   });
+
+  it('planner JSON parse retry: first parse fails, retry succeeds with final answer', async () => {
+    // Arrange — first response is invalid JSON; retry returns valid JSON with a final answer
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce({
+        content: 'not valid json {{{',
+        tokensUsed: 100,
+        costUsd: 0.002,
+        model: 'gpt-4o',
+      })
+      .mockResolvedValueOnce(
+        makePlannerResponse({
+          finalAnswer: 'Recovered answer after retry.',
+          reasoning: 'The retry succeeded.',
+        })
+      );
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — executor recovered and used the retried planner response
+    expect(result.output).toMatchObject({
+      finalAnswer: 'Recovered answer after retry.',
+      stopReason: 'final_answer',
+    });
+    // Two LLM calls: original (invalid JSON) + retry (valid JSON)
+    expect(runLlmCall).toHaveBeenCalledTimes(2);
+    // Cost from both the invalid-JSON response and the retry are accumulated
+    expect(result.costUsd).toBeCloseTo(0.002 + 0.005);
+    expect(result.tokensUsed).toBe(100 + 200);
+  });
 });

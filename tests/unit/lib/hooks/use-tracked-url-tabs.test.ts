@@ -739,6 +739,90 @@ describe('lib/hooks/use-tracked-url-tabs', () => {
     });
   });
 
+  describe('non-tracking branch coverage (L126)', () => {
+    it('updates previousTabRef across sequential changes even without tracking config', () => {
+      // Arrange — no tracking option provided
+      const { result } = renderHook(() =>
+        useTrackedUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+          // No tracking option — exercises the else-if branch at L126
+        })
+      );
+
+      // Act — first change (should update ref without tracking)
+      act(() => {
+        result.current.setActiveTab('security');
+      });
+
+      // Act — second change (ref should now hold 'security', not 'profile')
+      act(() => {
+        result.current.setActiveTab('notifications');
+      });
+
+      // Assert — both changes caused URL updates (proving baseSetActiveTab was called)
+      // and track was never invoked (L126 branch, not L111 branch)
+      expect(mockTrack).not.toHaveBeenCalled();
+      expect(mockRouter.replace).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses custom tabPropertyName and previousPropertyName in the track call', () => {
+      // Arrange — custom property names in tracking config
+      const { result } = renderHook(() =>
+        useTrackedUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+          tracking: {
+            eventName: 'nav_tab_changed',
+            tabPropertyName: 'current_tab',
+            previousPropertyName: 'prior_tab',
+          },
+        })
+      );
+
+      // Act
+      act(() => {
+        result.current.setActiveTab('account');
+      });
+
+      // Assert — custom property names appear in the track payload
+      expect(mockTrack).toHaveBeenCalledWith('nav_tab_changed', {
+        current_tab: 'account',
+        prior_tab: 'profile',
+      });
+    });
+
+    it('merges additionalProperties into the track event payload', () => {
+      // Arrange — additional properties provided alongside default property names
+      const { result } = renderHook(() =>
+        useTrackedUrlTabs<TestTab>({
+          defaultTab: DEFAULT_TAB,
+          allowedTabs: TEST_TABS,
+          tracking: {
+            eventName: 'dashboard_tab_changed',
+            additionalProperties: {
+              source: 'sidebar',
+              version: 2,
+            },
+          },
+        })
+      );
+
+      // Act
+      act(() => {
+        result.current.setActiveTab('notifications');
+      });
+
+      // Assert — additionalProperties are spread into the event alongside tab/previous_tab
+      expect(mockTrack).toHaveBeenCalledWith('dashboard_tab_changed', {
+        tab: 'notifications',
+        previous_tab: 'profile',
+        source: 'sidebar',
+        version: 2,
+      });
+    });
+  });
+
   describe('integration with useUrlTabs features', () => {
     it('should preserve other query params when changing tabs', async () => {
       // Arrange
