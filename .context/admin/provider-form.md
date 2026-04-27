@@ -142,17 +142,29 @@ const payload = {
   providerType: meta.providerType,
   isLocal: meta.isLocal,
   isActive: data.isActive,
-  ...(baseUrl ? { baseUrl } : {}),
-  ...(apiKeyEnvVar ? { apiKeyEnvVar } : {}),
 };
 
 if (isEdit) {
+  // Edit: send null for empty/hidden fields so stale values are cleared in the DB.
+  // The UPDATE schema accepts .nullable().optional() for these fields.
+  payload.baseUrl = baseUrl ?? null;
+  payload.apiKeyEnvVar = apiKeyEnvVar ?? null;
+  payload.timeoutMs = isFiniteNumber(data.timeoutMs) ? data.timeoutMs : null;
+  payload.maxRetries = isFiniteNumber(data.maxRetries) ? data.maxRetries : null;
+
   const updated = await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(provider.id), {
     body: payload,
   });
-  setApiKeyPresent(updated.apiKeyPresent ?? null); // re-check the green/red indicator
+  setApiKeyPresent(updated.apiKeyPresent ?? null);
   reset({ ...data, baseUrl: updated.baseUrl ?? '', apiKeyEnvVar: updated.apiKeyEnvVar ?? '' });
 } else {
+  // Create: only include fields when they have a value.
+  // The CREATE schema uses .optional() without .nullable() — null would fail validation.
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (apiKeyEnvVar) payload.apiKeyEnvVar = apiKeyEnvVar;
+  if (isFiniteNumber(data.timeoutMs)) payload.timeoutMs = data.timeoutMs;
+  if (isFiniteNumber(data.maxRetries)) payload.maxRetries = data.maxRetries;
+
   const created = await apiClient.post(API.ADMIN.ORCHESTRATION.PROVIDERS, { body: payload });
   router.push(`/admin/orchestration/providers/${created.id}`);
 }

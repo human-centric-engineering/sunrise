@@ -64,7 +64,7 @@ The badge disappears immediately on successful reset (re-fetches provider health
 - **Edit** — links to `/admin/orchestration/providers/:id`.
 - **Reactivate** — shown only when `isActive === false`. PATCHes `{ isActive: true }` and updates local state. Provides a quick path back without navigating to the edit form.
 - **View models** — opens an inline `<Dialog>` rendering `<ProviderModelsPanel>` (see below). A dialog is lighter than a sub-route and keeps the admin in context.
-- **Delete** — inline `<DeleteProviderDialog>` → `DELETE /providers/:id` (soft delete via `isActive = false`). The dialog warns that agents referencing this slug will error on their next chat turn until reactivated.
+- **Delete** — inline `<DeleteProviderDialog>` → `DELETE /providers/:id` (soft delete via `isActive = false`). The dialog warns that agents referencing this slug will error on their next chat turn until reactivated. The card remains visible with an Inactive badge; the admin can reactivate from the dropdown menu.
 
 ### Test connection
 
