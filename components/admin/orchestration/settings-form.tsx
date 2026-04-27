@@ -4,7 +4,7 @@
  * OrchestrationSettingsForm
  *
  * Comprehensive form for global orchestration settings, organized into
- * four sections: Safety, Limits, Retention, and Approvals.
+ * six sections: Safety, Limits, Retention, Approvals, Escalation, and Search.
  *
  * Uses react-hook-form + Zod for client-side validation, matching the
  * pattern used in agent-form.tsx and capability-form.tsx.
@@ -174,11 +174,18 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(settingsFormSchema),
     defaultValues: defaults,
   });
+
+  const watchedKeyword = watch('keywordBoostWeight');
+  const watchedVector = watch('vectorWeight');
+  const searchPartialFill =
+    (watchedKeyword !== '' && watchedVector === '') ||
+    (watchedKeyword === '' && watchedVector !== '');
 
   React.useEffect(() => {
     reset(defaults);
@@ -707,6 +714,12 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
               <p className="text-xs text-red-600">{errors.vectorWeight.message}</p>
             )}
           </div>
+          {searchPartialFill && (
+            <p className="text-xs text-amber-600 sm:col-span-2">
+              Both weights must be set together. If only one is provided, search config will reset
+              to built-in defaults on save.
+            </p>
+          )}
         </CardContent>
       </Card>
 

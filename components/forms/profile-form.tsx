@@ -65,7 +65,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     handleSubmit,
     setValue,
     watch,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<UpdateUserInput>({
     resolver: zodResolver(updateUserSchema),
     mode: 'onTouched',
@@ -87,9 +87,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
       setError(null);
       setSuccess(false);
 
-      // Clean up empty strings to null for optional fields
+      // Clean up empty strings to null for optional fields.
+      // Exclude email — it's read-only in the form and cannot be changed yet.
+      const { email: _email, ...rest } = data;
       const cleanData = {
-        ...data,
+        ...rest,
         bio: data.bio?.trim() || null,
         phone: data.phone?.trim() || null,
         location: data.location?.trim() || null,
@@ -174,9 +176,6 @@ export function ProfileForm({ user }: ProfileFormProps) {
           {...register('bio')}
         />
         <FormError message={errors.bio?.message} />
-        <p className="text-muted-foreground text-xs">
-          Brief description for your profile. Max 500 characters.
-        </p>
       </div>
 
       {/* Phone */}
@@ -265,7 +264,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       )}
 
       {/* Submit button */}
-      <Button type="submit" disabled={isLoading}>
+      <Button type="submit" disabled={isLoading || !isDirty}>
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
