@@ -41,7 +41,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const row = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!row) throw new NotFoundError(`Provider ${id} not found`);
 
-  if (!isApiKeyEnvVarSet(row.apiKeyEnvVar)) {
+  if (!row.isLocal && !isApiKeyEnvVarSet(row.apiKeyEnvVar)) {
     return errorResponse(`Provider "${row.slug}" has no API key configured`, {
       code: 'API_KEY_MISSING',
       status: 422,

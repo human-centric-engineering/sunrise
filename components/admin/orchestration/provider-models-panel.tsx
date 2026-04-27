@@ -69,7 +69,8 @@ export function ProviderModelsPanel({
   apiKeyPresent = true,
 }: ProviderModelsPanelProps) {
   const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
-  const [loading, setLoading] = useState(apiKeyPresent);
+  const shouldFetch = apiKeyPresent || isLocal;
+  const [loading, setLoading] = useState(shouldFetch);
   const [error, setError] = useState<string | null>(null);
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestModelResult>>({});
@@ -109,9 +110,9 @@ export function ProviderModelsPanel({
   );
 
   useEffect(() => {
-    if (!apiKeyPresent) return;
+    if (!shouldFetch) return;
     void fetchModels();
-  }, [fetchModels, apiKeyPresent]);
+  }, [fetchModels, shouldFetch]);
 
   return (
     <div className="space-y-3">
@@ -122,7 +123,7 @@ export function ProviderModelsPanel({
             {isLocal ? 'Local provider — pricing not applicable.' : 'Live model catalogue.'}
           </p>
         </div>
-        {apiKeyPresent && (
+        {shouldFetch && (
           <Button
             type="button"
             variant="outline"
@@ -140,7 +141,7 @@ export function ProviderModelsPanel({
         )}
       </div>
 
-      {!apiKeyPresent && (
+      {!shouldFetch && (
         <div className="text-muted-foreground py-6 text-center text-sm">
           No API key configured for this provider. Set the environment variable and restart to fetch
           the live model catalogue.
