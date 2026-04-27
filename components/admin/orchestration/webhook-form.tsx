@@ -40,8 +40,8 @@ const createWebhookSchema = z.object({
   secret: z.string().min(16, 'Secret must be at least 16 characters').max(256),
 });
 
-// In edit mode an empty secret means "keep the existing one" — onSubmit strips
-// the key before PATCH so the server leaves the stored secret untouched.
+// In edit mode an empty secret means "keep the existing one" — onSubmit omits
+// the secret field from the PATCH body so it's never sent to the server.
 const editWebhookSchema = z.object({
   ...baseFields,
   secret: z
