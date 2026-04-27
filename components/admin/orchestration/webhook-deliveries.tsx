@@ -30,6 +30,7 @@ import {
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
+import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
-                      {d.eventType}
+                      {formatEventLabel(d.eventType)}
                     </Badge>
                   </TableCell>
                   <TableCell>

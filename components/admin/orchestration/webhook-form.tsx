@@ -23,6 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
 import { WEBHOOK_EVENT_TYPES } from '@/lib/validations/orchestration';
 
 // ─── Schema ────────────────────────────────────────────────────────────────
@@ -72,20 +73,6 @@ function generateSecret(): string {
   const hex = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
   return `whsec_${hex}`;
 }
-
-const EVENT_LABELS: Record<string, string> = {
-  budget_exceeded: 'Budget Exceeded',
-  workflow_failed: 'Workflow Failed',
-  approval_required: 'Approval Required',
-  circuit_breaker_opened: 'Circuit Breaker Opened',
-  conversation_started: 'Conversation Started',
-  conversation_completed: 'Conversation Completed',
-  message_created: 'Message Created',
-  agent_updated: 'Agent Updated',
-  budget_threshold_reached: 'Budget Threshold Reached',
-  execution_completed: 'Execution Completed',
-  execution_failed: 'Execution Failed',
-};
 
 // ─── Component ─────────────────────────────────────────────────────────────
 

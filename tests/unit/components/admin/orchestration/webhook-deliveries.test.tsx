@@ -108,7 +108,7 @@ describe('WebhookDeliveries', () => {
     mockFetch([makeDelivery()]);
     render(<WebhookDeliveries webhookId="wh-1" />);
     await waitFor(() => {
-      expect(screen.getByText('agent.created')).toBeInTheDocument();
+      expect(screen.getByText('Agent Created')).toBeInTheDocument();
       expect(screen.getByText('delivered')).toBeInTheDocument();
       expect(screen.getByText('200')).toBeInTheDocument();
       expect(screen.getByText('1')).toBeInTheDocument();
