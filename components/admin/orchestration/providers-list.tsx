@@ -104,6 +104,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
   const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
+  const [breakerError, setBreakerError] = useState<string | null>(null);
 
   // Lazy-fetch model counts for every visible provider after mount.
   // Uses module-level cache to avoid N+1 on every page navigation.
@@ -195,6 +196,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
 
   const handleResetBreaker = useCallback(async (providerId: string) => {
     setResettingBreaker((prev) => ({ ...prev, [providerId]: true }));
+    setBreakerError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
       setProviders((prev) =>
@@ -204,8 +206,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
             : p
         )
       );
-    } catch {
-      // Silently fail — breaker may have already recovered
+    } catch (err) {
+      setBreakerError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't reset the circuit breaker. Try again in a moment."
+      );
     } finally {
       setResettingBreaker((prev) => ({ ...prev, [providerId]: false }));
     }
@@ -228,6 +234,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       {reactivateError && (
         <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
           {reactivateError}
+        </div>
+      )}
+
+      {breakerError && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
+          {breakerError}
         </div>
       )}
 

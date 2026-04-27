@@ -563,6 +563,8 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           ...data,
           baseUrl: updated.baseUrl ?? '',
           apiKeyEnvVar: updated.apiKeyEnvVar ?? '',
+          timeoutMs: updated.timeoutMs ?? undefined,
+          maxRetries: updated.maxRetries ?? undefined,
         });
         setSaved(true);
         setTimeout(() => setSaved(false), 2500);
