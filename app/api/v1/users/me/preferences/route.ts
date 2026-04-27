@@ -17,6 +17,8 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { updatePreferencesSchema, parseUserPreferences } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
 import { getRouteLogger } from '@/lib/api/context';
+import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import type { UserPreferences } from '@/types';
 
 /**
@@ -29,6 +31,10 @@ import type { UserPreferences } from '@/types';
  * @throws UnauthorizedError if not authenticated
  */
 export const GET = withAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = apiLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   log.info('Fetching user preferences');
 
@@ -65,6 +71,10 @@ export const GET = withAuth(async (request, session) => {
  * @throws ValidationError if invalid data
  */
 export const PATCH = withAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = apiLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   log.info('Updating user preferences');
 
