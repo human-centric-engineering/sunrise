@@ -130,7 +130,7 @@ describe('WorkflowDetailsDialog', () => {
     await user.click(screen.getByRole('button', { name: /save workflow/i }));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(onConfirm.mock.calls[0][0].isTemplate).toBe(true);
+    expect(onConfirm.mock.calls[0][0].isTemplate).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('calls onOpenChange(false) when Cancel is clicked', async () => {
@@ -200,6 +200,6 @@ describe('WorkflowDetailsDialog', () => {
     await user.click(confirmBtn);
 
     // Assert: onConfirm must never have been invoked
-    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 });

@@ -125,7 +125,7 @@ describe('SetupWizard — StepIntro (step 1)', () => {
         expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
       });
       // test-review:accept tobe_true — structural prop-wiring assertion: verifies the embedded prop is correctly forwarded as true to ChatInterface
-      expect(capturedEmbedded).toBe(true);
+      expect(capturedEmbedded).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('passes starter prompts to ChatInterface', async () => {
@@ -140,7 +140,7 @@ describe('SetupWizard — StepIntro (step 1)', () => {
         expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
       });
       // test-review:accept tobe_true — structural array-type guard paired with .length check on next line; not a degenerate "operation succeeded" check
-      expect(Array.isArray(capturedStarterPrompts)).toBe(true);
+      expect(Array.isArray(capturedStarterPrompts)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       expect((capturedStarterPrompts ?? []).length).toBeGreaterThan(0);
     });
   });

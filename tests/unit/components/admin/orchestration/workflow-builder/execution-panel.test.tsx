@@ -198,7 +198,7 @@ describe('ExecutionPanel', () => {
 
       // Wait until the fetch has been called so the stream is in-flight.
       await waitFor(() => {
-        expect(fetch).toHaveBeenCalled();
+        expect(fetch).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       });
 
       // Record call count before unmount — any prior abort() calls (e.g.

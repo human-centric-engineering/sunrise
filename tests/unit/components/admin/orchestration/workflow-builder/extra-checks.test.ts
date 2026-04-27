@@ -166,7 +166,7 @@ describe('runExtraChecks', () => {
       const errors = runExtraChecks(nodes, []);
       const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
       // Flags the routes count error (1 branch only), not the classification prompt
-      expect(missing.some((e) => e.stepId === 'n1')).toBe(true);
+      expect(missing.some((e) => e.stepId === 'n1')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('flags route with no classificationPrompt and no routes', () => {

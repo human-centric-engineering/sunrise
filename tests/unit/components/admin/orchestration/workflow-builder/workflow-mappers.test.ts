@@ -113,9 +113,9 @@ describe('workflowDefinitionToFlow', () => {
     const { edges } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
 
     // a → b
-    expect(edges.some((e) => e.source === 'step-a' && e.target === 'step-b')).toBe(true);
+    expect(edges.some((e) => e.source === 'step-a' && e.target === 'step-b')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     // b → c
-    expect(edges.some((e) => e.source === 'step-b' && e.target === 'step-c')).toBe(true);
+    expect(edges.some((e) => e.source === 'step-b' && e.target === 'step-c')).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   it('maps node data correctly from step fields', () => {

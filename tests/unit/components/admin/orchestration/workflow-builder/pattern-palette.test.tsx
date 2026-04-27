@@ -114,7 +114,7 @@ describe('PatternPalette', () => {
       };
 
       const block = screen.getByTestId('palette-block-chain');
-      expect(() => fireEvent.dragStart(block, { dataTransfer })).not.toThrow();
+      expect(() => fireEvent.dragStart(block, { dataTransfer })).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(setData).toHaveBeenCalledWith('application/reactflow', 'chain');
     });
   });

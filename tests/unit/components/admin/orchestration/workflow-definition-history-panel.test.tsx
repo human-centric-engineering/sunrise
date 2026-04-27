@@ -105,7 +105,7 @@ describe('WorkflowDefinitionHistoryPanel', () => {
 
     render(<WorkflowDefinitionHistoryPanel workflowId={WORKFLOW_ID} />);
 
-    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(apiClient.get).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // ── First expand ───────────────────────────────────────────────────────────

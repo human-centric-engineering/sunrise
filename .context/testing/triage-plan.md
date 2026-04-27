@@ -3,7 +3,7 @@
 **Objective:** Systematically raise the floor of test quality across the entire Sunrise codebase using `/test-triage` for cheap grading, then targeted fixes. Identify areas needing deeper ceiling passes (full `/test-coverage` → `/test-plan` → `/test-write` → `/test-review` cycles).
 
 **Created:** 2026-04-22
-**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3h, 4a–4d complete)
+**Status:** In progress (Steps 1a–1d, 2a–2g, 3a–3h, 4a–4d, 5a–5f complete)
 **Ledger:** `.claude/testing/remediation-ledger.md` (13 files already triaged from earlier dogfood runs)
 
 ---
@@ -312,48 +312,48 @@
 135 test files — the largest single UI test surface. Break by feature area.
 **Estimated effort:** 4-5 sessions
 
-### Step 5a — Workflow builder (29 test files)
+### Step 5a — Workflow builder (30 test files)
 
 - **Path:** `tests/unit/components/admin/orchestration/workflow-builder/`
 - **Triage:** `/test-triage scan components/admin/orchestration/workflow-builder`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115)
+- **Notes:** 30 files, 502 tests. All Clean after annotation. Hits: tbt=15 (boolean fields, Array.isArray, .some(), .startsWith()), nac=21 (error-path guards + UI callback-fired guards), ent=6 (component robustness tests). All FP — annotated.
 
 ### Step 5b — Costs/budget (10 test files)
 
 - **Path:** `tests/unit/components/admin/orchestration/costs/`
 - **Triage:** `/test-triage scan components/admin/orchestration/costs`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115 — combined with 5a+5c+5d+5e)
+- **Notes:** 10 files, 101 tests. Zero sig hits — already Clean. No annotations needed.
 
 ### Step 5c — Knowledge base UI (10 test files)
 
 - **Path:** `tests/unit/components/admin/orchestration/knowledge/`
 - **Triage:** `/test-triage scan components/admin/orchestration/knowledge`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115 — combined with 5a+5b+5d+5e)
+- **Notes:** 10 files, 204 tests. nac=22 (14 error-path guards + 8 callback-fired guards). All FP — annotated.
 
 ### Step 5d — Learning UI (9 test files)
 
 - **Path:** `tests/unit/components/admin/orchestration/learn/`
 - **Triage:** `/test-triage scan components/admin/orchestration/learn`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115 — combined with 5a+5b+5c+5e)
+- **Notes:** 9 files, 46 tests. nac=2 (callback-fired guards). All FP — annotated.
 
 ### Step 5e — MCP admin pages (8 test files)
 
 - **Path:** `tests/unit/components/admin/orchestration/mcp/`
 - **Triage:** `/test-triage scan components/admin/orchestration/mcp`
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115 — combined with 5a+5b+5c+5d)
+- **Notes:** 8 files, 131 tests. Zero sig hits — already Clean. No annotations needed.
 
-### Step 5f — Remaining admin orchestration components (~67 test files)
+### Step 5f — Remaining admin orchestration components (71 test files)
 
 - **Covers:** agents, capabilities, providers, evaluations, observability, setup wizard, chat, analytics, audit-log, experiments, workflows
 - **Path:** `tests/unit/components/admin/orchestration/` (everything not covered above)
 - **Triage:** Scan the remaining subdirectories individually or in small batches
-- **Status:** NOT STARTED
-- **Notes:**
+- **Status:** DONE (PR #115 — combined with 5a–5e)
+- **Notes:** 71 files, 1157 tests. Hits: tbt=22 (boolean/predicate assertions), nac=45 (error-path + callback-fired guards). 1 transform error from broken `waitFor` annotation — fixed. All FP — annotated. All Clean.
 
 ---
 

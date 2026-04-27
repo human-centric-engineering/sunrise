@@ -105,7 +105,7 @@ describe('BackupPanel', () => {
         expect.objectContaining({ method: 'POST' })
       );
     });
-    expect(clickSpy).toHaveBeenCalled();
+    expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     clickSpy.mockRestore();
   });
 
@@ -121,6 +121,7 @@ describe('BackupPanel', () => {
     render(<BackupPanel />);
     await user.click(screen.getByRole('button', { name: /download backup/i }));
 
+    // test-review:accept no_arg_called — UI callback-fired guard
     await waitFor(() => expect(clickSpy).toHaveBeenCalled());
     expect(anchorDownload).toBe('orchestration-backup-2026.json');
     clickSpy.mockRestore();
@@ -165,7 +166,7 @@ describe('BackupPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('File is not valid JSON')).toBeInTheDocument();
     });
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows APIClientError message on import failure', async () => {
@@ -267,7 +268,7 @@ describe('BackupPanel', () => {
     fireEvent.drop(dropZone, { dataTransfer: { files: [] } });
 
     // No import attempt — mockPost should not be called
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     // No error shown
     expect(screen.queryByText('Import successful')).not.toBeInTheDocument();
   });
@@ -295,7 +296,7 @@ describe('BackupPanel', () => {
     input2.click = clickSpy2;
 
     fireEvent.keyDown(dropZone2, { key: 'Enter' });
-    expect(clickSpy2).toHaveBeenCalled();
+    expect(clickSpy2).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
   });
 
   it('Space key on drop zone triggers file input click', () => {
@@ -306,7 +307,7 @@ describe('BackupPanel', () => {
     input.click = clickSpy;
 
     fireEvent.keyDown(dropZone, { key: ' ' });
-    expect(clickSpy).toHaveBeenCalled();
+    expect(clickSpy).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
   });
 
   it('dragOver calls preventDefault to allow drop', () => {
@@ -316,7 +317,7 @@ describe('BackupPanel', () => {
     const dragOverEvent = createEvent.dragOver(dropZone, { dataTransfer: { files: [] } });
     // Use fireEvent to dispatch and check the default was prevented
     fireEvent(dropZone, dragOverEvent);
-    expect(dragOverEvent.defaultPrevented).toBe(true);
+    expect(dragOverEvent.defaultPrevented).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
   });
 
   // ── Export with no Content-Disposition header ─────────────────────────────
@@ -341,6 +342,7 @@ describe('BackupPanel', () => {
     render(<BackupPanel />);
     await user.click(screen.getByRole('button', { name: /download backup/i }));
 
+    // test-review:accept no_arg_called — UI callback-fired guard
     await waitFor(() => expect(clickSpy).toHaveBeenCalled());
     expect(anchorDownload).toBe('orchestration-backup.json');
     clickSpy.mockRestore();

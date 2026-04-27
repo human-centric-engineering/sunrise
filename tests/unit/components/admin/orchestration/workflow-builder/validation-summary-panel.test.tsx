@@ -125,7 +125,7 @@ describe('ValidationSummaryPanel', () => {
         await user.click(errorBtn);
       }
 
-      expect(onFocusNode).not.toHaveBeenCalled();
+      expect(onFocusNode).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('renders both WorkflowValidationError and ExtraCheckError entries', () => {

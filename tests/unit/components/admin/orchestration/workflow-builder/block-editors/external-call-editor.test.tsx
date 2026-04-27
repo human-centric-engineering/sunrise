@@ -449,7 +449,7 @@ describe('ExternalCallEditor', () => {
       expect(arg).toHaveProperty('headers');
       expect(typeof arg.headers).toBe('object');
       // The new entry has an empty-string key
-      expect('' in (arg.headers as Record<string, string>)).toBe(true);
+      expect('' in (arg.headers as Record<string, string>)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
     it('clicking Add header when headers already exist appends a new empty entry', async () => {

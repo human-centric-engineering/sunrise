@@ -202,7 +202,7 @@ describe('DocumentChunksModal', () => {
       />
     );
 
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('does not fetch when documentId is null', () => {
@@ -215,7 +215,7 @@ describe('DocumentChunksModal', () => {
       />
     );
 
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows chunk count in description', async () => {

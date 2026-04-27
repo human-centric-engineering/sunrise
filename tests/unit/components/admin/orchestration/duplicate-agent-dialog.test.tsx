@@ -167,7 +167,7 @@ describe('DuplicateAgentDialog', () => {
     });
 
     // Assert: no GET call — clone endpoint handles everything server-side
-    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(apiClient.get).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
 
     // Assert: router push to new agent's edit page
     await waitFor(() => {
@@ -197,6 +197,6 @@ describe('DuplicateAgentDialog', () => {
     });
 
     // Assert: router was NOT called
-    expect(mockPush).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 });

@@ -433,7 +433,7 @@ describe('ExperimentsList', () => {
       // Cancel the delete
       await user.click(screen.getByRole('button', { name: /cancel/i }));
 
-      expect(mockDelete).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(screen.getByText('Formal vs Casual')).toBeInTheDocument();
     });
 

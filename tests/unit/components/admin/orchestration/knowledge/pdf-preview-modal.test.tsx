@@ -108,7 +108,7 @@ describe('PdfPreviewModal', () => {
           body: expect.stringContaining('"documentId":"doc-1"'),
         })
       );
-      expect(onConfirmed).toHaveBeenCalled();
+      expect(onConfirmed).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
@@ -184,7 +184,7 @@ describe('PdfPreviewModal', () => {
         expect.objectContaining({ method: 'DELETE' })
       );
       expect(onOpenChange).toHaveBeenCalledWith(false);
-      expect(onConfirmed).not.toHaveBeenCalled();
+      expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -210,7 +210,7 @@ describe('PdfPreviewModal', () => {
       expect(screen.getByText('Document not in pending_review state')).toBeInTheDocument();
     });
 
-    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows fallback error message when non-ok response has no parseable body', async () => {
@@ -239,8 +239,8 @@ describe('PdfPreviewModal', () => {
       expect(screen.getByText('Confirmation failed (500)')).toBeInTheDocument();
     });
 
-    expect(onConfirmed).not.toHaveBeenCalled();
-    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error message when fetch throws a network error', async () => {
@@ -265,8 +265,8 @@ describe('PdfPreviewModal', () => {
     });
 
     // onConfirmed and onOpenChange must not be called — the dialog stays open
-    expect(onConfirmed).not.toHaveBeenCalled();
-    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onConfirmed).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    expect(onOpenChange).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('does not render when data is null', () => {

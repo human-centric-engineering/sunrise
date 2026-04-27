@@ -282,7 +282,7 @@ describe('CapabilityForm — Basic tab', () => {
         // but the category select should be back
         const comboboxes = screen.getAllByRole('combobox');
         const hasCategorySelect = comboboxes.some((t) => t.id === 'category');
-        expect(hasCategorySelect).toBe(true);
+        expect(hasCategorySelect).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -413,7 +413,7 @@ describe('CapabilityForm — Basic tab', () => {
         expect(
           document.body.textContent?.includes('Function definition') ||
             document.body.textContent?.includes('function definition')
-        ).toBe(true);
+        ).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
 

@@ -260,7 +260,7 @@ describe('AgentsTable', () => {
         const fetchUrls = mockFetch.mock.calls.map((call) =>
           toUrlString(call[0] as RequestInfo | URL)
         );
-        expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true);
+        expect(fetchUrls.some((u) => u.includes('q=al'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -482,7 +482,7 @@ describe('AgentsTable', () => {
       await waitFor(() => {
         expect(screen.queryByText('Delete agent')).not.toBeInTheDocument();
       });
-      expect(apiClient.delete).not.toHaveBeenCalled();
+      expect(apiClient.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -599,8 +599,8 @@ describe('AgentsTable', () => {
 
       // Assert: no per-row fetch calls for capabilities or conversations
       const allUrls = mockFetch.mock.calls.map((call) => toUrlString(call[0] as RequestInfo | URL));
-      expect(allUrls.every((u) => !u.includes('/capabilities'))).toBe(true);
-      expect(allUrls.every((u) => !u.includes('agentId='))).toBe(true);
+      expect(allUrls.every((u) => !u.includes('/capabilities'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(allUrls.every((u) => !u.includes('agentId='))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
   });
 
@@ -646,7 +646,7 @@ describe('AgentsTable', () => {
         const listFetches = mockFetch.mock.calls
           .filter((call) => !toUrlString(call[0] as RequestInfo | URL).includes('/export'))
           .map((call) => toUrlString(call[0] as RequestInfo | URL));
-        expect(listFetches.some((u) => u.includes('page=2'))).toBe(true);
+        expect(listFetches.some((u) => u.includes('page=2'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
   });
@@ -1049,7 +1049,7 @@ describe('AgentsTable', () => {
       resolveFetch!(makeAgentsListResponse([]));
 
       await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
+        expect(mockFetch).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       });
     });
   });

@@ -98,7 +98,7 @@ describe('BuilderToolbar', () => {
       await user.clear(input);
       await user.type(input, 'New name');
 
-      expect(onNameChange).toHaveBeenCalled();
+      expect(onNameChange).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
     });
   });
 

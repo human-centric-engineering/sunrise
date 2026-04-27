@@ -217,7 +217,7 @@ describe('BlockConfigPanel', () => {
       // Assert: nodeId is the first arg; the second arg must be the new label
       // (the component does NOT just forward the keypress — it passes the full
       // e.target.value which includes the initial text from the controlled prop)
-      expect(onLabelChange).toHaveBeenCalled();
+      expect(onLabelChange).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       const lastCall = onLabelChange.mock.calls[onLabelChange.mock.calls.length - 1];
       expect(lastCall[0]).toBe('step-abc');
       // The label should end with the typed character
@@ -299,7 +299,7 @@ describe('BlockConfigPanel', () => {
       await user.type(document.getElementById('ext-url')!, 'https://api.example.com');
 
       // Assert
-      expect(onConfigChange).toHaveBeenCalled();
+      expect(onConfigChange).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard;
       const lastCall = onConfigChange.mock.calls[onConfigChange.mock.calls.length - 1];
       expect(lastCall[0]).toBe('step-ext');
       expect(lastCall[1]).toHaveProperty('url');

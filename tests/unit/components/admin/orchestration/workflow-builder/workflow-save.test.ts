@@ -175,7 +175,7 @@ describe('saveWorkflow', () => {
         details: VALID_DETAILS,
       });
 
-      expect(apiClient.patch).not.toHaveBeenCalled();
+      expect(apiClient.patch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 
@@ -232,7 +232,7 @@ describe('saveWorkflow', () => {
         details: VALID_DETAILS,
       });
 
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('throws an error when workflowId is missing in edit mode', async () => {

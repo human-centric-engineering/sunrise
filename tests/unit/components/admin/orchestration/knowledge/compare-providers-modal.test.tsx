@@ -69,7 +69,7 @@ describe('CompareProvidersModal', () => {
   describe('fetch behaviour based on open prop', () => {
     it('does not fetch when open is false', () => {
       render(<CompareProvidersModal open={false} onOpenChange={onOpenChange} />);
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('fetches embedding models when open is true', async () => {

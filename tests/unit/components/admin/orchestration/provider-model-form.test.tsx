@@ -196,7 +196,7 @@ describe('ProviderModelForm', () => {
     await waitFor(() => {
       expect(screen.getByText(/at least one capability/i)).toBeInTheDocument();
     });
-    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockPatch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   // ── Create submit ─────────────────────────────────────────────────────────

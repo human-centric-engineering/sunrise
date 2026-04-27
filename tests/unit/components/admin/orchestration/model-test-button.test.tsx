@@ -165,7 +165,7 @@ describe('ModelTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test model/i }));
 
       // Assert
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

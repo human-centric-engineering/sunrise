@@ -121,7 +121,7 @@ describe('ExecutionInputDialog', () => {
     await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/positive number/i);
-    expect(props.onConfirm).not.toHaveBeenCalled();
+    expect(props.onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error for negative budget and does not call onConfirm', async () => {
@@ -132,7 +132,7 @@ describe('ExecutionInputDialog', () => {
     await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/positive number/i);
-    expect(props.onConfirm).not.toHaveBeenCalled();
+    expect(props.onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error when input is a JSON array', async () => {
@@ -143,7 +143,7 @@ describe('ExecutionInputDialog', () => {
     await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/JSON object/i);
-    expect(props.onConfirm).not.toHaveBeenCalled();
+    expect(props.onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error when input is a JSON string', async () => {
@@ -154,7 +154,7 @@ describe('ExecutionInputDialog', () => {
     await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/JSON object/i);
-    expect(props.onConfirm).not.toHaveBeenCalled();
+    expect(props.onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('shows error when input is malformed JSON', async () => {
@@ -165,7 +165,7 @@ describe('ExecutionInputDialog', () => {
     await user.click(screen.getByRole('button', { name: /^run$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/not valid JSON/i);
-    expect(props.onConfirm).not.toHaveBeenCalled();
+    expect(props.onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
   it('calls onOpenChange(false) when Cancel is clicked', async () => {
@@ -276,7 +276,7 @@ describe('ExecutionInputDialog', () => {
 
       // Assert: parse error shown, no API call made
       expect(screen.getByRole('alert')).toHaveTextContent(/not valid JSON/i);
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('shows "Validating…" label while dry-run is in-flight', async () => {
