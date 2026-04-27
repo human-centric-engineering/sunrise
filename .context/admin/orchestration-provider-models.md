@@ -50,7 +50,7 @@ Rendered inline beneath the matrix. Six rows mapping task intent → recommended
 | `fast_looping`     | Infrastructure    |
 | `high_reliability` | Control Plane     |
 | `private`          | Local / Sovereign |
-| `vector`           | Embedding         |
+| `embedding`        | Embedding         |
 
 Powered by `GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>`, which returns `{ intent, recommendations, heuristic }` — `recommendations` is a scored list of live models in the matching tier.
 
@@ -78,7 +78,7 @@ Any PATCH flips `isDefault` to `false` server-side so re-seeds leave the row alo
 | Model ID        | Required; the API identifier sent to the provider (e.g. `gpt-5`)                                                                                    |
 | Display Name    | Required, ≤ 100 chars                                                                                                                               |
 | Slug            | Required, lowercased with hyphens; disabled in edit mode. Auto-derived from `providerSlug + name` in create mode unless the admin types it manually |
-| Description     | Optional, ≤ 500 chars                                                                                                                               |
+| Description     | Required, ≤ 2000 chars                                                                                                                              |
 | Capabilities    | Two checkboxes: Chat · Embedding. At least one required (enforced client-side before POST)                                                          |
 | Tier Role       | Radix `<Select>` populated from `TIER_ROLE_META`; label shows `{label} — {description}`                                                             |
 | Reasoning Depth | `very_high` · `high` · `medium` · `none`                                                                                                            |
@@ -121,7 +121,7 @@ GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>
 Authorization: Admin
 ```
 
-`intent` ∈ `thinking` · `doing` · `fast_looping` · `high_reliability` · `private` · `vector`.
+`intent` ∈ `thinking` · `doing` · `fast_looping` · `high_reliability` · `private` · `embedding`.
 
 Response:
 

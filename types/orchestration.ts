@@ -717,7 +717,7 @@ export const TIER_ROLE_META: Record<TierRole, { label: string; description: stri
   infrastructure: { label: 'Infrastructure', description: 'Scaling, latency-sensitive loops' },
   control_plane: {
     label: 'Control Plane',
-    description: 'Fallback logic, A/B testing, cost routing',
+    description: 'Fallback logic, A/B testing, cost routing, enterprise compliance',
   },
   local_sovereign: {
     label: 'Local / Sovereign',

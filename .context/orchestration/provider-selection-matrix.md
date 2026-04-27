@@ -64,7 +64,7 @@ When assigning a model in an agent system:
 type TaskIntent = 'thinking' | 'doing' | 'fast_looping' | 'high_reliability' | 'private' | 'embedding';
 
 const recs = await recommendModels(intent, { limit?: number; includeInactive?: boolean });
-// Returns ModelRecommendation[] sorted by score (0-100)
+// Returns ModelRecommendation[] sorted by score (0-90 chat, 0-96 embedding)
 ```
 
 Scoring for chat intents: primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points). Non-matching tiers score 0 + secondary only.
