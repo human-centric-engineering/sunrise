@@ -11,8 +11,8 @@ import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
-import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
@@ -45,6 +45,10 @@ const createHookSchema = z.object({
 });
 
 export const GET = withAdminAuth(async (request, _session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, Number(searchParams.get('page') ?? 1));
@@ -73,16 +77,10 @@ export const POST = withAdminAuth(async (request, session) => {
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   const log = await getRouteLogger(request);
-  const body: unknown = await request.json();
-
-  const parsed = createHookSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid hook configuration', {
-      fields: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
-    });
-  }
-
-  const { name, eventType, action, filter, isEnabled } = parsed.data;
+  const { name, eventType, action, filter, isEnabled } = await validateRequestBody(
+    request,
+    createHookSchema
+  );
 
   const hook = await prisma.aiEventHook.create({
     data: {

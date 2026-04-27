@@ -10,11 +10,13 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
-import { NotFoundError } from '@/lib/api/errors';
-import { z } from 'zod';
+import { paginatedResponse } from '@/lib/api/responses';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -24,6 +26,10 @@ const querySchema = z.object({
 
 export const GET = withAdminAuth<{ id: string }>(
   async (request: NextRequest, _session, { params }) => {
+    const clientIP = getClientIP(request);
+    const rateLimit = adminLimiter.check(clientIP);
+    if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
     const { id } = await params;
 
     const sub = await prisma.aiWebhookSubscription.findUnique({
@@ -33,11 +39,17 @@ export const GET = withAdminAuth<{ id: string }>(
     if (!sub) throw new NotFoundError('Webhook subscription not found');
 
     const url = new URL(request.url);
-    const query = querySchema.parse({
+    const parsed = querySchema.safeParse({
       page: url.searchParams.get('page') ?? undefined,
       pageSize: url.searchParams.get('pageSize') ?? undefined,
       status: url.searchParams.get('status') ?? undefined,
     });
+    if (!parsed.success) {
+      throw new ValidationError('Invalid query parameters', {
+        fields: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+      });
+    }
+    const query = parsed.data;
 
     const where = {
       subscriptionId: id,
@@ -54,11 +66,10 @@ export const GET = withAdminAuth<{ id: string }>(
       prisma.aiWebhookDelivery.count({ where }),
     ]);
 
-    return successResponse(deliveries, {
+    return paginatedResponse(deliveries, {
       page: query.page,
-      pageSize: query.pageSize,
+      limit: query.pageSize,
       total,
-      totalPages: Math.ceil(total / query.pageSize),
     });
   }
 );

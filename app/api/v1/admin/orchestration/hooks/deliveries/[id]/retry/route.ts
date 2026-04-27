@@ -11,10 +11,11 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { retryHookDelivery } from '@/lib/orchestration/hooks/registry';
+import { cuidSchema } from '@/lib/validations/common';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const clientIP = getClientIP(request);
@@ -22,6 +23,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   const { id } = await params;
+  if (!cuidSchema.safeParse(id).success) {
+    throw new ValidationError('Invalid delivery ID format');
+  }
 
   const ok = await retryHookDelivery(id);
   if (!ok) throw new NotFoundError('Hook delivery not found or no longer retriable');
