@@ -138,20 +138,33 @@ function SortableHead({
   label,
   field,
   activeKey,
+  sortAsc,
   onToggle,
 }: {
   label: string;
   field: SortKey;
   activeKey: SortKey;
+  sortAsc: boolean;
   onToggle: (key: SortKey) => void;
 }): React.ReactElement {
+  const isActive = activeKey === field;
   return (
-    <TableHead className="cursor-pointer select-none" onClick={() => onToggle(field)}>
+    <TableHead
+      className="cursor-pointer select-none"
+      tabIndex={0}
+      role="columnheader"
+      aria-sort={isActive ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+      onClick={() => onToggle(field)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle(field);
+        }
+      }}
+    >
       <span className="inline-flex items-center gap-1">
         {label}
-        <ArrowUpDown
-          className={cn('h-3 w-3', activeKey === field ? 'opacity-100' : 'opacity-30')}
-        />
+        <ArrowUpDown className={cn('h-3 w-3', isActive ? 'opacity-100' : 'opacity-30')} />
       </span>
     </TableHead>
   );
@@ -264,7 +277,7 @@ export function ProviderModelsMatrix({
       </div>
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className="overflow-x-auto rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
@@ -272,44 +285,57 @@ export function ProviderModelsMatrix({
                 label="Provider"
                 field="providerSlug"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
-              <SortableHead label="Model" field="name" activeKey={sortKey} onToggle={toggleSort} />
+              <SortableHead
+                label="Model"
+                field="name"
+                activeKey={sortKey}
+                sortAsc={sortAsc}
+                onToggle={toggleSort}
+              />
               <TableHead>Type</TableHead>
               <SortableHead
                 label="Tier"
                 field="tierRole"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <SortableHead
                 label="Reasoning"
                 field="reasoningDepth"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <SortableHead
                 label="Latency"
                 field="latency"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <SortableHead
                 label="Cost Eff."
                 field="costEfficiency"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <SortableHead
                 label="Context"
                 field="contextLength"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <SortableHead
                 label="Tools"
                 field="toolUse"
                 activeKey={sortKey}
+                sortAsc={sortAsc}
                 onToggle={toggleSort}
               />
               <TableHead>Best For</TableHead>

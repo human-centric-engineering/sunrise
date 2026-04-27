@@ -249,7 +249,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
           API.ADMIN.ORCHESTRATION.PROVIDER_MODELS,
           { body: payload }
         );
-        router.push(`/admin/orchestration/provider-models/${created.id}`);
+        router.push(`/admin/orchestration/provider-models/${created.id}?created=1`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -275,333 +275,359 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
           </Button>
         </div>
       </div>
+      <fieldset disabled={submitting} className="space-y-6">
+        {/* Provider Slug & Model ID */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="providerSlug">
+              Provider Slug{' '}
+              <FieldHelp title="Provider slug">
+                The slug of the provider this model belongs to (e.g. &quot;openai&quot;,
+                &quot;anthropic&quot;, &quot;voyage&quot;). Must match an existing provider config
+                for the configured-status dot to appear green in the matrix.
+              </FieldHelp>
+            </Label>
+            <Input id="providerSlug" {...register('providerSlug')} placeholder="e.g. openai" />
+            {errors.providerSlug && (
+              <p className="text-destructive text-xs">{errors.providerSlug.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="modelId">
+              Model ID{' '}
+              <FieldHelp title="Model ID">
+                The API model identifier sent to the provider (e.g. &quot;gpt-5&quot;,
+                &quot;claude-opus-4&quot;, &quot;voyage-3&quot;).
+              </FieldHelp>
+            </Label>
+            <Input id="modelId" {...register('modelId')} placeholder="e.g. gpt-5" />
+            {errors.modelId && <p className="text-destructive text-xs">{errors.modelId.message}</p>}
+          </div>
+        </div>
 
-      {/* Provider Slug & Model ID */}
-      <div className="grid grid-cols-2 gap-4">
+        {/* Name & Slug */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Display Name</Label>
+            <Input id="name" {...register('name')} placeholder="e.g. GPT-5" />
+            {errors.name && <p className="text-destructive text-xs">{errors.name.message}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="slug">
+              Slug{' '}
+              <FieldHelp title="Slug">
+                Unique identifier used in URLs and API references. Auto-derived from provider slug +
+                name in create mode.{isEdit ? ' Cannot be changed after creation.' : ''}
+              </FieldHelp>
+            </Label>
+            <Input
+              id="slug"
+              {...register('slug', {
+                onChange: () => setSlugEdited(true),
+              })}
+              disabled={isEdit}
+              placeholder="e.g. openai-gpt-5"
+            />
+            {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
+          </div>
+        </div>
+
+        {/* Description */}
         <div className="space-y-2">
-          <Label htmlFor="providerSlug">
-            Provider Slug{' '}
-            <FieldHelp title="Provider slug">
-              The slug of the provider this model belongs to (e.g. &quot;openai&quot;,
-              &quot;anthropic&quot;, &quot;voyage&quot;). Must match an existing provider config for
-              the configured-status dot to appear green in the matrix.
-            </FieldHelp>
-          </Label>
-          <Input id="providerSlug" {...register('providerSlug')} placeholder="e.g. openai" />
-          {errors.providerSlug && (
-            <p className="text-destructive text-xs">{errors.providerSlug.message}</p>
+          <Label htmlFor="description">Description</Label>
+          <Textarea
+            id="description"
+            {...register('description')}
+            rows={3}
+            placeholder="Brief description of this model's strengths and characteristics."
+          />
+          {errors.description && (
+            <p className="text-destructive text-xs">{errors.description.message}</p>
           )}
         </div>
+
+        {/* Capabilities */}
         <div className="space-y-2">
-          <Label htmlFor="modelId">
-            Model ID{' '}
-            <FieldHelp title="Model ID">
-              The API model identifier sent to the provider (e.g. &quot;gpt-5&quot;,
-              &quot;claude-opus-4&quot;, &quot;voyage-3&quot;).
+          <Label>
+            Capabilities{' '}
+            <FieldHelp title="Capabilities">
+              Select whether this model is used for chat (text generation), embedding (vector
+              creation), or both.
             </FieldHelp>
           </Label>
-          <Input id="modelId" {...register('modelId')} placeholder="e.g. gpt-5" />
-          {errors.modelId && <p className="text-destructive text-xs">{errors.modelId.message}</p>}
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="capChat"
+                checked={watch('capChat')}
+                onCheckedChange={(v) => setValue('capChat', !!v)}
+              />
+              <label htmlFor="capChat">Chat</label>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="capEmbedding"
+                checked={hasEmbedding}
+                onCheckedChange={(v) => setValue('capEmbedding', !!v)}
+              />
+              <label htmlFor="capEmbedding">Embedding</label>
+            </div>
+          </div>
         </div>
-      </div>
 
-      {/* Name & Slug */}
-      <div className="grid grid-cols-2 gap-4">
+        {/* Tier Role */}
         <div className="space-y-2">
-          <Label htmlFor="name">Display Name</Label>
-          <Input id="name" {...register('name')} placeholder="e.g. GPT-5" />
-          {errors.name && <p className="text-destructive text-xs">{errors.name.message}</p>}
+          <Label>
+            Tier Role{' '}
+            <FieldHelp title="Tier roles">
+              <p>
+                Each model belongs to a tier that describes its primary role in an agent
+                architecture. The decision heuristic uses this to recommend models.
+              </p>
+            </FieldHelp>
+          </Label>
+          <Select
+            defaultValue={model?.tierRole ?? 'thinking'}
+            onValueChange={(v) => setValue('tierRole', v as ModelFormData['tierRole'])}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(
+                Object.entries(TIER_ROLE_META) as [
+                  TierRole,
+                  { label: string; description: string },
+                ][]
+              ).map(([key, meta]) => (
+                <SelectItem key={key} value={key}>
+                  {meta.label} — {meta.description}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {errors.tierRole && <p className="text-destructive text-xs">{errors.tierRole.message}</p>}
         </div>
+
+        {/* Rating dimensions */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Reasoning Depth</Label>
+            <Select
+              defaultValue={model?.reasoningDepth ?? 'medium'}
+              onValueChange={(v) =>
+                setValue('reasoningDepth', v as ModelFormData['reasoningDepth'])
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="very_high">Very High</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="none">None</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Latency</Label>
+            <Select
+              defaultValue={model?.latency ?? 'medium'}
+              onValueChange={(v) => setValue('latency', v as ModelFormData['latency'])}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="very_fast">Very Fast</SelectItem>
+                <SelectItem value="fast">Fast</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Cost Efficiency</Label>
+            <Select
+              defaultValue={model?.costEfficiency ?? 'medium'}
+              onValueChange={(v) =>
+                setValue('costEfficiency', v as ModelFormData['costEfficiency'])
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="very_high">Very High</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="none">None</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Context Length</Label>
+            <Select
+              defaultValue={model?.contextLength ?? 'medium'}
+              onValueChange={(v) => setValue('contextLength', v as ModelFormData['contextLength'])}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="very_high">Very High</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="n_a">N/A</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Tool Use</Label>
+            <Select
+              defaultValue={model?.toolUse ?? 'moderate'}
+              onValueChange={(v) => setValue('toolUse', v as ModelFormData['toolUse'])}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="strong">Strong</SelectItem>
+                <SelectItem value="moderate">Moderate</SelectItem>
+                <SelectItem value="none">None</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Best Role */}
         <div className="space-y-2">
-          <Label htmlFor="slug">Slug</Label>
+          <Label htmlFor="bestRole">
+            Best Role{' '}
+            <FieldHelp title="Best role">
+              Free-text description of what this model is best suited for in an agent architecture
+              (e.g. &quot;Planner / orchestrator&quot;, &quot;Premium embeddings&quot;).
+            </FieldHelp>
+          </Label>
           <Input
-            id="slug"
-            {...register('slug', {
-              onChange: () => setSlugEdited(true),
-            })}
-            disabled={isEdit}
-            placeholder="e.g. openai-gpt-5"
+            id="bestRole"
+            {...register('bestRole')}
+            placeholder="e.g. Planner / orchestrator"
           />
-          {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
+          {errors.bestRole && <p className="text-destructive text-xs">{errors.bestRole.message}</p>}
         </div>
-      </div>
 
-      {/* Description */}
-      <div className="space-y-2">
-        <Label htmlFor="description">Description</Label>
-        <Textarea
-          id="description"
-          {...register('description')}
-          rows={3}
-          placeholder="Brief description of this model's strengths and characteristics."
-        />
-        {errors.description && (
-          <p className="text-destructive text-xs">{errors.description.message}</p>
-        )}
-      </div>
-
-      {/* Capabilities */}
-      <div className="space-y-2">
-        <Label>
-          Capabilities{' '}
-          <FieldHelp title="Capabilities">
-            Select whether this model is used for chat (text generation), embedding (vector
-            creation), or both.
-          </FieldHelp>
-        </Label>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="capChat"
-              checked={watch('capChat')}
-              onCheckedChange={(v) => setValue('capChat', !!v)}
-            />
-            <label htmlFor="capChat">Chat</label>
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="capEmbedding"
-              checked={hasEmbedding}
-              onCheckedChange={(v) => setValue('capEmbedding', !!v)}
-            />
-            <label htmlFor="capEmbedding">Embedding</label>
-          </div>
-        </div>
-      </div>
-
-      {/* Tier Role */}
-      <div className="space-y-2">
-        <Label>
-          Tier Role{' '}
-          <FieldHelp title="Tier roles">
-            <p>
-              Each model belongs to a tier that describes its primary role in an agent architecture.
-              The decision heuristic uses this to recommend models.
-            </p>
-          </FieldHelp>
-        </Label>
-        <Select
-          defaultValue={model?.tierRole ?? 'thinking'}
-          onValueChange={(v) => setValue('tierRole', v as ModelFormData['tierRole'])}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(
-              Object.entries(TIER_ROLE_META) as [TierRole, { label: string; description: string }][]
-            ).map(([key, meta]) => (
-              <SelectItem key={key} value={key}>
-                {meta.label} — {meta.description}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {errors.tierRole && <p className="text-destructive text-xs">{errors.tierRole.message}</p>}
-      </div>
-
-      {/* Rating dimensions */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Reasoning Depth</Label>
-          <Select
-            defaultValue={model?.reasoningDepth ?? 'medium'}
-            onValueChange={(v) => setValue('reasoningDepth', v as ModelFormData['reasoningDepth'])}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="very_high">Very High</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="none">None</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Latency</Label>
-          <Select
-            defaultValue={model?.latency ?? 'medium'}
-            onValueChange={(v) => setValue('latency', v as ModelFormData['latency'])}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="very_fast">Very Fast</SelectItem>
-              <SelectItem value="fast">Fast</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Cost Efficiency</Label>
-          <Select
-            defaultValue={model?.costEfficiency ?? 'medium'}
-            onValueChange={(v) => setValue('costEfficiency', v as ModelFormData['costEfficiency'])}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="very_high">Very High</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="none">None</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Context Length</Label>
-          <Select
-            defaultValue={model?.contextLength ?? 'medium'}
-            onValueChange={(v) => setValue('contextLength', v as ModelFormData['contextLength'])}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="very_high">Very High</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="n_a">N/A</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Tool Use</Label>
-          <Select
-            defaultValue={model?.toolUse ?? 'moderate'}
-            onValueChange={(v) => setValue('toolUse', v as ModelFormData['toolUse'])}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="strong">Strong</SelectItem>
-              <SelectItem value="moderate">Moderate</SelectItem>
-              <SelectItem value="none">None</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* Best Role */}
-      <div className="space-y-2">
-        <Label htmlFor="bestRole">
-          Best Role{' '}
-          <FieldHelp title="Best role">
-            Free-text description of what this model is best suited for in an agent architecture
-            (e.g. &quot;Planner / orchestrator&quot;, &quot;Premium embeddings&quot;).
-          </FieldHelp>
-        </Label>
-        <Input id="bestRole" {...register('bestRole')} placeholder="e.g. Planner / orchestrator" />
-        {errors.bestRole && <p className="text-destructive text-xs">{errors.bestRole.message}</p>}
-      </div>
-
-      {/* Embedding-specific fields */}
-      {hasEmbedding && (
-        <div className="space-y-4 rounded-md border p-4">
-          <h3 className="text-sm font-semibold">Embedding Details</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="dimensions">
-                Dimensions{' '}
-                <FieldHelp title="Dimensions">
-                  Native output dimensions of the embedding vector (e.g. 1536, 1024, 768).
-                </FieldHelp>
-              </Label>
-              <Input id="dimensions" {...register('dimensions')} placeholder="e.g. 1536" />
-              {errors.dimensions && (
-                <p className="text-destructive text-xs">{errors.dimensions.message}</p>
-              )}
+        {/* Embedding-specific fields */}
+        {hasEmbedding && (
+          <div className="space-y-4 rounded-md border p-4">
+            <h3 className="text-sm font-semibold">Embedding Details</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="dimensions">
+                  Dimensions{' '}
+                  <FieldHelp title="Dimensions">
+                    Native output dimensions of the embedding vector (e.g. 1536, 1024, 768).
+                  </FieldHelp>
+                </Label>
+                <Input id="dimensions" {...register('dimensions')} placeholder="e.g. 1536" />
+                {errors.dimensions && (
+                  <p className="text-destructive text-xs">{errors.dimensions.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="costPerMillionTokens">Cost / 1M Tokens (USD)</Label>
+                <Input
+                  id="costPerMillionTokens"
+                  {...register('costPerMillionTokens')}
+                  placeholder="e.g. 0.02"
+                />
+                {errors.costPerMillionTokens && (
+                  <p className="text-destructive text-xs">{errors.costPerMillionTokens.message}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-6">
+              <div className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  id="schemaCompatible"
+                  checked={watch('schemaCompatible')}
+                  onCheckedChange={(v) => setValue('schemaCompatible', !!v)}
+                />
+                <label htmlFor="schemaCompatible">
+                  Schema Compatible (1536-dim){' '}
+                  <FieldHelp title="Schema compatible">
+                    Can this model produce 1536-dim vectors compatible with the pgvector column?
+                  </FieldHelp>
+                </label>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  id="hasFreeTier"
+                  checked={watch('hasFreeTier')}
+                  onCheckedChange={(v) => setValue('hasFreeTier', !!v)}
+                />
+                <label htmlFor="hasFreeTier">Free Tier</label>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  id="localModel"
+                  checked={watch('local')}
+                  onCheckedChange={(v) => setValue('local', !!v)}
+                />
+                <label htmlFor="localModel">Local / Self-hosted</label>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Quality</Label>
+                <Select
+                  defaultValue={model?.quality ?? ''}
+                  onValueChange={(v) => setValue('quality', v as ModelFormData['quality'])}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select quality" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="budget">Budget</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="costPerMillionTokens">Cost / 1M Tokens (USD)</Label>
+              <Label htmlFor="strengths">Strengths</Label>
+              <Textarea
+                id="strengths"
+                {...register('strengths')}
+                rows={2}
+                placeholder="Brief description of this model's strengths"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="setup">Setup Instructions</Label>
               <Input
-                id="costPerMillionTokens"
-                {...register('costPerMillionTokens')}
-                placeholder="e.g. 0.02"
+                id="setup"
+                {...register('setup')}
+                placeholder="e.g. API key → add as provider"
               />
-              {errors.costPerMillionTokens && (
-                <p className="text-destructive text-xs">{errors.costPerMillionTokens.message}</p>
-              )}
             </div>
           </div>
-          <div className="flex flex-wrap gap-6">
-            <div className="flex items-center gap-2 text-sm">
-              <Checkbox
-                id="schemaCompatible"
-                checked={watch('schemaCompatible')}
-                onCheckedChange={(v) => setValue('schemaCompatible', !!v)}
-              />
-              <label htmlFor="schemaCompatible">
-                Schema Compatible (1536-dim){' '}
-                <FieldHelp title="Schema compatible">
-                  Can this model produce 1536-dim vectors compatible with the pgvector column?
-                </FieldHelp>
-              </label>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Checkbox
-                id="hasFreeTier"
-                checked={watch('hasFreeTier')}
-                onCheckedChange={(v) => setValue('hasFreeTier', !!v)}
-              />
-              <label htmlFor="hasFreeTier">Free Tier</label>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Checkbox
-                id="localModel"
-                checked={watch('local')}
-                onCheckedChange={(v) => setValue('local', !!v)}
-              />
-              <label htmlFor="localModel">Local / Self-hosted</label>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Quality</Label>
-              <Select
-                defaultValue={model?.quality ?? ''}
-                onValueChange={(v) => setValue('quality', v as ModelFormData['quality'])}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select quality" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="budget">Budget</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="strengths">Strengths</Label>
-            <Textarea
-              id="strengths"
-              {...register('strengths')}
-              rows={2}
-              placeholder="Brief description of this model's strengths"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="setup">Setup Instructions</Label>
-            <Input id="setup" {...register('setup')} placeholder="e.g. API key → add as provider" />
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* Active toggle */}
-      <div className="flex items-center gap-3">
-        <Switch id="isActive" checked={isActive} onCheckedChange={(v) => setValue('isActive', v)} />
-        <Label htmlFor="isActive">Active</Label>
-        <span className="text-muted-foreground text-xs">
-          Inactive models are hidden from the matrix and recommendations.
-        </span>
-      </div>
+        {/* Active toggle */}
+        <div className="flex items-center gap-3">
+          <Switch
+            id="isActive"
+            checked={isActive}
+            onCheckedChange={(v) => setValue('isActive', v)}
+          />
+          <Label htmlFor="isActive">Active</Label>
+          <span className="text-muted-foreground text-xs">
+            Inactive models are hidden from the matrix and recommendations.
+          </span>
+        </div>
+      </fieldset>
     </form>
   );
 }
