@@ -52,21 +52,32 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     slug = `${baseSlug}-${suffix++}`;
   }
 
-  const template = await prisma.aiWorkflow.create({
-    data: {
-      name: body.name ?? `${workflow.name} (Template)`,
-      slug,
-      description: body.description ?? workflow.description,
-      workflowDefinition: workflow.workflowDefinition as Prisma.InputJsonValue,
-      workflowDefinitionHistory: [] as unknown as Prisma.InputJsonValue,
-      patternsUsed: workflow.patternsUsed,
-      isActive: true,
-      isTemplate: true,
-      templateSource: 'custom',
-      metadata: workflow.metadata as Prisma.InputJsonValue,
-      createdBy: session.user.id,
-    },
-  });
+  let template;
+  try {
+    template = await prisma.aiWorkflow.create({
+      data: {
+        name: body.name ?? `${workflow.name} (Template)`,
+        slug,
+        description: body.description ?? workflow.description,
+        workflowDefinition: workflow.workflowDefinition as Prisma.InputJsonValue,
+        workflowDefinitionHistory: [] as unknown as Prisma.InputJsonValue,
+        patternsUsed: workflow.patternsUsed,
+        isActive: true,
+        isTemplate: true,
+        templateSource: 'custom',
+        metadata: workflow.metadata as Prisma.InputJsonValue,
+        createdBy: session.user.id,
+      },
+    });
+  } catch (err: unknown) {
+    // P2002: unique constraint violation — slug race between findUnique and create
+    if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'P2002') {
+      throw new ValidationError('Template slug already exists — please try again', {
+        slug: ['A template with this slug was just created'],
+      });
+    }
+    throw err;
+  }
 
   log.info('Workflow saved as template', {
     sourceWorkflowId: id,
