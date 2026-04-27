@@ -13,7 +13,7 @@ import type { AiCapability } from '@/types/orchestration';
 /** Minimal capability shape the tool-call editor needs. */
 export type CapabilityOption = Pick<AiCapability, 'id' | 'slug' | 'name' | 'description'>;
 
-/** Minimal agent shape the orchestrator editor needs. */
+/** Minimal agent shape the orchestrator and agent-call editors need. */
 export type AgentOption = { slug: string; name: string; description: string | null };
 
 /**
@@ -41,4 +41,6 @@ export { RagRetrieveEditor } from '@/components/admin/orchestration/workflow-bui
 export { GuardEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/guard-editor';
 export { EvaluateEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor';
 export { ExternalCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/external-call-editor';
+export { AgentCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/agent-call-editor';
+export { NotificationEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/notification-editor';
 export { OrchestratorEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor';

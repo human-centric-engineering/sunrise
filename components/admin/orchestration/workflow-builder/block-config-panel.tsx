@@ -41,12 +41,14 @@ import { cn } from '@/lib/utils';
 
 import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 import {
+  AgentCallEditor,
   ChainEditor,
   EvaluateEditor,
   ExternalCallEditor,
   GuardEditor,
   HumanApprovalEditor,
   LlmCallEditor,
+  NotificationEditor,
   OrchestratorEditor,
   ParallelEditor,
   PlanEditor,
@@ -318,6 +320,12 @@ function BlockEditor({
       return (
         <OrchestratorEditor config={config as never} onChange={onChange as never} agents={agents} />
       );
+    case 'agent_call':
+      return (
+        <AgentCallEditor config={config as never} onChange={onChange as never} agents={agents} />
+      );
+    case 'send_notification':
+      return <NotificationEditor config={config as never} onChange={onChange as never} />;
     default:
       return (
         <p className="text-muted-foreground text-xs italic">
