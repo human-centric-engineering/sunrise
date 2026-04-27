@@ -92,7 +92,14 @@ export async function retryDelivery(deliveryId: string): Promise<boolean> {
   // Reset status for retry
   await prisma.aiWebhookDelivery.update({
     where: { id: deliveryId },
-    data: { status: 'pending', attempts: 0, lastError: null, nextRetryAt: null },
+    data: {
+      status: 'pending',
+      attempts: 0,
+      lastError: null,
+      nextRetryAt: null,
+      lastAttemptAt: null,
+      lastResponseCode: null,
+    },
   });
 
   const body = JSON.stringify({

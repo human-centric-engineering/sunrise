@@ -436,7 +436,14 @@ export async function retryHookDelivery(deliveryId: string): Promise<boolean> {
 
   await prisma.aiEventHookDelivery.update({
     where: { id: deliveryId },
-    data: { status: 'pending', attempts: 0, lastError: null, nextRetryAt: null },
+    data: {
+      status: 'pending',
+      attempts: 0,
+      lastError: null,
+      nextRetryAt: null,
+      lastAttemptAt: null,
+      lastResponseCode: null,
+    },
   });
 
   void attemptDelivery(
