@@ -498,10 +498,10 @@ export interface OrchestrationSettings {
   defaultApprovalTimeoutMs: number | null;
   /** Action when approval gate times out. */
   approvalDefaultAction: ApprovalDefaultAction | null;
-  /** Input guard behaviour for prompt injection detection. */
-  inputGuardMode: InputGuardMode;
-  /** Output guard behaviour for topic boundary enforcement. */
-  outputGuardMode: OutputGuardMode;
+  /** Input guard behaviour for prompt injection detection. `null` = disabled. */
+  inputGuardMode: InputGuardMode | null;
+  /** Output guard behaviour for topic boundary enforcement. `null` = disabled. */
+  outputGuardMode: OutputGuardMode | null;
   /** Days to retain webhook delivery logs, or `null` for no auto-cleanup. */
   webhookRetentionDays: number | null;
   /** Days to retain cost logs, or `null` for no auto-cleanup. */

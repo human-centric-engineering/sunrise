@@ -398,19 +398,19 @@ describe('hydrateSettings', () => {
     // Act
     const result = hydrateSettings(row);
 
-    // Assert — unknown value falls through to the default at L115
-    expect(result.inputGuardMode).toBe('log_only');
+    // Assert — unknown value falls through to null (disabled)
+    expect(result.inputGuardMode).toBeNull();
   });
 
-  it("falls back to 'log_only' when outputGuardMode is an unknown string", () => {
+  it('falls back to null when outputGuardMode is an unknown string', () => {
     // Arrange — 'panic' is not in VALID_OUTPUT_GUARD_MODES
     const row = makeRow({ outputGuardMode: 'panic' });
 
     // Act
     const result = hydrateSettings(row);
 
-    // Assert — unknown value falls through to the default at L117
-    expect(result.outputGuardMode).toBe('log_only');
+    // Assert — unknown value falls through to null (disabled)
+    expect(result.outputGuardMode).toBeNull();
   });
 });
 

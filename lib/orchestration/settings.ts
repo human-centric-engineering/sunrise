@@ -121,9 +121,17 @@ export function hydrateSettings(row: {
         ? row.approvalDefaultAction
         : null,
     inputGuardMode:
-      row.inputGuardMode && isInputGuard(row.inputGuardMode) ? row.inputGuardMode : 'log_only',
+      row.inputGuardMode === null
+        ? null
+        : isInputGuard(row.inputGuardMode)
+          ? row.inputGuardMode
+          : null,
     outputGuardMode:
-      row.outputGuardMode && isOutputGuard(row.outputGuardMode) ? row.outputGuardMode : 'log_only',
+      row.outputGuardMode === null
+        ? null
+        : isOutputGuard(row.outputGuardMode)
+          ? row.outputGuardMode
+          : null,
     webhookRetentionDays: row.webhookRetentionDays,
     costLogRetentionDays: row.costLogRetentionDays,
     auditLogRetentionDays: row.auditLogRetentionDays,

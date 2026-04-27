@@ -210,7 +210,7 @@ export class StreamingChatHandler {
         if (!agent.inputGuardMode) {
           try {
             const settings = await getOrchestrationSettings();
-            guardMode = settings.inputGuardMode;
+            guardMode = settings.inputGuardMode ?? 'none';
           } catch {
             logger.warn(
               'Failed to load orchestration settings for input guard mode, falling back to log_only'
@@ -483,7 +483,7 @@ export class StreamingChatHandler {
               if (!agent.outputGuardMode) {
                 try {
                   const settings = await getOrchestrationSettings();
-                  outputMode = settings.outputGuardMode;
+                  outputMode = settings.outputGuardMode ?? 'none';
                 } catch {
                   logger.warn(
                     'Failed to load orchestration settings for output guard mode, falling back to log_only'
