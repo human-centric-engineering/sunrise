@@ -133,4 +133,71 @@ describe('outbound-rate-limiter', () => {
 
     expect(checkOutboundRateLimit('api.example.com').allowed).toBe(true);
   });
+
+  // ─── Retry-After backoff path ───────────────────────────────────────────
+
+  it('checkOutboundRateLimit returns allowed:false when Retry-After deadline is in the future', () => {
+    // Arrange — set a deadline 30s from now
+    const futureSecs = 30;
+    recordRetryAfter('backoff.example.com', String(futureSecs));
+
+    // Act
+    const result = checkOutboundRateLimit('backoff.example.com');
+
+    // Assert — request is blocked and retryAfterMs reflects remaining wait
+    expect(result.allowed).toBe(false);
+    expect(result.retryAfterMs).toBeGreaterThan(0);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(futureSecs * 1000);
+  });
+
+  it('checkOutboundRateLimit cleans up expired Retry-After deadline and allows request', () => {
+    // Arrange — record a deadline that is already in the past
+    const past = new Date(Date.now() - 5000).toUTCString();
+    recordRetryAfter('expired.example.com', past);
+
+    // Act
+    const result = checkOutboundRateLimit('expired.example.com');
+
+    // Assert — expired deadline cleaned up; rate-limit window is fresh so request is allowed
+    expect(result.allowed).toBe(true);
+  });
+
+  it('recordRetryAfter with HTTP-date string: sets deadline from parsed date', () => {
+    // Arrange — future HTTP-date
+    const futureDate = new Date(Date.now() + 45_000).toUTCString();
+
+    // Act
+    recordRetryAfter('date.example.com', futureDate);
+
+    // Assert — the deadline should block subsequent requests
+    const result = checkOutboundRateLimit('date.example.com');
+    expect(result.allowed).toBe(false);
+    expect(result.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it('recordRetryAfter with unparseable string: does nothing (no crash)', () => {
+    // Arrange — header that is neither a number nor a valid date
+    const badHeader = 'not-a-valid-header!!@#$%';
+
+    // Act — must not throw
+    expect(() => recordRetryAfter('resilient.example.com', badHeader)).not.toThrow();
+
+    // Assert — no backoff was installed; requests are still allowed
+    expect(checkOutboundRateLimit('resilient.example.com').allowed).toBe(true);
+  });
+
+  it('recordRetryAfter does not overwrite existing deadline if new deadline is earlier', () => {
+    // Arrange — record a long Retry-After first (60s), then try to overwrite with a shorter one (10s)
+    recordRetryAfter('keep-latest.example.com', '60');
+    const shortDeadline = new Date(Date.now() + 10_000).toUTCString();
+    recordRetryAfter('keep-latest.example.com', shortDeadline);
+
+    // Act — the longer backoff (60s) should still be in effect
+    const result = checkOutboundRateLimit('keep-latest.example.com');
+
+    // Assert — still blocked with the original (longer) deadline intact
+    expect(result.allowed).toBe(false);
+    // retryAfterMs should be close to 60s, not 10s
+    expect(result.retryAfterMs).toBeGreaterThan(10_000);
+  });
 });

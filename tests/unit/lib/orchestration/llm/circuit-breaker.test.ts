@@ -13,6 +13,13 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { logger } from '@/lib/logging';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+
 describe('CircuitBreaker', () => {
   let breaker: CircuitBreaker;
 
@@ -169,6 +176,86 @@ describe('CircuitBreaker', () => {
 
     for (let i = 0; i < 3; i++) breaker.recordFailure();
     expect(breaker.openedAtTimestamp).toBe(now);
+
+    vi.restoreAllMocks();
+  });
+
+  // ── New coverage tests ────────────────────────────────────────────────────
+
+  it('recordFailure dispatches circuit_breaker_opened webhook event when breaker trips', async () => {
+    // Arrange
+    vi.clearAllMocks();
+
+    // Act — trip the breaker
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+
+    // Assert — webhook was dispatched for the trip event
+    // dispatchWebhookEvent is called with void (fire-and-forget), so we flush microtasks
+    await Promise.resolve();
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
+      'circuit_breaker_opened',
+      expect.objectContaining({
+        providerSlug: 'test-provider',
+        failures: 3,
+        threshold: 3,
+      })
+    );
+  });
+
+  it('recordSuccess logs info when transitioning from non-closed to closed state', () => {
+    // Arrange — trip the breaker and advance past cooldown to half_open
+    for (let i = 0; i < 3; i++) breaker.recordFailure();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000);
+    breaker.canAttempt(); // transitions to half_open
+    vi.clearAllMocks(); // clear prior logger calls
+
+    // Act
+    breaker.recordSuccess();
+
+    // Assert — logger.info was called about the reset
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      'Circuit breaker reset to closed',
+      expect.objectContaining({ provider: 'test-provider' })
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('canAttempt in open state with cooldown not elapsed: returns false', () => {
+    // Arrange — trip the breaker; cooldown = 2000ms but we don't advance time
+    for (let i = 0; i < 3; i++) breaker.recordFailure();
+    expect(breaker.state).toBe('open');
+
+    // Simulate only 500ms elapsed (less than 2000ms cooldown)
+    const trippedAt = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(trippedAt + 500);
+
+    // Act
+    const result = breaker.canAttempt();
+
+    // Assert — still blocked; cooldown not yet elapsed
+    expect(result).toBe(false);
+    expect(breaker.state).toBe('open');
+
+    vi.restoreAllMocks();
+  });
+
+  it('canAttempt transitions to half_open when cooldown elapses', () => {
+    // Arrange — trip the breaker
+    for (let i = 0; i < 3; i++) breaker.recordFailure();
+    expect(breaker.state).toBe('open');
+
+    // Advance past cooldown (2000ms)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2500);
+
+    // Act
+    const allowed = breaker.canAttempt();
+
+    // Assert — probe is allowed and state is now half_open
+    expect(allowed).toBe(true);
+    expect(breaker.state).toBe('half_open');
 
     vi.restoreAllMocks();
   });
