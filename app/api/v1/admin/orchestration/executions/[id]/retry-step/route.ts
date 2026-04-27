@@ -84,8 +84,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // Use PENDING (not RUNNING) to signal "ready to resume but no engine
   // attached yet". This prevents the zombie reaper from sweeping the row
   // before the client reconnects via ?resumeFromExecutionId=.
-  await prisma.aiWorkflowExecution.update({
-    where: { id },
+  //
+  // Optimistic lock: include status in WHERE so concurrent retry requests
+  // don't both truncate the trace (second one sees count === 0).
+  const result = await prisma.aiWorkflowExecution.updateMany({
+    where: { id, status: WorkflowStatus.FAILED },
     data: {
       status: WorkflowStatus.PENDING,
       executionTrace: keptTrace as unknown as object,
@@ -96,6 +99,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       completedAt: null,
     },
   });
+  if (result.count === 0) {
+    throw new ValidationError('Execution was already retried by another request', {
+      status: ['Concurrent retry detected'],
+    });
+  }
 
   log.info('execution retry-step prepared', {
     executionId: id,

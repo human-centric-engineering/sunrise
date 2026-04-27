@@ -59,10 +59,13 @@ export async function reapZombieExecutions(
         errorMessage: 'Execution reaped: exceeded zombie threshold without completing',
       },
     }),
+    // Use createdAt (not updatedAt) so incidental DB writes don't reset
+    // the reap timer — a PENDING row should be reaped based on when it
+    // was created, not when it was last touched.
     prisma.aiWorkflowExecution.updateMany({
       where: {
         status: WorkflowStatus.PENDING,
-        updatedAt: { lt: pendingCutoff },
+        createdAt: { lt: pendingCutoff },
       },
       data: {
         status: WorkflowStatus.FAILED,

@@ -70,13 +70,21 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // engine attached yet". The engine's initRun() flips to RUNNING when
   // the client reconnects via ?resumeFromExecutionId=. This prevents the
   // zombie reaper from sweeping the row before reconnection.
-  await prisma.aiWorkflowExecution.update({
-    where: { id },
+  //
+  // Optimistic lock: include status in WHERE so a concurrent approval
+  // that already flipped the row to PENDING will cause count === 0.
+  const result = await prisma.aiWorkflowExecution.updateMany({
+    where: { id, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
     data: {
       status: WorkflowStatus.PENDING,
       executionTrace: trace as unknown as object,
     },
   });
+  if (result.count === 0) {
+    throw new ValidationError('Execution was already approved by another request', {
+      status: ['Concurrent approval detected'],
+    });
+  }
 
   log.info('execution approved', {
     executionId: id,
