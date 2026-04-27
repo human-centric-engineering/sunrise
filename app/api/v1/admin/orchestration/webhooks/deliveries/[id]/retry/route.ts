@@ -10,6 +10,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -23,9 +24,19 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-  const { id } = await params;
-  if (!cuidSchema.safeParse(id).success) {
+  const { id: rawId } = await params;
+  if (!cuidSchema.safeParse(rawId).success) {
     throw new ValidationError('Invalid delivery ID format');
+  }
+  const id = rawId;
+
+  // Verify the delivery's parent subscription belongs to the calling admin
+  const delivery = await prisma.aiWebhookDelivery.findUnique({
+    where: { id },
+    select: { subscription: { select: { createdBy: true } } },
+  });
+  if (!delivery || delivery.subscription.createdBy !== session.user.id) {
+    throw new NotFoundError('Webhook delivery not found');
   }
 
   const ok = await retryDelivery(id);

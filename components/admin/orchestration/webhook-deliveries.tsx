@@ -31,6 +31,8 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatEventLabel } from '@/lib/orchestration/webhooks/event-labels';
+import { parsePaginationMeta } from '@/lib/validations/common';
+import type { PaginationMeta } from '@/types/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -42,13 +44,6 @@ interface Delivery {
   lastError: string | null;
   attempts: number;
   createdAt: string;
-}
-
-interface DeliveryMeta {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
 }
 
 export interface WebhookDeliveriesProps {
@@ -68,9 +63,9 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 
 
 export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [meta, setMeta] = useState<DeliveryMeta>({
+  const [meta, setMeta] = useState<PaginationMeta>({
     page: 1,
-    pageSize: 20,
+    limit: 20,
     total: 0,
     totalPages: 1,
   });
@@ -85,7 +80,7 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
       try {
         const params = new URLSearchParams({
           page: String(page),
-          pageSize: String(meta.pageSize),
+          pageSize: String(meta.limit),
         });
         if (statusFilter !== 'all') params.set('status', statusFilter);
 
@@ -96,14 +91,15 @@ export function WebhookDeliveries({ webhookId }: WebhookDeliveriesProps) {
         if (body.success) {
           setDeliveries(body.data);
           if (body.meta) {
-            setMeta(body.meta as unknown as DeliveryMeta);
+            const parsed = parsePaginationMeta(body.meta);
+            if (parsed) setMeta(parsed);
           }
         }
       } finally {
         setLoading(false);
       }
     },
-    [webhookId, statusFilter, meta.pageSize]
+    [webhookId, statusFilter, meta.limit]
   );
 
   useEffect(() => {

@@ -187,8 +187,8 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
             The URL of your external system that should receive event notifications (e.g. a Slack
             integration, your backend API, or a service like Zapier). Sunrise will send a POST
             request to this address each time a selected event fires. Must be publicly reachable
-            over HTTPS — private IPs, localhost, and cloud metadata endpoints are blocked for
-            security.
+            over HTTP or HTTPS — private IPs, localhost, and cloud metadata endpoints are blocked
+            for security.
           </FieldHelp>
         </Label>
         <Input
@@ -200,7 +200,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         />
         {errors.url && <p className="text-destructive text-xs">{errors.url.message}</p>}
         <p className="text-muted-foreground text-xs">
-          Only HTTPS URLs are accepted. Private IPs and internal addresses are blocked.
+          Private IPs, localhost, and cloud metadata endpoints are blocked.
         </p>
       </div>
 

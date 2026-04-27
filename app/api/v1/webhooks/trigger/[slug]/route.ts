@@ -25,8 +25,6 @@ import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
 import { slugSchema } from '@/lib/validations/common';
 
-const SYSTEM_USER_ID = 'webhook-trigger';
-
 const triggerSlugSchema = slugSchema.pipe(z.string().max(100));
 const webhookInputSchema = z.record(z.string(), z.unknown());
 
@@ -95,7 +93,7 @@ export async function POST(
         status: 'pending',
         inputData,
         executionTrace: [],
-        userId: SYSTEM_USER_ID,
+        userId: resolved.session.user.id,
       },
     });
 

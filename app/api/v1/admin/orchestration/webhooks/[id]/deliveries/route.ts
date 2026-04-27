@@ -17,6 +17,7 @@ import { paginatedResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { cuidSchema } from '@/lib/validations/common';
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -25,15 +26,18 @@ const querySchema = z.object({
 });
 
 export const GET = withAdminAuth<{ id: string }>(
-  async (request: NextRequest, _session, { params }) => {
+  async (request: NextRequest, session, { params }) => {
     const clientIP = getClientIP(request);
     const rateLimit = adminLimiter.check(clientIP);
     if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-    const { id } = await params;
+    const { id: rawId } = await params;
+    const idParsed = cuidSchema.safeParse(rawId);
+    if (!idParsed.success) throw new ValidationError('Invalid webhook ID format');
+    const id = idParsed.data;
 
-    const sub = await prisma.aiWebhookSubscription.findUnique({
-      where: { id },
+    const sub = await prisma.aiWebhookSubscription.findFirst({
+      where: { id, createdBy: session.user.id },
       select: { id: true },
     });
     if (!sub) throw new NotFoundError('Webhook subscription not found');

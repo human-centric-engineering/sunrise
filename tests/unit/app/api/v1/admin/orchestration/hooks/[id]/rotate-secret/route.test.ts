@@ -194,7 +194,7 @@ describe('POST /api/v1/admin/orchestration/hooks/:id/rotate-secret', () => {
     expect(logAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'hook.secret.rotated',
-        entityType: 'webhook',
+        entityType: 'hook',
         entityId: VALID_ID,
         metadata: { hadPrevious: false },
       })
@@ -268,7 +268,7 @@ describe('DELETE /api/v1/admin/orchestration/hooks/:id/rotate-secret', () => {
     expect(logAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'hook.secret.cleared',
-        entityType: 'webhook',
+        entityType: 'hook',
         entityId: VALID_ID,
       })
     );
