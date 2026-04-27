@@ -17,7 +17,7 @@ import type { Metadata } from 'next';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
-import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
+import { parseUserPreferences } from '@/lib/validations/user';
 import type { UserPreferences } from '@/types';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 import { getInitials } from '@/lib/utils/initials';
@@ -64,7 +64,7 @@ export default async function SettingsPage() {
   }
 
   // Parse preferences from JSON
-  const preferences = parsePreferences(user.preferences);
+  const preferences = parseUserPreferences(user.preferences) as UserPreferences;
 
   // Check if user has a password account
   const hasPasswordAccount = user.accounts.some((account) => account.password !== null);
@@ -124,29 +124,4 @@ function formatProviderName(providerId: string): string {
   };
 
   return providerNames[providerId.toLowerCase()] || providerId;
-}
-
-/**
- * Parse preferences from database JSON field
- */
-function parsePreferences(dbPreferences: unknown): UserPreferences {
-  if (!dbPreferences || typeof dbPreferences !== 'object') {
-    return DEFAULT_USER_PREFERENCES;
-  }
-
-  const prefs = dbPreferences as Record<string, unknown>;
-
-  return {
-    email: {
-      marketing:
-        typeof (prefs.email as Record<string, unknown>)?.marketing === 'boolean'
-          ? ((prefs.email as Record<string, unknown>).marketing as boolean)
-          : DEFAULT_USER_PREFERENCES.email.marketing,
-      productUpdates:
-        typeof (prefs.email as Record<string, unknown>)?.productUpdates === 'boolean'
-          ? ((prefs.email as Record<string, unknown>).productUpdates as boolean)
-          : DEFAULT_USER_PREFERENCES.email.productUpdates,
-      securityAlerts: true,
-    },
-  };
 }
