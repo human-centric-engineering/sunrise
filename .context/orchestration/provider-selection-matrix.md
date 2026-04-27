@@ -92,6 +92,8 @@ Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pt
 | `local`                | Boolean                                                                     | Runs locally (Ollama, etc.)              |
 | `quality`              | high, medium, budget (nullable)                                             | Embedding quality tier                   |
 
+**Audit fields** (returned by API, not editable via admin form): `metadata` (JSON, nullable), `createdBy` (user ID), `createdAt`, `updatedAt`.
+
 ## API Endpoints
 
 ### CRUD

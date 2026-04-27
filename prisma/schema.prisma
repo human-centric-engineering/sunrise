@@ -752,7 +752,7 @@ model AiProviderModel {
   // Selection matrix dimensions
   reasoningDepth String // 'very_high' | 'high' | 'medium' | 'none'
   latency        String // 'very_fast' | 'fast' | 'medium'
-  costEfficiency String // 'very_high' | 'high' | 'medium'
+  costEfficiency String // 'very_high' | 'high' | 'medium' | 'none'
   contextLength  String // 'very_high' | 'high' | 'medium' | 'n_a'
   toolUse        String // 'strong' | 'moderate' | 'none'
   bestRole       String // free-text, e.g. "Planner / orchestrator"

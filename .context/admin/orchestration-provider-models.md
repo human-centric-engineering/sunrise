@@ -110,8 +110,8 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
 - The submit handler assembles `capabilities[]` from the two checkboxes, strips embedding fields when `capEmbedding` is off, and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST.
-- Create: `POST /provider-models` → router pushes to the new model's edit page.
-- Edit: `PATCH /provider-models/:id` → inline "Saved" flash for 2s.
+- Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
+- Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
 - Every non-trivial field has a `<FieldHelp>` popover per the contextual-help rule.
 
 ## Recommend endpoint
@@ -130,9 +130,16 @@ Response:
   "intent": "thinking",
   "recommendations": [
     { "slug": "...", "providerSlug": "...", "score": 90, "reason": "..." },
-    ...
+    // ...
   ],
-  "heuristic": "Use frontier models (Tier 1)"
+  "heuristic": {
+    "thinking": "If it thinks → use frontier models (Tier 1)",
+    "doing": "If it does → use cheap/open models (Tier 2)",
+    "fast_looping": "If it loops fast → use infra providers (Tier 3)",
+    "high_reliability": "If it must not fail → route via aggregators (Tier 4)",
+    "private": "If it must stay private → run local (Tier 5)",
+    "embedding": "If it needs vector embeddings → use embedding models",
+  },
 }
 ```
 
