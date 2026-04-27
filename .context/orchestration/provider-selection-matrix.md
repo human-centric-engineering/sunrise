@@ -64,10 +64,10 @@ When assigning a model in an agent system:
 type TaskIntent = 'thinking' | 'doing' | 'fast_looping' | 'high_reliability' | 'private' | 'embedding';
 
 const recs = await recommendModels(intent, { limit?: number; includeInactive?: boolean });
-// Returns ModelRecommendation[] sorted by score (0-90 chat, 0-96 embedding)
+// Returns ModelRecommendation[] sorted by score desc, then slug asc (deterministic tiebreaker)
 ```
 
-Scoring for chat intents: primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points). Non-matching tiers score 0 + secondary only.
+Scoring for chat intents: primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
 
 Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts).
 
@@ -106,7 +106,9 @@ Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pt
 | PATCH  | `/api/v1/admin/orchestration/provider-models/:id` | Update (flips `isDefault` to `false` on edit)                                           |
 | DELETE | `/api/v1/admin/orchestration/provider-models/:id` | Soft delete (`isActive = false`)                                                        |
 
-**Soft delete behaviour:** DELETE sets `isActive = false` (no `deletedAt` column). Inactive models are excluded from the matrix and `recommendModels()` by default. Agents that explicitly reference a deactivated model still resolve at runtime — the model is hidden from selection UI but not blocked from use.
+**PATCH no-op short-circuit:** When the request body contains no user-supplied fields (and the model is not seed-managed), PATCH returns the current model without writing to the database or invalidating the cache.
+
+**Soft delete behaviour:** DELETE sets `isActive = false` (no `deletedAt` column). If the model is already inactive, DELETE returns `{ deleted: true }` immediately without a DB write. Inactive models are excluded from the matrix and `recommendModels()` by default. Agents that explicitly reference a deactivated model still resolve at runtime — the model is hidden from selection UI but not blocked from use.
 
 ### Recommendations
 

@@ -109,7 +109,7 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 ### Submit behaviour
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
-- The submit handler assembles `capabilities[]` from the two checkboxes, strips embedding fields when `capEmbedding` is off, and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST.
+- The submit handler assembles `capabilities[]` from the two checkboxes and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `capEmbedding` is off. In edit mode, unchecking `capEmbedding` explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
 - Every non-trivial field has a `<FieldHelp>` popover per the contextual-help rule.
