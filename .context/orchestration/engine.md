@@ -25,6 +25,8 @@ return sseResponse(events, { signal: request.signal });
 
 `execute()` returns `AsyncIterable<ExecutionEvent>`. Consumers iterate with `for await`; the SSE route hands the iterable straight to `sseResponse` which frames each event as `event: <type>\ndata: <json>\n\n`.
 
+A second entry point, `executeWithSubscriber()`, wraps the same generator but calls a subscriber callback on each event before yielding. The `GET /workflows/:id/execute-stream` SSE route uses this variant to persist execution trace entries as events arrive.
+
 ## Module layout
 
 ```
