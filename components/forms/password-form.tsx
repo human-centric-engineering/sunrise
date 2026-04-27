@@ -18,6 +18,7 @@ import { authClient } from '@/lib/auth/client';
 import { passwordSchema } from '@/lib/validations/auth';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { PasswordStrength } from '@/components/forms/password-strength';
@@ -127,7 +128,13 @@ export function PasswordForm() {
 
       {/* New Password */}
       <div className="space-y-2">
-        <Label htmlFor="newPassword">New Password</Label>
+        <Label htmlFor="newPassword" className="flex items-center gap-1">
+          New Password
+          <FieldHelp title="Password requirements">
+            Must be at least 8 characters with a mix of uppercase, lowercase, numbers, and special
+            characters. All other sessions will be logged out when you change your password.
+          </FieldHelp>
+        </Label>
         <PasswordInput
           id="newPassword"
           placeholder="Enter a new password"

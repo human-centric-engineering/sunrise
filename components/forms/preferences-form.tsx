@@ -16,6 +16,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { UserPreferences } from '@/types';
@@ -75,8 +76,11 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       {/* Marketing Emails */}
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
-          <Label htmlFor="marketing" className="text-base">
+          <Label htmlFor="marketing" className="flex items-center gap-1 text-base">
             Marketing Emails
+            <FieldHelp title="Marketing emails">
+              Newsletters, promotions, and product announcements. Typically 1–2 per month.
+            </FieldHelp>
           </Label>
           <p className="text-muted-foreground text-sm">
             Receive newsletters, promotions, and product news.
@@ -93,8 +97,12 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       {/* Product Updates */}
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
-          <Label htmlFor="productUpdates" className="text-base">
+          <Label htmlFor="productUpdates" className="flex items-center gap-1 text-base">
             Product Updates
+            <FieldHelp title="Product update emails">
+              Notifications about new features, improvements, and changes that may affect your
+              workflow.
+            </FieldHelp>
           </Label>
           <p className="text-muted-foreground text-sm">
             Get notified about new features and improvements.
@@ -112,8 +120,12 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
-            <Label htmlFor="securityAlerts" className="text-base">
+            <Label htmlFor="securityAlerts" className="flex items-center gap-1 text-base">
               Security Alerts
+              <FieldHelp title="Security alerts">
+                Critical notifications about login attempts, password changes, and account security
+                events. Cannot be disabled.
+              </FieldHelp>
             </Label>
             <ShieldCheck className="text-primary h-4 w-4" />
           </div>
