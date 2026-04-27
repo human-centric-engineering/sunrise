@@ -208,7 +208,7 @@ export async function recommendModels(
     });
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score || a.slug.localeCompare(b.slug));
   return scored.slice(0, limit);
 }
 
